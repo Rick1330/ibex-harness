@@ -16,13 +16,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import secrets
 import time
-from collections.abc import Generator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
 import httpx
+
+from app.clients._http import RedactedBearerAuth, jittered_backoff, retry_after_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,6 @@ _MAX_DOCUMENTS = 64
 _MAX_QUERY_BYTES = 8 * 1024
 _MAX_DOCUMENT_BYTES = 32 * 1024
 _RETRYABLE_STATUS: frozenset[int] = frozenset({429, 502, 503})
-_BACKOFF_BASE_SECONDS = 0.05
 _BACKOFF_MAX_SECONDS = 0.5
 
 
@@ -72,22 +72,6 @@ class RerankInvalidResponseError(RerankClientError):
         super().__init__(message, code="rerank_invalid_response")
 
 
-class _RedactedBearerAuth(httpx.Auth):
-    """Attach Authorization without putting the token in default headers/repr."""
-
-    __slots__ = ("_token",)
-
-    def __init__(self, token: str) -> None:
-        self._token = token
-
-    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
-        request.headers["Authorization"] = f"Bearer {self._token}"
-        yield request
-
-    def __repr__(self) -> str:
-        return "RedactedBearerAuth()"
-
-
 @dataclass(frozen=True, slots=True)
 class RerankClientConfig:
     """Read-path defaults: one attempt inside the ranking sub-budget.
@@ -100,11 +84,6 @@ class RerankClientConfig:
     connect_timeout: float = 0.05
     read_timeout: float = 0.15
     max_retries: int = 0
-
-
-def _jittered_backoff(attempt: int) -> float:
-    cap = min(_BACKOFF_BASE_SECONDS * (2**attempt), _BACKOFF_MAX_SECONDS)
-    return (secrets.randbelow(1_000_000) / 1_000_000) * cap
 
 
 class RerankClient:
@@ -126,7 +105,7 @@ class RerankClient:
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             headers={"Accept": "application/json"},
-            auth=_RedactedBearerAuth(token) if token else None,
+            auth=RedactedBearerAuth(token) if token else None,
             timeout=httpx.Timeout(cfg.read_timeout, connect=cfg.connect_timeout),
             follow_redirects=False,
         )
@@ -152,7 +131,7 @@ class RerankClient:
             except (RerankUnavailableError, RerankTimeoutError) as exc:
                 if not self._may_retry(exc, attempt=attempt):
                     raise
-                await asyncio.sleep(_jittered_backoff(attempt))
+                await asyncio.sleep(jittered_backoff(attempt, max_seconds=_BACKOFF_MAX_SECONDS))
         msg = "reranker retry loop exhausted without a result"  # pragma: no cover
         raise RerankUnavailableError(msg)  # pragma: no cover
 
@@ -283,14 +262,7 @@ def _raise_http_error(resp: httpx.Response) -> NoReturn:
     raise RerankUnavailableError(
         f"reranker unavailable ({status})",
         retryable=status in _RETRYABLE_STATUS,
-        retry_after_seconds=_retry_after_seconds(resp.headers.get("Retry-After")),
+        retry_after_seconds=retry_after_seconds(
+            resp.headers.get("Retry-After"), max_seconds=_BACKOFF_MAX_SECONDS
+        ),
     )
-
-
-def _retry_after_seconds(raw: str | None) -> float | None:
-    if raw is None:
-        return None
-    stripped = raw.strip()
-    if not stripped.isdigit():
-        return None
-    return min(_BACKOFF_MAX_SECONDS, float(int(stripped)))

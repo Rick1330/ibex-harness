@@ -220,9 +220,9 @@ def test_empty_base_url_is_rejected() -> None:
 
 
 def test_bearer_repr_never_contains_the_token() -> None:
-    from app.clients.rerank import _RedactedBearerAuth
+    from app.clients._http import RedactedBearerAuth
 
-    assert repr(_RedactedBearerAuth("super-secret")) == "RedactedBearerAuth()"
+    assert repr(RedactedBearerAuth("super-secret")) == "RedactedBearerAuth()"
     assert "super-secret" not in repr(RerankClient(_BASE, "super-secret"))
 
 

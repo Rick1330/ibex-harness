@@ -9,14 +9,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import secrets
 import time
-from collections.abc import Generator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn
 from uuid import UUID
 
 import httpx
+
+from app.clients._http import RedactedBearerAuth, jittered_backoff, retry_after_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -66,22 +67,6 @@ class EmbeddingInvalidResponseError(EmbeddingClientError):
         super().__init__(message, code="embedding_invalid_response")
 
 
-class _RedactedBearerAuth(httpx.Auth):
-    """Attach Authorization without putting the token in default headers/repr."""
-
-    __slots__ = ("_token",)
-
-    def __init__(self, token: str) -> None:
-        self._token = token
-
-    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
-        request.headers["Authorization"] = f"Bearer {self._token}"
-        yield request
-
-    def __repr__(self) -> str:
-        return "RedactedBearerAuth()"
-
-
 @dataclass(frozen=True, slots=True)
 class EmbeddingResult:
     vectors: list[list[float]]
@@ -97,22 +82,8 @@ class EmbeddingClientConfig:
     max_retries: int = 2
 
 
-def _jittered_backoff(attempt: int) -> float:
-    cap = min(_BACKOFF_BASE_SECONDS * (2**attempt), _BACKOFF_MAX_SECONDS)
-    return (secrets.randbelow(1_000_000) / 1_000_000) * cap
-
-
-def _parse_retry_after_seconds(raw: str | None) -> float | None:
-    if raw is None:
-        return None
-    stripped = raw.strip()
-    if not stripped.isdigit():
-        return None
-    return min(_BACKOFF_MAX_SECONDS, float(int(stripped)))
-
-
 def _retry_delay_seconds(attempt: int, retry_after_seconds: float | None) -> float:
-    delay = _jittered_backoff(attempt)
+    delay = jittered_backoff(attempt)
     if retry_after_seconds is None:
         return delay
     return min(_BACKOFF_MAX_SECONDS, max(delay, retry_after_seconds))
@@ -140,7 +111,7 @@ class EmbeddingClient:
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             headers={"Accept": "application/json"},
-            auth=_RedactedBearerAuth(token),
+            auth=RedactedBearerAuth(token),
             timeout=httpx.Timeout(cfg.read_timeout, connect=cfg.connect_timeout),
             follow_redirects=False,
         )
@@ -332,7 +303,7 @@ def _raise_http_error(resp: httpx.Response) -> NoReturn:
 def _retry_after_for_status(status: int, retry_after: str | None) -> float | None:
     if status != 429:
         return None
-    return _parse_retry_after_seconds(retry_after)
+    return retry_after_seconds(retry_after)
 
 
 def _unavailable_message(status: int, retry_after: str) -> str:

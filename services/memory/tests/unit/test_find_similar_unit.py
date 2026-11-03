@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -12,70 +11,25 @@ import pytest
 
 from app.config import Settings
 from app.read.full_text import FullTextHit
-from app.read.models import FindSimilarQuery, MemorySearchResult
+from app.read.models import MemorySearchResult
 from app.read.ranking import HydratedHit
 from app.read.repository import MemoryReadRepository
 from app.vectorstore.base import SearchHit
-
-
-def _settings(**kwargs: object) -> Settings:
-    return Settings(database_url="postgresql+asyncpg://x", **kwargs)
-
-
-def _result(memory_id, *, confidence: float = 0.9, source: str = "vector") -> MemorySearchResult:
-    now = datetime.now(UTC)
-    return MemorySearchResult(
-        id=memory_id,
-        org_id=uuid4(),
-        agent_id=uuid4(),
-        content="content",
-        category="factual",
-        confidence=confidence,
-        status="active",
-        similarity=0.95 if source == "vector" else 0.5,
-        source=source,  # type: ignore[arg-type]
-        created_at=now,
-        updated_at=now,
-    )
-
-
-def _hydrated_map(results: list[MemorySearchResult]) -> dict[UUID, HydratedHit]:
-    now = datetime.now(UTC)
-    return {
-        item.id: HydratedHit(
-            result=item,
-            valid_from=now - timedelta(days=30),
-            usefulness_score=0.5,
-            retrieval_count=0,
-        )
-        for item in results
-    }
-
-
-def _query(**kwargs: object) -> FindSimilarQuery:
-    defaults: dict[str, object] = {
-        "org_id": uuid4(),
-        "agent_id": uuid4(),
-        "query_embedding": [0.0] * 1024,
-        "query_text": "q",
-        "limit": 5,
-    }
-    defaults.update(kwargs)
-    return FindSimilarQuery(**defaults)  # type: ignore[arg-type]
-
-
-def _repo(
-    store: MagicMock | None = None,
-    settings: Settings | None = None,
-    *,
-    rerank_client: object | None = None,
-) -> MemoryReadRepository:
-    return MemoryReadRepository(
-        MagicMock(),
-        store or MagicMock(),
-        settings or _settings(),
-        rerank_client=rerank_client,  # type: ignore[arg-type]
-    )
+from tests.unit.find_similar_support import (
+    make_hydrated_map as _hydrated_map,
+)
+from tests.unit.find_similar_support import (
+    make_query as _query,
+)
+from tests.unit.find_similar_support import (
+    make_repo as _repo,
+)
+from tests.unit.find_similar_support import (
+    make_result as _result,
+)
+from tests.unit.find_similar_support import (
+    make_settings as _settings,
+)
 
 
 def _vector_repo(
