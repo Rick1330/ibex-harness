@@ -285,12 +285,15 @@ def _build_rerank(cfg: Settings) -> RerankClient | None:
             "reranking applies to the fused window only and will not run"
         )
         return None
-    if cfg.rerank_client_batch_size > _TEI_DEFAULT_CLIENT_BATCH_SIZE:
+    # A request carries at most min(batch size, window cap) texts, so the window cap
+    # can keep a large batch size harmless.
+    largest_request = min(cfg.rerank_client_batch_size, cfg.rerank_max_candidates)
+    if largest_request > _TEI_DEFAULT_CLIENT_BATCH_SIZE:
         logger.warning(
-            "IBEX_MEMORY_RERANK_CLIENT_BATCH_SIZE=%d exceeds the TEI default "
+            "reranking can send %d texts per request, above the TEI default "
             "--max-client-batch-size=%d; a server left at its default answers 413 "
-            "and every rerank degrades to the fused order",
-            cfg.rerank_client_batch_size,
+            "and affected reranks degrade to the fused order",
+            largest_request,
             _TEI_DEFAULT_CLIENT_BATCH_SIZE,
         )
     token = cfg.rerank_api_token.get_secret_value() if cfg.rerank_api_token else None

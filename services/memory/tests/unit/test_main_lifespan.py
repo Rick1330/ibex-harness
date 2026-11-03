@@ -173,6 +173,26 @@ def test_build_rerank_warns_when_the_batch_size_exceeds_the_server_default() -> 
     assert client is not None
     warning.assert_called_once()
     assert "max-client-batch-size" in warning.call_args.args[0]
+    # The message names the request size a search can actually build.
+    assert warning.call_args.args[1] == 48
+
+
+def test_build_rerank_does_not_warn_when_the_window_cap_keeps_requests_small() -> None:
+    """A request carries at most ``min(batch size, window cap)`` texts."""
+    from app.main import _build_rerank
+
+    cfg = Settings(
+        rerank_enabled=True,
+        search_hybrid_enabled=True,
+        rerank_base_url="http://reranker.test:80",
+        rerank_client_batch_size=48,
+        rerank_max_candidates=10,
+    )
+
+    with patch("app.main.logger.warning") as warning:
+        assert _build_rerank(cfg) is not None
+
+    warning.assert_not_called()
 
 
 def test_build_rerank_does_not_warn_at_the_server_default() -> None:

@@ -71,7 +71,8 @@ The question this record settles is what a reranker is allowed to override.
 - **Require the operator to raise TEI's `--max-client-batch-size`.** Rejected: the two defaults disagreed, and the
   disagreement was silent. A 50-candidate window against a stock server (limit `32`) returns `413`, which the read path
   correctly treats as "degrade", so rerank was a no-op on every default deployment while the counter said `degraded`
-  and the page looked normal. The client now owns the split, so the window is independent of a server flag.
+  and the page looked normal. The client now owns the split, so the **window** is independent of a server flag;
+  the batch size is not — it must not exceed the server's `--max-client-batch-size`, and any smaller value works.
 - **A new `reranker` wrapper service** in front of TEI. Deferred: the memory service talks to TEI's `POST /rerank`
   directly with the same client conventions as the embedder, and a wrapper adds a hop without adding a contract. Add one
   only if auth, caching, or provider abstraction needs it.

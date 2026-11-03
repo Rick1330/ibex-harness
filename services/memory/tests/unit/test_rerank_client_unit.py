@@ -478,11 +478,11 @@ async def test_a_failed_batch_cancels_the_requests_still_in_flight() -> None:
         config=RerankClientConfig(connect_timeout=0.05, read_timeout=5.0),
     )
 
-    with pytest.raises(RerankRejectedError):
-        await asyncio.wait_for(
-            client.rerank("query", [f"doc-{index}" for index in range(50)]),
-            timeout=2.0,
-        )
+    # The timeout lives outside the `pytest.raises` block so the block holds exactly
+    # one invocation that can raise the expected error.
+    async with asyncio.timeout(2.0):
+        with pytest.raises(RerankRejectedError):
+            await client.rerank("query", [f"doc-{index}" for index in range(50)])
 
     assert started.is_set()
     assert cancelled.is_set()
