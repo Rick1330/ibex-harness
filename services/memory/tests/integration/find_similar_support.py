@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -229,9 +229,16 @@ async def upsert_embedding(
     *,
     org_id: UUID,
     memory_id: UUID,
-    hotspot: int,
+    hotspot: int = 0,
+    embedding: Sequence[float] | None = None,
 ) -> list[float]:
-    embedding = zero_embedding(hotspot=hotspot)
+    """Store an embedding for ``memory_id``.
+
+    ``embedding`` wins when given, which is what the graded gold set needs: its vectors are
+    weighted combinations of topic bases, not one-hot hotspots. Existing callers keep passing
+    ``hotspot`` and are unaffected.
+    """
+    vector = list(embedding) if embedding is not None else zero_embedding(hotspot=hotspot)
     async with session_factory() as session:
         await with_service_org(session, org_id)
         row = await session.execute(
@@ -246,12 +253,12 @@ async def upsert_embedding(
         UpsertRequest(
             memory_id=memory_id,
             org_id=org_id,
-            embedding=embedding,
+            embedding=vector,
             embedding_model="test",
             expected_revision=lifecycle_revision,
         )
     )
-    return embedding
+    return vector
 
 
 async def seed_agent_with_memories(

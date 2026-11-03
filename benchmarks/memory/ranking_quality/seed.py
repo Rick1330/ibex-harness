@@ -31,7 +31,19 @@ if str(_BENCH_MEMORY) not in sys.path:
     sys.path.insert(0, str(_BENCH_MEMORY))
 
 from path_guard import resolve_bench_input_path
+from profiles import profile_vector
 from validate_gold_set import validate_gold_set
+from validate_gold_set_v2 import validate_gold_set_v2
+
+
+@dataclass(frozen=True, slots=True)
+class SeedContext:
+    """The collaborators and fixed inputs a row needs, so no function grows an argument list."""
+
+    session_factory: async_sessionmaker[AsyncSession]
+    store: PgVectorStore
+    topics: dict[str, int] | None
+    now: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,62 +149,116 @@ async def _purge_org_memories(session_factory: async_sessionmaker[AsyncSession])
         )
 
 
-async def _seed_memory_row(
-    session_factory: async_sessionmaker[AsyncSession],
-    store: PgVectorStore,
-    row: dict,
-    *,
-    now: datetime,
-) -> tuple[str, UUID]:
+async def _seed_memory_row(ctx: SeedContext, row: dict) -> tuple[str, UUID]:
     content_key = str(row["content_key"])
     age_days = int(row.get("valid_from_days_ago", 30))
     memory_id = await insert_scored_memory(
-        session_factory,
+        ctx.session_factory,
         InsertScoredMemoryParams(
             org_id=GOLD_ORG_ID,
             agent_id=GOLD_AGENT_ID,
             content=str(row["content"]),
             category=str(row["category"]),
-            valid_from=now - timedelta(days=age_days),
+            valid_from=ctx.now - timedelta(days=age_days),
             confidence=float(row.get("confidence", 0.85)),
             usefulness_score=float(row.get("usefulness_score", 0.5)),
             retrieval_count=int(row.get("retrieval_count", 0)),
         ),
     )
-    hotspot = int(row.get("embedding_hotspot", 0))
-    if hotspot < 0 or hotspot >= len(zero_embedding()):
-        msg = f"embedding_hotspot out of range for {content_key}"
-        raise ValueError(msg)
+    embedding = _embedding_for_row(row, ctx.topics)
+    if embedding is None:
+        hotspot = int(row.get("embedding_hotspot", 0))
+        if hotspot < 0 or hotspot >= len(zero_embedding()):
+            msg = f"embedding_hotspot out of range for {content_key}"
+            raise ValueError(msg)
+    else:
+        hotspot = 0
     await upsert_embedding(
-        store,
-        session_factory,
+        ctx.store,
+        ctx.session_factory,
         org_id=GOLD_ORG_ID,
         memory_id=memory_id,
         hotspot=hotspot,
+        embedding=embedding,
     )
     return content_key, memory_id
 
 
-def _validated_memories(gold_path: Path | None) -> list[dict]:
+def _validated_payload(gold_path: Path | None) -> dict:
     payload = load_gold_set(gold_path)
-    _raise_validation_errors(validate_gold_set(payload))
-    return _parse_memory_rows(payload["memories"])
+    validator = validate_gold_set_v2 if payload.get("schema_version") == 2 else validate_gold_set
+    _raise_validation_errors(validator(payload))
+    return payload
 
 
-async def _seed_memory_rows(
-    session_factory: async_sessionmaker[AsyncSession],
-    store: PgVectorStore,
-    memories: list[dict],
-    *,
-    now: datetime,
-) -> dict[str, UUID]:
+def _validated_memories(gold_path: Path | None) -> list[dict]:
+    return _parse_memory_rows(_validated_payload(gold_path)["memories"])
+
+
+def _embedding_for_row(row: dict, topics: dict[str, int] | None) -> list[float] | None:
+    """Vector for a gold row, or ``None`` when the row uses the v1 one-hot hotspot.
+
+    v2 rows carry `embedding_profile`, a weighted combination of declared topic bases; the
+    geometry only means anything if the stored vector is exactly that combination, so it is
+    built here rather than approximated by a hotspot.
+    """
+    profile = row.get("embedding_profile")
+    if profile is None:
+        return None
+    if not topics:
+        msg = f"{row.get('content_key')!r} has an embedding_profile but the corpus declares no topics"
+        raise ValueError(msg)
+    return profile_vector(profile, topics)
+
+
+def _conflict_pairs(memories: list[dict]) -> list[tuple[str, str]]:
+    """(winner, twin) pairs declared by `conflicts_with`, in corpus order."""
+    return [
+        (str(row["content_key"]), str(twin))
+        for row in memories
+        for twin in row.get("conflicts_with") or []
+    ]
+
+
+async def _seed_memory_rows(ctx: SeedContext, memories: list[dict]) -> dict[str, UUID]:
     content_key_to_id: dict[str, UUID] = {}
     for row in memories:
-        content_key, memory_id = await _seed_memory_row(
-            session_factory, store, row, now=now
-        )
+        content_key, memory_id = await _seed_memory_row(ctx, row)
         content_key_to_id[content_key] = memory_id
     return content_key_to_id
+
+
+async def _seed_conflicts(
+    session_factory: async_sessionmaker[AsyncSession],
+    pairs: list[tuple[str, str]],
+    content_key_to_id: dict[str, UUID],
+) -> None:
+    """Write one pending escalation per declared pair.
+
+    Conflict suppression drops the lower-ranked side of a *pending* escalation
+    (`read/conflicts.py`), so without these rows the graph subset measures nothing.
+    """
+    if not pairs:
+        return
+    async with session_factory() as session, session.begin():
+        await session.execute(text(_SERVICE_ACCOUNT_SQL))  # nosemgrep
+        await with_service_org(session, GOLD_ORG_ID)
+        for winner, twin in pairs:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO ibex_core.memory_conflict_escalations
+                        (org_id, new_memory_id, candidate_memory_id, conflict_type, status)
+                    VALUES (:org_id, :new_memory_id, :candidate_memory_id, 'contradicts', 'pending')
+                    ON CONFLICT DO NOTHING
+                    """
+                ),
+                {
+                    "org_id": str(GOLD_ORG_ID),
+                    "new_memory_id": str(content_key_to_id[winner]),
+                    "candidate_memory_id": str(content_key_to_id[twin]),
+                },
+            )
 
 
 async def _analyze_memories(session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -211,15 +277,19 @@ async def seed_gold_set(
     gold_path: Path | None = None,
 ) -> GoldSeedResult:
     """Insert gold memories + embeddings; return content_key → memory_id map."""
-    memories = _validated_memories(gold_path)
+    payload = _validated_payload(gold_path)
+    memories = _parse_memory_rows(payload["memories"])
+    topics = payload.get("topics")
     await _ensure_org_agent(session_factory)
     await _purge_org_memories(session_factory)
-    content_key_to_id = await _seed_memory_rows(
-        session_factory,
-        store,
-        memories,
+    ctx = SeedContext(
+        session_factory=session_factory,
+        store=store,
+        topics=topics,
         now=datetime.now(tz=UTC),
     )
+    content_key_to_id = await _seed_memory_rows(ctx, memories)
+    await _seed_conflicts(session_factory, _conflict_pairs(memories), content_key_to_id)
     await _analyze_memories(session_factory)
     return GoldSeedResult(
         org_id=GOLD_ORG_ID,
