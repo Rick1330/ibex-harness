@@ -28,9 +28,10 @@ class TestGeneratedCorpus:
         assert corpus == gen.build_corpus()
 
     def test_generation_is_deterministic(self) -> None:
-        assert json.dumps(gen.build_corpus(), sort_keys=True) == json.dumps(
-            gen.build_corpus(), sort_keys=True
-        )
+        first = json.dumps(gen.build_corpus(), sort_keys=True)
+        second = json.dumps(gen.build_corpus(), sort_keys=True)
+
+        assert first == second
 
     def test_shape_matches_the_planned_pools(self, corpus: dict[str, Any]) -> None:
         queries = corpus["queries"]

@@ -102,7 +102,7 @@ def _profile(topic: str, filler: int, weight: float) -> dict[str, float]:
     rejected by the profile rules, and rightly so.
     """
     second = math.sqrt(max(0.0, 1.0 - weight * weight))
-    if second == 0.0:
+    if second <= 0.0:
         return {topic: weight}
     return {topic: weight, f"filler-{filler}": second}
 
@@ -322,9 +322,24 @@ def _pool_for(index: int) -> str:
     return "graph"
 
 
+def _output_path(argv: list[str] | None) -> Path:
+    """Resolve the output path, refusing anything outside this benchmark directory.
+
+    The path comes from the command line, so without this a caller could write the corpus
+    anywhere the process can write.
+    """
+    if not argv or len(argv) < 2:
+        return OUTPUT_PATH
+    candidate = Path(argv[1]).resolve()
+    root = _RANK_DIR.resolve()
+    if root not in candidate.parents and candidate != root:
+        raise SystemExit(f"refusing to write outside {root}: {candidate}")
+    return candidate
+
+
 def main(argv: list[str] | None = None) -> int:
     payload = build_corpus()
-    out = Path(argv[1]) if argv and len(argv) > 1 else OUTPUT_PATH
+    out = _output_path(argv)
     out.write_text(json.dumps(payload, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     print(
         f"wrote {out.name}: {len(payload['memories'])} memories, "
