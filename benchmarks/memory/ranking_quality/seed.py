@@ -37,6 +37,16 @@ from validate_gold_set_v2 import validate_gold_set_v2
 
 
 @dataclass(frozen=True, slots=True)
+class SeedContext:
+    """The collaborators and fixed inputs a row needs, so no function grows an argument list."""
+
+    session_factory: async_sessionmaker[AsyncSession]
+    store: PgVectorStore
+    topics: dict[str, int] | None
+    now: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class GoldSeedResult:
     org_id: UUID
     agent_id: UUID
@@ -139,30 +149,23 @@ async def _purge_org_memories(session_factory: async_sessionmaker[AsyncSession])
         )
 
 
-async def _seed_memory_row(
-    session_factory: async_sessionmaker[AsyncSession],
-    store: PgVectorStore,
-    row: dict,
-    *,
-    now: datetime,
-    topics: dict[str, int] | None = None,
-) -> tuple[str, UUID]:
+async def _seed_memory_row(ctx: SeedContext, row: dict) -> tuple[str, UUID]:
     content_key = str(row["content_key"])
     age_days = int(row.get("valid_from_days_ago", 30))
     memory_id = await insert_scored_memory(
-        session_factory,
+        ctx.session_factory,
         InsertScoredMemoryParams(
             org_id=GOLD_ORG_ID,
             agent_id=GOLD_AGENT_ID,
             content=str(row["content"]),
             category=str(row["category"]),
-            valid_from=now - timedelta(days=age_days),
+            valid_from=ctx.now - timedelta(days=age_days),
             confidence=float(row.get("confidence", 0.85)),
             usefulness_score=float(row.get("usefulness_score", 0.5)),
             retrieval_count=int(row.get("retrieval_count", 0)),
         ),
     )
-    embedding = _embedding_for_row(row, topics)
+    embedding = _embedding_for_row(row, ctx.topics)
     if embedding is None:
         hotspot = int(row.get("embedding_hotspot", 0))
         if hotspot < 0 or hotspot >= len(zero_embedding()):
@@ -171,8 +174,8 @@ async def _seed_memory_row(
     else:
         hotspot = 0
     await upsert_embedding(
-        store,
-        session_factory,
+        ctx.store,
+        ctx.session_factory,
         org_id=GOLD_ORG_ID,
         memory_id=memory_id,
         hotspot=hotspot,
@@ -217,19 +220,10 @@ def _conflict_pairs(memories: list[dict]) -> list[tuple[str, str]]:
     ]
 
 
-async def _seed_memory_rows(
-    session_factory: async_sessionmaker[AsyncSession],
-    store: PgVectorStore,
-    memories: list[dict],
-    *,
-    now: datetime,
-    topics: dict[str, int] | None = None,
-) -> dict[str, UUID]:
+async def _seed_memory_rows(ctx: SeedContext, memories: list[dict]) -> dict[str, UUID]:
     content_key_to_id: dict[str, UUID] = {}
     for row in memories:
-        content_key, memory_id = await _seed_memory_row(
-            session_factory, store, row, now=now, topics=topics
-        )
+        content_key, memory_id = await _seed_memory_row(ctx, row)
         content_key_to_id[content_key] = memory_id
     return content_key_to_id
 
@@ -288,13 +282,13 @@ async def seed_gold_set(
     topics = payload.get("topics")
     await _ensure_org_agent(session_factory)
     await _purge_org_memories(session_factory)
-    content_key_to_id = await _seed_memory_rows(
-        session_factory,
-        store,
-        memories,
-        now=datetime.now(tz=UTC),
+    ctx = SeedContext(
+        session_factory=session_factory,
+        store=store,
         topics=topics,
+        now=datetime.now(tz=UTC),
     )
+    content_key_to_id = await _seed_memory_rows(ctx, memories)
     await _seed_conflicts(session_factory, _conflict_pairs(memories), content_key_to_id)
     await _analyze_memories(session_factory)
     return GoldSeedResult(

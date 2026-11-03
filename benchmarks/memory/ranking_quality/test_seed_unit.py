@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -61,3 +62,44 @@ class TestConflictPairs:
 
     def test_no_conflicts_yields_no_pairs(self) -> None:
         assert seed._conflict_pairs([{"content_key": "gold.a"}]) == []
+
+class TestStoredVector:
+    @pytest.mark.asyncio
+    async def test_v2_row_passes_the_profile_vector_to_the_store(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """What the store is asked to persist, not just what the helper returns."""
+        from uuid import UUID
+
+        captured: dict[str, object] = {}
+
+        async def fake_insert(*args: object, **kwargs: object) -> UUID:
+            return UUID("11111111-2222-3333-4444-555555555555")
+
+        async def fake_upsert(store: object, session_factory: object, **kwargs: object) -> list[float]:
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr(seed, "insert_scored_memory", fake_insert)
+        monkeypatch.setattr(seed, "upsert_embedding", fake_upsert)
+        ctx = seed.SeedContext(
+            session_factory=object(),  # type: ignore[arg-type]
+            store=object(),  # type: ignore[arg-type]
+            topics={"a": 0, "b": 1},
+            now=datetime.now(tz=UTC),
+        )
+        row = {
+            "content_key": "gold.x",
+            "content": "A statement long enough to pass any length check.",
+            "category": "factual",
+            "embedding_profile": {"a": 0.6, "b": 0.8},
+        }
+
+        await seed._seed_memory_row(ctx, row)
+
+        vector = captured["embedding"]
+        assert vector[0] == pytest.approx(0.6)  # type: ignore[index]
+        assert vector[1] == pytest.approx(0.8)  # type: ignore[index]
+        # The stored vector is the sparse profile, not a one-hot hotspot.
+        assert sum(1 for value in vector if value != 0.0) == 2  # type: ignore[union-attr]
+        assert captured["hotspot"] == 0
