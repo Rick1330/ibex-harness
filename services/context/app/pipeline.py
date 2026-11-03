@@ -8,10 +8,18 @@ interim packer score, and packs under ``TokenBudget.usable_budget``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from app.budget import TokenBudget
-from app.packer import ContextPacker, PackedMemories
+from app.conflict import collapse_conflicts
+from app.packer import ContextPacker, PackedMemories, ScoredMemory
 from app.retrieval import MemoryHit, RetrievalResult
 from app.scoring import score_hits, score_memory_hit
+
+
+def score_retrieval_hits(hits: Sequence[MemoryHit]) -> list[ScoredMemory]:
+    """Dedupe, drop unresolved conflicts, then attach the interim packer score."""
+    return score_hits(collapse_conflicts(_dedupe_hits(list(hits))))
 
 
 def pack_retrieval(
@@ -20,14 +28,13 @@ def pack_retrieval(
     *,
     packer: ContextPacker,
 ) -> PackedMemories:
-    """Dedupe hot+cold by ``memory_id``, score, and pack under usable budget.
+    """Dedupe hot+cold, suppress conflicts, score, and pack under usable budget.
 
     Preference when IDs collide: higher interim score, then lower ``rank``.
     Packs against ``budget.usable_budget`` (may be zero when the window is
     constrained). Does not format or populate gRPC metrics — that is 3.5.C.6.
     """
-    merged = _dedupe_hits(result.hot_memories + result.cold_memories)
-    scored = score_hits(merged)
+    scored = score_retrieval_hits(result.hot_memories + result.cold_memories)
     return packer.pack(scored, budget.usable_budget)
 
 

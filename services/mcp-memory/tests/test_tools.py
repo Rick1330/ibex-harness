@@ -33,7 +33,11 @@ from app.tools import (
     write_idempotency_key,
     write_memory,
 )
-from tests.memory_fixtures import CreatedMemory, create_memory_response, memory_client_for
+from tests.memory_fixtures import (
+    CreatedMemory,
+    create_memory_response,
+    memory_client_for,
+)
 
 ORG_A = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 ORG_B = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -625,23 +629,25 @@ async def test_record_feedback_success() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("handler", "exc_type"),
+    ("handler", "exc_type", "code"),
     [
-        (_status_handler(404), BackendRejectedError),
-        (_status_handler(503), BackendUnavailableError),
-        (_timeout_handler, BackendUnavailableError),
+        (_status_handler(404), BackendRejectedError, "not_found"),
+        (_status_handler(503), BackendUnavailableError, "backend_unavailable"),
+        (_timeout_handler, BackendUnavailableError, "backend_unavailable"),
     ],
 )
 async def test_record_feedback_fail_closed(
     handler: Callable[[httpx.Request], httpx.Response],
     exc_type: type[BaseException],
+    code: str,
 ) -> None:
     principal = Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT)
     args = parse_feedback_args({"memory_id": str(AGENT), "feedback": "negative"})
     client = memory_client_for(handler)
     set_access_token(TOKEN)
     try:
-        with pytest.raises(exc_type):
+        with pytest.raises(exc_type) as excinfo:
             await record_feedback(principal, args, client, _ALLOW)
     finally:
         set_access_token(None)
+    assert excinfo.value.code == code

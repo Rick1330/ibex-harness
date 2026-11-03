@@ -512,6 +512,12 @@ CREATE INDEX idx_directive_scenarios_directive_id
 > **Shipped (2.5.G5.M3 / ADR-0049):** `ibex_core.memory_relationships` typed
 > edges with dual composite FKs, FORCE RLS, bidirectional traversal indexes,
 > `memory_supersession_edges` view, and `resolve_supersession_tip`.
+> **Shipped (5.B.1/5.B.2 / ADR-0094):** `resolve_supersession_tip` is now consumed by a
+> bounded both-direction traversal (`GET /v1/memories/{id}/lineage`, depth ≤ 5, edge cap
+> 100), and the read path resolves pending conflict escalations per hydrated row through
+> two partial indexes on `memory_conflict_escalations` — `(org_id, new_memory_id)` and
+> `(org_id, candidate_memory_id)`, both `WHERE status = 'pending'` (migrations
+> `000057`/`000058`) — so an unresolved conflict can be suppressed without a second query.
 > **Shipped (3.1.1 / ADR-0052):** expand `memories` with `embedding vector(1024)`,
 > `embedding_model` / `embedding_dim`, quality columns, generated `search_vector`,
 > HNSW + validity + GIN indexes (`000017_memory_schema_v2_expand`). Physical rename

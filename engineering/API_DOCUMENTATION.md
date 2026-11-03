@@ -682,6 +682,86 @@ Authorization: Bearer {token}
 
 ---
 
+### GET /v1/memories/{memory_id}/lineage
+
+**Read the bounded relationship lineage of a memory (phase 5.B.1 / ADR-0094)**
+
+Walks `memory_relationships` in **both directions** — what this memory replaced and what replaced it — plus
+`contradicts`, `specializes`, `generalizes`, `merged_from`, and `derived_from` edges. Served by the memory service.
+
+**Required Permission:** `memory:read`
+
+**Request:**
+
+```http
+GET /v1/memories/a1b2c3d4-e5f6-7890-abcd-ef1234567890/lineage?max_depth=3
+Authorization: Bearer {token}
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `max_depth` | integer | No | 1–5, default 3. The cap is enforced in the traversal query. |
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "memory_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "status": "superseded",
+    "tombstoned": false,
+    "supersession_tip": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+    "max_depth": 3,
+    "truncated": false,
+    "edges": [
+      {
+        "source_memory_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "target_memory_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "relationship_type": "supersedes",
+        "confidence": 0.95,
+        "depth": 1,
+        "from_memory_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "other": {
+          "memory_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+          "status": "active",
+          "tombstoned": false
+        }
+      }
+    ]
+  }
+}
+```
+
+**Contract notes**
+
+- `edges` is capped at 100 with `truncated=true` when more exist; the depth cap, the cycle break, and a `500ms`
+  statement timeout are properties of the query, so a pathological graph terminates with an error instead of an
+  unbounded response.
+- `from_memory_id` is the node the walk arrived from, so a client can rebuild the chain without inferring direction
+  from `depth`.
+- `supersession_tip` is the current tip of the supersession chain, resolved by `ibex_core.resolve_supersession_tip`
+  within that helper's own 5-hop cap. It is a property of the memory, not of the walk: narrowing `max_depth` never
+  changes which memory is current. It equals `memory_id` when nothing superseded the memory, and also when the chain
+  head belongs to another agent — an agent-scoped caller is never handed a peer's memory id through this field.
+- An agent-scoped token only traverses nodes that belong to its own agent; an edge pointing at another agent's memory is
+  not returned. An org-scoped token sees the whole organization's graph.
+- `other.status` / `other.tombstoned` come from a join, so a replacement that was later deleted reads as deleted rather
+  than as a live link.
+
+**Response: 404 Not Found** — the memory is outside the caller's organization, or outside an agent-scoped token's
+agent. Both cases are the same response on purpose: a distinguishable answer would leak existence.
+
+```json
+{ "detail": { "code": "NOT_FOUND", "message": "Memory not found" } }
+```
+
+**Errors:** `400` invalid `max_depth`, `401`/`403` auth, `404` not visible, `503` database unavailable.
+
+**Observability:** `ibex_memory_lineage_queries_total{result="found|empty|not_found|error"}` and the
+`ibex_memory_lineage_seconds` histogram.
+
+---
+
 ### PATCH /v1/memories/{memory_id}
 
 **Update a memory**
@@ -887,7 +967,8 @@ Here the episodic memory has **higher cosine similarity** (0.91) but ranks **sec
           "confidence": 0.95,
           "status": "active",
           "created_at": "2024-01-15T10:30:45.123Z",
-          "updated_at": "2024-01-15T10:30:45.123Z"
+          "updated_at": "2024-01-15T10:30:45.123Z",
+          "conflict_groups": []
         },
         "similarity": 0.94,
         "rank": 1,
@@ -900,8 +981,22 @@ Here the episodic memory has **higher cosine similarity** (0.91) but ranks **sec
 
 **Errors:** `400` validation, `401`/`403` auth, `503` embedder unavailable (`EMBEDDING_FAILED`) or read path not configured.
 
+**Unresolved-conflict suppression (phase 5.B.2 / ADR-0094).** When the conflict stage escalates an incoming memory
+against an existing one, `memory_conflict_escalations` keeps a `pending` row until an operator resolves or dismisses it.
+Both sides are otherwise ordinary active memories, so a page could return a claim and its unresolved contradiction.
+The read path resolves the pending escalation ids each hydrated row belongs to and keeps only the highest-ranked side:
+a hit is dropped when it shares an escalation with a hit already kept above it. The response field `conflict_groups`
+carries those ids (empty for a conflict-free memory), which is also how the context service applies the same rule
+across the hot + cold merge. The ids are org-scoped: an agent-scoped page can name an escalation whose other side
+belongs to a peer agent, but never that memory's id or content. Suppression happens before the page is cut, so a pair costs one slot and the slot is
+refilled from the remaining fused candidates (hybrid) or from the full-text supplement (sparse fallback) rather than
+shortening the page; a reranked page can come back one shorter because its window has nothing left inside it to refill
+from. The Tier-1 PII re-check runs **before** the collapse, so a blocked higher-ranked side cannot take its counterpart
+with it. Authority is the escalation row, **not** a `contradicts` edge: no production code writes `contradicts` edges.
+
 **Observability:** `ibex_memory_search_fallback_total{triggered="true|false"}`,
-`ibex_memory_search_hybrid_total{vector="true|false",full_text="true|false"}`, and
+`ibex_memory_search_hybrid_total{vector="true|false",full_text="true|false"}`,
+`ibex_memory_conflict_suppressed_total` (hits dropped as the losing side of a pending conflict, counted from the ranked candidate set before the page slice), and
 `ibex_memory_rerank_total{result="applied|degraded|skipped"}` with the
 `ibex_memory_rerank_seconds` histogram — Grafana panels on the Memory Service dashboard.
 

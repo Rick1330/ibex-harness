@@ -9,13 +9,15 @@ Token is supplied per call (forwarded caller PAT) — never logged.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 from uuid import UUID
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+_T = TypeVar("_T")
 
 
 class MemoryHttpError(Exception):
@@ -69,6 +71,47 @@ class FeedbackResult:
 
 
 @dataclass(frozen=True, slots=True)
+class LineageEdge:
+    """One relationship edge, with the hop that reached it."""
+
+    source_memory_id: str
+    target_memory_id: str
+    relationship_type: str
+    confidence: float
+    depth: int
+    from_memory_id: str
+    other_memory_id: str
+    other_status: str
+    other_tombstoned: bool
+
+
+@dataclass(frozen=True, slots=True)
+class LineageResult:
+    """Bounded lineage for one memory, as returned by the memory service."""
+
+    memory_id: str
+    status: str
+    tombstoned: bool
+    supersession_tip: str
+    max_depth: int
+    truncated: bool
+    edges: tuple[LineageEdge, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _BodyCall:
+    token: str
+    body: Mapping[str, Any]
+    extra_headers: Mapping[str, str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _QueryCall:
+    token: str
+    params: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class _CallSpec:
     """Bundles outbound request fields so the sender stays under arg limits."""
 
@@ -76,6 +119,7 @@ class _CallSpec:
     path: str
     token: str
     body: Mapping[str, Any] | None = None
+    params: Mapping[str, Any] | None = None
     extra_headers: Mapping[str, str] | None = None
 
 
@@ -123,6 +167,40 @@ class _FeedbackBody(BaseModel):
     new_usefulness_score: float = Field(ge=0.0, le=1.0)
     total_positive_feedback: int = Field(ge=0)
     total_negative_feedback: int = Field(ge=0)
+
+
+class _LineageEndpointBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    memory_id: UUID
+    status: str
+    tombstoned: bool
+
+
+class _LineageEdgeBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    source_memory_id: UUID
+    target_memory_id: UUID
+    # Plain string, not an enum: a new edge type must degrade the projection,
+    # not fail the whole tool call for every caller.
+    relationship_type: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    depth: int = Field(ge=1)
+    from_memory_id: UUID
+    other: _LineageEndpointBody
+
+
+class _LineageBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    memory_id: UUID
+    status: str
+    tombstoned: bool
+    supersession_tip: UUID
+    max_depth: int = Field(ge=1, le=5)
+    truncated: bool
+    edges: list[_LineageEdgeBody]
 
 
 def build_memory_client(
@@ -173,19 +251,18 @@ class MemoryHttpClient:
         query: str,
         limit: int,
     ) -> list[SearchHit]:
-        response = await self._send(
-            _CallSpec(
-                method="POST",
-                path="/v1/memories/search",
+        return await self._post(
+            "/v1/memories/search",
+            _BodyCall(
                 token=token,
                 body={
                     "agent_id": str(agent_id),
                     "query": query,
                     "limit": limit,
                 },
-            )
+            ),
+            _parse_search_hits,
         )
-        return _parse_search_hits(response)
 
     async def create_memory(
         self,
@@ -194,16 +271,15 @@ class MemoryHttpClient:
         payload: Mapping[str, Any],
         idempotency_key: str,
     ) -> CreateMemoryResult:
-        response = await self._send(
-            _CallSpec(
-                method="POST",
-                path="/v1/memories",
+        return await self._post(
+            "/v1/memories",
+            _BodyCall(
                 token=token,
                 body=dict(payload),
                 extra_headers={"X-Idempotency-Key": idempotency_key},
-            )
+            ),
+            _parse_create_result,
         )
-        return _parse_create_result(response)
 
     async def record_feedback(
         self,
@@ -212,15 +288,46 @@ class MemoryHttpClient:
         memory_id: UUID,
         body: Mapping[str, Any],
     ) -> FeedbackResult:
-        response = await self._send(
+        return await self._post(
+            f"/v1/memories/{memory_id}/feedback",
+            _BodyCall(token=token, body=dict(body)),
+            _parse_feedback_result,
+        )
+
+    async def get_lineage(
+        self,
+        *,
+        token: str,
+        memory_id: UUID,
+        max_depth: int,
+    ) -> LineageResult:
+        return await self._get(
+            f"/v1/memories/{memory_id}/lineage",
+            _QueryCall(token=token, params={"max_depth": max_depth}),
+            _parse_lineage_result,
+        )
+
+    async def _post(self, path: str, call: _BodyCall, parse: Callable[[httpx.Response], _T]) -> _T:
+        return await self._call(
             _CallSpec(
                 method="POST",
-                path=f"/v1/memories/{memory_id}/feedback",
-                token=token,
-                body=dict(body),
-            )
+                path=path,
+                token=call.token,
+                body=call.body,
+                extra_headers=call.extra_headers,
+            ),
+            parse,
         )
-        return _parse_feedback_result(response)
+
+    async def _get(self, path: str, call: _QueryCall, parse: Callable[[httpx.Response], _T]) -> _T:
+        return await self._call(
+            _CallSpec(method="GET", path=path, token=call.token, params=call.params),
+            parse,
+        )
+
+    async def _call(self, spec: _CallSpec, parse: Callable[[httpx.Response], _T]) -> _T:
+        """Send one call and parse its body; the single place the two steps meet."""
+        return parse(await self._send(spec))
 
     async def _send(self, call: _CallSpec) -> httpx.Response:
         if not call.token.strip():
@@ -245,6 +352,7 @@ class MemoryHttpClient:
                 call.method,
                 f"{self.base_url}{call.path}",
                 headers=headers,
+                params=call.params,
                 json=call.body,
                 timeout=self._config.timeout_seconds,
             )
@@ -324,4 +432,35 @@ def _parse_feedback_result(response: httpx.Response) -> FeedbackResult:
         new_usefulness_score=body.new_usefulness_score,
         total_positive_feedback=body.total_positive_feedback,
         total_negative_feedback=body.total_negative_feedback,
+    )
+
+
+def _parse_lineage_result(response: httpx.Response) -> LineageResult:
+    try:
+        body = _LineageBody.model_validate(_response_data(response))
+    except ValidationError as exc:
+        raise MemoryHttpError(
+            f"memory lineage response invalid: {exc.errors()[0]['msg']}"
+        ) from exc
+    return LineageResult(
+        memory_id=str(body.memory_id),
+        status=body.status,
+        tombstoned=body.tombstoned,
+        supersession_tip=str(body.supersession_tip),
+        max_depth=body.max_depth,
+        truncated=body.truncated,
+        edges=tuple(
+            LineageEdge(
+                source_memory_id=str(edge.source_memory_id),
+                target_memory_id=str(edge.target_memory_id),
+                relationship_type=edge.relationship_type,
+                confidence=edge.confidence,
+                depth=edge.depth,
+                from_memory_id=str(edge.from_memory_id),
+                other_memory_id=str(edge.other.memory_id),
+                other_status=edge.other.status,
+                other_tombstoned=edge.other.tombstoned,
+            )
+            for edge in body.edges
+        ),
     )
