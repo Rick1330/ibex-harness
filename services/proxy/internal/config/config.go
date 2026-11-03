@@ -48,6 +48,9 @@ const (
 	defaultSessionSweepInterval   = time.Minute
 	defaultIdempotencyTTL         = 24 * time.Hour
 	defaultIdempotencyRedisTO     = 50 * time.Millisecond
+	defaultBudgetReservationLease = 15 * time.Minute
+	minBudgetReservationLease     = time.Minute
+	maxBudgetReservationLease     = 24 * time.Hour
 
 	envDevelopment = "development"
 	envStaging     = "staging"
@@ -94,13 +97,19 @@ type AnthropicConfig struct {
 }
 
 type Config struct {
-	Environment            string
-	ServiceName            string
-	LogLevel               slog.Level
-	Port                   string
-	RedisURL               string
-	AuthGRPCAddr           string
-	AuthValidateTimeout    time.Duration
+	Environment         string
+	ServiceName         string
+	LogLevel            slog.Level
+	Port                string
+	RedisURL            string
+	AuthGRPCAddr        string
+	AuthValidateTimeout time.Duration
+	// PolicyPublicKeysJSON maps key ids to PEM-encoded AuthService policy-signing
+	// public keys (IBEX_PROXY_POLICY_PUBLIC_KEYS, JSON object). Empty disables
+	// the GAP-002 policy snapshot stage.
+	PolicyPublicKeysJSON string
+	// PolicyMinEpoch is the minimum accepted signing-key epoch (0 accepts any).
+	PolicyMinEpoch         int64
 	ContextGRPCTarget      string
 	ContextAssembleTimeout time.Duration
 	// ContextEnabled gates Assemble on the chat hot path (3.5.D.2). Default false:
@@ -148,9 +157,12 @@ type Config struct {
 	ClickHouseFlushMS       int
 	IdempotencyTTL          time.Duration
 	IdempotencyRedisTimeout time.Duration
-	ExtractionTurnsTTL      time.Duration
-	WorkerEnqueueBaseURL    string
-	WorkerEnqueueAPIToken   string
+	// BudgetReservationLease bounds durable hard-cap holds on the proxy
+	// admission path (GAP-006); sized for the longest expected provider call.
+	BudgetReservationLease time.Duration
+	ExtractionTurnsTTL     time.Duration
+	WorkerEnqueueBaseURL   string
+	WorkerEnqueueAPIToken  string
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
@@ -169,6 +181,7 @@ func (c *Config) ApplyDefaults() {
 func (c *Config) applyIdempotencyDefaults() {
 	applyDurationDefault(&c.IdempotencyTTL, defaultIdempotencyTTL)
 	applyDurationDefault(&c.IdempotencyRedisTimeout, defaultIdempotencyRedisTO)
+	applyDurationDefault(&c.BudgetReservationLease, defaultBudgetReservationLease)
 }
 
 func (c *Config) applyClickHouseDefaults() {

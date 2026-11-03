@@ -236,7 +236,8 @@ func TestUnit_Streaming_ProviderErrorMidStream(t *testing.T) {
 }
 
 func TestUnit_Streaming_ClientDisconnect(t *testing.T) {
-	t.Parallel()
+	// This test snapshots the process-wide goroutine count; keep it serial so
+	// unrelated parallel tests cannot be mistaken for leaked goroutines.
 	before := runtime.NumGoroutine()
 	entered := make(chan struct{})
 	stub := &streamStubProvider{

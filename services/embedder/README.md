@@ -10,7 +10,7 @@ Python FastAPI service owning the embedding contract, profile registry, readines
 | `gpu` | TEI HTTP backend | Requires reachable TEI base URL and matching model/dimension |
 | `hosted` | Hosted API backend | Requires provider/base URL/API key and matching model/dimension |
 
-Selection is implemented in `app/factory.py` and covered by the backend contract tests. See [ADR-0046](../../web/content/docs/adr/0046-embedder-interface-registry.mdx).
+Selection is implemented in `app/factory.py` and covered by the backend contract tests. See [ADR-0046](../../engineering/adr/0046-embedder-interface-registry.md).
 
 ## Configuration
 

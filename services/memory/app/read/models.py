@@ -45,6 +45,10 @@ class MemorySearchResult:
 
     ``categories`` is the full label set used for half-life decay (F4-030a).
     When empty, scorers fall back to ``(category,)``.
+
+    ``conflict_groups`` holds the ids of unresolved conflict escalations this
+    memory belongs to. Two hits that share one are the two sides of a pending
+    contradiction, so the read path keeps only the higher-ranked one.
     """
 
     id: UUID
@@ -59,3 +63,5 @@ class MemorySearchResult:
     created_at: datetime
     updated_at: datetime
     categories: tuple[str, ...] = ()
+    lifecycle_revision: int = 1
+    conflict_groups: tuple[UUID, ...] = ()

@@ -29,6 +29,8 @@ type fallbackSuccess struct {
 	resp   provider.Response
 	model  string
 	reason string
+	// r carries the request whose context owns the re-priced fallback hold.
+	r *http.Request
 }
 
 type fallbackAudit struct {
@@ -81,7 +83,7 @@ func (h chatCompletionHandler) tryFallbackComplete(
 
 func (h chatCompletionHandler) walkFallbackChain(args walkFallbackArgs) (fallbackSuccess, bool) {
 	for _, hopModel := range args.chain {
-		stop, fb, ok := h.advanceFallbackHop(args, hopModel)
+		stop, fb, ok := h.advanceFallbackHop(&args, hopModel)
 		if stop {
 			return fb, ok
 		}
@@ -90,7 +92,7 @@ func (h chatCompletionHandler) walkFallbackChain(args walkFallbackArgs) (fallbac
 }
 
 func (h chatCompletionHandler) advanceFallbackHop(
-	args walkFallbackArgs,
+	args *walkFallbackArgs,
 	hopModel string,
 ) (stop bool, fb fallbackSuccess, ok bool) {
 	if args.p.r.Context().Err() != nil {
@@ -106,7 +108,7 @@ func (h chatCompletionHandler) advanceFallbackHop(
 	}
 }
 
-func (h chatCompletionHandler) tryFallbackHop(args walkFallbackArgs, hopModel string) (hopResult, fallbackSuccess) {
+func (h chatCompletionHandler) tryFallbackHop(args *walkFallbackArgs, hopModel string) (hopResult, fallbackSuccess) {
 	hopProv, err := h.resolveFallbackProvider(args, hopModel)
 	if err != nil {
 		if skipFallbackForOrgErr(err) {
@@ -115,17 +117,28 @@ func (h chatCompletionHandler) tryFallbackHop(args walkFallbackArgs, hopModel st
 		return hopAbort, fallbackSuccess{}
 	}
 	hopReq := fallbackHopRequest(args.primaryReq, hopModel)
+	r, ok := h.rebudgetForFallback(args.p.r, budgetAdmissionInput{
+		provider: hopProv.Name(), model: hopReq.Model,
+		messages: hopReq.Messages, maxTokens: maxTokensFromParsed(args.p.parsed),
+	})
+	if !ok {
+		// Fail closed: never call a fallback the cap cannot cover.
+		return hopAbort, fallbackSuccess{}
+	}
+	args.p.r = r
 	ctx := args.p.r.Context()
 	resp, err := h.completeFallbackHop(ctx, hopProv, hopReq)
 	if err != nil {
+		// The re-priced hold must not linger when the hop never delivered.
+		h.releaseBudget(ctx, "fallback_hop_failed")
 		return classifyFallbackHopErr(ctx, err, hopReq)
 	}
 	return hopOK, fallbackSuccess{
-		prov: hopProv, resp: resp, model: hopModel, reason: args.reason,
+		prov: hopProv, resp: resp, model: hopModel, reason: args.reason, r: args.p.r,
 	}
 }
 
-func (h chatCompletionHandler) resolveFallbackProvider(args walkFallbackArgs, hopModel string) (provider.Provider, error) {
+func (h chatCompletionHandler) resolveFallbackProvider(args *walkFallbackArgs, hopModel string) (provider.Provider, error) {
 	return h.modelRouter.ForOrg(args.p.r.Context(), args.orgID, hopModel)
 }
 

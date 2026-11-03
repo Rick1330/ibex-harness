@@ -22,8 +22,19 @@ def test_candidate_confidence_boundaries(confidence: float) -> None:
         content="x",
         interval=_interval(),
         confidence=confidence,
+        lifecycle_revision=1,
     )
     assert row.confidence == confidence
+
+
+def test_candidate_rejects_non_positive_lifecycle_revision() -> None:
+    with pytest.raises(ValueError, match="lifecycle_revision"):
+        CandidateMemory(
+            memory_id=uuid4(),
+            content="x",
+            interval=_interval(),
+            lifecycle_revision=0,
+        )
 
 
 @pytest.mark.parametrize("confidence", [-0.01, 1.01])
@@ -36,6 +47,7 @@ def test_candidate_confidence_rejects_out_of_range(confidence: float) -> None:
             content="x",
             interval=interval,
             confidence=confidence,
+            lifecycle_revision=1,
         )
 
 

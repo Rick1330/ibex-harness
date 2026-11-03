@@ -65,9 +65,11 @@ func TestMetricLabels_NoHighCardinality(t *testing.T) {
 	t.Parallel()
 	proxyReg := NewProxy("test-proxy")
 	authReg := NewAuth(AuthConfig{ServiceName: "test-auth"})
+	relayReg := NewRelay("test-relay")
 
 	assertNoForbiddenLabels(t, proxyReg.Gatherer())
 	assertNoForbiddenLabels(t, authReg.Gatherer())
+	assertNoForbiddenLabels(t, relayReg.Gatherer())
 }
 
 func TestHTTPMiddleware_RecordsRouteTemplate(t *testing.T) {

@@ -1,0 +1,24 @@
+name: Setup pnpm (Node workspace)
+description: Node 22 with pnpm store cache and native dependency builds
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      with:
+        version: 9.15.9
+
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: "22"
+        cache: pnpm
+
+    - name: Install workspace dependencies
+      shell: bash
+      # --ignore-scripts is intentionally NOT set: it would skip the native
+      # postinstall builds (better-sqlite3, esbuild, sharp, @parcel/watcher,
+      # unrs-resolver). Lifecycle-script execution is already restricted to
+      # exactly those packages via pnpm.onlyBuiltDependencies in the root
+      # package.json; every other dependency's install scripts are blocked
+      # by pnpm itself.
+      run: pnpm install --frozen-lockfile # NOSONAR

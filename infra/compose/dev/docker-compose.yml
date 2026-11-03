@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: docker.io/pgvector/pgvector:pg16
     container_name: ibex-dev-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ibex}
@@ -18,7 +18,7 @@ services:
       start_period: 10s
 
   redis:
-    image: redis/redis-stack:7.4.0-v1
+    image: docker.io/redis/redis-stack:7.4.0-v1
     container_name: ibex-dev-redis
     ports:
       - "${REDIS_PORT:-6379}:6379"
@@ -32,7 +32,7 @@ services:
       start_period: 10s
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8.14.39
+    image: docker.io/clickhouse/clickhouse-server:24.8.14.39
     container_name: ibex-dev-clickhouse
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-ibex}
@@ -44,14 +44,14 @@ services:
     volumes:
       - ibex_clickhouse_data:/var/lib/clickhouse
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -Fxq Ok."]
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 15s
 
   minio-init:
-    image: alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
+    image: docker.io/alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
     container_name: ibex-dev-minio-init
     user: "0:0"
     command: ["sh", "-c", "mkdir -p /data && chown -R 65532:65532 /data"]
@@ -68,8 +68,8 @@ services:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${MINIO_API_PORT:-9100}:9000"
+      - "${MINIO_CONSOLE_PORT:-9101}:9001"
     volumes:
       - ibex_minio_data:/data
     depends_on:

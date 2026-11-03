@@ -9,6 +9,8 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
+
 _QUEUE_NAMES: tuple[str, ...] = ("extraction", "embedding", "maintenance", "mcp_audit")
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
@@ -84,7 +86,7 @@ class Settings(BaseSettings):
     )
 
     redis_url: str = Field(
-        default="redis://127.0.0.1:6379/0",
+        default=DEFAULT_REDIS_URL,
         validation_alias=AliasChoices(
             "IBEX_EXTRACTION_REDIS_URL",
             "REDIS_URL",
@@ -324,9 +326,9 @@ class Settings(BaseSettings):
     @classmethod
     def _empty_redis_to_default(cls, value: object) -> object:
         if value is None:
-            return "redis://127.0.0.1:6379/0"
+            return DEFAULT_REDIS_URL
         if isinstance(value, str) and not value.strip():
-            return "redis://127.0.0.1:6379/0"
+            return DEFAULT_REDIS_URL
         return value
 
     @field_validator("extraction_openai_base_url", "extraction_vllm_base_url")

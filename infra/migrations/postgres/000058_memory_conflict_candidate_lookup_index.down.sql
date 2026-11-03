@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS ibex_core.idx_memory_conflict_escalations_org_candidate_pending;

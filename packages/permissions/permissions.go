@@ -1,6 +1,6 @@
 // Package permissions defines the IBEX Harness 64-bit permission bitmap.
 // This is the single source of truth for permission constants.
-// See web/content/docs/adr/0009-permission-bitmap.mdx for the full specification.
+// See engineering/adr/0009-permission-bitmap.md for the full specification.
 package permissions
 
 const (

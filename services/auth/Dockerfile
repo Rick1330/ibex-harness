@@ -1,4 +1,5 @@
-FROM golang@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea AS build
+# golang:1.26.10-alpine3.24 — bumped for GO-2026-6809 (crypto/x509)
+FROM golang@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS build
 WORKDIR /src
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
@@ -13,7 +14,7 @@ FROM alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec7
 # CVE-2026-14456: openssl 3.5.7 → 3.5.8 (alpine 3.24 image lag vs package index)
 RUN apk upgrade --no-cache libcrypto3 libssl3 \
   && adduser -D -H -u 10001 ibex
-USER ibex
+USER 10001:10001
 COPY --from=build /out/auth /usr/local/bin/auth
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/auth"]

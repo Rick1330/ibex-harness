@@ -14,6 +14,18 @@ const HeaderAgentID = "X-IBEX-Agent-ID"
 // injection still applies. Truthy values: 1, true, yes, on (case-insensitive).
 const HeaderSkipMemory = "X-IBEX-Skip-Memory"
 
+// SkipMemoryRequested reports whether the request opts out of context assembly.
+// Whitespace and casing are ignored; only documented truthy values enable it.
+func SkipMemoryRequested(h http.Header) bool {
+	v := strings.TrimSpace(strings.ToLower(h.Get(HeaderSkipMemory)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 // ValidateChatHeaders validates optional IBEX session header for chat completions.
 // Agent ID is verified by AgentVerificationMiddleware before the handler runs.
 func ValidateChatHeaders(h http.Header) []apierror.FieldError {

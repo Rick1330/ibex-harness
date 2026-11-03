@@ -78,6 +78,17 @@ func (m *memSessionStore) AppendCheckpoint(_ context.Context, p pkgsession.Check
 	return uuid.New(), nil
 }
 
+func (m *memSessionStore) LookupEvidenceFence(_ context.Context, orgID, sessionID uuid.UUID) (pkgsession.EvidenceFence, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sess := range m.sessions {
+		if sess.OrgID == orgID && sess.ID == sessionID {
+			return pkgsession.EvidenceFence{ResourceType: "session", ResourceID: sessionID, ResourceVersion: 1}, nil
+		}
+	}
+	return pkgsession.EvidenceFence{}, pkgsession.ErrEvidenceFenceNotFound
+}
+
 func (m *memSessionStore) Complete(context.Context, uuid.UUID, uuid.UUID) (pkgsession.CompleteResult, error) {
 	return pkgsession.CompleteOK, nil
 }

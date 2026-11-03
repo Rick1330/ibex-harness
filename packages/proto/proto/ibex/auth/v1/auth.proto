@@ -57,6 +57,12 @@ service AuthService {
 
   // ConsumeStepUp atomically consumes a bound one-time step-up JWT.
   rpc ConsumeStepUp(ConsumeStepUpRequest) returns (ConsumeStepUpResponse);
+
+  // IssuePolicySnapshot issues a signed, immutable authorization snapshot for
+  // the authenticated caller's org/subject/agent scope (GAP-002; decision
+  // record 21 §2.1-2.2). Callers verify the envelope against the AuthService
+  // policy-signing key set before any downstream effect.
+  rpc IssuePolicySnapshot(IssuePolicySnapshotRequest) returns (IssuePolicySnapshotResponse);
 }
 
 enum TokenType {
@@ -294,4 +300,30 @@ message ConsumeStepUpResponse {
   string session_id = 3;
   string action = 4;
   int64 permissions = 5;
+}
+
+message IssuePolicySnapshotRequest {
+  // Selected agent for this request scope. Must equal the token binding when
+  // the caller token is agent-scoped; empty is rejected for agent-scoped
+  // callers.
+  string agent_id = 1;
+}
+
+message PolicySnapshotEnvelope {
+  // Signature algorithm for this envelope; "RS256" today.
+  string algorithm = 1;
+
+  // Policy-signing key identity used to produce signature.
+  string key_id = 2;
+
+  // Canonical JCS bytes (RFC 8785) of the snapshot claims, including the
+  // claim-computed digest field.
+  bytes payload = 3;
+
+  // RS256 (PKCS#1 v1.5 / SHA-256) signature over payload.
+  bytes signature = 4;
+}
+
+message IssuePolicySnapshotResponse {
+  PolicySnapshotEnvelope envelope = 1;
 }

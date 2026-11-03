@@ -59,8 +59,14 @@ from app.routers.billing import router as billing_router
 from app.routers.capture_policies import router as capture_policies_router
 from app.routers.legal_holds import router as legal_holds_router
 from app.routers.model_policies import router as model_policies_router
+from app.routers.operator_agents import router as operator_agents_router
+from app.routers.operator_directives import router as operator_directives_router
 from app.routers.operator_events import router as operator_events_router
+from app.routers.operator_evidence import router as operator_evidence_router
+from app.routers.operator_evidence_deletions import router as operator_evidence_deletions_router
+from app.routers.operator_memories import router as operator_memories_router
 from app.routers.operator_overview import router as operator_overview_router
+from app.routers.operator_sessions import router as operator_sessions_router
 from app.routers.operator_traces import router as operator_traces_router
 from app.routers.organizations import router as organizations_router
 from app.routers.platform import router as platform_router
@@ -178,6 +184,12 @@ def _mount_routers(application: FastAPI) -> None:
         capture_policies_router,
         session_router,
         operator_events_router,
+        operator_evidence_router,
+        operator_evidence_deletions_router,
+        operator_directives_router,
+        operator_agents_router,
+        operator_memories_router,
+        operator_sessions_router,
         operator_overview_router,
         operator_traces_router,
         platform_router,

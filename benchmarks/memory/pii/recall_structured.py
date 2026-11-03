@@ -5,13 +5,16 @@ Usage (from services/memory):
 
   uv run python ../../benchmarks/memory/pii/recall_structured.py
 
-Writes recall_structured.json beside this script.
+Writes recall_structured.json beside this script unless --output PATH is supplied.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -51,8 +54,40 @@ FIXTURES: list[dict[str, str]] = [
 WRITE_BUDGET_MS = 200.0
 TARGET_RECALL = 0.95
 
+# Results may land beside this script (the committed docs baseline) or in the
+# system temp directory (CI and scratch runs). Resolving and prefix-checking
+# keeps a crafted --output from writing anywhere else on disk (S8707).
+_ALLOWED_OUTPUT_ROOTS = (
+    Path(__file__).resolve().parent,
+    Path(tempfile.gettempdir()).resolve(),
+)
+
+
+def resolve_output_path(raw: Path | str) -> Path:
+    resolved = Path(raw).resolve()
+    if resolved.suffix != ".json":
+        raise SystemExit(f"--output must end with .json, got {raw}")
+    if not any(resolved == root or resolved.is_relative_to(root) for root in _ALLOWED_OUTPUT_ROOTS):
+        allowed = ", ".join(str(root) for root in _ALLOWED_OUTPUT_ROOTS)
+        raise SystemExit(f"--output must resolve inside one of: {allowed}")
+    return resolved
+
+
+def write_text_secure(path: Path, text: str) -> None:
+    """Write without following a symlink swapped in after validation (S8707 TOCTOU)."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output", type=Path, default=Path(__file__).with_name("recall_structured.json")
+    )
+    args = parser.parse_args()
+
     settings = Settings()
     svc = PiiService(settings)
     # Warmup
@@ -89,8 +124,8 @@ def main() -> int:
         "spacy_model": settings.pii_spacy_model,
         "misses": misses,
     }
-    path = Path(__file__).with_name("recall_structured.json")
-    path.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
+    path = resolve_output_path(args.output)
+    write_text_secure(path, json.dumps(out, indent=2) + "\n")
     print(json.dumps(out, indent=2))
     return 0 if out["pass"] else 1
 

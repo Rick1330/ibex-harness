@@ -6,10 +6,35 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder test-mcp-memory test-memory test-memory-integration test-worker test-worker-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate coverage-worker-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory e2e-smoke-p3.5 verify-phase15 verify-phase25 mcp-conformance worker-dev worker-beat-dev worker-ping
+.PHONY: help setup setup-check check check-tools env-doctor stack-init readiness lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-integration-auth test-embedder test-mcp-memory test-memory test-memory-integration test-worker test-worker-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate coverage-worker-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory e2e-smoke-p3.5 verify-phase15 verify-phase25 mcp-conformance worker-dev worker-beat-dev worker-ping
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
+
+setup: ## Provision tools, dependencies, stacks, migrations, and readiness
+	@"$(BASH)" "$(DEV_TOOL)" setup
+
+setup-check: ## Verify tools only; do not install dependencies or start stacks
+	@"$(BASH)" infra/scripts/setup.sh --check
+
+check: ## Run the fast contributor environment gate
+	@"$(BASH)" "$(DEV_TOOL)" repo-guards
+	@"$(BASH)" "$(DEV_TOOL)" lint-docs
+	@"$(BASH)" "$(DEV_TOOL)" security-scan
+	@"$(BASH)" "$(DEV_TOOL)" check-tools
+	@"$(BASH)" "$(DEV_TOOL)" readiness
+
+check-tools: ## Verify installed tools against infra/tool-versions.conf
+	@"$(BASH)" "$(DEV_TOOL)" check-tools
+
+env-doctor: ## Diagnose runtime, network, ports, DNS, and injected telemetry
+	@"$(BASH)" "$(DEV_TOOL)" env-doctor
+
+stack-init: ## Initialize buckets and run direct service readiness probes (PROFILE=dev|test)
+	@"$(BASH)" "$(DEV_TOOL)" stack-init "$(if $(PROFILE),$(PROFILE),dev)"
+
+readiness: ## Run direct service readiness probes (PROFILE=dev|test)
+	@"$(BASH)" "$(DEV_TOOL)" readiness "$(if $(PROFILE),$(PROFILE),dev)"
 
 lint-docs: ## Run markdownlint using the repo configuration
 	@"$(BASH)" "$(DEV_TOOL)" lint-docs
@@ -17,8 +42,8 @@ lint-docs: ## Run markdownlint using the repo configuration
 lint-go: ## Run golangci-lint on packages and Go services (depguard + base + complexity)
 	@"$(BASH)" infra/scripts/ensure-origin-main.sh
 	golangci-lint run --config .golangci.depguard.yml ./packages/...
-	golangci-lint run --config .golangci.yml ./packages/... ./services/auth/... ./services/proxy/...
-	golangci-lint run --config .golangci.complexity.yml ./packages/... ./services/auth/... ./services/proxy/...
+	golangci-lint run --config .golangci.yml ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
+	golangci-lint run --config .golangci.complexity.yml ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
 
 security-scan: ## Run gitleaks locally if installed
 	@"$(BASH)" "$(DEV_TOOL)" security-scan
@@ -44,6 +69,9 @@ proto-test-integration: ## Run protobuf contract integration tests (requires buf
 test-integration: ## Run all Go integration tests (-tags=integration)
 	@"$(BASH)" "$(DEV_TOOL)" test-integration
 
+test-integration-auth: ## Run AuthService-backed auth/proxy integration tests
+	@"$(BASH)" "$(DEV_TOOL)" test-integration-auth
+
 test-embedder: ## Run Python embedder service unit tests (services/embedder)
 	@"$(BASH)" infra/scripts/embedder-test-ci.sh
 
@@ -52,6 +80,12 @@ test-memory: ## Run Python memory service unit tests (services/memory)
 
 test-memory-integration: ## Run memory PgVectorStore integration tests (needs Postgres + migrate)
 	@"$(BASH)" infra/scripts/memory-integration-test-ci.sh
+
+test-release-manifest: ## Run release manifest generator tests
+	uv run --no-project --no-build --with-requirements infra/scripts/release-manifest-test-requirements.txt python3 infra/scripts/test_release_manifest.py
+
+bundle-smoke: ## Run the memory-context bundle smoke (Docker/Podman required)
+	bash infra/scripts/bundle-smoke.sh
 
 test-worker: ## Run Python worker service unit tests (services/worker)
 	@"$(BASH)" infra/scripts/worker-test-ci.sh

@@ -27,6 +27,7 @@ from app.access_token import require_access_token
 from app.agent_verifier import AgentVerifier
 from app.clients.memory import (
     FeedbackResult,
+    LineageEdge,
     MemoryHttpClient,
     MemoryHttpError,
     MemoryHttpTimeout,
@@ -90,6 +91,18 @@ RECORD_FEEDBACK_SCHEMA: dict[str, Any] = {
     },
 }
 
+# Depth is capped at 5 to mirror the traversal function's own cap: asking a
+# client for more would be a promise the query does not keep.
+GET_MEMORY_LINEAGE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["memory_id"],
+    "properties": {
+        "memory_id": {"type": "string", "format": "uuid"},
+        "max_depth": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3},
+    },
+}
+
 
 class SearchMemoryArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -118,6 +131,13 @@ class RecordFeedbackArgs(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
 
 
+class GetMemoryLineageArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    memory_id: UUID
+    max_depth: int = Field(default=3, ge=1, le=5)
+
+
 def parse_search_args(raw: dict[str, Any] | None) -> SearchMemoryArgs:
     try:
         return SearchMemoryArgs.model_validate(raw or {})
@@ -135,6 +155,13 @@ def parse_write_args(raw: dict[str, Any] | None) -> WriteMemoryArgs:
 def parse_feedback_args(raw: dict[str, Any] | None) -> RecordFeedbackArgs:
     try:
         return RecordFeedbackArgs.model_validate(raw or {})
+    except ValidationError as exc:
+        raise SchemaError(_first_validation_message(exc)) from exc
+
+
+def parse_lineage_args(raw: dict[str, Any] | None) -> GetMemoryLineageArgs:
+    try:
+        return GetMemoryLineageArgs.model_validate(raw or {})
     except ValidationError as exc:
         raise SchemaError(_first_validation_message(exc)) from exc
 
@@ -278,6 +305,52 @@ def _require_permission(principal: Principal, bit: int, message: str) -> None:
         raise PermissionDeniedError(message)
 
 
+async def get_memory_lineage(
+    principal: Principal,
+    args: GetMemoryLineageArgs,
+    client: MemoryHttpClient | None,
+    agent_verifier: AgentVerifier | None = None,
+) -> dict[str, Any]:
+    """Read one memory's bounded lineage through the memory service.
+
+    Tenant scope comes from the caller's principal and the memory service applies
+    it inside the traversal. A memory outside the organization -- or outside an
+    agent-scoped token's agent -- is a 404 and surfaces as ``not_found``: the tool
+    never turns "you cannot see this" into an empty chain.
+
+    An agent-scoped token passes ``ValidateAgent`` first, exactly like the other
+    agent-scoped tools: neither token validation nor the memory read path checks
+    agent status, so this is the only place a suspended agent is stopped.
+    """
+    _require_permission(principal, MEMORY_READ, "get_memory_lineage requires MemoryRead")
+    mem = _require_client(client)
+    token = require_access_token()
+    if principal.agent_id is not None:
+        await _verify_agent_active(
+            agent_verifier,
+            bearer=token,
+            org_id=principal.org_id,
+            agent_id=principal.agent_id,
+        )
+    lineage = await _call_memory(
+        lambda: mem.get_lineage(
+            token=token,
+            memory_id=args.memory_id,
+            max_depth=args.max_depth,
+        )
+    )
+    return {
+        "org_id": str(principal.org_id),
+        "memory_id": lineage.memory_id,
+        "status": lineage.status,
+        "tombstoned": lineage.tombstoned,
+        "supersession_tip": lineage.supersession_tip,
+        "max_depth": lineage.max_depth,
+        "truncated": lineage.truncated,
+        "edges": [_edge_dict(edge) for edge in lineage.edges],
+    }
+
+
 async def _verify_agent_active(
     verifier: AgentVerifier | None,
     *,
@@ -317,12 +390,30 @@ def _hit_dict(hit: SearchHit) -> dict[str, Any]:
     }
 
 
+def _edge_dict(edge: LineageEdge) -> dict[str, Any]:
+    return {
+        "source_memory_id": edge.source_memory_id,
+        "target_memory_id": edge.target_memory_id,
+        "relationship_type": edge.relationship_type,
+        "confidence": edge.confidence,
+        "depth": edge.depth,
+        "from_memory_id": edge.from_memory_id,
+        "other": {
+            "memory_id": edge.other_memory_id,
+            "status": edge.other_status,
+            "tombstoned": edge.other_tombstoned,
+        },
+    }
+
+
 def _map_memory_http_error(exc: MemoryHttpError) -> MCPServiceError:
     status = exc.status_code
     if status == 401:
         return AuthFailedError(str(exc))
     if status == 403:
         return PermissionDeniedError(str(exc))
+    if status == 404:
+        return BackendRejectedError(str(exc), code="not_found")
     if status is not None and status >= 500:
         return BackendUnavailableError(str(exc))
     if status is not None and 400 <= status < 500:

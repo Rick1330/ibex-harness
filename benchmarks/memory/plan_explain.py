@@ -83,7 +83,7 @@ async def explain_hnsw_search_plan(
             "agent_id": str(params.agent_id),
             "min_similarity": 0.0,
             "limit": 10,
-            "include_expired": False,
+            "include_historical_candidates": False,
         },
     )
     return result.scalar_one()

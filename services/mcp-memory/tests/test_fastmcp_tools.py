@@ -75,7 +75,12 @@ async def test_tools_list_schemas_advertise_constraints() -> None:
     mcp = _mcp(audit)
     tools = await mcp.list_tools()
     by_name = {t.name: t for t in tools}
-    assert set(by_name) == {"search_memory", "write_memory", "record_feedback"}
+    assert set(by_name) == {
+        "search_memory",
+        "write_memory",
+        "record_feedback",
+        "get_memory_lineage",
+    }
 
     search = by_name["search_memory"].inputSchema
     assert search.get("additionalProperties") is False
@@ -105,8 +110,6 @@ async def test_tools_list_schemas_advertise_constraints() -> None:
     assert confidence.get("minimum") == 0.0
     assert confidence.get("maximum") == 1.0
 
-
-
     feedback = by_name["record_feedback"].inputSchema
     assert feedback.get("additionalProperties") is False
     assert set(feedback["properties"]["feedback"].get("enum", [])) == {
@@ -124,6 +127,13 @@ async def test_tools_list_schemas_advertise_constraints() -> None:
                 note_max = opt.get("maxLength")
                 break
     assert note_max == 2000
+
+    lineage = by_name["get_memory_lineage"].inputSchema
+    assert lineage.get("additionalProperties") is False
+    assert lineage.get("required") == ["memory_id"]
+    depth = lineage["properties"]["max_depth"]
+    assert depth.get("minimum") == 1
+    assert depth.get("maximum") == 5
 
 
 @pytest.mark.asyncio

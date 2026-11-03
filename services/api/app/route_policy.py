@@ -68,7 +68,7 @@ def _operator_permission_dependencies() -> dict[tuple[str, str], object]:
 
 
 def _operator_session_dependencies() -> dict[tuple[str, str], object]:
-    from app.routers.operator_overview import require_operator_metadata_session
+    from app.authz import require_operator_metadata_session
     from app.routers.operator_traces import require_trace_read_session
     from app.routers.session import (
         require_session_logout,
@@ -79,6 +79,16 @@ def _operator_session_dependencies() -> dict[tuple[str, str], object]:
     return {
         ("GET", "/v1/operator/context"): require_operator_metadata_session,
         ("GET", "/v1/operator/overview"): require_operator_metadata_session,
+        ("GET", "/v1/operator/agents"): require_operator_metadata_session,
+        ("GET", "/v1/operator/agents/{agent_id}"): require_operator_metadata_session,
+        ("GET", "/v1/operator/directives"): require_operator_metadata_session,
+        ("GET", "/v1/operator/directives/{directive_id}"): require_operator_metadata_session,
+        ("GET", "/v1/operator/evidence/deletions"): require_operator_metadata_session,
+        ("GET", "/v1/operator/evidence/summary"): require_operator_metadata_session,
+        ("GET", "/v1/operator/memories"): require_operator_metadata_session,
+        ("GET", "/v1/operator/memories/{memory_id}"): require_operator_metadata_session,
+        ("GET", "/v1/operator/sessions"): require_operator_metadata_session,
+        ("GET", "/v1/operator/sessions/{session_id}"): require_operator_metadata_session,
         ("GET", "/v1/operator/traces"): require_trace_read_session,
         ("GET", "/v1/operator/traces/runs/{run_id}"): require_trace_read_session,
         ("GET", "/v1/operator/traces/{trace_id}"): require_trace_read_session,

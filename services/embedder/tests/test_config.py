@@ -272,8 +272,11 @@ def test_load_active_backend_cpu_defaults() -> None:
     assert backend.dimensions == 384
 
 
-def test_load_active_backend_geometry_mismatch() -> None:
+def test_load_active_backend_geometry_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.backends.stub import StubBackend
+
     settings = Settings(profile="cpu", dim=1024, model="all-MiniLM-L6-v2")
+    monkeypatch.setattr("app.factory.build_backend", lambda _: StubBackend.for_profile("cpu"))
     with pytest.raises(GeometryMismatchError):
         load_active_backend(settings)
 

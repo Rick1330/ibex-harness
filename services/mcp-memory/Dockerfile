@@ -1,10 +1,10 @@
 # IBEX MCP Memory service — multi-stage, non-root, uv-managed.
 #
 # Build:
-#   docker build -t ibex-mcp-memory:local -f services/mcp-memory/Dockerfile .
+#   podman build -t ibex-mcp-memory:local -f services/mcp-memory/Dockerfile .
 #
 # Run:
-#   docker run --rm -p 8090:8090 \
+#   podman run --rm -p 8090:8090 \
 #     -e IBEX_AUTH_GRPC_ADDR=auth:9091 \
 #     -e IBEX_MCP_RESOURCE_URL=http://127.0.0.1:8090/mcp \
 #     ibex-mcp-memory:local
@@ -17,30 +17,38 @@ FROM ghcr.io/astral-sh/uv@sha256:2fd1b38e3398a256d6af3f71f0e2ba6a517b249998726a6
 # --------------------------------------------------------------------------- #
 # Stage 2 — dependency install (wheels only; no sdist setup.py execution)     #
 # --------------------------------------------------------------------------- #
-FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS deps
+FROM python@sha256:623674a14ef93d052bb9b0de4dbf5f28eb578a35263838941cc8aa43213c1487 AS deps
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_SYSTEM_PYTHON=0 \
-    UV_NO_BUILD=1
+    UV_NO_BUILD=1 \
+    UV_PYTHON=/usr/local/bin/python \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
 
 COPY --from=uv /uv /usr/local/bin/uv
 
 WORKDIR /app/services/mcp-memory
 
 COPY packages/authclient /app/packages/authclient
+COPY packages/mcp_runtime /app/packages/mcp_runtime
 # Trusted monorepo wheel only — UV_NO_BUILD=1 blocks uv build globally (Sonar S8541).
-RUN mkdir -p /wheels && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/authclient
+RUN mkdir -p /wheels \
+    && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/authclient \
+    && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/mcp_runtime
 COPY services/mcp-memory/pyproject.toml services/mcp-memory/uv.lock ./
 
 # Install third-party dependencies from lockfile (wheels only — Sonar S8541).
-RUN uv sync --frozen --no-build --no-install-project --find-links /wheels --no-install-package authclient \
-    && uv pip install --no-cache --force-reinstall --no-index --find-links /wheels "authclient==0.1.5"
+RUN uv sync --python "$UV_PYTHON" --frozen --no-build --no-install-project --find-links /wheels \
+        --no-install-package authclient \
+        --no-install-package mcp-runtime \
+    && uv pip install --python /app/.venv/bin/python --no-cache --force-reinstall --no-index --no-deps --find-links /wheels \
+        "authclient==0.1.5" /wheels/mcp_runtime-*.whl
 
 # --------------------------------------------------------------------------- #
 # Stage 3 — runtime image                                                      #
 # --------------------------------------------------------------------------- #
-FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS runtime
+FROM python@sha256:623674a14ef93d052bb9b0de4dbf5f28eb578a35263838941cc8aa43213c1487 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -49,6 +57,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     IBEX_MCP_PORT=8090
 
 RUN python -m pip uninstall --yes setuptools wheel || true \
+    && rm -rf /usr/local/lib/python3.*/site-packages/pip* \
+       /usr/local/lib/python3.*/ensurepip \
+       /usr/local/bin/pip* \
     && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends libpcre2-8-0=10.42-1+deb12u2 \
@@ -58,10 +69,10 @@ RUN python -m pip uninstall --yes setuptools wheel || true \
 
 WORKDIR /app
 
-COPY --from=deps /app/services/mcp-memory/.venv ./.venv
+COPY --from=deps /app/.venv ./.venv
 COPY services/mcp-memory/app ./app
 
-USER ibex
+USER 10001:10001
 
 EXPOSE 8090
 

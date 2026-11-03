@@ -1,7 +1,7 @@
 # apierror-py
 
 Python IBEX HTTP error envelope matching Go [`packages/apierror`](../apierror/) and
-[`API_DOCUMENTATION.md`](../../web/engineering/API_DOCUMENTATION.md) “Error Response Format”.
+[`API_DOCUMENTATION.md`](../../engineering/API_DOCUMENTATION.md) “Error Response Format”.
 
 Shape:
 

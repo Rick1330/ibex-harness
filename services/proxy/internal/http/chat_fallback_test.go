@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/billing"
+	"github.com/Rick1330/ibex-harness/packages/budgetledger"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
@@ -28,6 +30,7 @@ type scriptedProvider struct {
 	models []string
 	errs   []error
 	body   string
+	cancel func()
 	mu     sync.Mutex
 	calls  int
 }
@@ -38,6 +41,11 @@ func (s *scriptedProvider) SupportedModels() []string { return s.models }
 func (s *scriptedProvider) Complete(_ context.Context, _ provider.Request) (provider.Response, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.cancel != nil {
+		c := s.cancel
+		s.cancel = nil
+		c()
+	}
 	i := s.calls
 	s.calls++
 	if i < len(s.errs) && s.errs[i] != nil {
@@ -95,11 +103,13 @@ func fallbackChatHandler(t *testing.T, depth int, router *fakeFallbackRouter, pr
 }
 
 type fallbackHandlerOpts struct {
-	depth     int
-	router    *fakeFallbackRouter
-	tw        TraceWriter
-	pool      *asyncpool.Pool
-	providers []provider.Provider
+	depth        int
+	router       *fakeFallbackRouter
+	tw           TraceWriter
+	pool         *asyncpool.Pool
+	providers    []provider.Provider
+	budgetCache  *billing.Cache
+	budgetLedger budgetledger.Ledger
 }
 
 func newFallbackChatHandler(t *testing.T, opts fallbackHandlerOpts) http.Handler {
@@ -118,6 +128,8 @@ func newFallbackChatHandler(t *testing.T, opts fallbackHandlerOpts) http.Handler
 		d.Metrics = metrics.NewProxy("fallback-test")
 		d.CheckpointPool = opts.pool
 		d.TraceWriter = opts.tw
+		d.BudgetCache = opts.budgetCache
+		d.BudgetLedger = opts.budgetLedger
 	}))
 }
 
@@ -199,6 +211,88 @@ func TestUnit_ChatFallback_SkipDenyThenSuccess(t *testing.T) {
 	}
 	if rec.Header().Get(headerIBEXProviderUsed) != "claude-opus-4-5" {
 		t.Fatalf("used=%q", rec.Header().Get(headerIBEXProviderUsed))
+	}
+}
+
+func TestUnit_ChatFallback_SkipsHopsTheBudgetCannotPrice(t *testing.T) {
+	t.Parallel()
+	primary := &scriptedProvider{name: "openai", models: []string{"gpt-4o"}, errs: []error{pe5xx("openai", 503)}}
+	hop := &scriptedProvider{name: "anthropic", models: []string{fallbackModelClaudeSonnet}}
+	router := &fakeFallbackRouter{
+		chain:   []string{fallbackModelClaudeSonnet},
+		byModel: map[string]provider.Provider{"gpt-4o": primary, fallbackModelClaudeSonnet: hop},
+	}
+	orgID, agentID := uuid.MustParse(testChatOrgID), uuid.MustParse(testChatAgentID)
+	ledger := &fakeBudgetLedger{claimOut: budgetledger.ClaimOutcome{
+		Kind: budgetledger.ClaimOwned,
+		Reservation: budgetledger.Reservation{
+			ID: uuid.New(), Principal: budgetledger.Principal{OrgID: orgID, AgentID: agentID},
+			Key: "chat:req-1", RequestHash: "h", Version: 1,
+		},
+	}}
+	card := billing.CardVersion{Version: "9", Prices: []billing.PriceRow{{
+		Provider: "openai", ModelPattern: "gpt-4o*",
+		InputCentsPer1k: 100, OutputCentsPer1k: 200,
+	}}}
+	handler := newFallbackChatHandler(t, fallbackHandlerOpts{
+		depth: 1, router: router, providers: []provider.Provider{primary, hop},
+		budgetCache:  newBudgetCache(t, stubBudgetLoader{snap: hardCapSnapshot(card)}),
+		budgetLedger: ledger,
+	})
+	rec := postFallbackChat(t, handler)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if hop.calls != 0 {
+		t.Fatalf("hop calls=%d want 0 (unpriced fallback must never run)", hop.calls)
+	}
+	if len(ledger.claims) != 1 {
+		t.Fatalf("claims=%d want 1 (primary admission only)", len(ledger.claims))
+	}
+	if len(ledger.releases) != 1 {
+		t.Fatalf("releases=%d want 1 (primary hold dropped on failure)", len(ledger.releases))
+	}
+}
+
+func TestUnit_ChatFallback_CanceledWalkReleasesHold(t *testing.T) {
+	t.Parallel()
+	primary := &scriptedProvider{name: "openai", models: []string{"gpt-4o"}, errs: []error{pe5xx("openai", 503)}}
+	hop := &scriptedProvider{
+		name: "anthropic", models: []string{fallbackModelClaudeSonnet},
+		errs: []error{context.Canceled},
+	}
+	router := &fakeFallbackRouter{
+		chain:   []string{fallbackModelClaudeSonnet},
+		byModel: map[string]provider.Provider{"gpt-4o": primary, fallbackModelClaudeSonnet: hop},
+	}
+	orgID, agentID := uuid.MustParse(testChatOrgID), uuid.MustParse(testChatAgentID)
+	ledger := &fakeBudgetLedger{claimOut: budgetledger.ClaimOutcome{
+		Kind: budgetledger.ClaimOwned,
+		Reservation: budgetledger.Reservation{
+			ID: uuid.New(), Principal: budgetledger.Principal{OrgID: orgID, AgentID: agentID},
+			Key: "chat:req-1", RequestHash: "h", Version: 1,
+		},
+	}}
+	card := billing.CardVersion{Version: "9", Prices: []billing.PriceRow{
+		{Provider: "openai", ModelPattern: "gpt-4o*", InputCentsPer1k: 100, OutputCentsPer1k: 200},
+		{Provider: "anthropic", ModelPattern: fallbackModelClaudeSonnet, InputCentsPer1k: 100, OutputCentsPer1k: 200},
+	}}
+	inner := newFallbackChatHandler(t, fallbackHandlerOpts{
+		depth: 1, router: router, providers: []provider.Provider{primary, hop},
+		budgetCache:  newBudgetCache(t, stubBudgetLoader{snap: hardCapSnapshot(card)}),
+		budgetLedger: ledger,
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithCancel(r.Context())
+		hop.cancel = cancel
+		inner.ServeHTTP(w, r.WithContext(ctx))
+	})
+	postFallbackChat(t, handler)
+	if hop.calls != 1 {
+		t.Fatalf("hop calls=%d want 1", hop.calls)
+	}
+	if len(ledger.releases) != 2 {
+		t.Fatalf("releases=%d want 2 (reprice drop + canceled hop hold)", len(ledger.releases))
 	}
 }
 

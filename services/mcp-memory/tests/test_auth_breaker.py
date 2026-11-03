@@ -46,9 +46,7 @@ async def test_breaker_opens_after_n_unavailable() -> None:
 @pytest.mark.asyncio
 async def test_breaker_auth_failed_does_not_trip() -> None:
     inner = StaticTokenValidator({})
-    breaker = BreakingTokenValidator(
-        inner, failure_threshold=2, cooldown_seconds=60.0
-    )
+    breaker = BreakingTokenValidator(inner, failure_threshold=2, cooldown_seconds=60.0)
     for _ in range(5):
         with pytest.raises(AuthFailedError):
             await breaker.validate("bad")
@@ -62,9 +60,7 @@ async def test_breaker_half_open_success_closes() -> None:
         {token: ValidateResult(org_id=ORG, permissions=1, agent_id=AGENT)},
         available=False,
     )
-    breaker = BreakingTokenValidator(
-        inner, failure_threshold=2, cooldown_seconds=0.01
-    )
+    breaker = BreakingTokenValidator(inner, failure_threshold=2, cooldown_seconds=0.01)
     for _ in range(2):
         with pytest.raises(AuthUnavailableError):
             await breaker.validate(token)
@@ -79,9 +75,7 @@ async def test_breaker_half_open_success_closes() -> None:
 @pytest.mark.asyncio
 async def test_breaker_ready_bypasses_open_state() -> None:
     inner = StaticTokenValidator({}, available=True)
-    breaker = BreakingTokenValidator(
-        inner, failure_threshold=1, cooldown_seconds=60.0
-    )
+    breaker = BreakingTokenValidator(inner, failure_threshold=1, cooldown_seconds=60.0)
     inner.set_available(False)
     with pytest.raises(AuthUnavailableError):
         await breaker.validate("x")
@@ -144,9 +138,7 @@ async def test_breaker_half_open_single_probe_under_concurrency() -> None:
         {"tok": ValidateResult(org_id=ORG, permissions=1, agent_id=AGENT)},
         available=True,
     )
-    breaker = BreakingTokenValidator(
-        inner, failure_threshold=2, cooldown_seconds=60.0
-    )
+    breaker = BreakingTokenValidator(inner, failure_threshold=2, cooldown_seconds=60.0)
     # Simulate OPEN past cooldown, then contend for the single probe reservation.
     breaker._state = BreakerState.OPEN
     breaker.force_cooldown_elapsed_for_tests()

@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -27,14 +28,25 @@ class UpsertRequest:
     org_id: UUID
     embedding: Sequence[float]
     embedding_model: str
+    expected_revision: int
     embedding_dim: int = _DEFAULT_EMBEDDING_DIM
 
     def validate(self) -> None:
         _require_default_embedding_dim(self.embedding_dim)
         _require_embedding_length(self.embedding, self.embedding_dim, "embedding")
+        if self.expected_revision < 1:
+            msg = "expected_revision must be positive"
+            raise ValueError(msg)
         if not self.embedding_model.strip():
             msg = "embedding_model must be non-empty"
             raise ValueError(msg)
+
+
+class SearchMode(StrEnum):
+    """Purpose of a vector query; historical reads are write-path-only."""
+
+    USER_RETRIEVAL = "user_retrieval"
+    HISTORICAL_CONFLICT_CANDIDATES = "historical_conflict_candidates"
 
 
 _ITERATIVE_SCAN_VALUES = frozenset({"off", "relaxed_order", "strict_order"})
@@ -44,8 +56,8 @@ _ITERATIVE_SCAN_VALUES = frozenset({"off", "relaxed_order", "strict_order"})
 class SearchRequest:
     """Tenant-scoped vector similarity search.
 
-    The historical mode is reserved for write-time conflict detection; user
-    retrieval must retain the default current-validity fence.
+    Historical conflict candidates are a separate internal write-path mode.
+    User retrieval uses USER_RETRIEVAL by default and retains the validity fence.
     """
 
     org_id: UUID
@@ -56,9 +68,12 @@ class SearchRequest:
     ef_search: int | None = None
     # pgvector 0.8+: off | relaxed_order | strict_order (None = leave GUC alone)
     iterative_scan: str | None = None
-    include_expired: bool = False
+    mode: SearchMode = SearchMode.USER_RETRIEVAL
 
     def validate(self, *, embedding_dim: int = _DEFAULT_EMBEDDING_DIM) -> None:
+        if not isinstance(self.mode, SearchMode):
+            msg = f"mode must be a SearchMode, got {self.mode!r}"
+            raise TypeError(msg)
         _require_embedding_length(self.query_embedding, embedding_dim, "query_embedding")
         _require_at_least_one(self.limit, "limit")
         _require_unit_interval(self.min_similarity, "min_similarity")
@@ -113,5 +128,5 @@ class VectorStore(ABC):
         """Return hits ordered by descending cosine similarity."""
 
     @abstractmethod
-    async def delete(self, *, memory_id: UUID, org_id: UUID) -> None:
-        """Clear embedding fields for a memory (does not delete the row)."""
+    async def delete(self, *, memory_id: UUID, org_id: UUID, expected_revision: int) -> None:
+        """Clear embeddings only at the expected revision; never bypass a tombstone."""

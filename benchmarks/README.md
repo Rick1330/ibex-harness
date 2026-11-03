@@ -3,14 +3,14 @@
 This directory contains:
 
 1. **Proxy / load benchmark pipeline** (Phases 0–2) — Go stage microbenches, k6, published
-   `web/public/benchmarks/benchmark-data.json` → site `/benchmarks`.
+   `site/public/benchmarks/benchmark-data.json` → site `/benchmarks`.
 2. **Memory HNSW recall/latency benches** (Phase 3 Track B) — `memory/` exercising
    `services/memory` `PgVectorStore` against live pgvector; published
-   `web/public/benchmarks/hnsw-benchmark-data.json` → site `/benchmarks/memory`.
+   `site/public/benchmarks/hnsw-benchmark-data.json` → site `/benchmarks/memory`.
 
-Methodology: [ADR-0034](/docs/adr/0034-performance-methodology) (proxy),
-[ADR-0053](/docs/adr/0053-vector-store-abstraction) (vector store). Roadmap:
-[current state](https://ibexharness.com/roadmap/current-state).
+Methodology: [ADR-0034](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0034-performance-methodology.md) (proxy),
+[ADR-0053](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0053-vector-store-abstraction.md) (vector store).
+Current capability boundary: [status ledger](https://ibexharness.com/docs/architecture/status-and-evidence).
 
 ---
 
@@ -28,6 +28,12 @@ Methodology: [ADR-0034](/docs/adr/0034-performance-methodology) (proxy),
 Published proxy data is committed via the benchmark bot after successful **main** collects
 (`benchmark_main_complete` → artifact `benchmark-data`).
 
+Go-affecting PRs also run the blocking `benchmark-gate` job in `ci.yml`. It medians 5 samples of
+`BenchmarkProxyOverhead` and `BenchmarkProxyChatOverhead`, benchmarks a temporary `main` worktree
+on the same runner, and fails on a >20% regression or missing output. This gate is warm-path mean
+evidence, not p99; the scheduled/manual full-chat k6 profile remains the p99 evidence path. See
+[`BASELINE.md`](BASELINE.md).
+
 ### Suite contract (multi-bench)
 
 Each suite keeps its own JSON file and bot modules. Shared seams:
@@ -35,21 +41,28 @@ Each suite keeps its own JSON file and bot modules. Shared seams:
 | Field | Proxy | Memory HNSW | Ranking quality | Write pipeline | Extraction quality | Proxy+context | MCP tool p95 | Extraction throughput |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `suite_id` | `proxy` | `hnsw` | `rankingQuality` | `writePipeline` | `extractionQuality` | `contextAssembly` | `mcpTool` | `extractionThroughput` |
-| Artifact | `benchmark-data` | `hnsw-benchmark-data` | `ranking-quality-benchmark-data` | `write-pipeline-benchmark-data` | `extraction-quality-benchmark-data` | planned: `context-assembly-benchmark-data` | planned: `mcp-tool-benchmark-data` | planned: `extraction-throughput-benchmark-data` |
-| Public path | `web/public/benchmarks/benchmark-data.json` | `…/hnsw-benchmark-data.json` | `…/ranking-quality-benchmark-data.json` | `…/write-pipeline-benchmark-data.json` | `…/extraction-quality-benchmark-data.json` | planned: `…/context-assembly-benchmark-data.json` | planned: `…/mcp-tool-benchmark-data.json` | planned: `…/extraction-throughput-benchmark-data.json` |
+| Artifact | `benchmark-data` | `hnsw-benchmark-data` | `ranking-quality-benchmark-data` | `write-pipeline-benchmark-data` | `extraction-quality-benchmark-data` | `context-assembly-benchmark-data` | planned: `mcp-tool-benchmark-data` | planned: `extraction-throughput-benchmark-data` |
+| Public path | `site/public/benchmarks/benchmark-data.json` | `…/hnsw-benchmark-data.json` | `…/ranking-quality-benchmark-data.json` | `…/write-pipeline-benchmark-data.json` | `…/extraction-quality-benchmark-data.json` | `…/context-assembly-benchmark-data.json` | planned: `…/mcp-tool-benchmark-data.json` | planned: `…/extraction-throughput-benchmark-data.json` |
 | Dispatch | `benchmark_main_complete` | `memory_benchmark_main_complete` | same (bot publishes all memory suites) | same | `extraction_benchmark_main_complete` | planned (not dispatched) | planned (not dispatched) | planned (not dispatched) |
 | PR comment | shared sticky `IBEX_BOT_COMMENT` | same | `post-ranking-pr-comment` | `post-write-pr-comment` | `post-extraction-pr-comment` | planned sticky section | planned sticky section | planned sticky section |
 | Data PR | shared upsert on `chore/bench-data-publish` | same branch | same | same | same | same branch (when wired) | same branch (when wired) | same branch (when wired) |
 | Bot pin helper | `.github/actions/setup-benchmark-bot` | same | same | same | same | same | same | same |
-| Site registry | `web/src/lib/benchmarks/suites.ts` | same | `/benchmarks/memory/ranking-quality` | `/benchmarks/memory/write-pipeline` | `/benchmarks/extraction-quality` | planned `/benchmarks/context-assembly` | planned `/benchmarks/mcp-tool` | planned `/benchmarks/extraction-throughput` |
+| Site registry | `site/app/data/benchmarks.ts` | same | `/benchmarks/memory/ranking-quality` | `/benchmarks/memory/write-pipeline` | `/benchmarks/extraction-quality` | `/benchmarks/context-assembly` | planned `/benchmarks/mcp-tool` | planned `/benchmarks/extraction-throughput` |
 
 **Phase 3.5 suite notes (3.5.F.3):** the three rightmost columns document the
 contract shape only. Harnesses / metrics today:
 
-- **`contextAssembly`:** local load harness `benchmarks/context/assemble_load.py`
-  (stub asserts p99 &lt; 50ms); Go `BenchmarkProxyChatOverheadWithAssemble` is collected
-  under the existing **`proxy`** suite (not a separate published JSON). No dedicated
-  artifact / site page / bot dispatch yet — see exit-audit GAP-35-P2-001.
+- **`contextAssembly`:** `benchmarks/context/assemble_load.py` produces the stub
+  artifact `context-assembly-benchmark-data`, validated against
+  `data-schema/context-assembly-benchmark-data.schema.json`. The scheduled/manual
+  `context-benchmark.yml` stub gate and site registry entry exist; the workflow writes
+  the reserved public path and uploads the artifact. The registry has Overview
+  metadata only; its Overview is withheld from navigation and the sitemap because
+  the route is not implemented. Bot dispatch and the full live
+  pipeline remain out of scope. Go `BenchmarkProxyChatOverheadWithAssemble` is
+  collected under the existing **`proxy`** suite. See the
+  [profile boundaries](context/README.md#measurement-profiles-and-boundaries) and
+  exit-audit GAP-35-P2-001. Exit-audit criterion 4 remains **Partial**.
 - **`mcpTool`:** runtime `latency_ms` audit + Grafana MCP p95 panels only; no bench
   harness or published suite (GAP-35-P2-002).
 - **`extractionThroughput`:** distinct from **`extractionQuality`** (3.5.B.4 quality
@@ -62,7 +75,7 @@ upsert PR comment sections via the benchmark bot (same suite contract as HNSW).
 
 **Extraction CI gates (3.5.B.4):** `.github/workflows/extraction-eval.yml` — cassette smoke/fast,
 optional live `full`, hard 3pp absolute gate, publish + `extraction_benchmark_main_complete`.
-Harness under `services/worker/eval/` ([ADR-0066](/docs/adr/0066-extraction-quality-evaluation-harness)).
+Harness under `services/worker/eval/` ([ADR-0066](../engineering/adr/0066-extraction-quality-evaluation-harness.md)).
 
 Do **not** merge suites into one mega-JSON. Site nav groups by suite; proxy-only concepts
 (waterfall / k6 load) are not invented for HNSW.
@@ -135,7 +148,7 @@ remain planned.
 ```bash
 go test ./benchmarks/go/...
 python benchmarks/scripts/test_pipeline.py
-cd web && npm test -- src/lib/benchmarks/ && npm run typecheck
+pnpm --filter site typecheck && pnpm --filter site check:links
 ```
 
 ## Local quick run (proxy)
@@ -154,6 +167,7 @@ docker run --rm --network host -v "$PWD:/work" -w /work \
   -e K6_USE_CHAT=1 \
   -e IBEX_DEV_TOKEN=ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY \
   -e IBEX_DEV_AGENT_ID=00000000-0000-0000-0000-000000000003 \
+  -e K6_RUN_ID="local-$(date +%s%N)" \
   -e K6_VUS=25 -e K6_DURATION=30s \
   grafana/k6:0.53.0 run benchmarks/k6/proxy_load.js \
   --summary-trend-stats="med,p(90),p(95),p(99),p(99.9),min,max" \

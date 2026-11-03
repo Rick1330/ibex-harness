@@ -1,4 +1,4 @@
-# --- Local research drafts (not versioned; curated copies live under web/engineering/research/) ---
+# --- Local research drafts (not versioned; curated copies live under engineering/research/) ---
 new findings/
 
 # --- Secrets & local env ---
@@ -19,23 +19,6 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json.example
-
-# --- Docs site (Fumadocs / Next.js) ---
-web/.next/
-web/.next-dev/
-web/.next.stale-*/
-web/.open-next/
-web/.wrangler/
-web/.source/
-web/out/
-web/public/diagrams/
-web/public/markdown/
-web/public/search-index.json
-web/public/search-index.*.json
-web/public/docs/
-web/.api-build-stash/
-web/build-output.txt
-web/src/lib/changelog/changelog-content.generated.ts
 
 # --- CI test reports (JUnit for Trunk; ephemeral) ---
 test-results/
@@ -70,6 +53,7 @@ htmlcov/
 build/
 .venv/
 venv/
+.ibex/
 uv.lock.bak
 
 # --- Node / Next.js ---
@@ -99,3 +83,29 @@ coverage/
 # Next.js auto-generated agent rule stubs (layout guard allows only root AGENTS/CLAUDE)
 services/console/AGENTS.md
 services/console/CLAUDE.md
+
+# Wrangler local state (pages dev)
+.wrangler/
+
+# Nuxt build output (console and site)
+.nuxt/
+.nuxt-stale-*/
+.output/
+
+# Local tool scratch
+.zcode/
+.codacy/
+
+# Local agent and loop state (not repository content)
+LOOP.md
+STATE.md
+loop-budget.md
+loop-constraints.md
+loop-run-log.md
+safety.md
+gate.yaml
+opencode.json
+MODEL-POLICY.md
+
+# Local bundle smoke evidence (generated)
+bundle-smoke-result.json

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from ibex_idempotency import PostgresIdempotencyLedger
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -17,15 +18,16 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.auth.client import GRPCTokenValidator, TokenValidator
 from app.clients.embedding import EmbeddingClient
+from app.clients.rerank import RerankClient, RerankClientConfig
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory
 from app.feedback.service import MemoryFeedbackService
 from app.http_metrics import HTTPMetricsMiddleware
 from app.http_validation import request_validation_error_handler
-from app.idempotency.redis_store import RedisIdempotencyStore
 from app.pii.service import PiiService
 from app.probes import probe_router
 from app.read.hot_cache import MemoryHotCacheReader
+from app.read.lineage import MemoryLineageRepository
 from app.read.repository import MemoryReadRepository
 from app.routers.memories import router as memories_router
 from app.vectorstore.pgvector_store import PgVectorStore
@@ -48,11 +50,13 @@ class MemoryAppState:
     store: PgVectorStore | None = field(default=None, repr=False)
     validator: TokenValidator | None = field(default=None, repr=False)
     redis: Redis | None = field(default=None, repr=False)
-    idempotency_store: RedisIdempotencyStore | None = field(default=None, repr=False)
+    idempotency_ledger: PostgresIdempotencyLedger | None = field(default=None, repr=False)
     write_orchestrator: MemoryWriteOrchestrator | None = field(default=None, repr=False)
     read_repository: MemoryReadRepository | None = field(default=None, repr=False)
     hot_cache_reader: MemoryHotCacheReader | None = field(default=None, repr=False)
+    lineage_repository: MemoryLineageRepository | None = field(default=None, repr=False)
     embedding_client: EmbeddingClient | None = field(default=None, repr=False)
+    rerank_client: RerankClient | None = field(default=None, repr=False)
     pii: PiiService | None = field(default=None, repr=False)
     cache_writer: MemoryCacheWriter | None = field(default=None, repr=False)
     feedback_service: MemoryFeedbackService | None = field(default=None, repr=False)
@@ -62,7 +66,6 @@ class MemoryAppState:
 class _RedisResources:
     client: Redis | None
     cache_writer: MemoryCacheWriter | None
-    idempotency_store: RedisIdempotencyStore | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,11 +135,13 @@ async def _memory_service_lifespan(
     state.session_factory = session_factory
     state.store = store
     state.pii = pii
+    state.idempotency_ledger = PostgresIdempotencyLedger(session_factory)
 
     redis = _configure_redis(cfg, state)
     embedding_holder: dict[str, EmbeddingClient | None] = {"client": None}
     embed_callable = _build_embed(cfg, embedding_holder)
     state.embedding_client = embedding_holder.get("client")
+    state.rerank_client = _build_rerank(cfg)
     _configure_write_and_read_paths(
         _WriteReadBootstrap(
             state=state,
@@ -153,12 +158,17 @@ async def _memory_service_lifespan(
     try:
         yield
     finally:
-        await _shutdown_memory(state, auth=auth, engine=engine, embedding_holder=embedding_holder)
+        await _shutdown_memory(
+            state,
+            auth=auth,
+            engine=engine,
+            embedding_holder=embedding_holder,
+        )
 
 
 def _configure_redis(cfg: Settings, state: MemoryAppState) -> _RedisResources:
     if not cfg.redis_url:
-        return _RedisResources(client=None, cache_writer=None, idempotency_store=None)
+        return _RedisResources(client=None, cache_writer=None)
 
     redis_client = Redis.from_url(
         cfg.redis_url,
@@ -168,17 +178,7 @@ def _configure_redis(cfg: Settings, state: MemoryAppState) -> _RedisResources:
     state.redis = redis_client
     cache_writer = MemoryCacheWriter(redis_client, cfg)
     state.cache_writer = cache_writer
-    idempotency_store = RedisIdempotencyStore(
-        redis_client,
-        ttl_seconds=cfg.idempotency_ttl_seconds,
-        pending_ttl_seconds=cfg.idempotency_pending_ttl_seconds,
-    )
-    state.idempotency_store = idempotency_store
-    return _RedisResources(
-        client=redis_client,
-        cache_writer=cache_writer,
-        idempotency_store=idempotency_store,
-    )
+    return _RedisResources(client=redis_client, cache_writer=cache_writer)
 
 
 def _configure_write_and_read_paths(bootstrap: _WriteReadBootstrap) -> None:
@@ -200,9 +200,13 @@ def _configure_write_and_read_paths(bootstrap: _WriteReadBootstrap) -> None:
         bootstrap.session_factory,
         bootstrap.store,
         bootstrap.cfg,
+        rerank_client=bootstrap.state.rerank_client,
     )
     bootstrap.state.hot_cache_reader = MemoryHotCacheReader(
         bootstrap.redis.client,
+        bootstrap.session_factory,
+    )
+    bootstrap.state.lineage_repository = MemoryLineageRepository(
         bootstrap.session_factory,
     )
     bootstrap.state.feedback_service = MemoryFeedbackService(
@@ -239,6 +243,8 @@ async def _shutdown_memory(
     client = embedding_holder.get("client")
     if client is not None:
         await client.aclose()
+    if state.rerank_client is not None:
+        await state.rerank_client.aclose()
     if state.redis is not None:
         await state.redis.aclose()
     await auth.aclose()
@@ -261,6 +267,46 @@ def _build_embed(
     client = EmbeddingClient(cfg.embedding_base_url, token)
     holder["client"] = client
     return build_embedding_callable(client)
+
+
+# TEI's default ``--max-client-batch-size``. The client splits at the configured
+# batch size, so anything above this only works if the operator raised the server
+# flag too; otherwise the server answers 413 and every search degrades silently.
+_TEI_DEFAULT_CLIENT_BATCH_SIZE = 32
+
+
+def _build_rerank(cfg: Settings) -> RerankClient | None:
+    """Reranking is opt-in, and only meaningful on the fused hybrid window."""
+    if not cfg.rerank_enabled:
+        return None
+    if not cfg.search_hybrid_enabled:
+        logger.warning(
+            "IBEX_MEMORY_RERANK_ENABLED is set but hybrid retrieval is off; "
+            "reranking applies to the fused window only and will not run"
+        )
+        return None
+    # A request carries at most min(batch size, window cap) texts, so the window cap
+    # can keep a large batch size harmless.
+    largest_request = min(cfg.rerank_client_batch_size, cfg.rerank_max_candidates)
+    if largest_request > _TEI_DEFAULT_CLIENT_BATCH_SIZE:
+        logger.warning(
+            "reranking can send %d texts per request, above the TEI default "
+            "--max-client-batch-size=%d; a server left at its default answers 413 "
+            "and affected reranks degrade to the fused order",
+            largest_request,
+            _TEI_DEFAULT_CLIENT_BATCH_SIZE,
+        )
+    token = cfg.rerank_api_token.get_secret_value() if cfg.rerank_api_token else None
+    return RerankClient(
+        cfg.rerank_base_url,
+        token,
+        config=RerankClientConfig(
+            connect_timeout=cfg.rerank_connect_timeout_ms / 1000,
+            read_timeout=cfg.rerank_timeout_ms / 1000,
+            max_retries=cfg.rerank_max_retries,
+            client_batch_size=cfg.rerank_client_batch_size,
+        ),
+    )
 
 
 async def _postgres_ready(engine: AsyncEngine) -> bool:

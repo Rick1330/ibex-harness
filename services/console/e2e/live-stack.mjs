@@ -1,14 +1,11 @@
 import { execFileSync, spawn } from "node:child_process"
 import { createServer } from "node:https"
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
-import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const consoleDir = dirname(dirname(fileURLToPath(import.meta.url)))
-const require = createRequire(import.meta.url)
-const nextBin = require.resolve("next/dist/bin/next")
 const tempDir = mkdtempSync(join(tmpdir(), "ibex-console-live-"))
 const keyPath = join(tempDir, "server.key")
 const certPath = join(tempDir, "server.crt")
@@ -18,6 +15,9 @@ const sessionCookie = "ibex_session=fixture-access-secret"
 const orgId = "bfc3f97b-7a61-498d-9faa-96f34fbd4f2f"
 const observedAt = "2026-09-26T17:00:00Z"
 const runId = "11111111-1111-4111-8111-111111111111"
+const agentId = "33333333-3333-4333-8333-333333333333"
+const memoryId = "44444444-4444-4444-8444-444444444444"
+const sessionId = "88888888-8888-4888-8888-888888888888"
 const requests = []
 let eventStreams = 0
 let closing = false
@@ -46,6 +46,22 @@ function writeUnauthorized(response) {
 }
 
 function handleTestRoute(url, request, response) {
+  if (url.pathname === "/__test/login") {
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "set-cookie": `${sessionCookie}; Path=/; Secure; SameSite=Lax`,
+    })
+    response.end(`<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>IBEX Console fixture session</title></head>
+  <body>
+    <p>Fixture session set. <a href="https://127.0.0.1:${consolePort}/">Open the console</a>.</p>
+    <script>location.replace("https://127.0.0.1:${consolePort}/")</script>
+  </body>
+</html>`)
+    return true
+  }
   if (url.pathname === "/__test/requests") {
     writeJson(response, 200, requests)
     return true
@@ -158,7 +174,119 @@ function fixtureBodies() {
     tools: [],
     score_schema_note: null,
   }
+  const agent = {
+    id: agentId,
+    slug: "support-agent",
+    name: "Support Agent",
+    description: "Answers customer questions from the memory store.",
+    status: "active",
+    default_provider: "openai",
+    default_model: "gpt-4.1",
+    tags: ["prod", "support"],
+    total_sessions: 42,
+    total_memories: 128,
+    total_tokens_used: 901234,
+    last_active_at: observedAt,
+    created_at: observedAt,
+    updated_at: observedAt,
+  }
+  const memory = {
+    id: memoryId,
+    agent_id: agentId,
+    session_id: null,
+    category: "factual",
+    status: "active",
+    source: "extracted",
+    confidence: 0.8,
+    usefulness_score: 0.5,
+    content_tokens: 12,
+    retrieval_count: 3,
+    last_retrieved_at: observedAt,
+    pii_detected: false,
+    pii_redacted: false,
+    visibility: "agent",
+    pinned: false,
+    tags: ["support"],
+    lifecycle_revision: 1,
+    tombstoned: false,
+    expires_at: null,
+    valid_from: observedAt,
+    valid_until: null,
+    observed_at: observedAt,
+    created_at: observedAt,
+    updated_at: observedAt,
+  }
+  // The list projection is lineage-free by contract; only the detail carries it.
+  const memoryDetail = {
+    ...memory,
+    lineage: {
+      superseded_by: null,
+      merged_into: null,
+      tip: { id: memoryId, status: "active", tombstoned: false },
+      replaces: [],
+      replaced_by: [],
+      edges_truncated: false,
+    },
+  }
+  const sessionTurn = {
+    id: "99999999-9999-4999-8999-999999999999",
+    turn_index: 0,
+    request_id: "req-live-1",
+    input_tokens: 10,
+    output_tokens: 20,
+    model: "gpt-4.1",
+    provider: "openai",
+    latency_ms: 100,
+    is_streaming: false,
+    is_complete: true,
+    created_at: observedAt,
+    trace: {
+      trace_id: "trace-live-1",
+      run_id: runId,
+      completeness: "complete",
+      status: "ok",
+      error_code: null,
+      started_at: observedAt,
+      ended_at: observedAt,
+    },
+  }
+  const session = {
+    id: sessionId,
+    agent_id: agentId,
+    external_id: "ext-live-1",
+    status: "completed",
+    model: "gpt-4.1",
+    provider: "openai",
+    directive_version_id: null,
+    turn_count: 1,
+    total_input_tokens: 10,
+    total_output_tokens: 20,
+    total_latency_ms: 100,
+    last_extracted_turn: 0,
+    lifecycle_revision: 1,
+    evidence_fence_version: 1,
+    created_at: observedAt,
+    updated_at: observedAt,
+    completed_at: observedAt,
+  }
   return {
+    sessions: {
+      data: [session],
+      pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
+    },
+    session,
+    sessionDetail: { ...session, turns: [sessionTurn], turns_truncated: false },
+    memoryDetail,
+    memories: {
+      data: [memory],
+      pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
+    },
+    memory,
+    agents: {
+      data: [agent],
+      pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
+    },
+    agent,
     context: {
       schema_version: "operator.context.v1",
       org_id: orgId,
@@ -197,6 +325,27 @@ function fixtureBodies() {
 
 function resolveFixtureBody(pathname) {
   const bodies = fixtureBodies()
+  if (pathname === "/v1/operator/sessions") return { status: 200, payload: bodies.sessions }
+  if (pathname === `/v1/operator/sessions/${sessionId}`) {
+    return { status: 200, payload: bodies.sessionDetail }
+  }
+  if (pathname.startsWith("/v1/operator/sessions/")) {
+    return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Session not found" } } }
+  }
+  if (pathname === "/v1/operator/memories") return { status: 200, payload: bodies.memories }
+  if (pathname === `/v1/operator/memories/${memoryId}`) {
+    return { status: 200, payload: bodies.memoryDetail }
+  }
+  if (pathname.startsWith("/v1/operator/memories/")) {
+    return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Memory not found" } } }
+  }
+  if (pathname === "/v1/operator/agents") return { status: 200, payload: bodies.agents }
+  if (pathname === `/v1/operator/agents/${agentId}`) {
+    return { status: 200, payload: bodies.agent }
+  }
+  if (pathname.startsWith("/v1/operator/agents/")) {
+    return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Agent not found" } } }
+  }
   if (pathname === "/v1/operator/context") return { status: 200, payload: bodies.context }
   if (pathname === "/v1/operator/overview") return { status: 200, payload: bodies.overview }
   if (pathname === "/v1/operator/platform/health") return { status: 200, payload: bodies.health }
@@ -254,12 +403,12 @@ const api = createServer({ key: tlsKey, cert: tlsCert }, handleApiRequest)
 api.listen(apiPort, "127.0.0.1")
 
 consoleProcess = spawn(
-  process.execPath,
+  "corepack",
   [
-    nextBin,
-    "dev", "--hostname", "127.0.0.1", "--port", String(consolePort),
-    "--experimental-https", "--experimental-https-key", keyPath,
-    "--experimental-https-cert", certPath,
+    "pnpm", "exec", "nuxt", "dev",
+    "--no-tui", "--no-fork",
+    "--host", "127.0.0.1", "--port", String(consolePort),
+    "--https", "--https.key", keyPath, "--https.cert", certPath,
   ],
   {
     cwd: consoleDir,
@@ -268,7 +417,6 @@ consoleProcess = spawn(
       NODE_EXTRA_CA_CERTS: certPath,
       NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --use-openssl-ca`.trim(),
       SSL_CERT_FILE: certPath,
-      CONSOLE_DATA_MODE: "live",
       CONSOLE_READ_ONLY: "1",
       IBEX_OPERATOR_API_ORIGIN: `https://127.0.0.1:${apiPort}`,
       IBEX_OPERATOR_SESSION_COOKIE_NAME: "ibex_session",

@@ -49,9 +49,7 @@ async def test_allow_all_and_static_helpers() -> None:
 
 def test_serialize_request() -> None:
     wire = _serialize_request((str(AGENT), str(ORG)))
-    assert wire == encode_validate_agent_request(
-        agent_id=str(AGENT), org_id=str(ORG)
-    )
+    assert wire == encode_validate_agent_request(agent_id=str(AGENT), org_id=str(ORG))
 
 
 def test_require_active_payload_accepts_active() -> None:

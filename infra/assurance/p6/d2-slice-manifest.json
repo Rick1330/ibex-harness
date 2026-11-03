@@ -20,7 +20,7 @@
     {
       "name": "d2-performance-notes",
       "sha256": "0f5c4be6c78a6ded5c0ff140fcb90b8e2de741a5ea8390b67d7f065ff0cac69a",
-      "uri": "file://web/engineering/pr3-evidence/d2-performance-notes.md",
+      "uri": "file://engineering/pr3-evidence/d2-performance-notes.md",
       "evidence_state": "contract-tested",
       "producer": "pr-911"
     },
@@ -86,7 +86,7 @@
       "evidence_state": "contract-tested",
       "artifact_uris": [
         "file://infra/assurance/p6/d2-residual-register.json",
-        "file://web/engineering/pr3-evidence/d2-performance-notes.md",
+        "file://engineering/pr3-evidence/d2-performance-notes.md",
         "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.json",
         "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.txt"
       ]

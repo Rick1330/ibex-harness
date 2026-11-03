@@ -84,6 +84,7 @@ class MemoryHit:
     similarity: float
     rank: int
     source: str
+    conflict_groups: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,6 +298,7 @@ def _hit_from_payload(payload: MemoryHitPayload) -> MemoryHit:
         similarity=payload.similarity,
         rank=payload.rank,
         source=payload.source,
+        conflict_groups=payload.conflict_groups,
     )
 
 

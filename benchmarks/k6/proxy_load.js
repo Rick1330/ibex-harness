@@ -1,4 +1,5 @@
 /* global __ENV */
+import exec from "k6/execution";
 import http from "k6/http";
 import { check, sleep } from "k6";
 
@@ -21,6 +22,9 @@ const HEALTH_PATH = __ENV.K6_HEALTH_PATH || "/health";
 const CHAT_PATH = __ENV.K6_CHAT_PATH || "/v1/chat/completions";
 const TOKEN = __ENV.IBEX_DEV_TOKEN || __ENV.K6_TOKEN || "";
 const AGENT_ID = __ENV.IBEX_DEV_AGENT_ID || __ENV.K6_AGENT_ID || "";
+// A run-scoped prefix keeps repeated runs against the same stack from replaying
+// durable-idempotency responses. CI supplies a workflow-unique value.
+const RUN_ID = __ENV.K6_RUN_ID || `${Date.now()}`;
 
 const chatBody = JSON.stringify({
   model: __ENV.K6_MODEL || "gpt-4o-mini",
@@ -38,6 +42,8 @@ function probeHealth() {
 function probeChat() {
   const headers = {
     "Content-Type": "application/json",
+    // Durable PostgreSQL idempotency is enabled in the benchmark profile.
+    "Idempotency-Key": `bench-${RUN_ID}-${exec.vu.idInTest}-${exec.scenario.iterationInTest}`,
   };
   if (TOKEN) {
     headers.Authorization = `Bearer ${TOKEN}`;

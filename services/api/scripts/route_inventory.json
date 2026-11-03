@@ -189,6 +189,34 @@
     "source": "services/api/app/routers/agents.py"
   },
   {
+    "endpoint": "app.routers.operator_agents.operator_agent_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_agent_list",
+    "path": "/v1/operator/agents",
+    "response_model": "<class 'app.pagination.CursorPage[OperatorAgent]'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_agents.py"
+  },
+  {
+    "endpoint": "app.routers.operator_agents.operator_agent_detail",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_agent_detail",
+    "path": "/v1/operator/agents/{agent_id}",
+    "response_model": "<class 'app.schemas.operator_agents.OperatorAgent'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_agents.py"
+  },
+  {
     "endpoint": "app.routers.operator_overview.operator_context",
     "methods": [
       "GET"
@@ -197,10 +225,38 @@
     "path": "/v1/operator/context",
     "response_model": "<class 'app.schemas.operator_overview.OperatorContextResponse'>",
     "security": [
-      "app.deps.operator_org_session",
-      "app.routers.operator_overview.require_operator_metadata_session"
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
     ],
     "source": "services/api/app/routers/operator_overview.py"
+  },
+  {
+    "endpoint": "app.routers.operator_directives.operator_directive_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_directive_list",
+    "path": "/v1/operator/directives",
+    "response_model": "<class 'app.schemas.operator_directives.OperatorDirectivePage'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_directives.py"
+  },
+  {
+    "endpoint": "app.routers.operator_directives.operator_directive_detail",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_directive_detail",
+    "path": "/v1/operator/directives/{directive_id}",
+    "response_model": "<class 'app.schemas.operator_directives.OperatorDirectiveDetail'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_directives.py"
   },
   {
     "endpoint": "app.routers.operator_events.stream_events",
@@ -216,6 +272,62 @@
     "source": "services/api/app/routers/operator_events.py"
   },
   {
+    "endpoint": "app.routers.operator_evidence_deletions.operator_evidence_deletions",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_evidence_deletions",
+    "path": "/v1/operator/evidence/deletions",
+    "response_model": "<class 'app.schemas.operator_evidence_deletions.OperatorEvidenceDeletions'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_evidence_deletions.py"
+  },
+  {
+    "endpoint": "app.routers.operator_evidence.operator_evidence_summary",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_evidence_summary",
+    "path": "/v1/operator/evidence/summary",
+    "response_model": "<class 'app.schemas.operator_evidence.OperatorEvidenceSummary'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_evidence.py"
+  },
+  {
+    "endpoint": "app.routers.operator_memories.operator_memory_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_memory_list",
+    "path": "/v1/operator/memories",
+    "response_model": "<class 'app.pagination.CursorPage[OperatorMemory]'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_memories.py"
+  },
+  {
+    "endpoint": "app.routers.operator_memories.operator_memory_detail",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_memory_detail",
+    "path": "/v1/operator/memories/{memory_id}",
+    "response_model": "<class 'app.schemas.operator_memories.OperatorMemoryDetail'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_memories.py"
+  },
+  {
     "endpoint": "app.routers.operator_overview.operator_overview",
     "methods": [
       "GET"
@@ -224,8 +336,8 @@
     "path": "/v1/operator/overview",
     "response_model": "<class 'app.schemas.operator_overview.OperatorOverviewResponse'>",
     "security": [
-      "app.deps.operator_org_session",
-      "app.routers.operator_overview.require_operator_metadata_session"
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
     ],
     "source": "services/api/app/routers/operator_overview.py"
   },
@@ -293,6 +405,34 @@
       "app.routers.session.require_session_refresh"
     ],
     "source": "services/api/app/routers/session.py"
+  },
+  {
+    "endpoint": "app.routers.operator_sessions.operator_session_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_session_list",
+    "path": "/v1/operator/sessions",
+    "response_model": "<class 'app.pagination.CursorPage[OperatorSession]'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_sessions.py"
+  },
+  {
+    "endpoint": "app.routers.operator_sessions.operator_session_detail",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_session_detail",
+    "path": "/v1/operator/sessions/{session_id}",
+    "response_model": "<class 'app.schemas.operator_sessions.OperatorSessionDetail'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_sessions.py"
   },
   {
     "endpoint": "app.routers.operator_traces.operator_trace_list",

@@ -8,9 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from ibex_idempotency import ClaimToken
 from sqlalchemy.exc import IntegrityError
 
-from app.idempotency.redis_store import IdempotencyToken
 from app.routers.memory_write_support import IdempotencyHandle
 from app.write.models import MemoryRow
 
@@ -88,11 +88,18 @@ def mapping_row(**overrides: object) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
-def active_idempotency_handle(*, store: MagicMock | None = None) -> IdempotencyHandle:
+def active_idempotency_handle(*, ledger: MagicMock | None = None) -> IdempotencyHandle:
     return IdempotencyHandle(
-        store=store or MagicMock(),
-        token=IdempotencyToken(org_id=uuid4(), key="k"),
-        fingerprint="fp",
+        ledger=ledger or MagicMock(),
+        claim=ClaimToken(
+            claim_id=uuid4(),
+            org_id=uuid4(),
+            agent_id=uuid4(),
+            key="k",
+            request_hash="f" * 64,
+            version=1,
+        ),
+        request_hash="f" * 64,
     )
 
 

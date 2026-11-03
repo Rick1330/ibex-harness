@@ -40,10 +40,13 @@ def test_ready_ok_with_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_ready_fails_on_geometry_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.backends.stub import StubBackend
+
     monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
     monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", "service-token")
     monkeypatch.setenv("IBEX_EMBEDDING_DIM", "1024")
     monkeypatch.setenv("IBEX_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    monkeypatch.setattr("app.main.build_backend", lambda _: StubBackend.for_profile("cpu"))
     with TestClient(app) as client:
         resp = client.get("/ready")
     assert resp.status_code == 503

@@ -220,6 +220,24 @@
     },
     {
       "type": "timeseries",
+      "title": "Search hybrid channels",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (vector, full_text) (rate(ibex_memory_search_hybrid_total[$__rate_interval]))",
+          "legendFormat": "vector={{vector}} full_text={{full_text}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2
+        }
+      }
+    },
+    {
+      "type": "timeseries",
       "title": "Search GIN fallback (triggered)",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -227,6 +245,24 @@
         {
           "expr": "sum by (triggered) (rate(ibex_memory_search_fallback_total[$__rate_interval]))",
           "legendFormat": "triggered={{triggered}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Search rerank outcomes",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (result) (rate(ibex_memory_rerank_total[$__rate_interval]))",
+          "legendFormat": "{{result}}"
         }
       ],
       "fieldConfig": {
@@ -251,6 +287,24 @@
         "defaults": {
           "unit": "reqps",
           "decimals": 2
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Search rerank latency p95",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 44 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ibex_memory_rerank_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3
         }
       }
     },

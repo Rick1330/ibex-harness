@@ -1,5 +1,0 @@
-{
-  "title": "API Reference",
-  "icon": "Terminal",
-  "pages": ["http-routes", "auth-grpc", "proxy-health", "chat-completions", "errors"]
-}

@@ -162,6 +162,7 @@ async def test_near_dup_via_pgvector_org_scoped(
             org_id=org_a,
             embedding=vec,
             embedding_model="test-model",
+            expected_revision=1,
         )
     )
     await store.upsert(
@@ -170,6 +171,7 @@ async def test_near_dup_via_pgvector_org_scoped(
             org_id=org_b,
             embedding=vec,
             embedding_model="test-model",
+            expected_revision=1,
         )
     )
 

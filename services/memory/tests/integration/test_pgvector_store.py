@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.vectorstore.base import SearchRequest, UpsertRequest
+from app.vectorstore.base import SearchMode, SearchRequest, UpsertRequest
 from app.vectorstore.pgvector_store import PgVectorStore
 from tests.integration.conftest import seed_org_agent_memory, zero_embedding
 
@@ -31,6 +31,7 @@ async def test_pgvector_upsert_search_delete(
             org_id=org_id,
             embedding=query,
             embedding_model="bge-m3",
+            expected_revision=1,
         )
     )
     hits = await store.search(
@@ -47,7 +48,7 @@ async def test_pgvector_upsert_search_delete(
     assert hits[0].memory_id == memory_id
     assert hits[0].similarity == pytest.approx(1.0, abs=1e-6)
 
-    await store.delete(memory_id=memory_id, org_id=org_id)
+    await store.delete(memory_id=memory_id, org_id=org_id, expected_revision=1)
     hits_after = await store.search(
         SearchRequest(
             org_id=org_id,
@@ -61,6 +62,60 @@ async def test_pgvector_upsert_search_delete(
 
 
 @pytest.mark.asyncio
+async def test_expired_active_memory_is_candidate_only_for_write_path(
+    store: PgVectorStore,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    org_id, agent_id, memory_id = await seed_org_agent_memory(
+        session_factory, content="expired conflict candidate"
+    )
+    query = zero_embedding(hotspot=3)
+    await store.upsert(
+        UpsertRequest(
+            memory_id=memory_id,
+            org_id=org_id,
+            embedding=query,
+            embedding_model="bge-m3",
+            expected_revision=1,
+        )
+    )
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SELECT set_config('app.current_org_id', :org_id, true)"
+            ),
+            {"org_id": str(org_id)},
+        )
+        result = await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                """
+                UPDATE ibex_core.memories
+                SET valid_from = CURRENT_TIMESTAMP - INTERVAL '2 days',
+                    valid_until = CURRENT_TIMESTAMP - INTERVAL '1 day'
+                WHERE id = :memory_id AND org_id = :org_id
+                  AND status = 'active' AND deleted_at IS NULL
+                """
+            ),
+            {"memory_id": str(memory_id), "org_id": str(org_id)},
+        )
+        assert result.rowcount == 1
+
+    common = {
+        "org_id": org_id,
+        "agent_id": agent_id,
+        "query_embedding": query,
+        "limit": 5,
+        "min_similarity": 0.5,
+    }
+    user_hits = await store.search(SearchRequest(**common, mode=SearchMode.USER_RETRIEVAL))
+    conflict_hits = await store.search(
+        SearchRequest(**common, mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES)
+    )
+    assert memory_id not in {hit.memory_id for hit in user_hits}
+    assert memory_id in {hit.memory_id for hit in conflict_hits}
+
+
+@pytest.mark.asyncio
 async def test_pgvector_cross_org_isolation(
     store: PgVectorStore,
     session_factory: async_sessionmaker[AsyncSession],
@@ -70,14 +125,10 @@ async def test_pgvector_cross_org_isolation(
     vec_a = zero_embedding(hotspot=1)
     vec_b = zero_embedding(hotspot=2)
     await store.upsert(
-        UpsertRequest(
-            memory_id=mem_a, org_id=org_a, embedding=vec_a, embedding_model="bge-m3"
-        )
+        UpsertRequest(memory_id=mem_a, org_id=org_a, embedding=vec_a, embedding_model="bge-m3", expected_revision=1)
     )
     await store.upsert(
-        UpsertRequest(
-            memory_id=mem_b, org_id=org_b, embedding=vec_b, embedding_model="bge-m3"
-        )
+        UpsertRequest(memory_id=mem_b, org_id=org_b, embedding=vec_b, embedding_model="bge-m3", expected_revision=1)
     )
 
     hits_a = await store.search(
@@ -140,6 +191,7 @@ async def test_upsert_missing_memory_raises(
         org_id=UUID("00000000-0000-0000-0000-000000000002"),
         embedding=zero_embedding(),
         embedding_model="bge-m3",
+        expected_revision=1,
     )
     with pytest.raises(LookupError):
         await store.upsert(request)
@@ -203,13 +255,12 @@ async def test_search_relaxed_order_returns_descending_similarity(
 
     await store.upsert(
         UpsertRequest(
-            memory_id=mem_near, org_id=org_id, embedding=vec_near, embedding_model="bge-m3"
+            memory_id=mem_near, org_id=org_id, embedding=vec_near, embedding_model="bge-m3",
+            expected_revision=1,
         )
     )
     await store.upsert(
-        UpsertRequest(
-            memory_id=mem_far, org_id=org_id, embedding=vec_far, embedding_model="bge-m3"
-        )
+        UpsertRequest(memory_id=mem_far, org_id=org_id, embedding=vec_far, embedding_model="bge-m3", expected_revision=1)
     )
     hits = await store.search(
         SearchRequest(

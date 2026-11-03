@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prometheus_client import Counter
+from prometheus_client import Counter, Histogram
 
 SEARCH_FALLBACK = Counter(
     "ibex_memory_search_fallback_total",
@@ -10,10 +10,46 @@ SEARCH_FALLBACK = Counter(
     ["triggered"],
 )
 
+SEARCH_HYBRID = Counter(
+    "ibex_memory_search_hybrid_total",
+    "Hybrid retrieval invocations on find_similar, by channel that returned hits",
+    ["vector", "full_text"],
+)
+
+RERANK = Counter(
+    "ibex_memory_rerank_total",
+    "Cross-encoder rerank outcomes on find_similar",
+    ["result"],
+)
+
+RERANK_LATENCY = Histogram(
+    "ibex_memory_rerank_seconds",
+    "Cross-encoder rerank latency on find_similar",
+    buckets=(0.025, 0.05, 0.1, 0.15, 0.25, 0.5, 1.0),
+)
+
 HOT_CACHE_READ = Counter(
     "ibex_memory_hot_cache_read_total",
     "Hot cache read invocations via get_hot_memories",
     ["result"],
+)
+
+LINEAGE_QUERIES = Counter(
+    "ibex_memory_lineage_queries_total",
+    "Bounded relationship-lineage traversals, by outcome",
+    ["result"],
+)
+
+LINEAGE_LATENCY = Histogram(
+    "ibex_memory_lineage_seconds",
+    "Relationship-lineage traversal latency (root state + walk)",
+    buckets=(0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5),
+)
+
+CONFLICT_SUPPRESSED = Counter(
+    "ibex_memory_conflict_suppressed_total",
+    "Search and hot-cache hits dropped because they share an unresolved conflict "
+    "with a higher-ranked hit",
 )
 
 PII_RECONFIRM = Counter(

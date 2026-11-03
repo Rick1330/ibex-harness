@@ -35,6 +35,19 @@ class MemoryCacheWriter:
     def hot_key(self, org_id: UUID, agent_id: UUID) -> str:
         return hot_memories_key(org_id, agent_id)
 
+    async def forget_memory(self, *, org_id: UUID, agent_id: UUID, memory_id: UUID) -> None:
+        """Best-effort cache eviction after the authoritative tombstone commits."""
+        try:
+            await self.redis.delete(self.object_key(org_id, memory_id))
+            await self.redis.zrem(self.hot_key(org_id, agent_id), str(memory_id))
+        except (OSError, RedisError):
+            WRITE_CACHE_ERRORS.labels(op="forget_invalidate").inc()
+            logger.warning(  # NOSONAR pythonsecurity:S5145 - UUID hex is hex-only, not free text
+                "memory cache invalidation failed org_id=%s memory_id=%s",
+                org_id.hex,
+                memory_id.hex,
+            )
+
     async def write_created(self, outcome: WriteOutcome) -> None:
         if outcome.kind != WriteOutcomeKind.CREATED:
             return
@@ -58,9 +71,7 @@ class MemoryCacheWriter:
         ttl: int | None = None,
     ) -> None:
         """Recompute and ZADD hot score. Fail-open on Redis errors."""
-        resolved_ttl = (
-            ttl if ttl is not None else self.settings.memory_cache_ttl_seconds
-        )
+        resolved_ttl = ttl if ttl is not None else self.settings.memory_cache_ttl_seconds
         try:
             await self._write_hot(memory, resolved_ttl)
         except (OSError, RedisError):
@@ -86,9 +97,7 @@ class MemoryCacheWriter:
 
     async def _write_hot(self, memory: MemoryRow, ttl: int) -> None:
         if self._hot_zadd_trim is None:
-            object.__setattr__(
-                self, "_hot_zadd_trim", register_hot_zadd_trim_script(self.redis)
-            )
+            object.__setattr__(self, "_hot_zadd_trim", register_hot_zadd_trim_script(self.redis))
         score = compute_hot_cache_score(memory, weights=self.settings.rank_weights())
         key = self.hot_key(memory.org_id, memory.agent_id)
         await zadd_hot_memory(

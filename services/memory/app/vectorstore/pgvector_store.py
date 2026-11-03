@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.vectorstore.base import SearchHit, SearchRequest, UpsertRequest, VectorStore
+from app.vectorstore.base import SearchHit, SearchMode, SearchRequest, UpsertRequest, VectorStore
 
 # Shared with benchmarks/memory/plan_assert.py — keep EXPLAIN SQL in sync.
 SEARCH_SQL = """
@@ -22,8 +22,10 @@ FROM (
       AND agent_id = :agent_id
       AND status = 'active'
       AND deleted_at IS NULL
-      AND (:include_expired OR valid_from <= CURRENT_TIMESTAMP)
-      AND (:include_expired OR valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)
+      AND tombstoned = FALSE
+      AND (:include_historical_candidates OR expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+      AND (:include_historical_candidates OR valid_from <= CURRENT_TIMESTAMP)
+      AND (:include_historical_candidates OR valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)
       AND embedding IS NOT NULL
     ORDER BY embedding <=> CAST(:query AS vector)
     LIMIT :limit
@@ -60,12 +62,16 @@ class PgVectorStore(VectorStore):
                         WHERE id = :memory_id
                           AND org_id = :org_id
                           AND deleted_at IS NULL
+                          AND tombstoned = FALSE
+                          AND status <> 'deleted'
+                          AND lifecycle_revision = :expected_revision
                         """
                 ),
                 {
                     "embedding": vector_literal,
                     "embedding_model": request.embedding_model,
                     "embedding_dim": request.embedding_dim,
+                    "expected_revision": request.expected_revision,
                     "memory_id": str(request.memory_id),
                     "org_id": str(request.org_id),
                 },
@@ -112,7 +118,9 @@ class PgVectorStore(VectorStore):
                     "agent_id": str(request.agent_id),
                     "min_similarity": threshold,
                     "limit": request.limit,
-                    "include_expired": request.include_expired,
+                    "include_historical_candidates": (
+                        request.mode is SearchMode.HISTORICAL_CONFLICT_CANDIDATES
+                    ),
                 },
             )
             rows = result.mappings().all()
@@ -121,10 +129,12 @@ class PgVectorStore(VectorStore):
             for row in rows
         ]
 
-    async def delete(self, *, memory_id: UUID, org_id: UUID) -> None:
+    async def delete(self, *, memory_id: UUID, org_id: UUID, expected_revision: int) -> None:
+        if expected_revision < 1:
+            raise ValueError("expected_revision must be positive")
         async with self._session_factory() as session, session.begin():
             await _set_org(session, org_id)
-            await session.execute(
+            result = await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                     """
                         UPDATE ibex_core.memories
@@ -134,10 +144,22 @@ class PgVectorStore(VectorStore):
                             updated_at = NOW()
                         WHERE id = :memory_id
                           AND org_id = :org_id
+                          AND lifecycle_revision = :expected_revision
+                          AND tombstoned = FALSE
+                          AND deleted_at IS NULL
+                          AND status <> 'deleted'
                         """
                 ),
-                {"memory_id": str(memory_id), "org_id": str(org_id)},
+                {
+                    "memory_id": str(memory_id),
+                    "org_id": str(org_id),
+                    "expected_revision": expected_revision,
+                },
             )
+            if result.rowcount != 1:
+                raise LookupError(
+                    f"memory {memory_id} not found at expected lifecycle revision {expected_revision}"
+                )
 
 
 async def _set_org(session: AsyncSession, org_id: UUID) -> None:

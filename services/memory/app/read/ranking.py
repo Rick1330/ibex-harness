@@ -14,11 +14,13 @@ floor ``> 0.5``.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
 from uuid import UUID
 
+from app.read.fusion import RRF_K_DEFAULT, reciprocal_rank_fusion
 from app.read.models import MemorySearchResult, SearchSource
 from app.scoring import CompositeInputs, RankWeights, composite_score, passes_relevance_floor
 
@@ -80,6 +82,8 @@ class RankOptions:
     now: datetime | None = None
     relevance_floor: float = DEFAULT_COMPOSITE_RELEVANCE_FLOOR
     weights: RankWeights | None = None
+    #: Per-memory relevance that overrides the retrieval score (cross-encoder rerank).
+    relevance_overrides: Mapping[UUID, float] | None = None
 
 
 def merge_candidates(
@@ -93,10 +97,55 @@ def merge_candidates(
     return list(by_id.values())
 
 
+def fuse_candidates(
+    vector: list[RankedCandidate],
+    fts: list[RankedCandidate],
+    *,
+    k: int = RRF_K_DEFAULT,
+) -> list[RankedCandidate]:
+    """Order the union of both channels by reciprocal rank fusion.
+
+    The candidate keeps its own channel score: cosine for a vector hit, clamped
+    ``ts_rank_cd`` for a full-text hit. Fusion decides *which* candidates are
+    admitted and in what order; composite scoring still decides the presentation
+    order, so ADR-0068 weights and floors keep their meaning.
+
+    The returned list is the whole fused union. The caller windows it to the page
+    size before hydration, which is what makes fusion decide admission rather
+    than merely decorate an ordering that composite score overrides.
+    """
+    by_id: dict[UUID, RankedCandidate] = {}
+    for item in [*vector, *fts]:
+        # Vector wins a duplicate: its score is the one composite scoring uses.
+        by_id.setdefault(item.memory_id, item)
+    ordering = reciprocal_rank_fusion(
+        [[item.memory_id for item in vector], [item.memory_id for item in fts]],
+        k=k,
+    )
+    return [by_id[item.memory_id] for item in ordering]
+
+
 def relevance_for_composite(candidate: RankedCandidate) -> float:
     if candidate.source == "vector":
         return candidate.score
     return FTS_COMPOSITE_RELEVANCE
+
+
+def _relevance_for(candidate: RankedCandidate, opts: RankOptions) -> float:
+    """Rerank score when one exists, else the candidate's own retrieval score.
+
+    TEI returns a normalized ``[0, 1]`` score for a reranker, so it is directly the
+    composite relevance component. The clamp is defensive: a composite input outside
+    the unit interval is a contract violation, and dropping the whole page over it
+    would be worse than saturating the component.
+    """
+    overrides = opts.relevance_overrides
+    if overrides is None:
+        return relevance_for_composite(candidate)
+    override = overrides.get(candidate.memory_id)
+    if override is None:
+        return relevance_for_composite(candidate)
+    return min(1.0, max(0.0, override))
 
 
 def rank_hydrated_hits(
@@ -117,7 +166,7 @@ def rank_hydrated_hits(
         ranked = candidate_by_id.get(memory_id)
         if ranked is None:
             continue
-        relevance = relevance_for_composite(ranked)
+        relevance = _relevance_for(ranked, opts)
         if not passes_relevance_floor(relevance, opts.relevance_floor):
             continue
         composite = composite_score(

@@ -255,7 +255,7 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
         run: |
           python3 benchmarks/scripts/check_hnsw_gate_status.py \
-            --published web/public/benchmarks/hnsw-benchmark-data.json
+            --published site/public/benchmarks/hnsw-benchmark-data.json
 
       - name: Validate published HNSW data
         run: |
@@ -264,7 +264,7 @@ jobs:
             --require-hashes \
             -r .github/requirements/jsonschema.txt
           python benchmarks/scripts/validate_published_hnsw.py --strict \
-            web/public/benchmarks/hnsw-benchmark-data.json
+            site/public/benchmarks/hnsw-benchmark-data.json
 
       - name: Require benchmark bot pin (same-repo PR)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
@@ -299,7 +299,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          HNSW_BENCHMARK_DATA_PATH: ${{ github.workspace }}/web/public/benchmarks/hnsw-benchmark-data.json
+          HNSW_BENCHMARK_DATA_PATH: ${{ github.workspace }}/site/public/benchmarks/hnsw-benchmark-data.json
           BOT_PATH: ${{ steps.setup_bot.outputs.bot-path }}
         run: |
           set -euo pipefail
@@ -319,7 +319,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hnsw-benchmark-data
-          path: web/public/benchmarks/hnsw-benchmark-data.json
+          path: site/public/benchmarks/hnsw-benchmark-data.json
           retention-days: 14
           if-no-files-found: error
 
@@ -457,7 +457,7 @@ jobs:
             --suite ranking_quality \
             --latest "$latest" \
             --gate "$gate" \
-            --published web/public/benchmarks/ranking-quality-benchmark-data.json \
+            --published site/public/benchmarks/ranking-quality-benchmark-data.json \
             --sha "$GITHUB_SHA" \
             --branch "$GITHUB_REF_NAME" \
             --run-number "$GITHUB_RUN_NUMBER" \
@@ -467,7 +467,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          published="web/public/benchmarks/ranking-quality-benchmark-data.json"
+          published="site/public/benchmarks/ranking-quality-benchmark-data.json"
           if [ ! -f "$published" ]; then
             echo "Skipping published ranking-quality validation (file missing)"
             exit 0
@@ -539,7 +539,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ranking-quality-benchmark-data
-          path: web/public/benchmarks/ranking-quality-benchmark-data.json
+          path: site/public/benchmarks/ranking-quality-benchmark-data.json
           retention-days: 14
           if-no-files-found: warn
 
@@ -576,7 +576,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          RANKING_QUALITY_BENCHMARK_DATA_PATH: ${{ github.workspace }}/web/public/benchmarks/ranking-quality-benchmark-data.json
+          RANKING_QUALITY_BENCHMARK_DATA_PATH: ${{ github.workspace }}/site/public/benchmarks/ranking-quality-benchmark-data.json
           BOT_PATH: ${{ steps.setup_bot_ranking.outputs.bot-path }}
         run: |
           set -euo pipefail
@@ -681,7 +681,7 @@ jobs:
             --suite write_pipeline \
             --latest "$latest" \
             --gate "$gate" \
-            --published web/public/benchmarks/write-pipeline-benchmark-data.json \
+            --published site/public/benchmarks/write-pipeline-benchmark-data.json \
             --sha "$GITHUB_SHA" \
             --branch "$GITHUB_REF_NAME" \
             --run-number "$GITHUB_RUN_NUMBER" \
@@ -691,7 +691,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          published="web/public/benchmarks/write-pipeline-benchmark-data.json"
+          published="site/public/benchmarks/write-pipeline-benchmark-data.json"
           if [ ! -f "$published" ]; then
             echo "Skipping published write-pipeline validation (file missing)"
             exit 0
@@ -762,7 +762,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: write-pipeline-benchmark-data
-          path: web/public/benchmarks/write-pipeline-benchmark-data.json
+          path: site/public/benchmarks/write-pipeline-benchmark-data.json
           retention-days: 14
           if-no-files-found: warn
 
@@ -799,7 +799,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          WRITE_PIPELINE_BENCHMARK_DATA_PATH: ${{ github.workspace }}/web/public/benchmarks/write-pipeline-benchmark-data.json
+          WRITE_PIPELINE_BENCHMARK_DATA_PATH: ${{ github.workspace }}/site/public/benchmarks/write-pipeline-benchmark-data.json
           BOT_PATH: ${{ steps.setup_bot_write.outputs.bot-path }}
         run: |
           set -euo pipefail

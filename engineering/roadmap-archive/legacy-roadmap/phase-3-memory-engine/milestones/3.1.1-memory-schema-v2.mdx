@@ -1,0 +1,109 @@
+---
+title: "3.1.1 Memory schema v2"
+description: "Memory schema v2: HNSW vector index, temporal validity columns, and multi-label taxonomy. Every later milestone in Phase 3, 3.5, and beyond depends on this schema."
+summary: "Memory schema v2: HNSW vector index, temporal validity columns, and multi-label taxonomy. Every later milestone in Phase 3, 3.5, and beyond depends on this schema."
+status: "completed"
+milestoneId: "3.1.1"
+track: "A"
+trackTitle: "Schema & Migrations"
+trackHref: "/roadmap/phase-3-memory-engine/tracks#track-a--schema--migrations"
+goal: "[Track A — Schema & Migrations](/roadmap/phase-3-memory-engine/tracks#track-a--schema--migrations)"
+estimatedEffort: "4–5 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.1.1 — Memory schema v2: HNSW, temporal validity, multi-label"
+---
+
+# Milestone 3.1.1 — Memory schema v2: HNSW, temporal validity, multi-label
+
+**Status:** Completed  
+**Goal:** [Track A — Schema & Migrations](/roadmap/phase-3-memory-engine/tracks#track-a--schema--migrations)  
+**Phase:** 3 — Core Memory Substrate  
+**Estimated effort:** 4–5 days  
+**Track:** [Track A — Schema & Migrations](/roadmap/phase-3-memory-engine/tracks#track-a--schema--migrations)  
+**ADR:** [ADR-0052](/docs/adr/0052-memory-schema-v2-expand) (expand — not ADR-0040). Temporal foundation [ADR-0047](/docs/adr/0047-memory-temporal-validity); multi-label [ADR-0048](/docs/adr/0048-memory-multi-label-categories); relationship graph [ADR-0049](/docs/adr/0049-memory-relationship-graph).  
+**Completed:** 2026-08-25  
+**Migration:** `000017_memory_schema_v2_expand`
+
+---
+
+<Callout type="info" title="Post–G5.M1 / G5.M2 / G5.M3: expand, do not CREATE">
+  After [2.5.G5.M1](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m1-temporal-validity-columns),
+  `ibex_core.memories` already exists (`000014`) with `valid_from` / `valid_until` / `observed_at`,
+  FORCE RLS, and composite org-safe FKs. After
+  [2.5.G5.M2](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m2-multi-label-category-support),
+  `ibex_core.memory_labels` already exists (`000015`) with `org_id`, composite FK, FORCE RLS, and
+  primary sync onto `memories.category` — do **not** `CREATE TABLE memory_labels` again. After
+  [2.5.G5.M3](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m3-relationship-graph-readiness),
+  `ibex_core.memory_relationships` already exists (`000016`) with dual composite FKs, FORCE RLS,
+  bidirectional traversal indexes, supersession view, and tip helper — do **not**
+  `CREATE TABLE memory_relationships` again ([ADR-0049](/docs/adr/0049-memory-relationship-graph)).
+  Draft RLS that uses `memory_id IN (SELECT id FROM memories)` is incorrect; keep
+  `rls_org_visible(org_id)`. Milestone 3.1.1 is an **expand** migration (`ADD COLUMN
+  embedding…`, HNSW, remaining quality columns). Keep `observed_at`.
+</Callout>
+
+<Callout type="note" title="Planning baseline (sketch deviations)">
+  The SQL sketch on this page historically showed a greenfield `CREATE TABLE` and provisional
+  migration `000041`. **Shipped reality:** `000017_memory_schema_v2_expand` ALTERs the live
+  foundation only. Deviations from the sketch: no CREATE of memories/labels/relationships; no
+  Alembic / `services/memory` ORM skeleton; physical rename `category` → `primary_category`
+  deferred (trigger still writes `memories.category`); indexes are non-CONCURRENTLY while the
+  table has no product write traffic; CI pins `pgvector/pgvector:0.8.6-pg16@sha256:…`
+  (pgvector 0.8.6 on PostgreSQL 16).
+</Callout>
+
+## Why This Milestone Exists
+
+Every later milestone in Phase 3, 3.5, and beyond depends on embedding + ANN search + quality
+columns on the memories foundation. Phase 2.5 Track E already fixed temporal validity and
+multi-label taxonomy at the schema layer; 3.1.1 completes the expand with HNSW (not IVFFlat)
+and the remaining quality / hybrid-search columns.
+
+---
+
+## Non-Goals
+
+- Any memory service business logic (Track C and D)
+- The embedding service itself (built in Phase 2.5)
+- Context assembly, extraction workers, or dashboard (Phase 3.5+)
+- Alembic / Python ORM mirror (golang-migrate remains source of truth per ADR-0005)
+- Physical rename of `category` → `primary_category` (deferred; ADR-0052)
+
+---
+
+## Deliverables (shipped)
+
+### Migration files
+
+```
+infra/migrations/postgres/
+ 000017_memory_schema_v2_expand.up.sql
+ 000017_memory_schema_v2_expand.down.sql
+```
+
+### Expand summary
+
+- `CREATE EXTENSION IF NOT EXISTS vector`
+- Columns: `embedding vector(1024)`, `embedding_model` (≤256 chars), `embedding_dim` (triplet CHECK),
+  `confidence`, `usefulness_score`, `source`, `superseded_by` / `merged_into` (composite FKs),
+  `retrieval_count`, `last_retrieved_at`, `pii_detected`, `pii_redacted`,
+  `metadata` (JSON object, ≤8192 octets text), generated `search_vector`
+- Indexes: `idx_memories_embedding_hnsw` (HNSW), `idx_memories_validity`, `idx_memories_search_vector`
+- Hidden mutation (pre-existing, documented in migration comments): `sync_memory_primary_category`
+
+---
+
+## Success signals
+
+- [x] Migration applies cleanly from zero via `make db-migrate` / CI `db-migrate-smoke`
+- [x] `idx_memories_embedding_hnsw` confirmed as HNSW type via `pg_am` catalog assertion
+- [x] RLS integration test proves cross-org denial on `memories` after expand
+- [x] Primary-category sync regression (existing trigger; two labels, confidence + label ASC tie-break)
+- [x] ADR-0052 published in `site/content/docs/adr/` (not ADR-0040)
+
+---
+
+## Prerequisites
+
+- Phase 2.5 exit (pluggable embedder, MCP skeleton, G5.M1–M3 schema)
+- `infra/migrations/postgres/` layout follows ADR-0005

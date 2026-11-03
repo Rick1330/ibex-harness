@@ -88,6 +88,8 @@ func TestLoadRejectsNonPositiveShutdownTimeout(t *testing.T) {
 
 func TestLoadFromEnvHappyPath(t *testing.T) {
 	t.Setenv("IBEX_ENV", "development")
+	t.Setenv("IBEX_SERVICE_NAME", "auth")
+	t.Setenv("OTEL_SERVICE_NAME", "auth")
 	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
 	t.Setenv("IBEX_LOG_LEVEL", "DEBUG")
 	t.Setenv("IBEX_ARGON2_MEMORY_KIB", "65536")
@@ -265,6 +267,7 @@ func TestValidate_AuthServiceTokenRequiredOutsideDevelopment(t *testing.T) {
 				t.Fatal("expected missing AuthService token error")
 			}
 			cfg.AuthServiceToken = "service-secret"
+			cfg.PolicySigningKeyPEM = policySigningPEM(t)
 			if err := cfg.Validate(); err != nil {
 				t.Fatalf("configured service token should validate: %v", err)
 			}

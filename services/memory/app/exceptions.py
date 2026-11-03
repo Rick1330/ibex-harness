@@ -45,6 +45,28 @@ class DuplicateMemoryError(ConflictError):
         self.existing_id = existing_id
 
 
+class StaleLifecycleError(ConflictError):
+    code = "STALE_LIFECYCLE_REVISION"
+
+    def __init__(self, message: str = "Lifecycle revision is stale") -> None:
+        super().__init__(message)
+
+
+class StaleMemoryRevisionError(StaleLifecycleError):
+    """A supersession/PII target changed; callers may reload candidates and retry."""
+
+    code = "STALE_MEMORY_REVISION"
+
+
+class MemoryOrganizationUnavailableError(ConflictError):
+    """The organization was cancelled while a memory write was pending."""
+
+    code = "ORG_UNAVAILABLE"
+
+    def __init__(self, message: str = "Organization no longer accepts memory writes") -> None:
+        super().__init__(message)
+
+
 class ExternalServiceError(IBEXError):
     code = "UPSTREAM_ERROR"
     http_status = 503

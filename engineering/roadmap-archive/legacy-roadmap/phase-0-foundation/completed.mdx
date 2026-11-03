@@ -1,0 +1,61 @@
+---
+title: "Phase 0 — Completed Deliverables"
+description: "Foundation milestones were delivered as numbered audits and GitHub PRs. Archived copies live in the contributor workspace (sibling to the git clone; see DEVELOPMENT_GUIDE.md §12)."
+summary: "Foundation milestones were delivered as numbered audits and GitHub PRs. Archived copies live in the contributor workspace (sibling to the git clone; see DEVELOPMENT_GUIDE.md §12)."
+phase: "phase-0-foundation"
+---
+
+# Phase 0 — Completed Deliverables
+
+Foundation milestones were delivered as numbered audits and GitHub PRs. Archived copies live in the session workspace at contributor workspace archive (sibling to the git clone; see [DEVELOPMENT_GUIDE.md](/roadmap/DEVELOPMENT_GUIDE) §12).
+
+| Report | Focus | Key outcome |
+| --- | --- | --- |
+| 001 | Docs reorg + bootstrap | `docs/` layout, MIT license, CI skeleton |
+| 002 | Automated reviewers | Copilot advisory; CodeRabbit removed |
+| 003 | Governance + proto + compose | ADR-0003/0004, `packages/proto`, compose stacks |
+| 004 | Foundation-004 gap analysis | PR #6/#7 split; toolchain + skeletons in flight |
+| 005 | Foundation-004 audit | Merged PR #6 (`c4d302a`), PR #8 (`5d0bfac`) |
+
+## Merged PRs (Foundation-004)
+
+| PR | Title | Squash SHA |
+| --- | --- | --- |
+| #6 | Toolchain and developer workflow bootstrap | `c4d302a` |
+| #8 | Go auth and proxy service skeletons | `5d0bfac` |
+
+PR #7 was superseded by PR #8 after rebase onto `main`.
+
+## Files of note on `main`
+
+| Path | Purpose |
+| --- | --- |
+| `Makefile`, `infra/scripts/dev-tool.sh` | Canonical local commands |
+| `engineering/TOOLCHAIN.md` | Tool installation and sanity checks |
+| `.pre-commit-config.yaml` | Optional fast local hooks |
+| `packages/proto/` | `ContextAssemblyService` contract |
+| `infra/compose/dev/` | Postgres, Redis, ClickHouse, MinIO |
+| `services/auth/`, `services/proxy/` | Go skeletons |
+| `go.mod`, `.golangci.yml` | Root module; advisory lint |
+| `.github/workflows/ci.yml` | Governance CI skeleton (evolved in Phase 1) |
+| `.github/branch-protection-main.json` | Branch protection contract |
+| `.github/scripts/check-repo-layout.sh` | Repo guards |
+| `infra/compose/test/` | Test compose validated in CI |
+
+## What Phase 0 enabled (forward to Phase 1)
+
+Phase 0 did **not** ship application business logic. It established the monorepo contract that Phase 1 built on:
+
+- **Governance:** protected `main`, secret scan, markdown lint, layout guards
+- **Contracts:** Buf proto source (`packages/proto`) with lint/breaking hooks
+- **Infra:** dev and test compose stacks; migration tooling path
+- **Toolchain:** `Makefile`, `dev-tool.sh`, `TOOLCHAIN.md` for reproducible local dev
+- **Service shells:** auth and proxy with health/readiness/metrics only
+
+## Explicitly not delivered (by design)
+
+- Application business logic (Phase 1)
+- Database migrations (Phase 1.1)
+- Auth protobuf or validation RPCs (Phase 1.1.2+)
+- Python / Next.js application services (Phase 3+)
+- Committed protobuf generated code

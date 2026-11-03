@@ -20,6 +20,7 @@ func toProto(req AssembleParams) *contextv1.AssembleContextRequest {
 		RequestId:          req.RequestID,
 		TraceId:            req.TraceID,
 		SpanId:             req.SpanID,
+		PrincipalContext:   req.PrincipalContext,
 		RecentMessages:     msgs,
 		Options: &contextv1.AssemblyOptions{
 			SkipColdMemories: req.Options.SkipColdMemories,

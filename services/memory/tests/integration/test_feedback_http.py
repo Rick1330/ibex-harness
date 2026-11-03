@@ -89,8 +89,8 @@ async def _seed_ranked_pair(
             usefulness_score=0.50,
         ),
     )
-    await upsert_embedding(store, org_id=org.org_id, memory_id=org.memory_id, hotspot=3)
-    await upsert_embedding(store, org_id=org.org_id, memory_id=control_id, hotspot=3)
+    await upsert_embedding(store, session_factory, org_id=org.org_id, memory_id=org.memory_id, hotspot=3)
+    await upsert_embedding(store, session_factory, org_id=org.org_id, memory_id=control_id, hotspot=3)
     return org, agent_b, agent_c, control_id
 
 

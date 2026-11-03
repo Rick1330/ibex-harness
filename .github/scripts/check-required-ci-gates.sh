@@ -12,7 +12,7 @@ SEMANTIC_WORKFLOW="${ROOT}/.github/workflows/semantic-pr.yml"
 # this guard. Both the job id and effective displayed context name are checked.
 	workflow_for_context() {
   case "$1" in
-    ci-gate-repo|ci-gate-go|ci-gate-web|ci-gate-security|ci-gate-python|gitleaks) printf '%s\n' "$CI_WORKFLOW" ;;
+    ci-gate-repo|ci-gate-go|ci-gate-site|ci-gate-security|ci-gate-python|gitleaks) printf '%s\n' "$CI_WORKFLOW" ;;
     ci-gate-semgrep) printf '%s\n' "$SEMGREP_WORKFLOW" ;;
     semantic-pr-title) printf '%s\n' "$SEMANTIC_WORKFLOW" ;;
     *) return 1 ;;

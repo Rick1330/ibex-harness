@@ -34,16 +34,18 @@ def test_postgres_store_load_and_update_delegate(monkeypatch: pytest.MonkeyPatch
     async def fake_load(_org, _sid):
         return SessionSnapshot(last_extracted_turn=2, status="completed", deleted_at=None)
 
-    async def fake_update(_org, _sid, turn: int) -> None:
-        fake_update.turn = turn  # type: ignore[attr-defined]
+    async def fake_update(_org, _sid, turn: int, revision: int) -> None:
+        fake_update.turn = turn
+        fake_update.revision = revision  # type: ignore[attr-defined]
 
     monkeypatch.setattr(store, "_load", fake_load)
     monkeypatch.setattr(store, "_update", fake_update)
     snap = store.load(org_id, session_id)
     assert snap is not None
     assert snap.last_extracted_turn == 2
-    store.update_last_extracted_turn(org_id, session_id, 9)
+    store.update_last_extracted_turn(org_id, session_id, 9, 3)
     assert fake_update.turn == 9  # type: ignore[attr-defined]
+    assert fake_update.revision == 3  # type: ignore[attr-defined]
 
 
 def test_run_coro_rejects_same_thread_running_loop(
@@ -130,13 +132,13 @@ def _session_factory(execute: AsyncMock) -> MagicMock:
 @pytest.mark.asyncio
 async def test_load_found_binds_org_and_session() -> None:
     org_id, session_id = uuid4(), uuid4()
-    row = SimpleNamespace(last_extracted_turn=4, status="completed", deleted_at=None)
+    row = SimpleNamespace(last_extracted_turn=4, status="completed", deleted_at=None, lifecycle_revision=3)
     result = MagicMock()
     result.one_or_none.return_value = row
     execute = AsyncMock(return_value=result)
     store = PostgresSessionStore(_session_factory(execute))
     snap = await store._load(org_id, session_id)
-    assert snap == SessionSnapshot(4, "completed", None)
+    assert snap == SessionSnapshot(4, "completed", None, 3)
     assert execute.await_count == 2
     select_params = execute.await_args_list[1].args[1]
     assert select_params["org_id"] == org_id
@@ -155,15 +157,18 @@ async def test_load_none_when_missing() -> None:
 @pytest.mark.asyncio
 async def test_update_binds_turn_and_org() -> None:
     org_id, session_id = uuid4(), uuid4()
-    execute = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = uuid4()
+    execute = AsyncMock(return_value=result)
     store = PostgresSessionStore(_session_factory(execute))
-    await store._update(org_id, session_id, 11)
+    await store._update(org_id, session_id, 11, 7)
     assert execute.await_count == 2
     update_params = execute.await_args_list[1].args[1]
     assert update_params == {
         "turn": 11,
         "session_id": session_id,
         "org_id": org_id,
+        "expected_revision": 7,
     }
     update_sql = execute.await_args_list[1].args[0].text
     assert "GREATEST(last_extracted_turn" in update_sql

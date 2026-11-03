@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-runtime"
+version = "0.1.0"
+description = "Shared ASGI runtime primitives for IBEX MCP services (metrics, bearer auth, rate limiting)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "prometheus-client>=0.20.0",
+  "redis>=5.0.0",
+  "starlette>=0.40.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["mcp_runtime*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

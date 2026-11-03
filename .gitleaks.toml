@@ -7,13 +7,24 @@ useDefault = true
 paths = [
   '''\.env\.example$''',
   '''docs/ENVIRONMENT_VARIABLES\.md''',
-  '''web/content/docs/.*\.mdx$''',
+  '''site/content/docs/.*\.md$''',
   '''prompts/''',
   '''services/proxy/internal/auth/validator_test\.go''',
+  # Generated Nuxt dev output. It is gitignored and never source; local agent
+  # checkpoint refs can still contain it, which would otherwise fail a full
+  # local `gitleaks detect`.
+  '''services/console/\.nuxt/''',
 ]
 regexes = [
   '''key: "agent_billing"''',
   '''idempotency_key: "preview-idempotency-01"''',
+  '''idempotencyKey: "pol-publish-2026-10-27-03"''',
+  '''pol-publish-2026-10-27-03''',
   '''agent_billing''',
   '''preview-idempotency-01''',
+  # bundle-smoke.sh uses two fixed, non-secret idempotency keys. The
+  # curl-auth-header rule treats the header value as a credential; allowlist
+  # only those exact values, with token boundaries, so a real credential that
+  # merely contains this text is still reported.
+  '''\bbundle-smoke-create-[12]\b''',
 ]

@@ -34,7 +34,11 @@ def test_auth_401_emits_audit() -> None:
     sink = MemoryAuditSink()
     application = create_app(
         settings=settings,
-        deps=CreateAppDeps(validator=StaticTokenValidator({}), audit_sink=sink, agent_verifier=AllowAllAgentVerifier()),
+        deps=CreateAppDeps(
+            validator=StaticTokenValidator({}),
+            audit_sink=sink,
+            agent_verifier=AllowAllAgentVerifier(),
+        ),
     )
     with TestClient(application) as client:
         resp = client.post(
@@ -60,16 +64,14 @@ def test_auth_503_emits_audit() -> None:
     )
     sink = MemoryAuditSink()
     validator = StaticTokenValidator(
-        {
-            "tok": ValidateResult(
-                org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT
-            )
-        },
+        {"tok": ValidateResult(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT)},
         available=False,
     )
     application = create_app(
         settings=settings,
-        deps=CreateAppDeps(validator=validator, audit_sink=sink, agent_verifier=AllowAllAgentVerifier()),
+        deps=CreateAppDeps(
+            validator=validator, audit_sink=sink, agent_verifier=AllowAllAgentVerifier()
+        ),
     )
     with TestClient(application) as client:
         # Trip breaker (N=5) then still 503
@@ -80,10 +82,7 @@ def test_auth_503_emits_audit() -> None:
                 json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
             )
             assert resp.status_code == 503
-    assert any(
-        e.tool_name == "auth" and e.error_code == "auth_unavailable"
-        for e in sink.events
-    )
+    assert any(e.tool_name == "auth" and e.error_code == "auth_unavailable" for e in sink.events)
 
 
 def test_config_rejects_bad_overrides() -> None:

@@ -1,0 +1,30 @@
+{
+  "format": "ibex-jcs-v0",
+  "hash": "sha256",
+  "vectors": [
+    {
+      "name": "object-key-order",
+      "input": {"b": 2, "a": 1},
+      "canonical_utf8": "{\"a\":1,\"b\":2}",
+      "sha256": "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+    },
+    {
+      "name": "control-and-unicode-string",
+      "input": {"z": "é", "a": "\u0001"},
+      "canonical_utf8": "{\"a\":\"\\u0001\",\"z\":\"é\"}",
+      "sha256": "bc003dd4849f320bd8e2d82b843be0d54cc97802c0ce299c1b7c8cd507583e30"
+    },
+    {
+      "name": "number-normalization",
+      "input": {"n": 1.0, "m": -0.0},
+      "canonical_utf8": "{\"m\":0,\"n\":1}",
+      "sha256": "e3b6c0bec58210a991852202a6f5ae06aa52c0daca1e4388138125526d51631e"
+    },
+    {
+      "name": "nested-values-and-array-order",
+      "input": {"obj": {"b": null, "a": true}, "arr": [3, 2, 1]},
+      "canonical_utf8": "{\"arr\":[3,2,1],\"obj\":{\"a\":true,\"b\":null}}",
+      "sha256": "cd766538eda35ff21589b68e9784ccb3f73b4748028386b709df2979242f99e0"
+    }
+  ]
+}

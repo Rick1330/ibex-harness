@@ -22,6 +22,8 @@ WHERE org_id = :org_id
   AND agent_id = :agent_id
   AND status = 'active'
   AND deleted_at IS NULL
+  AND tombstoned = FALSE
+  AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
   AND valid_from <= CURRENT_TIMESTAMP
   AND (valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)
   AND confidence >= :min_confidence

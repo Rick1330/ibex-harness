@@ -38,12 +38,12 @@ func BuiltInCapabilityCatalog() CapabilityCatalog {
 		caps = append(caps, capabilityFromRow(row))
 	}
 	out := CatalogFromCapabilities(caps...)
-	for id, cap := range out {
-		if err := ValidateBuiltinCapability(cap); err != nil {
+	for id, entry := range out {
+		if err := ValidateBuiltinCapability(entry); err != nil {
 			panic(fmt.Sprintf("corrupt built-in capability %q: %v", id, err))
 		}
-		if cap.ModelID != id {
-			panic(fmt.Sprintf("corrupt built-in capability: key %q has ModelID %q", id, cap.ModelID))
+		if entry.ModelID != id {
+			panic(fmt.Sprintf("corrupt built-in capability: key %q has ModelID %q", id, entry.ModelID))
 		}
 	}
 	return out

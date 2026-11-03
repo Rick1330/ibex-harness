@@ -1,7 +1,7 @@
 # Memory HNSW benches (Phase 3 / m3.2.1)
 
 Lives under the top-level [`benchmarks/`](../README.md) tree so recall/latency
-results share the same publish surface as proxy benches (`web/public/benchmarks/`)
+results share the same publish surface as proxy benches (`site/public/benchmarks/`)
 and the [benchmark bot](https://github.com/Rick1330/ibexharness-benchmark-bot).
 
 The runner imports `services/memory` (`PgVectorStore`) via `PYTHONPATH` — the
@@ -67,7 +67,7 @@ CI validates the published file with `benchmarks/scripts/validate_published_hnsw
 
 `collect-ranking-quality` and `collect-write-pipeline-bench` run in parallel with HNSW in
 `memory-benchmark.yml`. They enforce regression gates, merge published history JSON under
-`web/public/benchmarks/`, upload `*-benchmark-data` artifacts, and upsert sticky PR comment
+`site/public/benchmarks/`, upload `*-benchmark-data` artifacts, and upsert sticky PR comment
 sections via the benchmark bot.
 
 | Suite | Directory | Published JSON | Bot subcommand |
@@ -116,9 +116,9 @@ Artifacts:
 | Path | Role |
 | --- | --- |
 | `benchmarks/memory/output/hnsw_recall_latency.json` | Latest raw run |
-| `web/public/benchmarks/hnsw-benchmark-data.json` | Published history (site + bot) |
+| `site/public/benchmarks/hnsw-benchmark-data.json` | Published history (site + bot) |
 
 Schema: [`../data-schema/hnsw-benchmark-data.schema.json`](../data-schema/hnsw-benchmark-data.schema.json).
-Methodology: [ADR-0053](/docs/adr/0053-vector-store-abstraction).
+Methodology: [ADR-0053](../../engineering/adr/0053-vector-store-abstraction.md).
 
 **1M corpora belong on CI**, not a developer laptop.

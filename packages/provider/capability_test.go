@@ -47,12 +47,12 @@ func TestUnit_MergeCapabilityCatalog_OverlayWins(t *testing.T) {
 		SupportsTools: true, SupportsVision: true, SupportsStreaming: true, TokenizerFamily: TokenizerFamilyO200kBase,
 	})
 	merged := MergeCapabilityCatalog(base, overlay)
-	cap, ok := merged.Lookup("gpt-4o")
+	entry, ok := merged.Lookup("gpt-4o")
 	if !ok {
 		t.Fatal("missing gpt-4o")
 	}
-	if cap.ContextWindow != 64_000 || cap.MaxOutputTokens != 8_192 {
-		t.Fatalf("overlay not applied: %+v", cap)
+	if entry.ContextWindow != 64_000 || entry.MaxOutputTokens != 8_192 {
+		t.Fatalf("overlay not applied: %+v", entry)
 	}
 }
 
@@ -67,19 +67,19 @@ func TestUnit_NewRegistry_MissingCapability(t *testing.T) {
 func TestUnit_NewRegistry_RejectsInvalidCapabilityRows(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name string
-		cap  ModelCapability
+		name  string
+		entry ModelCapability
 	}{
 		{
 			name: "model id mismatch",
-			cap: ModelCapability{
+			entry: ModelCapability{
 				ModelID: "gpt-4o-mini", Provider: "openai", ContextWindow: 128_000, MaxOutputTokens: 16_384,
 				SupportsTools: true, SupportsVision: true, SupportsStreaming: true, TokenizerFamily: TokenizerFamilyO200kBase,
 			},
 		},
 		{
 			name: "bad tokenizer",
-			cap: ModelCapability{
+			entry: ModelCapability{
 				ModelID: "gpt-4o", Provider: "openai", ContextWindow: 128_000, MaxOutputTokens: 16_384,
 				SupportsTools: true, SupportsVision: true, SupportsStreaming: true, TokenizerFamily: "not-a-family",
 			},
@@ -88,7 +88,7 @@ func TestUnit_NewRegistry_RejectsInvalidCapabilityRows(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			catalog := CapabilityCatalog{"gpt-4o": tc.cap}
+			catalog := CapabilityCatalog{"gpt-4o": tc.entry}
 			_, err := NewRegistry(catalog, stubProvider{name: "openai", models: []string{"gpt-4o"}})
 			if !errors.Is(err, ErrInvalidCapability) {
 				t.Fatalf("err=%v want ErrInvalidCapability", err)
@@ -103,12 +103,12 @@ func TestUnit_Registry_CapabilityKnownAndUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	cap, ok := reg.Capability("gpt-4o")
+	entry, ok := reg.Capability("gpt-4o")
 	if !ok {
 		t.Fatal("expected capability")
 	}
-	if cap.ContextWindow != 128_000 {
-		t.Fatalf("ContextWindow=%d", cap.ContextWindow)
+	if entry.ContextWindow != 128_000 {
+		t.Fatalf("ContextWindow=%d", entry.ContextWindow)
 	}
 	if _, ok := reg.Capability("no-such-model"); ok {
 		t.Fatal("expected miss")
@@ -134,9 +134,9 @@ func TestUnit_Registry_ConcurrentCapability(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			cap, ok := reg.Capability("gpt-4o")
-			if !ok || cap.ModelID != "gpt-4o" {
-				t.Errorf("Capability failed: ok=%v cap=%+v", ok, cap)
+			entry, ok := reg.Capability("gpt-4o")
+			if !ok || entry.ModelID != "gpt-4o" {
+				t.Errorf("Capability failed: ok=%v entry=%+v", ok, entry)
 			}
 		}()
 	}
@@ -179,10 +179,10 @@ func TestUnit_ValidateCapability(t *testing.T) {
 		SupportsTools: true, SupportsVision: true, SupportsStreaming: true, TokenizerFamily: TokenizerFamilyO200kBase,
 	}
 	cases := []struct {
-		name string
-		cap  ModelCapability
-		fn   func(ModelCapability) error
-		ok   bool
+		name  string
+		entry ModelCapability
+		fn    func(ModelCapability) error
+		ok    bool
 	}{
 		{"valid overlay", valid, ValidateCapability, true},
 		{"valid builtin", valid, ValidateBuiltinCapability, true},
@@ -198,7 +198,7 @@ func TestUnit_ValidateCapability(t *testing.T) {
 		{"spaced tokenizer", ModelCapability{ModelID: "m", Provider: "openai", ContextWindow: 1, MaxOutputTokens: 1, TokenizerFamily: " o200k_base "}, ValidateCapability, false},
 	}
 	for _, tc := range cases {
-		err := tc.fn(tc.cap)
+		err := tc.fn(tc.entry)
 		if tc.ok && err != nil {
 			t.Fatalf("%s: unexpected err %v", tc.name, err)
 		}
@@ -208,7 +208,7 @@ func TestUnit_ValidateCapability(t *testing.T) {
 	}
 }
 
-func withFamily(cap ModelCapability, family string) ModelCapability {
-	cap.TokenizerFamily = family
-	return cap
+func withFamily(entry ModelCapability, family string) ModelCapability {
+	entry.TokenizerFamily = family
+	return entry
 }

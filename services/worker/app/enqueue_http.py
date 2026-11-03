@@ -7,7 +7,7 @@ import hmac
 import json
 import logging
 import threading
-import time
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -18,7 +18,9 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from app.config import Settings, get_settings
+from app.db import create_engine, create_session_factory
 from app.extraction.batch import TurnPayload, parse_turns
+from app.idempotency_ledger import ClaimOutcome, PostgresIdempotencyLedger, fingerprint_enqueue
 from app.task_names import TASK_EXTRACT_SESSION_MEMORIES
 from app.tasks.extraction import extract_session_memories
 
@@ -27,30 +29,21 @@ logger = logging.getLogger(__name__)
 # Slightly above MAX_BATCH_CONTENT_BYTES to allow JSON framing.
 MAX_ENQUEUE_BODY_BYTES = 600_000
 _DISPATCH_CONCURRENCY = 32
-_IDEMPOTENCY_TTL_SEC = 600.0
-_IDEMPOTENCY_WAIT_SEC = 30.0
-_MAX_IDEMPO_ENTRIES = 10_000
 
 _enqueue_started = False
 _enqueue_lock = threading.Lock()
 _dispatch_sem = threading.Semaphore(_DISPATCH_CONCURRENCY)
-_idempo_lock = threading.Lock()
-_idempo: dict[str, _IdempoEntry] = {}
-
-
-class _IdempoEntry:
-    """In-flight (task_id is None) or completed cache entry with waiter event."""
-
-    __slots__ = ("exp", "ready", "task_id")
-
-    def __init__(self, task_id: str | None, exp: float, ready: threading.Event) -> None:
-        self.task_id = task_id
-        self.exp = exp
-        self.ready = ready
 
 
 class DispatchBusyError(RuntimeError):
     """Raised when enqueue dispatch concurrency is exhausted."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidatedEnqueue:
+    kwargs: dict[str, Any]
+    idempotency_key: str
+    ledger: Any
 
 
 def _bearer_matches(provided: str, expected: str) -> bool:
@@ -88,9 +81,17 @@ def health(_request: Request) -> Response:
 
 
 async def ready(request: Request) -> Response:
-    """Report readiness only when enqueue auth and Celery broker Redis are available."""
+    """Report readiness only when auth, PostgreSQL ledger, and Redis are available."""
     settings: Settings = request.app.state.settings
     if not _enqueue_auth_ready(settings):
+        return JSONResponse({"status": "not_ready"}, status_code=503)
+    ledger = getattr(request.app.state, "ledger", None)
+    if ledger is None:
+        return JSONResponse({"status": "not_ready"}, status_code=503)
+    try:
+        await asyncio.wait_for(ledger.ping(), timeout=0.5)
+    except Exception:
+        logger.exception("worker_enqueue_database_not_ready")
         return JSONResponse({"status": "not_ready"}, status_code=503)
     broker_url = _broker_url(settings)
     if not broker_url:
@@ -176,104 +177,6 @@ async def _read_json_limited(request: Request) -> object:
         raise ValueError("invalid_json") from exc
 
 
-def _idempo_prune_locked(now: float) -> None:
-    expired = [k for k, e in _idempo.items() if e.task_id is not None and e.exp < now]
-    for key in expired:
-        del _idempo[key]
-    overflow = len(_idempo) - _MAX_IDEMPO_ENTRIES
-    if overflow <= 0:
-        return
-    completed = sorted(
-        ((k, e) for k, e in _idempo.items() if e.task_id is not None),
-        key=lambda item: item[1].exp,
-    )
-    for key, _ in completed[:overflow]:
-        del _idempo[key]
-
-
-def _idempo_completed(entry: _IdempoEntry | None, now: float) -> bool:
-    return entry is not None and entry.task_id is not None and entry.exp >= now
-
-
-def _idempo_decide(key: str, now: float) -> tuple[str | None, bool, threading.Event | None]:
-    """Decide claim outcome under lock: (task_id, owner, wait_event)."""
-    entry = _idempo.get(key)
-    if _idempo_completed(entry, now) and entry is not None:
-        return entry.task_id, False, None
-    if entry is not None and entry.task_id is None:
-        return None, False, entry.ready
-    ready = threading.Event()
-    _idempo[key] = _IdempoEntry(None, now + _IDEMPOTENCY_TTL_SEC, ready)
-    return None, True, None
-
-
-def _idempo_wait(wait_ev: threading.Event | None, deadline: float) -> bool:
-    if wait_ev is None:
-        return False
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return False
-    return wait_ev.wait(timeout=remaining)
-
-
-def _idempo_begin(key: str) -> tuple[str | None, bool]:
-    """Reserve or observe an idempotency key.
-
-    Returns:
-      (task_id, False) when a completed entry is ready to return.
-      (None, True) when this caller owns dispatch and must complete/fail.
-      (None, False) when waiters timed out — caller should return 503.
-    """
-    deadline = time.monotonic() + _IDEMPOTENCY_WAIT_SEC
-    while True:
-        with _idempo_lock:
-            now = time.monotonic()
-            _idempo_prune_locked(now)
-            task_id, owner, wait_ev = _idempo_decide(key, now)
-            if task_id is not None or owner:
-                return task_id, owner
-        if not _idempo_wait(wait_ev, deadline):
-            return None, False
-
-
-def _idempo_complete(key: str, task_id: str) -> None:
-    with _idempo_lock:
-        now = time.monotonic()
-        entry = _idempo.get(key)
-        if entry is None:
-            ready = threading.Event()
-            ready.set()
-            _idempo[key] = _IdempoEntry(task_id, now + _IDEMPOTENCY_TTL_SEC, ready)
-        else:
-            entry.task_id = task_id
-            entry.exp = now + _IDEMPOTENCY_TTL_SEC
-            entry.ready.set()
-        _idempo_prune_locked(now)
-
-
-def _idempo_fail(key: str) -> None:
-    with _idempo_lock:
-        entry = _idempo.pop(key, None)
-        if entry is not None:
-            entry.ready.set()
-
-
-def _idempo_get(key: str) -> str | None:
-    """Return a completed cached task id, if present (test/helper)."""
-    with _idempo_lock:
-        now = time.monotonic()
-        _idempo_prune_locked(now)
-        entry = _idempo.get(key)
-        if not _idempo_completed(entry, now) or entry is None:
-            return None
-        return entry.task_id
-
-
-def _idempo_put(key: str, task_id: str) -> None:
-    """Store a completed task id (test/helper; refreshes TTL)."""
-    _idempo_complete(key, task_id)
-
-
 def _dispatch_extract(request: Request, kwargs: dict[str, Any]) -> str:
     apply_async = getattr(request.app.state, "apply_async", None)
     if apply_async is None:
@@ -299,54 +202,55 @@ def _bad_request(exc: Exception) -> JSONResponse:
     return JSONResponse({"error": msg}, status_code=400)
 
 
-def _idempotency_key(request: Request, kwargs: dict[str, Any]) -> str:
-    header = (request.headers.get("idempotency-key") or "").strip()
-    if header:
-        return header
-    return str(kwargs.get("session_id") or "")
-
-
 def _unavailable() -> JSONResponse:
     return JSONResponse({"error": "unavailable"}, status_code=503)
 
 
-async def _admit_idempo(idem_key: str) -> tuple[bool, Response | None]:
-    """Returns (owner, early_response). early_response is set when not dispatching."""
-    if not idem_key:
-        return False, None
-    existing, owner = await asyncio.to_thread(_idempo_begin, idem_key)
-    if existing is not None:
-        return False, JSONResponse({"task_id": existing}, status_code=202)
-    if not owner:
-        return False, _unavailable()
-    return True, None
-
-
-async def _clear_idempo_reservation(owner: bool, idem_key: str) -> None:
-    if owner and idem_key:
-        await asyncio.to_thread(_idempo_fail, idem_key)
-
-
-async def _dispatch_owned(
-    request: Request, kwargs: dict[str, Any], *, owner: bool, idem_key: str
-) -> Response:
+async def _claim_or_response(
+    ledger: Any, kwargs: dict[str, Any], idem_key: str
+) -> tuple[ClaimOutcome | None, Response | None]:
     try:
-        task_id = await _dispatch_extract_bounded(request, kwargs)
-    except DispatchBusyError:
-        await _clear_idempo_reservation(owner, idem_key)
-        return _unavailable()
+        outcome: ClaimOutcome = await ledger.claim(
+            org_id=UUID(kwargs["org_id"]),
+            agent_id=UUID(kwargs["agent_id"]),
+            key=idem_key,
+            request_hash=fingerprint_enqueue(kwargs),
+        )
     except Exception:
-        await _clear_idempo_reservation(owner, idem_key)
-        logger.exception("worker_enqueue_dispatch_failed")
-        return _unavailable()
-    if owner and idem_key:
-        await asyncio.to_thread(_idempo_complete, idem_key, task_id)
-    return JSONResponse({"task_id": task_id}, status_code=202)
+        logger.exception("worker_enqueue_idempotency_claim_failed")
+        return None, JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
+    response = _claim_outcome_response(outcome)
+    if response is not None:
+        return None, response
+    if outcome.claim is None:
+        return None, JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
+    return outcome, None
 
 
-async def enqueue_extraction(request: Request) -> Response:
+def _claim_outcome_response(outcome: ClaimOutcome) -> Response | None:
+    if outcome.kind == "replay":
+        return Response(
+            content=outcome.response or b"{}",
+            status_code=outcome.status or 202,
+            media_type="application/json",
+        )
+    if outcome.kind == "conflict":
+        return JSONResponse({"error": "idempotency_conflict"}, status_code=409)
+    if outcome.kind == "in_progress":
+        return JSONResponse(
+            {"error": "idempotency_in_progress"},
+            status_code=409,
+            headers={"Retry-After": str(outcome.retry_after or 1)},
+        )
+    return None
+
+
+async def _prepare_enqueue_request(
+    request: Request,
+) -> _ValidatedEnqueue | Response:
     settings: Settings = request.app.state.settings
-    if denied := _authorize(request, settings):
+    denied = _authorize(request, settings)
+    if denied is not None:
         return denied
     try:
         payload = await _read_json_limited(request)
@@ -354,18 +258,67 @@ async def enqueue_extraction(request: Request) -> Response:
     except (ValueError, TypeError) as exc:
         return _bad_request(exc)
 
-    idem_key = _idempotency_key(request, kwargs)
-    owner, early = await _admit_idempo(idem_key)
-    if early is not None:
-        return early
-    return await _dispatch_owned(request, kwargs, owner=owner, idem_key=idem_key)
+    idem_key = (request.headers.get("idempotency-key") or "").strip()
+    if not idem_key:
+        return JSONResponse({"error": "idempotency_key_required"}, status_code=400)
+    if len(idem_key) > 256:
+        return JSONResponse({"error": "idempotency_key_too_long"}, status_code=400)
+    ledger = getattr(request.app.state, "ledger", None)
+    if ledger is None:
+        return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
+    return _ValidatedEnqueue(kwargs, idem_key, ledger)
+
+
+async def _dispatch_and_finalize(
+    request: Request, ledger: Any, kwargs: dict[str, Any], outcome: ClaimOutcome
+) -> Response:
+    try:
+        task_id = await _dispatch_extract_bounded(request, kwargs)
+    except DispatchBusyError:
+        await _release_durable_claim(ledger, outcome)
+        return _unavailable()
+    except Exception:
+        await _release_durable_claim(ledger, outcome)
+        logger.exception("worker_enqueue_dispatch_failed")
+        return _unavailable()
+    body = json.dumps({"task_id": task_id}, separators=(",", ":")).encode("utf-8")
+    try:
+        await ledger.finalize(outcome.claim, status=202, response=body)
+    except Exception:
+        logger.exception("worker_enqueue_idempotency_finalize_failed")
+        return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
+    return Response(content=body, status_code=202, media_type="application/json")
+
+
+async def enqueue_extraction(request: Request) -> Response:
+    prepared = await _prepare_enqueue_request(request)
+    if isinstance(prepared, Response):
+        return prepared
+    outcome, response = await _claim_or_response(
+        prepared.ledger, prepared.kwargs, prepared.idempotency_key
+    )
+    if response is not None:
+        return response
+    if outcome is None:
+        return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
+    return await _dispatch_and_finalize(request, prepared.ledger, prepared.kwargs, outcome)
+
+
+async def _release_durable_claim(ledger: Any, outcome: ClaimOutcome) -> None:
+    try:
+        if outcome.claim is not None:
+            await ledger.release(outcome.claim)
+    except Exception:
+        logger.exception("worker_enqueue_idempotency_release_failed")
 
 
 def create_enqueue_app(
     settings: Settings | None = None,
     *,
     apply_async: Any | None = None,
+    ledger: Any | None = None,
 ) -> Starlette:
+    resolved_settings = settings or get_settings()
     app = Starlette(
         routes=[
             Route("/health", health, methods=["GET"]),
@@ -373,8 +326,12 @@ def create_enqueue_app(
             Route("/internal/extraction/enqueue", enqueue_extraction, methods=["POST"]),
         ]
     )
-    app.state.settings = settings or get_settings()
+    app.state.settings = resolved_settings
     app.state.apply_async = apply_async
+    if ledger is None and getattr(resolved_settings, "database_url", None):
+        engine = create_engine(resolved_settings)
+        ledger = PostgresIdempotencyLedger(create_session_factory(engine))
+    app.state.ledger = ledger
     app.state.task_name = TASK_EXTRACT_SESSION_MEMORIES
     return app
 
@@ -424,5 +381,3 @@ def reset_enqueue_http_for_tests() -> None:
     global _enqueue_started
     with _enqueue_lock:
         _enqueue_started = False
-    with _idempo_lock:
-        _idempo.clear()

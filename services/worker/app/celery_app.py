@@ -9,6 +9,7 @@ from kombu import Exchange, Queue
 from app.config import Settings, get_settings, queue_names
 from app.logging import configure_logging
 from app.task_names import (
+    TASK_BUDGET_RESERVATION_SWEEP,
     TASK_BUDGET_SPENT_ROLLUP,
     TASK_EMBEDDING_NOOP,
     TASK_EXTRACT_SESSION_MEMORIES,
@@ -34,6 +35,7 @@ TASK_ROUTES: dict[str, dict[str, str]] = {
     TASK_ORG_DELETE_ORGANIZATION: {"queue": "maintenance"},
     TASK_RECONCILE_USAGE_ACTUALS: {"queue": "maintenance"},
     TASK_BUDGET_SPENT_ROLLUP: {"queue": "maintenance"},
+    TASK_BUDGET_RESERVATION_SWEEP: {"queue": "maintenance"},
 }
 
 DEFAULT_QUEUE_NAME = "celery"
@@ -97,6 +99,11 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
             },
             "budget-spent-rollup": {
                 "task": TASK_BUDGET_SPENT_ROLLUP,
+                "schedule": schedule(run_every=cfg.maintenance_beat_seconds),
+                "options": {"queue": "maintenance"},
+            },
+            "budget-reservation-sweep": {
+                "task": TASK_BUDGET_RESERVATION_SWEEP,
                 "schedule": schedule(run_every=cfg.maintenance_beat_seconds),
                 "options": {"queue": "maintenance"},
             },

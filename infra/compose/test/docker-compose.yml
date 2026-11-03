@@ -1,7 +1,7 @@
 # Minimal stack for integration tests (Postgres + Redis + ClickHouse).
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: docker.io/pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ibex
       POSTGRES_PASSWORD: ibex
@@ -9,7 +9,7 @@ services:
       # HNSW build / incremental insert — give the container headroom on developer hosts.
       POSTGRES_INITDB_ARGS: "-E UTF8"
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     shm_size: "3gb"
     # Docker Desktop VM raised to ~8GiB for HNSW benches on this host.
     mem_limit: 6g
@@ -44,9 +44,9 @@ services:
       retries: 10
 
   redis:
-    image: redis/redis-stack:7.4.0-v1
+    image: docker.io/redis/redis-stack:7.4.0-v1
     ports:
-      - "6380:6379"
+      - "${REDIS_PORT:-6380}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -54,17 +54,17 @@ services:
       retries: 10
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8.14.39
+    image: docker.io/clickhouse/clickhouse-server:24.8.14.39
     environment:
       CLICKHOUSE_DB: ibex
       CLICKHOUSE_USER: default
       # Non-empty password required for host access (empty → default user is localhost-only).
       CLICKHOUSE_PASSWORD: ibextest
     ports:
-      - "8124:8123"
-      - "9003:9000"
+      - "${CLICKHOUSE_HTTP_PORT:-8124}:8123"
+      - "${CLICKHOUSE_NATIVE_HOST_PORT:-9000}:9000"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -Fxq Ok."]
       interval: 5s
       timeout: 5s
       retries: 10

@@ -58,7 +58,8 @@ def _build_profile_backend(settings: Settings) -> EmbeddingBackend:
     if profile == "hosted":
         return _build_hosted_backend(settings)
     logger.info("backend profile=%s using stub", profile)
-    return StubBackend.for_profile(profile)  # type: ignore[arg-type]
+    dimensions, model_id = settings.resolved_geometry()
+    return StubBackend(profile=profile, model_id=model_id, dimensions=dimensions)  # type: ignore[arg-type]
 
 
 def _wrap_with_cache(inner: EmbeddingBackend, settings: Settings) -> CachingEmbeddingBackend:

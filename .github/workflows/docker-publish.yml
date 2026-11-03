@@ -8,13 +8,15 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'services/**/Dockerfile'
+      - 'services/**/app/**'
+      - 'services/**/scripts/**'
       - 'services/auth/**'
       - 'services/proxy/**'
-      - 'services/embedder/**'
-      - 'services/mcp-memory/**'
-      - 'services/memory/**'
-      - 'services/api/**'
-      - 'services/worker/**'
+      - 'infra/provider-capabilities/**'
+      - 'services/**/pyproject.toml'
+      - 'services/**/uv.lock'
+      - 'services/**/requirements*.txt'
       - 'packages/**'
       - 'go.mod'
       - 'go.sum'
@@ -81,6 +83,7 @@ jobs:
       (github.event_name == 'pull_request') ||
       (github.event_name == 'workflow_call') ||
       (github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'push' && github.ref_type == 'tag') ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.head_repository.full_name == github.repository &&
        github.event.workflow_run.conclusion == 'success' &&
@@ -107,6 +110,12 @@ jobs:
           case "${{ github.event_name }}" in
             workflow_call|workflow_dispatch)
               tag="${INPUT_IMAGE_TAG}"
+              ;;
+            push)
+              # release-docker.yml calls this workflow on a tag push. GitHub keeps
+              # the caller's event (push), so inputs.image_tag carries the release
+              # tag; fall back to the ref name if a caller omits it.
+              tag="${INPUT_IMAGE_TAG:-${GITHUB_REF_NAME}}"
               ;;
             pull_request)
               # PR runs are scan-only; publish jobs are gated out.

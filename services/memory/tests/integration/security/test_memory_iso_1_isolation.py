@@ -42,6 +42,7 @@ async def test_memory_iso_1_1_cross_org_search_empty(
     org_b = security_env.orgs.org_b
     await upsert_embedding(
         security_env.store,
+        security_env.session_factory,
         org_id=org_a.org_id,
         memory_id=org_a.memory_id,
         hotspot=3,
@@ -177,6 +178,7 @@ async def test_memory_iso_1_5_hnsw_no_cross_org_leakage(
             org_id=org_a.org_id,
             embedding=vec,
             embedding_model="test",
+            expected_revision=1,
         )
     )
     await security_env.store.upsert(
@@ -185,6 +187,7 @@ async def test_memory_iso_1_5_hnsw_no_cross_org_leakage(
             org_id=org_b.org_id,
             embedding=vec,
             embedding_model="test",
+            expected_revision=1,
         )
     )
     for ef_search in (10, 40, 100):

@@ -28,6 +28,12 @@ class SearchMemoryHit(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    lifecycle_revision: int = 1
+    # Unresolved conflict escalations this memory belongs to. Two hits sharing
+    # one are the two sides of a pending contradiction; the read path already
+    # keeps only the higher-ranked side, and the field lets the context assembly
+    # apply the same rule across the hot + cold merge.
+    conflict_groups: list[UUID] = Field(default_factory=list)
 
 
 class SearchResultItem(BaseModel):

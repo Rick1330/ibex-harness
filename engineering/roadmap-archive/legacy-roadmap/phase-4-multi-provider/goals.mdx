@@ -1,0 +1,54 @@
+---
+title: "Phase 4 — Goals"
+description: "Production-ready operator platform goals, evidence contracts, world-class dashboard capability slices, and release gates."
+summary: "Production-ready operator platform goals, evidence contracts, world-class dashboard capability slices, and release gates."
+phase: "phase-4-multi-provider"
+---
+
+# Phase 4 — Goals
+
+> **Historical record (reconciled 2026-11-01).** Status claims on this page may predate ADR-0089 and ADR-0090. Use [RECONCILIATION.md](../RECONCILIATION.md) for the current crosswalk; do not read this page as current evidence.
+
+The goals below supersede the previous dashboard-first plan. Each goal states an observable product outcome and a verification boundary.
+
+## Track A — Management API Server
+
+The management API provides authenticated, tenant-isolated CRUD for organizations, users, agents, tokens, provider credentials, and model policies. Existing 4.A.1–4.A.5 milestones remain valid, but their OpenAPI output becomes an input to Track P and the generated operator client.
+
+## Track B — Rate Limiting & Quota Enforcement
+
+Track B continues to provide atomic RPM controls and configuration APIs. Monthly token usage and cost governance are moved into 4.P.4 and 4.D.6 because they require an immutable usage ledger rather than only Redis counters.
+
+## Track C — Multi-Provider Adapters & Resilience
+
+Track C provides provider parity, routing, circuit breakers, fallback policy, and streaming hardening. The user-confirmed 4.C.5 completion is the planning baseline. Release evidence must still include slow-client, bounded-buffer, leak, and provider-error normalization tests.
+
+## Track P — Operator Readiness, Evidence & Control Plane
+
+Track P is the required prerequisite track. Its objective is to turn architecture intent into enforceable runtime, identity, evidence, privacy, data, deployment, and test contracts.
+
+- **4.P.0 — Runtime Topology & Environment Contract:** choose and provision the live operator UI/API/SSE topology, origin policy, TLS, CORS/CSRF, cookies/tokens, health, readiness, drain, and stream ingress.
+- **4.P.1 — Identity, Tenancy & Authorization Assurance:** implement tenant context, sessions, refresh/revocation, role and resource authorization, step-up assurance, and negative isolation tests.
+- **4.P.2 — Canonical Evidence Plane & Durable Publication:** define OTel/W3C-compatible trace/span/event identity, typed provenance, checkpoint joins, transactional outbox, idempotent relays, and versioned read/stream contracts.
+- **4.P.3 — Privacy, Retention, Deletion & Audit Governance:** define capture/redaction policy, encrypted payload manifests, retention, deletion, legal hold, safe rendering, audit ledger, and evidence bundles.
+- **4.P.4 — Query, Usage & Cost Data Platform:** define shared query grammar, bounded query shapes, freshness/completeness semantics, immutable usage facts, rate-card versions, reconciliation, alerts, and enforcement inputs.
+- **4.P.5 — Production Platform, Recovery & Supply Chain:** implement executable deployment, probes, resources, rollout/rollback, backup/PITR, restore drills, SLOs, chaos, SBOM, provenance, signatures, and admission verification.
+- **4.P.6 — Contract & Assurance Harness:** generate clients, snapshot contracts, run golden fixtures, tenant/security/accessibility/E2E/load tests, and make evidence-producing gates required in CI or staging.
+
+## Track D — Operator Capability Slices
+
+Track D is no longer a generic dashboard feature list. Every milestone is a thin vertical slice with backend contract, UX behavior, tests, telemetry, and rollback.
+
+- **4.D.1 — Authenticated Shell & Operational Overview:** real operator origin, organization context, navigation, global search entry, health/freshness state, and read-only operational overview.
+- **4.D.2 — Explore & Provenance Trace Inspector:** global high-cardinality-safe exploration and the auditable context-and-policy provenance debugger.
+- **4.D.3 — Sessions, Memory, Context & Safe Replay Evidence:** session reconstruction, memory/context evidence, graph lineage, governed export/delete, and sandboxed replay.
+- **4.D.4 — Failures, Incidents & Evidence Bundles:** failure projection, incident lifecycle, ownership, timeline, linked traces, and signed postmortem bundles.
+- **4.D.5 — Directives, Routing, Experiments & Controlled Actions:** versioned directives, routing decision provenance, evaluation-linked promotion, previews, approvals, rollback, and drift integration when its producer contract exists.
+- **4.D.6 — Usage, Cost Governance & Capacity:** reconciled usage/cost, rate cards, budgets, soft/hard caps, queue/resource capacity, and explainable cost decisions.
+
+## Track E — Release Readiness & Phase Exit
+
+- **4.E.1 — Environment, Fixtures & Required CI:** deploy the operator test environment, seed tenants/roles, install browsers, run OpenAPI/Playwright/axe/keyboard suites, and publish evidence artifacts.
+- **4.E.2 — Reliability, Resilience & Recovery Gate:** run load, slow-client, provider failure, queue, database, backup/restore, chaos, and rollback scenarios against declared SLO/RPO/RTO.
+- **4.E.3 — Staged Rollout & Operator Readiness:** perform dark launch, 1%, 10%, 25%, and 100% promotion with bake windows, abort thresholds, on-call ownership, runbooks, and support exports.
+- **4.E.4 — Phase 4 Findings Register & Sign-off:** certify the evidence set, close P0 gaps, assign residual P1/P2 risks, and publish the final phase record.

@@ -2,8 +2,6 @@ package evidenceoutbox
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,8 +14,9 @@ import (
 )
 
 type stubDeliverer struct {
-	err error
-	n   int
+	err   error
+	n     int
+	fence *TombstoneFence
 }
 
 func (s *stubDeliverer) Deliver(_ context.Context, _ OutboxRow) error {
@@ -25,9 +24,32 @@ func (s *stubDeliverer) Deliver(_ context.Context, _ OutboxRow) error {
 	return s.err
 }
 
-func validPayloadDigest(payload []byte) string {
-	digest := sha256.Sum256(payload)
-	return hex.EncodeToString(digest[:])
+func (s *stubDeliverer) DeliverWithTombstoneFence(
+	ctx context.Context, row OutboxRow, fence TombstoneFence,
+) error {
+	s.fence = &fence
+	return s.Deliver(ctx, row)
+}
+
+func validRelayPayload() []byte {
+	return relayPayloadWithClass(RedactionClassMetadata)
+}
+
+func relayPayloadWithClass(class RedactionClass) []byte {
+	return relayPayloadWithFence(class, TombstoneFence{
+		ResourceType: "memory", ResourceID: "mem-1", ResourceVersion: 1,
+	})
+}
+
+func relayPayloadWithFence(class RedactionClass, fence TombstoneFence) []byte {
+	return []byte(fmt.Sprintf(
+		`{"redaction_class":%q,"tombstone_fence":{"resource_type":%q,"resource_id":%q,"resource_version":%d}}`,
+		class, fence.ResourceType, fence.ResourceID, fence.ResourceVersion,
+	))
+}
+
+func relayPayloadWithoutClass() []byte {
+	return []byte(`{"tombstone_fence":{"resource_type":"memory","resource_id":"mem-1","resource_version":1}}`)
 }
 
 func TestUnit_NewRelay_RequiresDeps(t *testing.T) {
@@ -78,11 +100,20 @@ func (d *idempotentReplayDeliverer) Deliver(_ context.Context, row OutboxRow) er
 	if d.effects == nil {
 		d.effects = map[string]int{}
 	}
-	key := row.EventID.String() + ":" + fmt.Sprint(row.AggregateSeq)
+	key := row.OrgID.String() + ":" + row.EventID.String() + ":" + fmt.Sprint(row.AggregateSeq)
 	if d.effects[key] == 0 {
 		d.effects[key] = 1
 	}
 	return nil
+}
+
+func (d *idempotentReplayDeliverer) DeliverWithTombstoneFence(
+	ctx context.Context, row OutboxRow, fence TombstoneFence,
+) error {
+	if row.TombstoneFence == nil || *row.TombstoneFence != fence {
+		return errTombstoneFenceInvalid
+	}
+	return d.Deliver(ctx, row)
 }
 
 func TestUnit_ProcessBatch_AckLossReplaysWithIdempotentEffect(t *testing.T) {
@@ -102,12 +133,13 @@ func TestUnit_ProcessBatch_AckLossReplaysWithIdempotentEffect(t *testing.T) {
 	eventID := uuid.New()
 	now := time.Now()
 	row := func(attempts int) *sqlmock.Rows {
+		payload := validRelayPayload()
 		return sqlmock.NewRows([]string{
 			"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
-			"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
+			"event_type", "payload", "payload_digest", "payload_digest_scheme", "delivery_status", "attempts", "available_at",
 			"last_error", "created_at", "delivered_at",
 		}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-			[]byte(`{}`), validPayloadDigest([]byte(`{}`)), StatusInFlight, attempts, now, "", now, nil)
+			payload, validPayloadDigest(payload), PayloadDigestSchemeJCSV1, StatusInFlight, attempts, now, "", now, nil)
 	}
 
 	// The sink applies the event, but the relay loses the acknowledgement.
@@ -147,13 +179,14 @@ func expectClaimAndAck(mock sqlmock.Sqlmock) uuid.UUID {
 	org := uuid.New()
 	eventID := uuid.New()
 	now := time.Now()
+	payload := validRelayPayload()
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{
 		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
-		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
+		"event_type", "payload", "payload_digest", "payload_digest_scheme", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		[]byte(`{}`), validPayloadDigest([]byte(`{}`)), StatusInFlight, 1, now, "", now, nil)
+		payload, validPayloadDigest(payload), PayloadDigestSchemeJCSV1, StatusInFlight, 1, now, "", now, nil)
 	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(2).WillReturnRows(rows)
 	mock.ExpectCommit()
 	mock.ExpectBegin()
@@ -175,6 +208,18 @@ func assertDeliveredOnce(t *testing.T, res RelayBatchResult, d *stubDeliverer) {
 	if d.n != 1 {
 		t.Fatalf("deliveries=%d", d.n)
 	}
+	if d.fence == nil {
+		t.Fatal("nil fence passed to deliverer")
+	}
+	if d.fence.ResourceType != "memory" {
+		t.Fatalf("fence resource type=%q want memory", d.fence.ResourceType)
+	}
+	if d.fence.ResourceID != "mem-1" {
+		t.Fatalf("fence resource id=%q want mem-1", d.fence.ResourceID)
+	}
+	if d.fence.ResourceVersion != 1 {
+		t.Fatalf("fence passed to deliverer=%+v", d.fence)
+	}
 }
 
 func TestUnit_ProcessBatch_DeliverFailureOutcomes(t *testing.T) {
@@ -187,6 +232,12 @@ func TestUnit_ProcessBatch_DeliverFailureOutcomes(t *testing.T) {
 		{
 			name: "poison_at_max", attempts: 2, maxAttempts: 2,
 			wantPoisoned: 1, markStatus: StatusPoison,
+		},
+		{
+			name: "poison_on_unsupported_fence_resource", attempts: 1, maxAttempts: 5,
+			wantPoisoned: 1, markStatus: StatusPoison,
+			deliverErr:  fmt.Errorf("relay fence: %w", ErrUnsupportedFenceResource),
+			wantErrText: "relay fence: evidenceoutbox: unsupported fence resource type",
 		},
 	}
 	for _, tc := range cases {
@@ -204,6 +255,8 @@ type deliverFailureCase struct {
 	wantFailed   int
 	wantPoisoned int
 	markStatus   string
+	deliverErr   error
+	wantErrText  string
 }
 
 func runDeliverFailureCase(t *testing.T, tc deliverFailureCase) {
@@ -213,7 +266,13 @@ func runDeliverFailureCase(t *testing.T, tc deliverFailureCase) {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	d := &stubDeliverer{err: errors.New("sink down")}
+	deliverErr := tc.deliverErr
+	wantErrText := tc.wantErrText
+	if deliverErr == nil {
+		deliverErr = errors.New("sink down")
+		wantErrText = "sink down"
+	}
+	d := &stubDeliverer{err: deliverErr}
 	relay, err := NewRelay(db, d, RelayConfig{BatchSize: 1, MaxAttempts: tc.maxAttempts})
 	if err != nil {
 		t.Fatal(err)
@@ -223,19 +282,20 @@ func runDeliverFailureCase(t *testing.T, tc deliverFailureCase) {
 	org := uuid.New()
 	eventID := uuid.New()
 	now := time.Now()
+	payload := validRelayPayload()
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{
 		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
-		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
+		"event_type", "payload", "payload_digest", "payload_digest_scheme", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		[]byte(`{}`), validPayloadDigest([]byte(`{}`)), StatusInFlight, tc.attempts, now, "", now, nil)
+		payload, validPayloadDigest(payload), PayloadDigestSchemeJCSV1, StatusInFlight, tc.attempts, now, "", now, nil)
 	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
 	mock.ExpectCommit()
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(`evidence_outbox_mark_failure`).
-		WithArgs(id, tc.attempts, tc.markStatus, "sink down", sqlmock.AnyArg()).
+		WithArgs(id, tc.attempts, tc.markStatus, wantErrText, sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
 	mock.ExpectCommit()
 
@@ -264,13 +324,14 @@ func TestUnit_ProcessBatch_InvalidTenantRowNeverReachesSink(t *testing.T) {
 	id := uuid.New()
 	eventID := uuid.New()
 	now := time.Now()
+	payload := validRelayPayload()
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{
 		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
-		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
+		"event_type", "payload", "payload_digest", "payload_digest_scheme", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, uuid.Nil, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		[]byte(`{}`), validPayloadDigest([]byte(`{}`)), StatusInFlight, 1, now, "", now, nil)
+		payload, validPayloadDigest(payload), PayloadDigestSchemeJCSV1, StatusInFlight, 1, now, "", now, nil)
 	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
 	mock.ExpectCommit()
 	mock.ExpectBegin()
@@ -283,13 +344,62 @@ func TestUnit_ProcessBatch_InvalidTenantRowNeverReachesSink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPoisonedWithoutDelivery(t, res, d)
+	assertPoisonedWithoutDelivery(t, res, d.n)
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func assertPoisonedWithoutDelivery(t *testing.T, res RelayBatchResult, d *stubDeliverer) {
+type legacyOnlyDeliverer struct{ n int }
+
+func (d *legacyOnlyDeliverer) Deliver(context.Context, OutboxRow) error {
+	d.n++
+	return nil
+}
+
+func TestUnit_ProcessBatch_RejectsUnsafeContractsBeforeSink(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name           string
+		payload        []byte
+		wantErr        string
+		legacyOnlySink bool
+	}{
+		{name: "missing class", payload: relayPayloadWithoutClass(), wantErr: errRedactionUnclassified.Error()},
+		{name: "malformed payload", payload: []byte("{"), wantErr: errRedactionUnclassified.Error()},
+		{name: "redacted class", payload: relayPayloadWithClass(RedactionClassRedacted), wantErr: errRedactionNotProjectable.Error()},
+		{name: "prohibited class", payload: relayPayloadWithClass(RedactionClassProhibited), wantErr: errRedactionProhibited.Error()},
+		{
+			name: "unsupported class", payload: relayPayloadWithClass(RedactionClass("future")),
+			wantErr: fmt.Sprintf("%s: %q", errRedactionUnsupported, RedactionClass("future")),
+		},
+		{name: "missing fence", payload: []byte(`{"redaction_class":"metadata"}`), wantErr: errTombstoneFenceMissing.Error()},
+		{
+			name:    "empty fence resource type",
+			payload: relayPayloadWithFence(RedactionClassMetadata, TombstoneFence{ResourceID: "mem-1", ResourceVersion: 1}),
+			wantErr: errTombstoneFenceInvalid.Error(),
+		},
+		{
+			name:    "empty fence resource id",
+			payload: relayPayloadWithFence(RedactionClassMetadata, TombstoneFence{ResourceType: "memory", ResourceVersion: 1}),
+			wantErr: errTombstoneFenceInvalid.Error(),
+		},
+		{
+			name:    "nonpositive fence version",
+			payload: relayPayloadWithFence(RedactionClassMetadata, TombstoneFence{ResourceType: "memory", ResourceID: "mem-1"}),
+			wantErr: errTombstoneFenceInvalid.Error(),
+		},
+		{name: "sink lacks fence hook", payload: validRelayPayload(), wantErr: errFencedDeliveryRequired.Error(), legacyOnlySink: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runUnsafeContractCase(t, tc)
+		})
+	}
+}
+
+func assertPoisonedWithoutDelivery(t *testing.T, res RelayBatchResult, sinkCalls int) {
 	t.Helper()
 	if res.Delivered != 0 {
 		t.Fatalf("delivered=%d want 0", res.Delivered)
@@ -300,14 +410,15 @@ func assertPoisonedWithoutDelivery(t *testing.T, res RelayBatchResult, d *stubDe
 	if res.Poisoned != 1 {
 		t.Fatalf("poisoned=%d want 1", res.Poisoned)
 	}
-	if d.n != 0 {
-		t.Fatalf("deliveries=%d want 0", d.n)
+	if sinkCalls != 0 {
+		t.Fatalf("deliveries=%d want 0", sinkCalls)
 	}
 }
 
 func TestUnit_ValidateOutboxRow_RejectsMalformedDigest(t *testing.T) {
 	t.Parallel()
-	row := OutboxRow{ID: uuid.New(), OrgID: uuid.New(), EventID: uuid.New(), AggregateID: "agg", AggregateSeq: 1, SchemaVersion: SchemaVersion, EventType: EventTypeRunCommitted, Payload: []byte(`{}`), PayloadDigest: "not-a-sha256-digest"}
+	payload := validRelayPayload()
+	row := OutboxRow{ID: uuid.New(), OrgID: uuid.New(), EventID: uuid.New(), AggregateID: "agg", AggregateSeq: 1, SchemaVersion: SchemaVersion, EventType: EventTypeRunCommitted, Payload: payload, PayloadDigestScheme: PayloadDigestSchemeJCSV1, PayloadDigest: "not-a-sha256-digest"}
 	if err := validateOutboxRow(row); err == nil || !strings.Contains(err.Error(), "payload_digest") {
 		t.Fatalf("err=%v want payload digest validation error", err)
 	}
@@ -315,11 +426,12 @@ func TestUnit_ValidateOutboxRow_RejectsMalformedDigest(t *testing.T) {
 
 func TestUnit_ValidateOutboxRow_RejectsDigestMismatch(t *testing.T) {
 	t.Parallel()
-	payload := []byte(`{"value":"trusted"}`)
+	payload := validRelayPayload()
 	row := OutboxRow{
 		ID: uuid.New(), OrgID: uuid.New(), EventID: uuid.New(), AggregateID: "agg", AggregateSeq: 1,
 		SchemaVersion: SchemaVersion, EventType: EventTypeRunCommitted,
-		Payload: payload, PayloadDigest: validPayloadDigest([]byte(`{"value":"tampered"}`)),
+		Payload: payload, PayloadDigestScheme: PayloadDigestSchemeJCSV1,
+		PayloadDigest: validPayloadDigest([]byte(`{"value":"tampered"}`)),
 	}
 	if err := validateOutboxRow(row); err == nil || !strings.Contains(err.Error(), "does not match payload") {
 		t.Fatalf("err=%v want payload digest mismatch", err)
@@ -328,11 +440,12 @@ func TestUnit_ValidateOutboxRow_RejectsDigestMismatch(t *testing.T) {
 
 func TestUnit_ValidateOutboxRow_AcceptsUppercaseDigest(t *testing.T) {
 	t.Parallel()
-	payload := []byte(`{"value":"trusted"}`)
+	payload := validRelayPayload()
 	row := OutboxRow{
 		ID: uuid.New(), OrgID: uuid.New(), EventID: uuid.New(), AggregateID: "agg", AggregateSeq: 1,
 		SchemaVersion: SchemaVersion, EventType: EventTypeRunCommitted,
-		Payload: payload, PayloadDigest: strings.ToUpper(validPayloadDigest(payload)),
+		Payload: payload, PayloadDigestScheme: PayloadDigestSchemeJCSV1,
+		PayloadDigest: strings.ToUpper(validPayloadDigest(payload)),
 	}
 	if err := validateOutboxRow(row); err != nil {
 		t.Fatalf("uppercase digest should be accepted: %v", err)
@@ -387,5 +500,57 @@ func TestUnit_TruncErr_UTF8SafeCap(t *testing.T) {
 	}
 	if !utf8.ValidString(got) {
 		t.Fatalf("split rune: %q", got)
+	}
+}
+
+func runUnsafeContractCase(t *testing.T, tc struct {
+	name           string
+	payload        []byte
+	wantErr        string
+	legacyOnlySink bool
+}) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var deliverer Deliverer
+	var sinkCalls func() int
+	if tc.legacyOnlySink {
+		legacy := &legacyOnlyDeliverer{}
+		deliverer = legacy
+		sinkCalls = func() int { return legacy.n }
+	} else {
+		stub := &stubDeliverer{}
+		deliverer = stub
+		sinkCalls = func() int { return stub.n }
+	}
+	relay, err := NewRelay(db, deliverer, RelayConfig{BatchSize: 1, MaxAttempts: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, org, eventID, now := uuid.New(), uuid.New(), uuid.New(), time.Now()
+	mock.ExpectBegin()
+	rows := sqlmock.NewRows([]string{
+		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
+		"event_type", "payload", "payload_digest", "payload_digest_scheme", "delivery_status", "attempts", "available_at",
+		"last_error", "created_at", "delivered_at",
+	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
+		tc.payload, validPayloadDigest(tc.payload), PayloadDigestSchemeJCSV1, StatusInFlight, 1, now, "", now, nil)
+	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`evidence_outbox_mark_failure`).WithArgs(
+		id, 1, StatusPoison, tc.wantErr, sqlmock.AnyArg(),
+	).WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
+	mock.ExpectCommit()
+
+	res, err := relay.ProcessBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPoisonedWithoutDelivery(t, res, sinkCalls())
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Annotated, TypeVar
 
 from fastapi import Depends, Header, HTTPException, Request
+from ibex_idempotency import PostgresIdempotencyLedger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.client import TokenValidator, ValidateResult, parse_authorization_header
@@ -13,7 +14,9 @@ from app.auth.errors import AuthFailedError, AuthUnavailableError
 from app.feedback.service import MemoryFeedbackService
 from app.permissions import MEMORY_READ, MEMORY_WRITE, has_permission
 from app.read.hot_cache import MemoryHotCacheReader
+from app.read.lineage import MemoryLineageRepository
 from app.read.repository import MemoryReadRepository
+from app.write.cache import MemoryCacheWriter
 from app.write.orchestrator import MemoryWriteOrchestrator
 
 _T = TypeVar("_T")
@@ -43,9 +46,7 @@ def get_validator(request: Request) -> TokenValidator:
 
 
 def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
-    return _require_memory_component(
-        request, "session_factory", message="Database not configured"
-    )
+    return _require_memory_component(request, "session_factory", message="Database not configured")
 
 
 def get_write_orchestrator(request: Request) -> MemoryWriteOrchestrator:
@@ -102,9 +103,7 @@ def require_memory_read(
 
 
 def get_read_repository(request: Request) -> MemoryReadRepository:
-    return _require_memory_component(
-        request, "read_repository", message="Read path not configured"
-    )
+    return _require_memory_component(request, "read_repository", message="Read path not configured")
 
 
 def get_embedding_client(request: Request):
@@ -113,8 +112,8 @@ def get_embedding_client(request: Request):
     )
 
 
-def get_idempotency_store(request: Request):
-    return _optional_memory_component(request, "idempotency_store")
+def get_idempotency_ledger(request: Request):
+    return _optional_memory_component(request, "idempotency_ledger")
 
 
 def get_redis(request: Request):
@@ -125,7 +124,7 @@ def get_redis(request: Request):
 class CreateMemoryContext:
     token: ValidateResult
     orchestrator: MemoryWriteOrchestrator
-    idempotency_store: object | None
+    idempotency_ledger: PostgresIdempotencyLedger | None
     idempotency_key: str | None
 
 
@@ -148,6 +147,25 @@ class HotMemoryContext:
 class FeedbackMemoryContext:
     token: ValidateResult
     feedback_service: MemoryFeedbackService
+
+
+@dataclass(frozen=True, slots=True)
+class LineageMemoryContext:
+    token: ValidateResult
+    lineage_repository: MemoryLineageRepository
+
+
+def get_lineage_repository(request: Request) -> MemoryLineageRepository:
+    return _require_memory_component(
+        request, "lineage_repository", message="Lineage read path not configured"
+    )
+
+
+def get_lineage_memory_context(
+    token: Annotated[ValidateResult, Depends(require_memory_read)],
+    lineage_repository: Annotated[MemoryLineageRepository, Depends(get_lineage_repository)],
+) -> LineageMemoryContext:
+    return LineageMemoryContext(token=token, lineage_repository=lineage_repository)
 
 
 def get_feedback_service(request: Request) -> MemoryFeedbackService:
@@ -191,13 +209,13 @@ def get_hot_memory_context(
 def get_create_memory_context(
     token: Annotated[ValidateResult, Depends(require_memory_write)],
     orchestrator: Annotated[MemoryWriteOrchestrator, Depends(get_write_orchestrator)],
-    idempotency_store: Annotated[object | None, Depends(get_idempotency_store)],
+    idempotency_ledger: Annotated[PostgresIdempotencyLedger | None, Depends(get_idempotency_ledger)],
     idempotency_key: Annotated[str | None, Header(alias="X-Idempotency-Key")] = None,
 ) -> CreateMemoryContext:
     return CreateMemoryContext(
         token=token,
         orchestrator=orchestrator,
-        idempotency_store=idempotency_store,
+        idempotency_ledger=idempotency_ledger,
         idempotency_key=idempotency_key,
     )
 
@@ -207,3 +225,7 @@ def get_feedback_memory_context(
     feedback_service: Annotated[MemoryFeedbackService, Depends(get_feedback_service)],
 ) -> FeedbackMemoryContext:
     return FeedbackMemoryContext(token=token, feedback_service=feedback_service)
+
+
+def get_memory_cache_writer(request: Request) -> MemoryCacheWriter | None:
+    return _optional_memory_component(request, "cache_writer")  # type: ignore[return-value]

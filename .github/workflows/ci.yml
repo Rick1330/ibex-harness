@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       force_full:
@@ -75,8 +77,19 @@ jobs:
       - name: Repo layout guard
         run: bash .github/scripts/check-repo-layout.sh
 
+      - name: Repo layout guard regression tests
+        run: bash .github/scripts/test-check-repo-layout.sh
+
       - name: CI aggregate gate regression tests
         run: bash .github/scripts/test-ci-gate.sh
+
+      - name: PR tracking guard regression tests
+        run: bash .github/scripts/test-check-pr-tracking.sh
+
+      - name: CI tiering policy tests
+        run: bash infra/scripts/test-ci-tiering.sh
+      - name: Bundle smoke URL guard tests
+        run: bash infra/scripts/test-bundle-smoke-url.sh
 
       - name: Required CI gate inventory guard
         run: bash .github/scripts/check-required-ci-gates.sh
@@ -95,14 +108,8 @@ jobs:
       - name: Landing hero assets guard
         run: bash .github/scripts/check-landing-assets.sh
 
-      - name: Static export guards
-        run: bash .github/scripts/check-static-export.sh
-
       - name: Provider credential schema leak guard
         run: bash .github/scripts/check-provider-credential-leak.sh
-
-      - name: Search index size-limit sync guard
-        run: bash .github/scripts/check-search-index-limit-sync.sh
 
       - name: Validate action pins
         env:
@@ -132,7 +139,7 @@ jobs:
     outputs:
       go: ${{ steps.detect.outputs.go }}
       python: ${{ steps.detect.outputs.python }}
-      web: ${{ steps.detect.outputs.web }}
+      site: ${{ steps.detect.outputs.site }}
       console: ${{ steps.detect.outputs.console }}
       proto: ${{ steps.detect.outputs.proto }}
       docker: ${{ steps.detect.outputs.docker }}
@@ -145,7 +152,7 @@ jobs:
       full: ${{ steps.detect.outputs.full }}
       run_go: ${{ steps.detect.outputs.run_go }}
       run_python: ${{ steps.detect.outputs.run_python }}
-      run_web: ${{ steps.detect.outputs.run_web }}
+      run_site: ${{ steps.detect.outputs.run_site }}
       run_console: ${{ steps.detect.outputs.run_console }}
       run_security: ${{ steps.detect.outputs.run_security }}
       run_docker: ${{ steps.detect.outputs.run_docker }}
@@ -160,7 +167,7 @@ jobs:
         uses: ./.github/actions/detect-changes
         with:
           fetch-depth: ${{ github.event_name == 'push' && '2' || '0' }}
-          force-full: ${{ github.event_name == 'workflow_dispatch' && inputs.force_full == true }}
+          force-full: ${{ github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.force_full == true) }}
 
   markdown:
     name: markdownlint
@@ -358,7 +365,7 @@ jobs:
       - name: Generate stubs (ephemeral; not committed)
         working-directory: packages/proto
         run: buf generate
-      - uses: ./.github/actions/setup-pnpm-web
+      - uses: ./.github/actions/setup-pnpm-node
       - name: Type-check generated TypeScript stubs
         run: pnpm exec tsc -p packages/proto/tsconfig.json
       - name: Contract unit tests
@@ -477,14 +484,14 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: Migrate up twice (idempotent)
         env:
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           go run ./infra/migrations/postgres/cmd/migrate -command up
           go run ./infra/migrations/postgres/cmd/migrate -command up
           go run ./infra/migrations/postgres/cmd/migrate -command version
       - name: Integration tests (RLS, schema)
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/db-migrate-integration.xml -- \
             -tags=integration -count=1 ./infra/migrations/postgres/...
@@ -546,7 +553,7 @@ jobs:
           done
       - name: Migrate up
         env:
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
       - name: Auth unit tests
         run: |
@@ -564,7 +571,7 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: Auth integration tests
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/auth-smoke-integration.xml -- \
             -tags=integration -count=1 ./services/auth/...
@@ -621,7 +628,7 @@ jobs:
         run: buf generate
       - name: Migrate up
         env:
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
       - name: Proxy unit tests
         run: |
@@ -639,7 +646,7 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: Proxy auth integration tests
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/proxy-auth-integration.xml -- \
             -tags=integration -count=1 -p 1 ./services/proxy/...
@@ -655,7 +662,7 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: Proxy memory integration tests (3.5.D.6)
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           count=$(go test -tags=integration -list '^TestMemoryIntegration_' ./services/proxy | grep -c '^TestMemoryIntegration_' || true)
           if [ "$count" -lt 3 ]; then
@@ -717,7 +724,7 @@ jobs:
         run: buf generate
       - name: Migrate up
         env:
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
       - name: Proxy agent verification unit tests
         run: |
@@ -735,7 +742,7 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: Proxy agent verification integration tests
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           count=$(go test -tags=integration -list '^TestSecurity_SEC[23]_' ./services/proxy | grep -c '^TestSecurity_SEC' || true)
           if [ "$count" -lt 10 ]; then
@@ -797,11 +804,11 @@ jobs:
         run: buf generate
       - name: Migrate up
         env:
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
       - name: Phase 1 security integration suite (M1.5.1)
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           count=$(go test -tags=integration -list '^TestSecurity_' ./services/proxy | grep -c '^TestSecurity_' || true)
           if [ "$count" -lt 30 ]; then
@@ -894,7 +901,7 @@ jobs:
       - name: Race detector (unit tests)
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/go-race.xml -- \
-            -race -timeout=120s -count=1 ./packages/... ./services/auth/... ./services/proxy/...
+            -race -timeout=120s -count=1 ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
       - name: Upload test results to Trunk (go-race)
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -906,6 +913,111 @@ jobs:
         env:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
 
+  benchmark-gate:
+    name: benchmark-gate
+    needs: [changes]
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.run_go == 'true' || needs.changes.outputs.benchmarks == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: ./.github/actions/setup-buf
+      - name: Generate protobuf stubs (PR head)
+        working-directory: packages/proto
+        run: buf generate
+      - name: Run benchmark pipeline unit tests
+        run: |
+          set -euo pipefail
+          go test ./benchmarks/go/...
+          python benchmarks/scripts/test_pipeline.py
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Set up context artifact test runtime
+        run: |
+          bash infra/scripts/context-uv-sync.sh
+          uv pip install --python services/context/.venv/bin/python \
+            --only-binary :all: --require-hashes \
+            -r .github/requirements/jsonschema.txt
+      - name: Run context artifact unit tests
+        run: services/context/.venv/bin/python -m pytest benchmarks/scripts/test_context_assembly_artifact.py
+      - name: Prepare base-branch worktree
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          base_ref="${BASE_REF:-main}"
+          git fetch --no-tags origin "${base_ref}:refs/remotes/origin/${base_ref}"
+          base_dir="$RUNNER_TEMP/ibex-benchmark-base"
+          rm -rf "$base_dir"
+          git worktree add --detach "$base_dir" "origin/${base_ref}"
+          (
+            cd "$base_dir/packages/proto"
+            buf generate
+          )
+          mkdir -p benchmarks/output
+          out="$GITHUB_WORKSPACE/benchmarks/output"
+          : > "$out/go-bench-head.txt"
+          : > "$out/go-bench-base.txt"
+      - name: Run alternating PR-head and base-branch Go benchmarks
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/benchmarks/output"
+          base_dir="$RUNNER_TEMP/ibex-benchmark-base"
+          for _ in 1 2 3 4 5; do
+            go test ./benchmarks/go -run=^$ -bench='^BenchmarkProxyOverhead$' -benchmem -count=1 \
+              >> "$out/go-bench-head.txt"
+            (
+              cd "$base_dir"
+              go test ./benchmarks/go -run=^$ -bench='^BenchmarkProxyOverhead$' -benchmem -count=1 \
+                >> "$out/go-bench-base.txt"
+            )
+            go test ./services/proxy/internal/http -run=^$ -bench='^BenchmarkProxyChatOverhead$' \
+              -benchmem -count=1 >> "$out/go-bench-head.txt"
+            (
+              cd "$base_dir"
+              go test ./services/proxy/internal/http -run=^$ -bench='^BenchmarkProxyChatOverhead$' \
+                -benchmem -count=1 >> "$out/go-bench-base.txt"
+            )
+          done
+      - name: Enforce Go benchmark regression gate
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          base_ref="${BASE_REF:-main}"
+          python benchmarks/scripts/go_bench_gate.py \
+            --base benchmarks/output/go-bench-base.txt \
+            --head benchmarks/output/go-bench-head.txt \
+            --base-ref "origin/${base_ref}" \
+            --tolerance-pct 20 \
+            --output benchmarks/output/go-bench-gate.json \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Upload benchmark gate evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-benchmark-gate
+          path: |
+            benchmarks/output/go-bench-base.txt
+            benchmarks/output/go-bench-head.txt
+            benchmarks/output/go-bench-gate.json
+          if-no-files-found: warn
+
   go-services:
     name: go-services
     needs: [changes, proto-contract]
@@ -915,7 +1027,7 @@ jobs:
       contents: read
     strategy:
       matrix:
-        service: [auth, proxy]
+        service: [auth, proxy, relay]
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -960,6 +1072,73 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: go build
         run: go build -o /dev/null ./services/${{ matrix.service }}/cmd/${{ matrix.service }}
+
+  relay-integration:
+    name: relay-integration
+    needs: [changes, proto-contract, db-migrate-smoke]
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        # pgvector 0.8.6 on PostgreSQL 16 — immutable pin of
+        # pgvector/pgvector:0.8.6-pg16 (mutable :pg16 must not be used in CI).
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/setup-gotestsum
+      - uses: ./.github/actions/setup-buf
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
+      - name: Migrate up
+        env:
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+        run: go run ./infra/migrations/postgres/cmd/migrate -command up
+      - name: Relay integration tests (fence authority + tombstone-fenced delivery)
+        env:
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+        run: |
+          bash infra/scripts/go-test-gotestsum.sh test-results/junit/relay-integration.xml -- \
+            -tags=integration -count=1 -p 1 ./services/relay/...
+      - name: Idempotency ledger integration tests (real PostgreSQL)
+        env:
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+        run: |
+          bash infra/scripts/go-test-gotestsum.sh test-results/junit/idempotency-ledger-integration.xml -- \
+            -tags=integration -count=1 -p 1 ./packages/idempotency/...
+      - name: Upload test results to Trunk (relay-integration)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/trunk-upload-junit
+        with:
+          junit-paths: test-results/junit/relay-integration.xml
+          variant: relay-integration
+          org-slug: ${{ secrets.TRUNK_ORG_URL_SLUG }}
+        env:
+          TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
 
   embedder-test:
     name: embedder-test
@@ -1038,6 +1217,58 @@ jobs:
       - name: MCP memory unit tests (pytest + ruff)
         run: bash infra/scripts/mcp-memory-test-ci.sh
 
+  mcp-gateway-test:
+    name: mcp-gateway-test
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - name: MCP gateway enforcement-core tests (pytest + ruff)
+        run: bash infra/scripts/mcp-gateway-test-ci.sh
+
+  mcp-operator-test:
+    name: mcp-operator-test
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - name: MCP operator gateway unit tests (pytest + ruff + coverage)
+        run: bash infra/scripts/mcp-operator-test-ci.sh
+
   memory-test:
     name: memory-test
     needs: changes
@@ -1094,6 +1325,9 @@ jobs:
       - name: Check API mounted-route inventory freshness
         run: services/api/.venv/bin/python services/api/scripts/route_inventory.py --check
 
+      - name: Release manifest tests
+        run: uv run --no-project --no-build --with-requirements infra/scripts/release-manifest-test-requirements.txt python3 infra/scripts/test_release_manifest.py
+
   api-integration:
     name: api-integration
     needs: changes
@@ -1139,9 +1373,9 @@ jobs:
           enable-cache: true
       - name: API tenant / GUC integration tests
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          IBEX_API_DATABASE_URL: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          IBEX_API_DATABASE_URL: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: bash infra/scripts/api-integration-test-ci.sh
 
   worker-test:
@@ -1207,7 +1441,7 @@ jobs:
   worker-integration:
     name: worker-integration
     needs: changes
-    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1312,8 +1546,8 @@ jobs:
           aws --endpoint-url http://127.0.0.1:9100 s3 ls s3://ibex-sessions
       - name: Worker Redis + multistore integration tests
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
           S3_MASTER_KEY_B64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         run: bash infra/scripts/worker-integration-test-ci.sh
 
@@ -1362,14 +1596,125 @@ jobs:
           enable-cache: true
       - name: Memory PgVectorStore integration tests
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: bash infra/scripts/memory-integration-test-ci.sh
+
+  idempotency-conformance:
+    name: idempotency-conformance
+    needs: changes
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        # pgvector 0.8.6 on PostgreSQL 16 — immutable pin of
+        # pgvector/pgvector:0.8.6-pg16 (mutable :pg16 must not be used in CI).
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Migrate up
+        env:
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+        run: go run ./infra/migrations/postgres/cmd/migrate -command up
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - name: request-idempotency-core.v1 conformance suite
+        env:
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          IBEX_IDEMPOTENCY_CONFORMANCE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+        run: bash infra/scripts/idempotency-conformance-ci.sh
+
+  mcp-operator-integration:
+    name: mcp-operator-integration
+    needs: changes
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      redis:
+        image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      postgres:
+        # pgvector 0.8.6 on PostgreSQL 16 — same immutable pin as idempotency-conformance.
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Migrate up
+        env:
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+        run: go run ./infra/migrations/postgres/cmd/migrate -command up
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - name: MCP operator read isolation (RLS + cross-tenant)
+        env:
+          IBEX_MCP_OPERATOR_TEST_DATABASE_URL: postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          IBEX_MCP_OPERATOR_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+        run: bash infra/scripts/mcp-operator-integration-ci.sh
 
   memory-security-integration:
     name: memory-security-integration
     needs: changes
-    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1420,14 +1765,14 @@ jobs:
           enable-cache: true
       - name: Memory security integration tests (m3.E.1 ISO-*)
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: bash infra/scripts/memory-security-integration-test-ci.sh
 
   security-integration-p35:
     name: security-integration-p35
     needs: changes
-    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1482,16 +1827,16 @@ jobs:
         run: buf generate
       - name: Phase 3.5 ISO-MCP isolation matrix (3.5.F.2)
         env:
-          POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
           IBEX_ISO_MCP_ALLOW_DESTRUCTIVE_DB: "1"
         run: bash infra/scripts/security-integration-p35.sh
 
   e2e-smoke-p3-memory:
     name: e2e-smoke-p3-memory
     needs: changes
-    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1545,14 +1890,14 @@ jobs:
         run: buf generate
       - name: Phase 3 memory HTTP lifecycle e2e (m3.E.2)
         env:
-          POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: bash infra/scripts/memory-e2e-test-ci.sh
 
   e2e-smoke-p35:
     name: e2e-smoke-p3.5
     needs: changes
-    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -1607,14 +1952,14 @@ jobs:
         run: buf generate
       - name: Phase 3.5 learning-loop e2e (3.5.F.1)
         env:
-          POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: bash infra/scripts/e2e-phase35-ci.sh
 
   verify-phase25:
     name: verify-phase25
     needs: changes
-    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true' || needs.changes.outputs.run_compose == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true' || needs.changes.outputs.run_compose == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1688,7 +2033,7 @@ jobs:
         run: buf generate
       - name: Install golangci-lint
         run: |
-          GOLANGCI_LINT_VERSION=2.8.0
+          GOLANGCI_LINT_VERSION=2.12.2
           GOLANGCI_LINT_ARCHIVE="golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz"
           curl --proto '=https' --tlsv1.2 -sSfL -o "${GOLANGCI_LINT_ARCHIVE}" \
             "https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/${GOLANGCI_LINT_ARCHIVE}"
@@ -1703,15 +2048,14 @@ jobs:
           golangci-lint run --config .golangci.depguard.yml ./packages/...
       - name: Run golangci-lint (base linters)
         run: |
-          golangci-lint run --config .golangci.yml ./packages/... ./services/auth/... ./services/proxy/...
+          golangci-lint run --config .golangci.yml ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
       - name: Run golangci-lint (complexity — whole-files scoped)
         run: |
-          golangci-lint run --config .golangci.complexity.yml ./packages/... ./services/auth/... ./services/proxy/...
+          golangci-lint run --config .golangci.complexity.yml ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
   go-fuzz:
     name: go-fuzz
     needs: changes
-    if: needs.changes.outputs.run_go == 'true'
-    continue-on-error: true
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1729,6 +2073,9 @@ jobs:
           go-version-file: go.mod
       - name: Run Go fuzz smoke (chat request parser)
         run: go test -fuzz=FuzzParseChatCompletionRequest -fuzztime=30s ./services/proxy/internal/llm/
+      - name: Run Go fuzz smoke (JWT splitter and header validator)
+        if: ${{ !cancelled() }}
+        run: go test -fuzz=FuzzSplitJWTAndHeader -fuzztime=30s ./services/auth/internal/sessionjwt/
 
   trivy:
     name: trivy
@@ -1784,7 +2131,7 @@ jobs:
   osv-scan:
     name: osv-scan
     needs: changes
-    if: github.event_name != 'schedule' && needs.changes.outputs.run_security == 'true'
+    if: needs.changes.outputs.run_security == 'true'
     permissions:
       security-events: write
       contents: read
@@ -1800,10 +2147,10 @@ jobs:
         --lockfile
         pnpm-lock.yaml
 
-  web-build:
-    name: web-build
+  site-build:
+    name: site-build
     needs: [changes, repo-guards]
-    if: needs.changes.outputs.run_web == 'true'
+    if: needs.changes.outputs.run_site == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1839,7 +2186,7 @@ jobs:
             echo "No successful Benchmarks run for ${HEAD_SHA}; using committed benchmark JSON."
             exit 0
           fi
-          mkdir -p web/public/benchmarks
+          mkdir -p site/public/benchmarks
           if ! gh run download "$run_id" \
             --repo "${GITHUB_REPOSITORY}" \
             --name benchmark-data \
@@ -1847,9 +2194,9 @@ jobs:
             echo "Benchmark artifact download failed for run ${run_id}; using committed benchmark JSON."
             exit 0
           fi
-          cp /tmp/benchmark-data/benchmark-data.json web/public/benchmarks/benchmark-data.json
+          cp /tmp/benchmark-data/benchmark-data.json site/public/benchmarks/benchmark-data.json
           if [ -f /tmp/benchmark-data/badge.svg ]; then
-            cp /tmp/benchmark-data/badge.svg web/public/benchmarks/badge.svg
+            cp /tmp/benchmark-data/badge.svg site/public/benchmarks/badge.svg
           fi
           echo "Overlaid benchmark artifact from run ${run_id}"
 
@@ -1874,7 +2221,7 @@ jobs:
             echo "No successful Memory Benchmarks run for ${HEAD_SHA}; using committed HNSW JSON."
             exit 0
           fi
-          mkdir -p web/public/benchmarks
+          mkdir -p site/public/benchmarks
           if ! gh run download "$run_id" \
             --repo "${GITHUB_REPOSITORY}" \
             --name hnsw-benchmark-data \
@@ -1883,14 +2230,14 @@ jobs:
             exit 0
           fi
           cp /tmp/hnsw-benchmark-data/hnsw-benchmark-data.json \
-            web/public/benchmarks/hnsw-benchmark-data.json
+            site/public/benchmarks/hnsw-benchmark-data.json
           echo "Overlaid HNSW artifact from run ${run_id}"
           if gh run download "$run_id" \
             --repo "${GITHUB_REPOSITORY}" \
             --name ranking-quality-benchmark-data \
             --dir /tmp/ranking-quality-benchmark-data 2>/dev/null; then
             cp /tmp/ranking-quality-benchmark-data/ranking-quality-benchmark-data.json \
-              web/public/benchmarks/ranking-quality-benchmark-data.json
+              site/public/benchmarks/ranking-quality-benchmark-data.json
             echo "Overlaid ranking-quality artifact from run ${run_id}"
           fi
           if gh run download "$run_id" \
@@ -1898,29 +2245,45 @@ jobs:
             --name write-pipeline-benchmark-data \
             --dir /tmp/write-pipeline-benchmark-data 2>/dev/null; then
             cp /tmp/write-pipeline-benchmark-data/write-pipeline-benchmark-data.json \
-              web/public/benchmarks/write-pipeline-benchmark-data.json
+              site/public/benchmarks/write-pipeline-benchmark-data.json
             echo "Overlaid write-pipeline artifact from run ${run_id}"
           fi
 
-      - uses: ./.github/actions/setup-pnpm-web
+      - uses: ./.github/actions/setup-pnpm-node
 
-      - name: Cache Next.js build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Typecheck site
+        run: pnpm --filter site typecheck
+
+      - name: Lint site
+        run: pnpm --filter site lint
+
+      - name: Build site
+        run: pnpm --filter site build
+
+      - name: Check claims, links, and redirects
+        run: |
+          pnpm --filter site check:claims
+          pnpm --filter site check:links
+          pnpm --filter site check:redirects
+
+      - name: Prepare Chromium for site browser gates
+        # Playwright browser download via package CLI — not an npm lifecycle install.
+        run: pnpm --filter site exec playwright install --with-deps chromium # NOSONAR
+
+      - name: Test site layout and article render
+        timeout-minutes: 8
+        run: |
+          pnpm --filter site test:unit
+          pnpm --filter site test:e2e
+
+      - name: Upload site browser evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          path: web/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml', 'web/**') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-
-
-      - name: Typecheck web app
-        run: pnpm --filter web typecheck
-
-      - name: Test web components
-        timeout-minutes: 3
-        run: pnpm --filter web test
-
-      - name: Build web app
-        run: pnpm web:build:clean
+          name: site-browser-evidence
+          path: site/test-results/
+          if-no-files-found: warn
+          retention-days: 14
 
   console-quality:
     name: console-quality
@@ -1939,7 +2302,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-pnpm-web
+      - uses: ./.github/actions/setup-pnpm-node
 
       - name: Lint Console
         run: pnpm --filter @ibex/console lint
@@ -1962,13 +2325,14 @@ jobs:
           cleanup() { kill "${server_pid}" 2>/dev/null || true; }
           trap cleanup EXIT
           for _ in $(seq 1 30); do
-            if curl --fail --silent --show-error http://127.0.0.1:3100/dashboard >/tmp/console-dashboard.html; then
+            if curl --fail --silent --show-error "http://127.0.0.1:3100/?demo=1" >/tmp/console-overview.html; then
               break
             fi
             sleep 1
           done
-          grep -Fq "Overview unavailable" /tmp/console-dashboard.html
-          if grep -Fq "1,284,092" /tmp/console-dashboard.html; then
+          grep -Fq "Organization snapshot unavailable" /tmp/console-overview.html
+          grep -Fq "No counts are invented for the gap." /tmp/console-overview.html
+          if grep -Fq "1,284,092" /tmp/console-overview.html; then
             echo "forbidden fixture metric leaked into production preview HTML" >&2
             exit 1
           fi
@@ -1977,18 +2341,18 @@ jobs:
         run: |
           set -euo pipefail
           log_file="${RUNNER_TEMP}/console-d1.log"
-          (cd services/console && NODE_ENV=production PORT=3101 CONSOLE_DATA_MODE=live CONSOLE_READ_ONLY=1 IBEX_OPERATOR_API_ORIGIN=http://127.0.0.1:3199 pnpm start >"${log_file}" 2>&1) &
+          (cd services/console && NODE_ENV=production PORT=3101 CONSOLE_READ_ONLY=1 IBEX_OPERATOR_API_ORIGIN=http://127.0.0.1:3199 pnpm start >"${log_file}" 2>&1) &
           server_pid=$!
           cleanup() { kill "${server_pid}" 2>/dev/null || true; }
           trap cleanup EXIT
           for _ in $(seq 1 30); do
-            if curl --fail --silent --show-error -H 'Cookie: ibex_session=fixture-test-cookie' http://127.0.0.1:3101/dashboard >/tmp/console-d1.html; then
+            if curl --fail --silent --show-error -H 'Cookie: ibex_session=fixture-test-cookie' "http://127.0.0.1:3101/?demo=1" >/tmp/console-d1.html; then
               break
             fi
             sleep 1
           done
-          grep -Fq "Organization overview is unavailable" /tmp/console-d1.html
-          grep -Fq "No mock values are substituted" /tmp/console-d1.html
+          grep -Fq "Organization snapshot unavailable" /tmp/console-d1.html
+          grep -Fq "No counts are invented for the gap" /tmp/console-d1.html
           if grep -Fq "1,284,092" /tmp/console-d1.html; then
             echo "forbidden fixture metric leaked into live D1 HTML" >&2
             exit 1
@@ -2037,8 +2401,8 @@ jobs:
           persist-credentials: false
       - name: Hadolint all Dockerfiles
         run: |
-          # Dockerfiles today: services/auth, services/proxy, services/embedder, services/mcp-memory.
-          # Pending: services/memory, services/dashboard (see web/engineering/DEPENDENCIES.md §10).
+          # Dockerfiles today: services/auth, services/proxy, services/embedder, services/mcp-memory, services/mcp-operator.
+          # Pending: services/memory (see engineering/DEPENDENCIES.md §10).
           mapfile -t files < <(find . -name 'Dockerfile*' -not -path './.git/*' | sort)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No Dockerfiles found"
@@ -2076,9 +2440,33 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      clickhouse:
+        # Immutable pin of clickhouse/clickhouse-server:24.8.14.39 (multi-arch
+        # index). Backs the relay connected-runtime coverage (openRuntime +
+        # serveRelay) so the success path is measured under the merged profile.
+        image: clickhouse/clickhouse-server:24.8.14.39@sha256:1ffa82edee000a42c09313bd9f1293d94c570aee74babc1b3ca9983a35fa597b
+        env:
+          CLICKHOUSE_DB: ibex
+          CLICKHOUSE_USER: default
+          # Non-empty password required for host access (empty → localhost-only).
+          CLICKHOUSE_PASSWORD: ibextest
+        ports:
+          - 8123:8123
+          - 9000:9000
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+          --health-start-period 15s
     env:
-      POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-      POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+      POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+      CLICKHOUSE_TEST_NATIVE_DSN: clickhouse://default:ibextest@127.0.0.1:9000?database=ibex
+      CLICKHOUSE_MIGRATE_DSN: clickhouse://default:ibextest@127.0.0.1:9000?database=ibex&x-multi-statement=true&x-migrations-table-engine=MergeTree
+      # The clickhouse migration integration tests insert over HTTP; the service
+      # maps host 8123 to the container HTTP port (see infra/compose/dev).
+      CLICKHOUSE_HTTP_PORT: "8123"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2093,11 +2481,13 @@ jobs:
         run: buf generate
       - name: Migrate up
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
+      - name: ClickHouse migrate up
+        run: bash infra/scripts/clickhouse-migrate.sh up
       - name: Go unit coverage
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/coverage-unit.xml -- \
             -count=1 -coverprofile=coverage-go-unit.out \
-            ./packages/... ./services/auth/... ./services/proxy/...
+            ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
       - name: Upload test results to Trunk (coverage-unit)
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -2112,7 +2502,7 @@ jobs:
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/coverage-integration.xml -- \
             -tags=integration -count=1 -p 1 -coverprofile=coverage-go-integration.out \
-            ./packages/... ./services/auth/... ./services/proxy/... ./infra/...
+            ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/... ./infra/...
       - name: Upload test results to Trunk (coverage-integration)
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -2370,7 +2760,7 @@ jobs:
         id: bandit
         run: |
           targets=()
-          for svc in memory embedder mcp-memory worker api; do
+          for svc in memory embedder mcp-memory mcp-operator worker api; do
             app_dir="services/${svc}/app"
             if [ -d "$app_dir" ]; then
               targets+=("$app_dir")
@@ -2425,8 +2815,8 @@ jobs:
           sarif_file: bandit.sarif
           category: bandit
 
-  web-go-quality-gate:
-    name: web-go-quality-gate
+  site-go-quality-gate:
+    name: site-go-quality-gate
     needs:
       - changes
       - proto-contract
@@ -2442,32 +2832,32 @@ jobs:
     if: |
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.run_web == 'true' &&
+      needs.changes.outputs.run_site == 'true' &&
       needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - run: echo "Go quality gates passed for web deploy"
+      - run: echo "Go quality gates passed for site deploy"
 
-  web-deploy:
-    name: web-deploy
+  site-deploy:
+    name: site-deploy
     needs:
       - changes
       - repo-guards
-      - web-build
-      - web-go-quality-gate
+      - site-build
+      - site-go-quality-gate
     if: |
       always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.run_web == 'true' &&
+      needs.changes.outputs.run_site == 'true' &&
       needs.repo-guards.result == 'success' &&
-      needs.web-build.result == 'success' &&
-      (needs.changes.outputs.run_go != 'true' || needs.web-go-quality-gate.result == 'success')
+      needs.site-build.result == 'success' &&
+      (needs.changes.outputs.run_go != 'true' || needs.site-go-quality-gate.result == 'success')
     permissions:
       contents: read
-    uses: ./.github/workflows/web-deploy.yml
+    uses: ./.github/workflows/site-deploy.yml
     secrets:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -2499,7 +2889,7 @@ jobs:
         run: bash .github/scripts/install-go-ci-tool.sh golang.org/x/vuln/cmd/govulncheck
       - name: Run govulncheck
         run: |
-          govulncheck ./packages/... ./services/auth/... ./services/proxy/...
+          govulncheck ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
 
   license-check:
     name: license-check
@@ -2530,7 +2920,7 @@ jobs:
         run: bash .github/scripts/install-go-ci-tool.sh github.com/google/go-licenses
       - name: Verify dependency licenses
         run: |
-          go-licenses check ./packages/... ./services/auth/... ./services/proxy/... \
+          go-licenses check ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/... \
             --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,Unicode-DFS-2016,MPL-2.0
 
   ci-gate-repo:
@@ -2579,11 +2969,16 @@ jobs:
       - security-integration
       - ratelimit-hierarchical-integration
       - go-race
+      - benchmark-gate
       - go-services
+      - relay-integration
       - embedder-test
       - embedder-coverage
       - mcp-memory-test
       - mcp-memory-coverage
+      - mcp-gateway-test
+      - mcp-operator-test
+      - mcp-operator-integration
       - memory-test
       - memory-coverage
       - api-test
@@ -2607,7 +3002,7 @@ jobs:
           persist-credentials: false
       - name: Evaluate Go gate
         run: |
-          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_go }}" "${{ needs.changes.result }}" \
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_go == 'true' || (github.event_name == 'pull_request' && needs.changes.outputs.benchmarks == 'true') }}" "${{ needs.changes.result }}" \
             "${{ needs.buf-lint.result }}" \
             "${{ needs.proto-contract.result }}" \
             "${{ needs.db-migrate-smoke.result }}" \
@@ -2617,11 +3012,16 @@ jobs:
             "${{ needs.security-integration.result }}" \
             "${{ needs.ratelimit-hierarchical-integration.result }}" \
             "${{ needs.go-race.result }}" \
+            "${{ needs.benchmark-gate.result }}" \
             "${{ needs.go-services.result }}" \
+            "${{ needs.relay-integration.result }}" \
             "${{ needs.embedder-test.result }}" \
             "${{ needs.embedder-coverage.result }}" \
             "${{ needs.mcp-memory-test.result }}" \
             "${{ needs.mcp-memory-coverage.result }}" \
+            "${{ needs.mcp-gateway-test.result }}" \
+            "${{ needs.mcp-operator-test.result }}" \
+            "${{ needs.mcp-operator-integration.result }}" \
             "${{ needs.memory-test.result }}" \
             "${{ needs.memory-coverage.result }}" \
             "${{ needs.api-test.result }}" \
@@ -2636,11 +3036,11 @@ jobs:
             "${{ needs.coverage.result }}" \
             "${{ needs.govulncheck.result }}"
 
-  ci-gate-web:
-    name: ci-gate-web
+  ci-gate-site:
+    name: ci-gate-site
     needs:
       - changes
-      - web-build
+      - site-build
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -2649,10 +3049,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Evaluate web gate
+      - name: Evaluate site gate
         run: |
-          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_web }}" "${{ needs.changes.result }}" \
-            "${{ needs.web-build.result }}"
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_site }}" "${{ needs.changes.result }}" \
+            "${{ needs.site-build.result }}"
 
   ci-gate-security:
     name: ci-gate-security
@@ -2686,6 +3086,9 @@ jobs:
       - embedder-coverage
       - mcp-memory-test
       - mcp-memory-coverage
+      - mcp-gateway-test
+      - mcp-operator-test
+      - mcp-operator-integration
       - memory-test
       - memory-coverage
       - api-test
@@ -2716,6 +3119,9 @@ jobs:
             "${{ needs.embedder-coverage.result }}" \
             "${{ needs.mcp-memory-test.result }}" \
             "${{ needs.mcp-memory-coverage.result }}" \
+            "${{ needs.mcp-gateway-test.result }}" \
+            "${{ needs.mcp-operator-test.result }}" \
+            "${{ needs.mcp-operator-integration.result }}" \
             "${{ needs.memory-test.result }}" \
             "${{ needs.memory-coverage.result }}" \
             "${{ needs.api-test.result }}" \
@@ -2731,3 +3137,43 @@ jobs:
             "${{ needs.e2e-smoke-p3-memory.result }}" \
             "${{ needs.e2e-smoke-p35.result }}" \
             "${{ needs.verify-phase25.result }}"
+
+  ci-gate-nightly:
+    name: ci-gate-nightly
+    needs:
+      - changes
+      - proto-contract
+      - db-migrate-smoke
+      - go-fuzz
+      - e2e-smoke-p3-memory
+      - e2e-smoke-p35
+      - verify-phase25
+      - memory-security-integration
+      - security-integration-p35
+      - worker-integration
+      - relay-integration
+      - mcp-operator-integration
+      - idempotency-conformance
+    if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.force_full == true))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Evaluate nightly gate
+        run: |
+          bash .github/scripts/evaluate-ci-gate.sh "true" "${{ needs.changes.result }}" \
+            "${{ needs.proto-contract.result }}" \
+            "${{ needs.db-migrate-smoke.result }}" \
+            "${{ needs.go-fuzz.result }}" \
+            "${{ needs.e2e-smoke-p3-memory.result }}" \
+            "${{ needs.e2e-smoke-p35.result }}" \
+            "${{ needs.verify-phase25.result }}" \
+            "${{ needs.memory-security-integration.result }}" \
+            "${{ needs.security-integration-p35.result }}" \
+            "${{ needs.worker-integration.result }}" \
+            "${{ needs.relay-integration.result }}" \
+            "${{ needs.mcp-operator-integration.result }}" \
+            "${{ needs.idempotency-conformance.result }}"

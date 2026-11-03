@@ -76,7 +76,10 @@ def test_proto_wire_user_id_field() -> None:
     org_bytes = str(org_id).encode()
     uid = b"user-42"
     payload = (
-        bytes([0x0A]) + encode_varint(len(org_bytes)) + org_bytes + bytes([0x22])
+        bytes([0x0A])
+        + encode_varint(len(org_bytes))
+        + org_bytes
+        + bytes([0x22])
         + encode_varint(len(uid))
         + uid
     )
@@ -250,7 +253,9 @@ async def test_orchestrator_quarantine_calls_after_commit() -> None:
     mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
     mock_cm.__aexit__ = AsyncMock(return_value=None)
 
-    orch = MemoryWriteOrchestrator(_Pipe(), MagicMock(return_value=mock_cm), after_commit=after_commit)
+    orch = MemoryWriteOrchestrator(
+        _Pipe(), MagicMock(return_value=mock_cm), after_commit=after_commit
+    )
     fake_row = sample_memory_row(
         org_id=org_id,
         agent_id=agent_id,
@@ -259,9 +264,11 @@ async def test_orchestrator_quarantine_calls_after_commit() -> None:
         pii_detected=True,
     )
     with (
+        patch("app.write.orchestrator.lock_organization_for_memory_write", AsyncMock()),
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
         patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
         patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.enqueue_memory_lifecycle_event", AsyncMock()),
     ):
         await orch.create(
             CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="quarantine")
@@ -345,33 +352,29 @@ def test_http_error_for_write_maps_embedding() -> None:
 
 @pytest.mark.asyncio
 async def test_begin_idempotency_conflict_and_in_progress() -> None:
-    from app.idempotency.redis_store import ClaimKind, ClaimOutcome, pending_record
-    from app.routers.memory_write_support import begin_idempotency
+    from ibex_idempotency import KIND_CONFLICT, KIND_IN_PROGRESS, ClaimOutcome
 
-    store = AsyncMock()
-    store.claim = AsyncMock(
-        return_value=ClaimOutcome(kind=ClaimKind.CONFLICT, record=pending_record("fp"))
-    )
-    org_id = uuid4()
+    from app.routers.memory_write_support import Principal, begin_idempotency
+
+    ledger = AsyncMock()
+    ledger.claim = AsyncMock(return_value=ClaimOutcome(kind=KIND_CONFLICT))
+    principal = Principal(org_id=uuid4(), agent_id=uuid4())
     with pytest.raises(HTTPException) as exc:
         await begin_idempotency(
-            store=store,
-            org_id=org_id,
+            ledger=ledger,
+            principal=principal,
             idempotency_key="k",
-            fingerprint="fp",
+            request_hash="fp",
         )
     assert exc.value.status_code == 409
 
-    store.claim = AsyncMock(
-        return_value=ClaimOutcome(kind=ClaimKind.IN_PROGRESS, record=pending_record("fp"))
-    )
-    org_id = uuid4()
+    ledger.claim = AsyncMock(return_value=ClaimOutcome(kind=KIND_IN_PROGRESS, retry_after=5))
     with pytest.raises(HTTPException) as exc:
         await begin_idempotency(
-            store=store,
-            org_id=org_id,
+            ledger=ledger,
+            principal=principal,
             idempotency_key="k",
-            fingerprint="fp",
+            request_hash="fp",
         )
     assert exc.value.detail["code"] == "IDEMPOTENCY_IN_PROGRESS"
 
@@ -402,9 +405,11 @@ async def test_orchestrator_after_commit_failure_does_not_propagate() -> None:
     )
     fake_row = sample_memory_row(content="x")
     with (
+        patch("app.write.orchestrator.lock_organization_for_memory_write", AsyncMock()),
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
         patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
         patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.enqueue_memory_lifecycle_event", AsyncMock()),
     ):
         outcome = await orch.create(
             CreateMemoryCommand(org_id=uuid4(), agent_id=uuid4(), content="x")

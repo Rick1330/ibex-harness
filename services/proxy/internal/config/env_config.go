@@ -20,6 +20,8 @@ type envConfig struct {
 	RedisURL                  ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
 	AuthGRPCAddr              string            `env:"IBEX_AUTH_GRPC_ADDR" envDefault:"127.0.0.1:9091"`
 	AuthValidateTimeout       time.Duration     `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
+	PolicyPublicKeysJSON      string            `env:"IBEX_PROXY_POLICY_PUBLIC_KEYS"`
+	PolicyMinEpoch            int64             `env:"IBEX_PROXY_POLICY_MIN_EPOCH"`
 	ContextGRPCTarget         string            `env:"IBEX_CONTEXT_GRPC_TARGET"`
 	ContextAssembleTimeout    time.Duration     `env:"IBEX_CONTEXT_ASSEMBLE_TIMEOUT"`
 	ContextEnabled            string            `env:"IBEX_CONTEXT_ENABLED" envDefault:"false"`
@@ -77,6 +79,7 @@ type envConfig struct {
 	ClickHouseFlushMS         int               `env:"CLICKHOUSE_INSERT_FLUSH_MS"`
 	IdempotencyTTL            time.Duration     `env:"IBEX_IDEMPOTENCY_TTL"`
 	IdempotencyRedisTO        time.Duration     `env:"IBEX_IDEMPOTENCY_REDIS_TIMEOUT"`
+	BudgetReservationLease    time.Duration     `env:"IBEX_BUDGET_RESERVATION_LEASE"`
 	ExtractionTurnsTTL        time.Duration     `env:"IBEX_EXTRACTION_TURNS_TTL"`
 	WorkerEnqueueBaseURL      string            `env:"IBEX_WORKER_ENQUEUE_BASE_URL"`
 	WorkerEnqueueAPIToken     ibexconfig.Secret `env:"IBEX_WORKER_ENQUEUE_API_TOKEN" secret:"true"`
@@ -109,6 +112,7 @@ func buildProxyConfig(envCfg envConfig) (Config, error) {
 	}
 
 	cfg := baseProxyConfig(envCfg, level)
+	cfg.BudgetReservationLease = envCfg.BudgetReservationLease
 	sh, err := selfHostedConfigFromEnv(envCfg)
 	if err != nil {
 		return Config{}, err
@@ -235,16 +239,17 @@ func parseCSVModels(raw string) []string {
 
 func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 	return Config{
-		Environment:       envCfg.Environment,
-		ServiceName:       envCfg.ServiceName,
-		LogLevel:          level,
-		Port:              envCfg.Port,
-		RedisURL:          envCfg.RedisURL.String(),
-		AuthGRPCAddr:      envCfg.AuthGRPCAddr,
-		ContextGRPCTarget: envCfg.ContextGRPCTarget,
-		RequestIDHeader:   envCfg.RequestIDHeader,
-		TraceIDHeader:     envCfg.TraceIDHeader,
-		ErrorDocsBase:     envCfg.ErrorDocsBase,
+		Environment:          envCfg.Environment,
+		ServiceName:          envCfg.ServiceName,
+		LogLevel:             level,
+		Port:                 envCfg.Port,
+		RedisURL:             envCfg.RedisURL.String(),
+		AuthGRPCAddr:         envCfg.AuthGRPCAddr,
+		PolicyPublicKeysJSON: strings.TrimSpace(envCfg.PolicyPublicKeysJSON),
+		ContextGRPCTarget:    envCfg.ContextGRPCTarget,
+		RequestIDHeader:      envCfg.RequestIDHeader,
+		TraceIDHeader:        envCfg.TraceIDHeader,
+		ErrorDocsBase:        envCfg.ErrorDocsBase,
 		RateLimit: RateLimitConfig{
 			DefaultRPM:   defaultRateLimitRPM,
 			OrgOverrides: map[uuid.UUID]int{},
@@ -293,6 +298,7 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 }
 
 func applyProxyNumericEnv(cfg *Config, envCfg envConfig) {
+	cfg.PolicyMinEpoch = envCfg.PolicyMinEpoch
 	if envCfg.AuthValidateTimeout > 0 {
 		cfg.AuthValidateTimeout = envCfg.AuthValidateTimeout
 	}

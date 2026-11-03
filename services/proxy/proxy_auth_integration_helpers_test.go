@@ -224,12 +224,15 @@ func proxyIntegrationConfig(authAddr, redisURL string, srvOpts proxyServerOpts) 
 		defaultRPM = 60
 	}
 	cfg := config.Config{
-		Environment:         "development",
-		ServiceName:         "proxy",
-		Port:                "8080",
-		RedisURL:            redisURL,
-		AuthGRPCAddr:        authAddr,
-		AuthValidateTimeout: 200 * time.Millisecond,
+		Environment:  "development",
+		ServiceName:  "proxy",
+		Port:         "8080",
+		RedisURL:     redisURL,
+		AuthGRPCAddr: authAddr,
+		// Argon2 token verification exceeds the production budget on a
+		// developer machine; local integration fixtures use the documented 2s
+		// development budget. Production config remains unchanged.
+		AuthValidateTimeout: 2 * time.Second,
 		RateLimit: config.RateLimitConfig{
 			DefaultRPM: int(defaultRPM),
 		},

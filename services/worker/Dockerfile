@@ -12,7 +12,7 @@
 
 FROM ghcr.io/astral-sh/uv@sha256:2fd1b38e3398a256d6af3f71f0e2ba6a517b249998726a64d8cfbe55ab34af5e AS uv
 
-FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS deps
+FROM python@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0b7f AS deps
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -24,13 +24,17 @@ COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app/services/worker
 
 COPY packages/ibex_async_db /app/packages/ibex_async_db
-RUN mkdir -p /wheels && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/ibex_async_db
+COPY packages/ibex_idempotency /app/packages/ibex_idempotency
+RUN mkdir -p /wheels && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/ibex_async_db \
+    && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/ibex_idempotency
 COPY services/worker/pyproject.toml services/worker/uv.lock ./
 
-RUN uv sync --frozen --no-build --no-install-project --find-links /wheels --no-install-package ibex-async-db \
-    && uv pip install --no-index --find-links /wheels "ibex-async-db==0.1.0"
+RUN uv sync --frozen --no-build --no-install-project --find-links /wheels \
+    --no-install-package ibex-async-db --no-install-package ibex-idempotency \
+    && uv pip install --no-deps --no-index --find-links /wheels \
+    "ibex-async-db==0.1.0" "ibex-idempotency==0.1.0"
 
-FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS runtime
+FROM python@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0b7f AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -38,6 +42,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     IBEX_WORKER_BEAT_SCHEDULE_FILE=/var/lib/ibex/celerybeat/celerybeat-schedule
 
 RUN python -m pip uninstall --yes setuptools wheel || true \
+    && rm -rf /usr/local/lib/python3.*/site-packages/pip* \
+       /usr/local/lib/python3.*/ensurepip \
+       /usr/local/bin/pip* \
     && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends libpcre2-8-0=10.42-1+deb12u2 \
@@ -55,7 +62,7 @@ COPY services/worker/scripts ./scripts
 
 RUN chmod +x scripts/healthcheck.sh
 
-USER ibex
+USER 10001:10001
 
 HEALTHCHECK --interval=15s --timeout=10s --start-period=30s --retries=3 \
     CMD ["./scripts/healthcheck.sh"]

@@ -175,7 +175,7 @@ class AgentPatch(_AgentWritable):
 class AgentListQuery(BaseModel):
     """Query params for GET /v1/agents (FastAPI Query model)."""
 
-    cursor: str | None = None
+    cursor: str | None = Field(default=None, max_length=2048)
     limit: int = Field(default=50, ge=1, le=100)
     status: AgentStatus | None = None
     tags: list[TagStr] | None = Field(default=None, max_length=_MAX_TAGS)

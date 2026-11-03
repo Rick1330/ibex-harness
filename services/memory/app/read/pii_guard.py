@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from app.read.metrics import PII_RECONFIRM
 
@@ -53,3 +55,25 @@ def should_block_read_result(content: str) -> bool:
 def filter_pii_blocked_results(results: list[MemorySearchResult]) -> list[MemorySearchResult]:
     """Drop search/hot-cache hits that fail Tier-1 read-path PII re-check."""
     return [item for item in results if not should_block_read_result(item.content)]
+
+
+class PiiReadGuard:
+    """Evaluate the Tier-1 re-check at most once per memory per request.
+
+    The read paths evaluate one candidate list, then widen it for a refill or an
+    FTS merge. Re-running the guard over the wider list would count the same row
+    twice in ``ibex_memory_read_pii_reconfirm_total`` and re-log the same blocked
+    memory, so verdicts from the first evaluation are reused and only unseen
+    rows are scanned.
+    """
+
+    def __init__(self) -> None:
+        self._evaluated: set[UUID] = set()
+        self._allowed: set[UUID] = set()
+
+    def allow(self, results: Sequence[MemorySearchResult]) -> list[MemorySearchResult]:
+        fresh = [item for item in results if item.id not in self._evaluated]
+        if fresh:
+            self._evaluated.update(item.id for item in fresh)
+            self._allowed.update(item.id for item in filter_pii_blocked_results(fresh))
+        return [item for item in results if item.id in self._allowed]

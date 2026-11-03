@@ -86,6 +86,7 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, claim *idempotencyClaim) {
 	ctx := p.r.Context()
 	if errors.Is(ctx.Err(), context.Canceled) {
+		h.abandonIdempotency(claim)
 		return
 	}
 	provReq := llm.ToProviderRequest(p.parsed)
@@ -93,6 +94,16 @@ func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, c
 	provReq.Messages = inj.Messages
 	p.r = p.r.WithContext(withContextAssembleMeta(ctx, inj.Meta))
 	if !h.applyCredentialOverride(p.w, p.r, p.prov, &provReq) {
+		h.abandonIdempotency(claim)
+		return
+	}
+	var budgetOK bool
+	p.r, budgetOK = h.claimBudgetAdmission(p.w, p.r, budgetAdmissionInput{
+		provider: p.prov.Name(), model: provReq.Model,
+		messages: provReq.Messages, maxTokens: maxTokensFromParsed(p.parsed),
+	})
+	if !budgetOK {
+		h.abandonIdempotency(claim)
 		return
 	}
 	h.completeAndRespond(p, claim, provReq)
@@ -120,35 +131,26 @@ func (h chatCompletionHandler) completeAndRespond(
 
 func (h chatCompletionHandler) handlePrimaryCompleteError(args primaryCompleteErrorArgs) {
 	p, claim, provReq, err := args.p, args.claim, args.provReq, args.err
-	if errors.Is(err, context.Canceled) || errors.Is(p.r.Context().Err(), context.Canceled) {
-		return
-	}
-	// Request already done (deadline/other) — surface primary failure, never fallback.
-	if p.r.Context().Err() != nil {
-		h.writeProviderFailure(providerFailureParams{
-			w: p.w, r: p.r, err: err, requestID: args.requestID,
-			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
-		})
+	if h.exitPrimaryCompleteError(args, err) {
 		return
 	}
 	elig := provider.FallbackEligible(err, provReq)
 	if !elig.Eligible {
-		h.writeProviderFailure(providerFailureParams{
-			w: p.w, r: p.r, err: err, requestID: args.requestID,
-			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
-		})
+		h.writePrimaryProviderFailure(args, err)
 		return
 	}
 	fb, ok := h.tryFallbackComplete(p, provReq, elig.Reason)
 	if !ok {
 		if errors.Is(p.r.Context().Err(), context.Canceled) {
+			h.releaseBudget(p.r.Context(), "canceled")
 			return
 		}
-		h.writeProviderFailure(providerFailureParams{
-			w: p.w, r: p.r, err: err, requestID: args.requestID,
-			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
-		})
+		h.writePrimaryProviderFailure(args, err)
 		return
+	}
+	if fb.r != nil {
+		// Carry the re-priced fallback hold (context) into settlement.
+		p.r = fb.r
 	}
 	h.finishProviderResponse(finishProviderArgs{
 		p: p, claim: claim, prov: fb.prov, resp: fb.resp,
@@ -157,6 +159,30 @@ func (h chatCompletionHandler) handlePrimaryCompleteError(args primaryCompleteEr
 			FallbackModel: fb.model,
 			Reason:        fb.reason,
 		},
+	})
+}
+
+// exitPrimaryCompleteError handles canceled and already-finished requests,
+// reporting whether the caller must stop. It runs before any fallback logic so
+// a dead client never triggers provider work.
+func (h chatCompletionHandler) exitPrimaryCompleteError(args primaryCompleteErrorArgs, err error) bool {
+	p := args.p
+	if errors.Is(err, context.Canceled) || errors.Is(p.r.Context().Err(), context.Canceled) {
+		h.releaseBudget(p.r.Context(), "canceled")
+		return true
+	}
+	// Request already done (deadline/other) — surface primary failure, never fallback.
+	if p.r.Context().Err() != nil {
+		h.writePrimaryProviderFailure(args, err)
+		return true
+	}
+	return false
+}
+
+func (h chatCompletionHandler) writePrimaryProviderFailure(args primaryCompleteErrorArgs, err error) {
+	h.writeProviderFailure(providerFailureParams{
+		w: args.p.w, r: args.p.r, err: err, requestID: args.requestID,
+		parsed: args.p.parsed, providerName: args.p.prov.Name(), claim: args.claim,
 	})
 }
 
@@ -312,6 +338,10 @@ func (h chatCompletionHandler) writeJSONSuccess(p providerSuccessParams, out []b
 		// openaicompatible leaves Response.Usage nil; recover from forwarded JSON.
 		usage = httpsession.UsageFromJSON(out)
 	}
+	h.settleBudgetOutcome(p.r.Context(), budgetSettlement{
+		status: p.resp.StatusCode, provider: p.providerName,
+		model: checkpointModel(p.parsed, p.audit), usage: usage,
+	})
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
 		Messages: p.parsed.Messages, CompletionText: httpsession.CompletionTextFromJSON(out),
 		Model: checkpointModel(p.parsed, p.audit), Provider: p.providerName, Usage: usage,
@@ -386,10 +416,18 @@ func (h chatCompletionHandler) streamCheckpointHook(
 			IsComplete: res.complete,
 			ErrorCode:  errCode,
 		})
+		// An incomplete stream still consumed provider capacity: settle the
+		// measured usage (or the stored estimate) instead of dropping the hold
+		// as unspent. The STREAM_INCOMPLETE checkpoint marker is unchanged.
+		h.settleBudgetOutcome(ctx, budgetSettlement{
+			status: http.StatusOK, provider: providerName,
+			model: checkpointModel(parsed, audit), usage: res.usage,
+		})
 	}
 }
 
 func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
+	h.releaseBudget(p.r.Context(), "provider_failure")
 	mapped, write := provider.MapError(p.err)
 	if !write || mapped == nil {
 		return

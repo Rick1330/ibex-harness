@@ -1,0 +1,247 @@
+---
+title: "Findings Log"
+description: "Unexpected discoveries, design pivots, and plan changes. Update this file when implementation reveals something the roadmap did not anticipate."
+summary: "Unexpected discoveries, design pivots, and plan changes. Update this file when implementation reveals something the roadmap did not anticipate."
+---
+
+# Findings Log
+
+Unexpected discoveries, design pivots, and plan changes. Update this file when implementation reveals something the roadmap did not anticipate.
+
+## Template (copy for new entries)
+
+```text
+## YYYY-MM-DD — [Brief title]
+
+**Context:** Phase N / Milestone N.M.K
+
+**Finding:** What we discovered.
+
+**Impact:** How this changes scope, order, or estimates.
+
+**Decision:** What we are doing about it.
+
+**Updated:** Which roadmap files changed (paths).
+```
+
+---
+
+## 2026-09-14 — Phase 4 operator platform roadmap redesigned (Track P / D / E)
+
+**Context:** Phase 4 planning / PR [#831](https://github.com/Rick1330/ibex-harness/pull/831)
+
+**Finding:** The original Phase 4 plan listed dashboard features without runtime topology, canonical evidence, privacy lifecycle, query semantics, durable usage facts, recovery model, or executable release gates. Staff-engineering audits identified authorization fail-open, incomplete cross-store deletion, trace join gaps, and assembly correctness defects that would make a premature Track D UI dishonest.
+
+**Impact:** Track P (operator readiness and control plane) is now a hard prerequisite before Track D capability slices. Track E makes CI, resilience, staged rollout, and F4 findings sign-off executable gates. Findings F4-001–F4-034 and risks are published on the Phase 4 hub.
+
+The current Phase 4 register has since expanded through **F4-037**; F4-035 records surface separation, while F4-036/F4-037 track explicit Proxy profile selection and Redis rate-limit fail-closed behavior.
+
+**Decision:** Redesign Phase 4 milestones 4.P.0–4.P.6, 4.D.1–4.D.6, and 4.E.1–4.E.4. Treat 4.C.5 as implementation baseline complete with release-evidence soak still required. Archive research provenance under `engineering/research/operator-platform/` (not repo-root drafts).
+
+**Updated:** `engineering/roadmap-archive/legacy-roadmap/phase-4-multi-provider/*`, `engineering/OPERATOR_PLATFORM_ARCHITECTURE.md`, `engineering/UI_UX_GUIDELINES.md` §15, `engineering/TESTING_STRATEGY.md` §16, `engineering/API_DOCUMENTATION.md`, `https://ibexharness.com/roadmap`, `engineering/roadmap-archive/legacy-roadmap/findings.mdx`.
+
+---
+
+## 2026-08-20 — Roadmap simplified: Phase 5.5 and Phase 6 removed
+
+**Context:** Post-redesign cleanup
+
+**Finding:** Phase 5.5 (Production Hardening) duplicated exit-gate hardening already distributed across phases 2.5–5. Phase 6 content was fully absorbed into Phase 4.5. Keeping both as separate phases added nav complexity without distinct scope.
+
+**Impact:** Roadmap ends at Phase 5 (Advanced Retrieval & Graph Memory). Org-wide production hardening (observability stack, chaos/load validation, release discipline, security/GDPR baseline) is noted as future roadmap scope in Phase 5 exit criteria, not a separate phase.
+
+**Decision:** Delete `phase-5-5-production-hardening/` and `phase-6-intelligence-monetization/`. Rename `phase-5-production-hardening` → `phase-5-advanced-retrieval`. Update hub site code (`PHASE_SLUGS`, icons) for phases 2.5, 3.5, 4.5, 5.
+
+**Updated:** `meta.json`, `overview.mdx`, `current-state.mdx`, `findings.mdx`, phase 5 index/goals, `web/src/lib/roadmap-types.ts`, `roadmap-hub.ts`, `sidebar-icon-maps.ts`.
+
+---
+
+## 2026-08-19 — Roadmap redesigned: phases restructured (2.5, 3.5, 4.5 added)
+
+**Context:** Post-Phase 2 / pre-Phase 3 planning
+
+**Finding:** The original roadmap bundled too many concerns into single phases and deferred critical foundation work. Phase 3 conflated memory schema, embedding, extraction, context assembly, management API, and dashboard into one monolithic phase with a single 6-service delivery. Phase 4 covered only multi-provider routing while Phase 6 (intelligence/monetization) had statistical methodology problems (z-score assumptions, static baselines, undefined KL divergence). Several key abstractions (tokenizer registry, response pipeline, pluggable embedder) were missing from the plan entirely.
+
+**Impact:** Complete roadmap restructure. Phase 3 rescoped to memory substrate only. New intermediate phases (2.5, 3.5) added. Management API and dashboard merged into Phase 4. Phase 6 absorbed into new Phase 4.5 with redesigned statistical methodology. Phase 5 rescoped from production hardening to advanced retrieval.
+
+**Decision:** New phase map: 0→1→1.5→2 (complete) → 2.5 (Provider Generalization) → 3 (Core Memory Substrate) → 3.5 (Extraction & Context Assembly) → 4 (Operator Platform & Multi-Provider) → 4.5 (Intelligence Layer) → 5 (Advanced Retrieval & Graph Memory). Each phase has explicit tracks (A–F) with milestones grouped under tracks. Every phase has a dedicated exit gate track with security integration tests, benchmarks, and a severity-tiered gap register.
+
+**Updated:** All `engineering/roadmap-archive/legacy-roadmap/phase-*` index and goals pages. `current-state.mdx` updated with new phase map. New directories created for phases 2.5, 3.5, 4.5. Phase 6 content absorbed into Phase 4.5.
+
+---
+
+## 2026-08-18 — Phase 2 closed; landing/docs honesty wrap
+
+**Context:** Phase 2 exit / handoff to Phase 3
+
+**Finding:** Roadmap pages already marked Phase 2 complete, but the landing page, `SITE_DESCRIPTION`, and several operator guides still described Phase 1 (`make up`, Auth gRPC `:50051`, chat **501** stub as the happy path) or sold unshipped memory as live.
+
+**Impact:** New visitors could think persistent memory ships today; operators following `make dev-smoke` docs would expect the wrong status code.
+
+**Decision:** Treat Phase 2 as closed on `main`. Landing and live operator docs match mock/live chat, directives, sessions, and traces. Memory, context assembly, workers, and dashboard remain **Phase 3** — do not invent those services under `services/` until those milestones land.
+
+**Updated:** `current-state.mdx`, `findings.mdx`, `phase-3-memory-engine/index.mdx`, landing copy, `DEVELOPMENT_GUIDE.md`, `TESTING_STRATEGY.md`, issuing-api-keys, incident-response, rate-limiting, docs changelog unreleased
+
+---
+
+## 2026-07-23 — Auth cache 2.2.1 shipped (supersedes June deferral note)
+
+**Context:** Phase 2 / Milestone 2.2.1; roadmap truth pass ([#481](https://github.com/Rick1330/ibex-harness/pull/481))
+
+**Finding:** Milestone [2.2.1](/roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom) is complete. Bloom + LRU auth cache ships per [ADR-0028](/docs/adr/0028-auth-cache-design), but the 2026-06-04 deferral entry below still reads like the cache is future work.
+
+**Impact:** Roadmap decision logs and `current-state` must treat auth cache as shipped; public docs that still describe gRPC-only auth need rebaselining in the docs rewrite PRs.
+
+**Decision:** Treat 2.2.1 as authoritative for current status. Keep the 2026-06-04 entry as historical context only.
+
+**Updated:** `findings.mdx`, `phase-2-single-provider/decisions.mdx`, `current-state.mdx`
+
+---
+
+## 2026-07-19 — Session idle sweeper required (→ 2.4.4)
+
+**Context:** Phase 2 / Goal 2.4; Phase 3 extraction (3.4.2)
+
+**Finding:** `SessionStore.Complete()` documents an idle-timeout path, but no milestone implemented a sweeper. Most clients never send `X-IBEX-Session-End`. Extraction only picks terminal sessions — without a sweeper, Phase 3 memory extraction is dead in production.
+
+**Impact:** Hard dependency between Phase 2 session lifecycle and Phase 3 extraction.
+
+**Decision:** Add milestone **[2.4.4](/roadmap/phase-2-single-provider/milestones/2.4.4-session-idle-timeout-sweeper)** (proxy ticker marks idle sessions `abandoned`). Update 2.4.2 and 3.4.2 so extraction uses `status IN ('completed','abandoned')`.
+
+**Updated:** `2.4.4-session-idle-timeout-sweeper.mdx`, `2.4.2-session-store.mdx`, `3.4.2-session-incremental-read.mdx`, `findings.mdx`
+
+---
+
+## 2026-07-19 — Context proto: adopt Phase 0 / ADR-0038
+
+**Context:** Phase 3 / Milestone 3.5.1
+
+**Finding:** Phase 0 already committed `packages/proto/proto/ibex/context/v1/context.proto` with three RPCs (`AssembleContext`, `SearchMemories`, `RecordMemoryFeedback`), enforced by CI. Milestone 3.5.1's draft proposed a conflicting one-RPC skeleton.
+
+**Impact:** Literal implementation would fail `TestContextProtoContract` and silently drop feedback/search.
+
+**Decision:** **[ADR-0038](/docs/adr/0038-context-assembly-service)** Accepted — adopt Phase 0 contract as-is; stubs return `UNIMPLEMENTED` for Search/Feedback until later milestones. Replace 3.5.1 proto snippet with a pointer to the existing file.
+
+**Updated:** `adr/0038-context-assembly-service.mdx`, `3.5.1-context-assembly-skeleton.mdx`, `adr/meta.json`, `findings.mdx`
+
+---
+
+## 2026-07-19 — Phase 4/6 honesty (fingerprints, drift, billing → Phase 6)
+
+**Context:** Phase 3 exit / Phase 4 goals vs vision docs
+
+**Finding:** Phase 3 exit and schema Non-Goals pointed fingerprints, drift alerts, and billing readiness at Phase 4. Phase 4 goals only cover providers, routing, and rate limits. Vision capabilities (fingerprinting, drift, billing) have no Phase 4 home.
+
+**Impact:** Readers expecting Phase 4 monetization/intelligence would be misled.
+
+**Decision:** Defer behavioural fingerprints, drift alerts, and billing to **[Phase 4.5 — Intelligence Layer](/roadmap/phase-4-5-intelligence-layer)** (originally planned for Phase 6, absorbed into Phase 4.5 per 2026-08-20 simplification). Update 3.1.1, 3.9.3, Phase 4 goals, and overview accordingly.
+
+**Updated:** `phase-4-5-intelligence-layer/*`, `3.1.1`, `3.9.3`, `phase-4-multi-provider/goals.mdx`, `overview.mdx`, `findings.mdx`
+
+---
+
+## 2026-07-19 — Duration banners honesty (solo maintainer)
+
+**Context:** Roadmap overview phase week banners
+
+**Finding:** Phase "N weeks" banners imply team parallel calendars. Solo maintenance means calendar time ≈ sum of milestone `estimatedEffort` values, often longer than the banner.
+
+**Impact:** Planning and stakeholder expectations.
+
+**Decision:** Treat phase week banners as **planning guidance only**. Overview Phase 2/3 cells use milestone-sum language; [GOVERNANCE.md](/docs/engineering/GOVERNANCE) notes the same for solo maintenance.
+
+**Updated:** `overview.mdx`, `GOVERNANCE.md`, `findings.mdx`
+
+---
+
+## 2026-07-19 — Directive vision honesty (F7): Phase 2 scope narrow
+
+**Context:** Phase 2 / Goal 2.3 directives
+
+**Finding:** Vision docs imply A/B experiments, regression-gated promotion, and live session pin for directives. Phase 2 only delivers versioned directive config + rollback.
+
+**Impact:** Over-promising Phase 2 operator capabilities.
+
+**Decision:** Phase 2 = **versioned config + rollback only**. A/B, regression-gated promotion, and live session pin are **deferred** (document in goals/findings; not Phase 2 exit criteria).
+
+**Updated:** `findings.mdx` (and Phase 2 goals notes as applicable)
+
+---
+
+## 2026-07-12 — Phase 2 ADR renumber and directive injection ownership
+
+**Context:** Phase 2 / Milestone 2.1.1 planning
+
+**Finding:** Phase 2 decision log assigned ADR-0022–0031 for provider/auth/directive topics, but ADR-0022–0024 were already consumed (health check, docs site, benchmark pipeline). Public docs claimed Phase 1 shipped the provider adapter skeleton; `packages/provider` did not exist. Milestone 2.1.2 pseudocode injects directives via `SystemDirective` on the provider request, while 2.3.3 assigns injection to proxy middleware.
+
+**Impact:** Broken ADR links if filed at 0022; duplicate injection logic if both 2.1.2 and 2.3.3 implement it.
+
+**Decision:** Renumber pending Phase 2 ADRs to **0025–0034** (provider abstraction = ADR-0025, accepted in 2.1.1). Implement messages-only `provider.Request`; directive injection exclusively in proxy middleware per ADR-0025 §5. Milestone 2.1.4 will extract registry lookup from handler into middleware without behavior change.
+
+**Updated:** `engineering/roadmap-archive/legacy-roadmap/phase-2-single-provider/decisions.mdx`, milestone frontmatter (2.1.x–2.6.x), `site/content/docs/proxy/provider-adapters.mdx`, `site/content/docs/adr/0025-llm-provider-abstraction.md`, `findings.mdx`
+
+---
+
+## 2026-06-04 — Auth cache (bloom/LRU) deferred to Phase 2 optional 2.2.1
+
+**Historical note:** Superseded for current status by the 2026-07-23 finding above — milestone 2.2.1 is complete.
+
+**Context:** Milestone 1.2.1 / PR #51
+
+**Finding:** [ARCHITECTURE.md](/roadmap/ARCHITECTURE) described bloom → LRU → gRPC as if implemented; Phase 1 shipped gRPC-only fail-closed validation per ADR-0011 and SECURITY §15.
+
+**Impact:** Docs must distinguish Phase 1 implemented vs Phase 2 target; avoid implying cached permissions on auth outage before 2.2.1.
+
+**Decision:** Formal deferral record in ADR-0011 §7; ARCHITECTURE updated; stub milestone `2.2.1-auth-cache-bloom.md` added. Implement cache only in Phase 2 optional milestone via `TokenValidator` decorator.
+
+**Updated:** `site/content/docs/adr/0008-security-ci-gates.md`, `engineering/ARCHITECTURE.md`, `engineering/roadmap-archive/legacy-roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom`, `decisions.md`, `current-state.mdx`
+
+---
+
+## 2026-07-12 — Unified web product pivot (monorepo `web/`)
+
+**Context:** Phase 1.5 exit / post-PR #206
+
+**Finding:** The public product shipped as a **single** Next.js static export at `ibexharness.com` (landing, docs, benchmarks, blog, releases, roadmap) from `web/` in the harness monorepo. MASTER_BRIEF Part I assumed a separate landing repo and `docs.ibexharness.com` as primary. Benchmark pipeline, dashboard, and CI path-filter gates were delivered but not in the original milestone table.
+
+**Impact:** Roadmap paths (`docs/app/` → `web/`), deploy workflow names (`web-deploy.yml`), and Phase 1.5 exit criteria needed reconciliation. Phase 2.6.1 benchmark infrastructure is pre-delivered; Phase 2 still owns middleware-complete latency baseline.
+
+**Decision:** Declare Phase 1.5 complete after `verify_phase15.sh` lands. Update hub pages, milestone frontmatter, and MASTER_BRIEF Part 0 pivot. Phase 2 entry unblocked.
+
+**Updated:** `https://ibexharness.com/roadmap`, `overview.mdx`, `phase-1-5-docs-site/index.mdx`, `master-brief.mdx`, `findings.mdx`
+
+---
+
+## 2026-06-01 — Auth proto delivered (resolved)
+
+**Context:** Phase 1 planning (original finding below)
+
+**Finding:** `ibex.auth.v1` now exists at `packages/proto/proto/ibex/auth/v1/auth.proto` with Buf lint/breaking in CI.
+
+**Impact:** Original blocker for milestones 1.1.2 and 1.2.1 is resolved.
+
+**Decision:** Close planning blocker; proxy auth client shipped per ADR-0011.
+
+**Updated:** `phase-1-core-platform/goals.mdx`, milestone 1.1.2, 1.2.1
+
+---
+
+## 2026-06-03 — OpenSSF Scorecard alerts triaged (not product CVEs)
+
+**Finding:** GitHub Code Scanning showed ~30 open **Scorecard** supply-chain policy alerts (pinned dependencies, code review, fuzzing, SAST maturity)—not exploitable application findings. Grype had a stale failed analysis from pre–PR #31 SARIF upload; SBOM workflow is artifact-only per ADR-0008.
+
+**Impact:** Security tab noise obscured real gates (CodeQL, Semgrep, Trivy, OSV). Solo-maintainer repo will not satisfy every Scorecard recommendation without explicit policy choices.
+
+**Decision:** Delete stale Grype analysis on `main`; dismiss fixed `PinnedDependencies` alerts after pinned SHAs landed; dismiss CodeReview/Fuzzing/SAST/CII alerts as not applicable or tracked as backlog. Grype remains workflow artifacts only (`grype-report.txt/json`).
+
+**Updated:** `CONTRIBUTING.md`, `https://ibexharness.com/roadmap`, workspace archive 010
+
+---
+
+## 2026-06-06 — Runtime Alpine base images pinned by digest
+
+**Context:** Two open Scorecard `PinnedDependencies` Code Scanning alerts ([#720](https://github.com/Rick1330/ibex-harness/security/code-scanning/720), [#721](https://github.com/Rick1330/ibex-harness/security/code-scanning/721)) on `services/auth/Dockerfile` and `services/proxy/Dockerfile` runtime stage.
+
+**Decision:** Pin `alpine:3.23` to `alpine:3.23@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11` per Scorecard remediation. Build stage `golang:1.25-alpine3.20` unchanged (semantic version; not flagged).
+
+**Updated:** `services/auth/Dockerfile`, `services/proxy/Dockerfile`

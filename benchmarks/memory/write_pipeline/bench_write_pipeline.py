@@ -106,11 +106,13 @@ async def run_bench(*, iterations: int) -> dict:
             cmd = CreateMemoryCommand(
                 org_id=org_id,
                 agent_id=agent_id,
-                content=(
-                    f"Wall-clock benchmark iteration {index} "
-                    f"with unique marker {uuid4().hex} "
-                    f"recorded at nanosecond {time.time_ns()}."
-                ),
+                # Keep the iteration marker free of PII-shaped tokens (times,
+                # dates, long digit runs, organization-like strings). Presidio
+                # redaction rewrites detected spans to typed placeholders, so a
+                # PII-shaped marker collapses distinct iterations onto one
+                # content_hash and the write path reports a spurious exact
+                # duplicate. The numeric index alone keeps each write unique.
+                content=f"latency probe sample {index} recorded for the memory write pipeline",
                 category="factual",
                 confidence=0.85,
             )

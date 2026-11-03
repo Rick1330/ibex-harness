@@ -11,8 +11,8 @@ _EXPECTED_PREDICATES = (
 )
 
 _SEARCH_PREDICATES = (
-    "(:include_expired OR valid_from <= CURRENT_TIMESTAMP)",
-    "(:include_expired OR valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)",
+    "(:include_historical_candidates OR valid_from <= CURRENT_TIMESTAMP)",
+    "(:include_historical_candidates OR valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)",
 )
 
 

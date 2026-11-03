@@ -10,7 +10,7 @@ BENCH_DIR="$ROOT/benchmarks/memory"
 SIZES="${MEMORY_BENCH_SIZES:-10000 100000}"
 # Workspace-relative paths (path_guard rejects escapes / parent refs).
 OUTPUT="${MEMORY_BENCH_OUTPUT:-benchmarks/memory/output/hnsw_recall_latency.json}"
-PUBLISHED="${MEMORY_BENCH_PUBLISHED:-web/public/benchmarks/hnsw-benchmark-data.json}"
+PUBLISHED="${MEMORY_BENCH_PUBLISHED:-site/public/benchmarks/hnsw-benchmark-data.json}"
 
 to_workspace_rel() {
   local p="$1"

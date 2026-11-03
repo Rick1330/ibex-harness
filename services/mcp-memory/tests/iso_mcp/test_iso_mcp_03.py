@@ -16,9 +16,10 @@ from tests.iso_mcp.conftest import (
 pytestmark = pytest.mark.iso_mcp
 
 
-def test_iso_mcp_03_suspended_agent_denied_on_search_and_write(
+def test_iso_mcp_03_suspended_agent_denied_on_search_write_and_lineage(
     iso_app: tuple[TestClient, MemoryAuditSink],
     iso_env: dict[str, str],
+    iso_ids: dict[str, object],
 ) -> None:
     client, sink = iso_app
     headers = mcp_session(client, iso_env["token_suspended"])
@@ -33,9 +34,7 @@ def test_iso_mcp_03_suspended_agent_denied_on_search_and_write(
             arguments={"query": "suspended-agent"},
         ),
     )
-    assert_permission_denied(
-        search, sink=sink, tool_name="search_memory", events_before=before
-    )
+    assert_permission_denied(search, sink=sink, tool_name="search_memory", events_before=before)
 
     before = len(sink.events)
     write = tools_call(
@@ -47,6 +46,18 @@ def test_iso_mcp_03_suspended_agent_denied_on_search_and_write(
             arguments={"content": "must not write for suspended agent"},
         ),
     )
+    assert_permission_denied(write, sink=sink, tool_name="write_memory", events_before=before)
+
+    before = len(sink.events)
+    lineage = tools_call(
+        client,
+        ToolCallSpec(
+            headers=headers,
+            request_id=32,
+            name="get_memory_lineage",
+            arguments={"memory_id": str(iso_ids["agent_suspended"])},
+        ),
+    )
     assert_permission_denied(
-        write, sink=sink, tool_name="write_memory", events_before=before
+        lineage, sink=sink, tool_name="get_memory_lineage", events_before=before
     )

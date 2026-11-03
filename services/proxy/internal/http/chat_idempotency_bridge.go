@@ -15,6 +15,7 @@ type capturingWriter = chat.CapturingWriter
 func (h chatCompletionHandler) idemp() chat.Idempotency {
 	return chat.Idempotency{
 		Store:         h.idempotencyStore,
+		Ledger:        h.terminationLedger,
 		Metrics:       h.metrics,
 		Log:           h.log,
 		DocsBase:      h.docsBase,
@@ -45,4 +46,9 @@ func (h chatCompletionHandler) finishIdempotency(claim *idempotencyClaim, status
 
 func (h chatCompletionHandler) finishIdempotencyCapture(claim *idempotencyClaim, cw *capturingWriter) {
 	h.idemp().FinishCapture(claim, cw)
+}
+
+// abandonIdempotency releases a pending claim on pre-provider fail-closed exits.
+func (h chatCompletionHandler) abandonIdempotency(claim *idempotencyClaim) {
+	h.idemp().Abandon(claim)
 }

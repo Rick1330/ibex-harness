@@ -1,9 +1,40 @@
-# braces stack-exhaustion advisory (GHSA-vfj7-8cjw-p6xm): npm has no patched
-# release (OSV reports fixed version "--"). It is reachable only through
-# console development tooling (eslint-config-next and shadcn), not production
-# dependencies. Advisory-scoped ignore keeps other braces findings visible.
-# Revisit when the upstream dependency chain publishes a fix.
+# OSV ignore policy: advisory-scoped, expiring, and limited to dependency
+# chains that are build-time or development-only and have no compatible fixed
+# release. A package that reaches the deployed artifact must not be ignored.
+
+# zod patch advisory (GHSA-mrhx-c7xc-m3w5): fixed only in zod 4.6.6, which
+# @nuxt/content 3.16.2 (the Docus content layer for the static site) does not
+# accept yet. Build-time only; the deployed site is static HTML/JS.
 [[IgnoredVulns]]
-id = "GHSA-vfj7-8cjw-p6xm"
+id = "GHSA-mrhx-c7xc-m3w5"
 ignoreUntil = 2026-12-01
-reason = "No upstream fixed release; reachable only through console devDependencies eslint-config-next/shadcn; excluded from production audit."
+reason = "Fix exists only in zod 4.6.6+; @nuxt/content 3.16.2 for the static Docus site still resolves zod 3.25.76. Build-time only, no runtime exposure. Re-audit when @nuxt/content supports zod 4."
+
+# glob ReDoS advisory (GHSA-3g3m-2fjr-6pw4) is NOT ignored: `pnpm.overrides` in
+# the root package.json pins glob >=14.0.2, so the advisory no longer resolves.
+# If a future lockfile reintroduces glob <14, this gate must fail.
+
+# minimatch ReDoS advisory (GHSA-g3hv-75wg-m249): fixed only in minimatch 11,
+# a major that the build-time glob/archiver chains do not accept. Build-time
+# only; absent from the deployed Nitro output.
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2026-12-01
+reason = "Fixed only in minimatch 11 (major); carried by build-time glob/archiver chains and absent from the deployed Nitro output. Re-audit when the parent packages upgrade."
+
+# deepmerge prototype-pollution advisory (GHSA-gcqx-w48m-w2h4): OSV reports no
+# fixed release. Carried by @rollup/plugin-node-resolve at build time only and
+# absent from the deployed Nitro output.
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+ignoreUntil = 2026-12-01
+reason = "No upstream fixed release; carried by @rollup/plugin-node-resolve at build time and absent from the deployed Nitro output. Revisit when a fixed release exists."
+
+# nitro-server advisory (GHSA-vjh5-4x84-xrqp): OSV reports no fixed release as
+# of 4.6.3. The Console uses the Nitro node-server preset, but no Console
+# hostname, workload, or production promotion is claimed (ADR-0088). Re-audit
+# before any hosted rollout and when an upstream fix exists.
+[[IgnoredVulns]]
+id = "GHSA-vjh5-4x84-xrqp"
+ignoreUntil = 2026-12-01
+reason = "No upstream fixed release as of @nuxt/nitro-server 4.6.3; the Console is not hosted and claims no production deployment. Re-audit before any hosted rollout."

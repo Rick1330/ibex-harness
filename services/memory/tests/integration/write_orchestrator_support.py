@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID, uuid4
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
@@ -30,9 +31,14 @@ from app.pipeline import (
     ValidateStage,
     WritePipeline,
 )
-from app.vectorstore.base import UpsertRequest
+from app.vectorstore.base import SearchMode, UpsertRequest
 from app.write.orchestrator import MemoryWriteOrchestrator
-from tests.integration.conftest import TimedMemorySeed, insert_timed_memory, zero_embedding
+from tests.integration.conftest import (
+    TimedMemorySeed,
+    insert_timed_memory,
+    with_service_org,
+    zero_embedding,
+)
 
 
 class EmbedProbe:
@@ -102,14 +108,18 @@ def build_orchestrator(deps: OrchestratorTestDeps) -> MemoryWriteOrchestrator:
             session_factory, RetrievalBump(org_id=org_id, memory_id=memory_id)
         )
 
-    dedup = DedupService(
-        settings, store=deps.store, exact_lookup=lookup, bump_retrieval=bump
-    )
+    dedup = DedupService(settings, store=deps.store, exact_lookup=lookup, bump_retrieval=bump)
     conflict = ConflictService(settings, subject_extractor=extract)
 
-    async def load_candidates(org_id: UUID, ids: tuple[UUID, ...]):
+    async def load_candidates(org_id: UUID, agent_id: UUID, ids: tuple[UUID, ...]):
         return await load_candidate_memories(
-            session_factory, CandidateLoad(org_id=org_id, memory_ids=ids)
+            session_factory,
+            CandidateLoad(
+                org_id=org_id,
+                agent_id=agent_id,
+                memory_ids=ids,
+                search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
+            ),
         )
 
     pipeline = WritePipeline(
@@ -169,12 +179,23 @@ async def seed_vector_memory(
             valid_until=seed.valid_until,
         ),
     )
+    async with session_factory() as session:
+        await with_service_org(session, seed.org_id)
+        row = await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SELECT lifecycle_revision FROM ibex_core.memories "
+                "WHERE id = :memory_id AND org_id = :org_id"
+            ),
+            {"memory_id": str(memory_id), "org_id": str(seed.org_id)},
+        )
+        lifecycle_revision = row.scalar_one()
     await store.upsert(
         UpsertRequest(
             memory_id=memory_id,
             org_id=seed.org_id,
             embedding=vec,
             embedding_model="test-model",
+            expected_revision=lifecycle_revision,
         )
     )
     return memory_id, vec

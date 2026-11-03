@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
-import logging
-import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from urllib.parse import urlsplit
-from uuid import UUID
+from typing import Any
 
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.types import ASGIApp, Receive, Scope, Send
+from mcp_runtime.middleware import (
+    AUTH_AUDIT_ORG_UNKNOWN,
+    origin_from_resource,
+    path_is_protected,
+)
+from mcp_runtime.middleware import (
+    BearerAuthConfig as SharedBearerAuthConfig,
+)
+from mcp_runtime.middleware import (
+    BearerAuthMiddleware as _BearerAuthMiddleware,
+)
+from starlette.types import ASGIApp
 
 from app.access_token import set_access_token
 from app.audit import AsyncAuditEmitter, ToolCallAuditEvent
@@ -21,14 +27,11 @@ from app.config import Settings
 from app.errors import AuthFailedError, AuthUnavailableError
 from app.principal import set_principal
 
-logger = logging.getLogger(__name__)
-
 ValidatorProvider = Callable[[], TokenValidator | None]
 AuditProvider = Callable[[], AsyncAuditEmitter | None]
 
-_WWW_AUTHENTICATE = 'Bearer realm="ibex-mcp", resource_metadata="{metadata_url}"'
-# ClickHouse org_id is non-null; unknown identity uses the nil UUID sentinel.
-AUTH_AUDIT_ORG_UNKNOWN = UUID("00000000-0000-0000-0000-000000000000")
+_origin_from_resource = origin_from_resource
+_path_is_protected = path_is_protected
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,120 +42,43 @@ class BearerAuthConfig:
     protected_prefixes: tuple[str, ...] = ("/mcp",)
 
 
-@dataclass(frozen=True, slots=True)
-class _AuthError:
-    status: int
-    code: str
-    message: str
-    www_authenticate: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _AsgiCall:
-    scope: Scope
-    receive: Receive
-    send: Send
-
-
-@dataclass(frozen=True, slots=True)
-class _RejectRequest:
-    call: _AsgiCall
-    error: _AuthError
-    started: float
-
-
-class BearerAuthMiddleware:
-    """Pure ASGI middleware — BaseHTTPMiddleware breaks Streamable HTTP streaming.
-
-    Uses a provider so the validator can be wired during lifespan without
-    reconstructing middleware on every request.
-    """
+class BearerAuthMiddleware(_BearerAuthMiddleware):
+    """Pure ASGI middleware — BaseHTTPMiddleware breaks Streamable HTTP streaming."""
 
     def __init__(self, app: ASGIApp, config: BearerAuthConfig) -> None:
-        self.app = app
-        self.settings = config.settings
-        self.get_validator = config.get_validator
-        self.get_audit = config.get_audit or (lambda: None)
-        self.protected_prefixes = config.protected_prefixes
-        self._metadata_url = (
-            _origin_from_resource(config.settings.resource_url)
-            + "/.well-known/oauth-protected-resource"
-        )
+        super().__init__(app, _shared_config(config))
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
 
-        path = scope.get("path") or ""
-        if not _path_is_protected(path, self.protected_prefixes):
-            await self.app(scope, receive, send)
-            return
+def _shared_config(config: BearerAuthConfig) -> SharedBearerAuthConfig[Any]:
+    return SharedBearerAuthConfig(
+        realm="ibex-mcp",
+        resource_url=config.settings.resource_url,
+        get_validator=config.get_validator,
+        parse_token=parse_authorization_header,
+        bind_principal=_bind_token,
+        clear_principal=_clear_token,
+        auth_failed_error=AuthFailedError,
+        auth_unavailable_error=AuthUnavailableError,
+        emit_deny=_deny_emitter(config.get_audit or (lambda: None)),
+        protected_prefixes=config.protected_prefixes,
+    )
 
-        call = _AsgiCall(scope=scope, receive=receive, send=send)
-        started = time.perf_counter()
-        validator = self.get_validator()
-        if validator is None:
-            await self._reject(
-                _RejectRequest(
-                    call=call,
-                    error=_AuthError(
-                        status=503,
-                        code="auth_unavailable",
-                        message="authentication service unavailable",
-                    ),
-                    started=started,
-                )
-            )
-            return
 
-        request = Request(scope, receive)
-        try:
-            token = parse_authorization_header(request.headers.get("authorization"))
-            result = await validator.validate(token)
-            set_principal(result.to_principal())
-            set_access_token(token)
-        except AuthFailedError as exc:
-            await self._reject(
-                _RejectRequest(
-                    call=call,
-                    error=_AuthError(
-                        status=401,
-                        code=exc.code,
-                        message=exc.message,
-                        www_authenticate=_WWW_AUTHENTICATE.format(
-                            metadata_url=self._metadata_url
-                        ),
-                    ),
-                    started=started,
-                )
-            )
-            return
-        except AuthUnavailableError as exc:
-            await self._reject(
-                _RejectRequest(
-                    call=call,
-                    error=_AuthError(status=503, code=exc.code, message=exc.message),
-                    started=started,
-                )
-            )
-            return
+def _bind_token(token: str, result: Any) -> None:
+    set_principal(result.to_principal())
+    set_access_token(token)
 
-        try:
-            await self.app(scope, receive, send)
-        finally:
-            set_principal(None)
-            set_access_token(None)
 
-    async def _reject(self, req: _RejectRequest) -> None:
-        self._emit_auth_audit(req.error.code, started=req.started)
-        await _send_error(req.call, req.error)
+def _clear_token() -> None:
+    set_principal(None)
+    set_access_token(None)
 
-    def _emit_auth_audit(self, error_code: str, *, started: float) -> None:
-        audit = self.get_audit()
+
+def _deny_emitter(get_audit: AuditProvider) -> Callable[[str, int], None]:
+    def emit(error_code: str, latency_ms: int) -> None:
+        audit = get_audit()
         if audit is None:
             return
-        latency_ms = int((time.perf_counter() - started) * 1000)
         audit.emit(
             ToolCallAuditEvent(
                 request_id=str(uuid.uuid4()),
@@ -164,32 +90,4 @@ class BearerAuthMiddleware:
             )
         )
 
-
-def _path_is_protected(path: str, prefixes: tuple[str, ...]) -> bool:
-    for prefix in prefixes:
-        if path == prefix or path.startswith(prefix + "/"):
-            return True
-    return False
-
-
-def _origin_from_resource(resource_url: str) -> str:
-    """Derive the public origin used for resource-metadata discovery links."""
-    url = resource_url.rstrip("/")
-    if url.endswith("/mcp"):
-        return url[: -len("/mcp")] or url
-    parts = urlsplit(url)
-    if parts.scheme and parts.netloc:
-        return parts.scheme + "://" + parts.netloc
-    return url
-
-
-async def _send_error(call: _AsgiCall, error: _AuthError) -> None:
-    headers: dict[str, str] = {"content-type": "application/json"}
-    if error.www_authenticate is not None:
-        headers["www-authenticate"] = error.www_authenticate
-    response = JSONResponse(
-        status_code=error.status,
-        content={"error": {"code": error.code, "message": error.message}},
-        headers=headers,
-    )
-    await response(call.scope, call.receive, call.send)
+    return emit

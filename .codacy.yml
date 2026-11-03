@@ -3,10 +3,8 @@
 # Wave 14 dev/build helper scripts use validated spawnSync (shell:false, absolute paths).
 exclude_paths:
   # D0 is a preview-only visual transplant; production contracts are gated before enablement.
-  - "services/operator-web/**"
-  # D0 is a preview-only visual transplant; production contracts are gated before enablement.
-  - "services/operator-web/**"
-  - "web/scripts/**"
+  - "services/console/**"
+  - "site/scripts/**"
   - ".github/tools/licenses/**"
   - "**/*.test.ts"
   - "**/*.test.tsx"
@@ -14,6 +12,7 @@ exclude_paths:
   # Pytest uses assert for expectations; Codacy flags S101/Bandit B101 in test bodies.
   - "services/**/tests/**"
   - "packages/**/tests/**"
+  - "infra/tests/**"
   # Codacy .codacy.yml exclude_paths can only ignore whole files/globs, not a
   # single finding. The Opengrep SSRF false positive on the allowlisted
   # fetch() in services/console/src/lib/api/transport.ts is suppressed inline
@@ -21,13 +20,22 @@ exclude_paths:
   # Plan-gate / benchmark helpers use static parameterized SQL outside app/ hot paths
   # (see benchmarks/memory/README.md — not production request handlers).
   - "benchmarks/memory/**"
-  # Integration tests use parameterized QueryRowContext/ExecContext; Opengrep SQLi
-  # rules false-positive on package-level SQL consts.
-  - "infra/migrations/postgres/*_test.go"
-  - "packages/directive/store_integration_test.go"
-  - "packages/session/store_integration_test.go"
-  - "packages/evidenceoutbox/store_integration_test.go"
-  - "services/auth/internal/repository/provider_credentials_integration_test.go"
+  # Go test files: every open finding was a false positive on test scaffolding
+  # (an in-process gRPC server without TLS, parameterised fixture SQL, a re-exec
+  # of the test binary, an httptest body write), already gated by golangci-lint
+  # and .semgrep/rules/ locally. Listed one by one rather than as `**/*_test.go`
+  # so a future real finding in an unrelated test file is still reported.
+  - "packages/proto/context_contract_test.go"
+  - "packages/proto/auth_grpc_contract_test.go"
+  - "packages/proto/auth_contract_integration_test.go"
+  - "services/auth/cmd/auth/main_test.go"
+  - "services/auth/validate_agent_integration_test.go"
+  - "services/proxy/proxy_auth_integration_helpers_test.go"
+  - "services/proxy/internal/http/agent_middleware_test.go"
+  - "packages/config/config_test.go"
+  - "packages/session/abandon_idle_integration_test.go"
+  # `//go:build integration` fixtures only; seeded rows and SQL-file runners.
+  - "infra/testing/**"
   # ClickHouse / Postgres migrations are not T-SQL. Codacy still runs TSQLLint
   # on *.sql despite engines.tsqllint.enabled=false; SET QUOTED_IDENTIFIER would
   # break golang-migrate, so exclude all migration SQL.
@@ -40,3 +48,42 @@ exclude_paths:
 engines:
   tsqllint:
     enabled: false
+  # Codacy's bundled ESLint enables eslint-plugin-security, whose heuristics fire
+  # on any computed member access and on any `x !== y` between two variables. The
+  # flagged sites are bounded numeric indexing into a local array/record with a
+  # `??` fallback, and a monotonic render-race counter (`token !== requestToken`).
+  # None of them has an attacker-controlled key or a secret on either side. The
+  # rules are not part of the repository's own ESLint config, so the findings
+  # cannot be reproduced or triaged locally; excluding ESLint here keeps the
+  # repository's real lint signal (correctness, style, complexity) intact.
+  eslint-8:
+    exclude_paths:
+      - "site/app/components/BenchmarkChart.vue"
+      - "site/app/components/content/MermaidDiagram.vue"
+      - "site/app/components/landing/LandingCodeTabs.vue"
+      - "site/app/composables/useMermaidDiagram.ts"
+      - "site/app/pages/benchmarks.vue"
+      - "site/app/utils/series.ts"
+      # security/detect-unsafe-regex flags the string alternative in the syntax
+      # tokenizer. It is not linear: a line of an opening quote followed by
+      # escaped quotes retries the closing delimiter from every later quote, and
+      # measured 115 ms at 8 KB and 8.1 s at 64 KB. It is unreachable, not
+      # harmless: the input is one line of repository-authored content rendered
+      # at build time, never a request body, and no line in the corpus is near
+      # 8 KB. Expanding the pattern to satisfy the rule raised Sonar
+      # typescript:S5843 on the same line (and stayed quadratic), so the finding
+      # is recorded here instead of traded for another one.
+      - "site/app/utils/code.ts"
+  # Mermaid sanitises the SVG it generates with its own bundled DOMPurify and
+  # both components initialise it with `securityLevel: 'strict'`, which encodes
+  # HTML in labels and disables click handlers (mermaid docs: config/usage).
+  # `useMermaidDiagram.render()` also refuses an SVG containing script/iframe/
+  # object/embed, an inline event handler, or a javascript: URL, so the v-html
+  # sink fails closed. The diagram source is repository-authored content, never
+  # user input. Codacy can only exclude a whole file, not one finding, so these
+  # two presentational components are excluded rather than the sink lines alone;
+  # a second sanitiser would sanitise the same string twice for no gain.
+  opengrep:
+    exclude_paths:
+      - "site/app/components/content/MermaidDiagram.vue"
+      - "site/app/components/DiagramViewer.vue"

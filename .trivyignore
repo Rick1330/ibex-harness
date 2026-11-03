@@ -4,3 +4,12 @@
 # Revisit by 2026-12-01 when bumping CI tool modules.
 CVE-2026-56864
 CVE-2026-56865
+
+# zod unbounded array validation (CVE-2023-54404, fixed only in zod 4.6.6+).
+# Direct zod consumers in this workspace already resolve to zod >=4.6.7; the
+# remaining 3.25.76 instance is carried by the shadcn CLI (console
+# devDependency), which targets zod v3 and cannot take the major bump. It is
+# development tooling and never ships. Mirrors the GHSA-mrhx-c7xc-m3w5 entry
+# in osv-scanner.toml.
+# Revisit when shadcn moves to zod v4.
+CVE-2023-54404

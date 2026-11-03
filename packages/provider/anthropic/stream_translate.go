@@ -399,11 +399,11 @@ func (st *streamState) writeRaw(s string) error {
 }
 
 func truncateErrMsg(msg string) string {
-	const max = 512
-	if len(msg) <= max {
+	const maxLen = 512
+	if len(msg) <= maxLen {
 		return msg
 	}
-	return msg[:max]
+	return msg[:maxLen]
 }
 
 type openAIStreamChunk struct {

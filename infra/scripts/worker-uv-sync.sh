@@ -15,8 +15,11 @@ fi
 
 WHEEL_DIR="$WORKER_DIR/.wheels"
 bash "$(dirname "${BASH_SOURCE[0]}")/build-ibex-async-db-wheel.sh" "$WHEEL_DIR"
+bash "$(dirname "${BASH_SOURCE[0]}")/build-ibex-idempotency-wheel.sh" "$WHEEL_DIR"
 
 cd "$WORKER_DIR"
 uv sync --frozen --no-build --extra dev --no-install-project \
-  --find-links "$WHEEL_DIR" --no-install-package ibex-async-db
-uv pip install --no-index --find-links "$WHEEL_DIR" "ibex-async-db==0.1.0"
+  --find-links "$WHEEL_DIR" --no-install-package ibex-async-db \
+  --no-install-package ibex-idempotency
+uv pip install --no-deps --no-index --find-links "$WHEEL_DIR" \
+  "ibex-async-db==0.1.0" "ibex-idempotency==0.1.0"

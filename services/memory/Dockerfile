@@ -10,12 +10,13 @@
 
 FROM ghcr.io/astral-sh/uv@sha256:2fd1b38e3398a256d6af3f71f0e2ba6a517b249998726a64d8cfbe55ab34af5e AS uv
 
-FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS deps
+FROM python@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0b7f AS deps
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_SYSTEM_PYTHON=0 \
-    UV_NO_BUILD=1
+    UV_NO_BUILD=1 \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
 
 COPY --from=uv /uv /usr/local/bin/uv
 
@@ -23,23 +24,29 @@ WORKDIR /app/services/memory
 
 COPY packages/authclient /app/packages/authclient
 COPY packages/ibex_async_db /app/packages/ibex_async_db
+COPY packages/ibex_idempotency /app/packages/ibex_idempotency
 # Trusted monorepo wheel only — UV_NO_BUILD=1 blocks uv build globally (Sonar S8541).
 RUN mkdir -p /wheels && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/authclient \
-    && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/ibex_async_db
+    && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/ibex_async_db \
+    && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/ibex_idempotency
 COPY services/memory/pyproject.toml services/memory/uv.lock ./
 
 RUN uv sync --frozen --no-build --no-install-project --find-links /wheels \
     --no-install-package authclient --no-install-package ibex-async-db \
-    && uv pip install --no-cache --force-reinstall --no-index --find-links /wheels \
-    "authclient==0.1.5" "ibex-async-db==0.1.0"
+    --no-install-package ibex-idempotency \
+    && uv pip install --no-cache --force-reinstall --no-deps --no-index --find-links /wheels \
+    "authclient==0.1.5" "ibex-async-db==0.1.0" "ibex-idempotency==0.1.0"
 
-FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS runtime
+FROM python@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0b7f AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
 RUN python -m pip uninstall --yes setuptools wheel || true \
+    && rm -rf /usr/local/lib/python3.*/site-packages/pip* \
+       /usr/local/lib/python3.*/ensurepip \
+       /usr/local/bin/pip* \
     && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends libpcre2-8-0=10.42-1+deb12u2 \
@@ -49,11 +56,11 @@ RUN python -m pip uninstall --yes setuptools wheel || true \
 
 WORKDIR /app
 
-COPY --from=deps /app/services/memory/.venv ./.venv
+COPY --from=deps /app/.venv ./.venv
 
 COPY services/memory/app ./app
 
-USER ibex
+USER 10001:10001
 
 EXPOSE 8005
 

@@ -44,7 +44,7 @@
       "state": "accepted_residual",
       "blocking": false,
       "owner": "platform",
-      "evidence_path": "web/content/docs/adr/0083-d2-publication-query-lifecycle-contract.mdx",
+      "evidence_path": "engineering/adr/0083-d2-publication-query-lifecycle-contract.md",
       "next_gate": "Independent P3 gates before any content enablement"
     },
     {
@@ -115,7 +115,7 @@
       "state": "deferred",
       "blocking": false,
       "owner": "platform",
-      "evidence_path": "web/content/docs/adr/0083-d2-publication-query-lifecycle-contract.mdx",
+      "evidence_path": "engineering/adr/0083-d2-publication-query-lifecycle-contract.md",
       "next_gate": "Writer+DTO+UI agreement; interim_v1 stays labelled"
     },
     {
@@ -125,7 +125,7 @@
       "state": "inapplicable",
       "blocking": false,
       "owner": "platform",
-      "evidence_path": "web/content/docs/adr/0083-d2-publication-query-lifecycle-contract.mdx",
+      "evidence_path": "engineering/adr/0083-d2-publication-query-lifecycle-contract.md",
       "next_gate": "Snapshot-only; no streaming claim"
     }
   ]

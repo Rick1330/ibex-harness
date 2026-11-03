@@ -64,6 +64,20 @@ var AuthRequiredMetricNames = []string{
 	"ibex_process_up",
 }
 
+// RelayRequiredMetricNames lists metrics that must appear on relay /metrics.
+var RelayRequiredMetricNames = []string{
+	"ibex_relay_batches_total",
+	"ibex_relay_claimed_total",
+	"ibex_relay_delivered_total",
+	"ibex_relay_retried_total",
+	"ibex_relay_dead_letter_total",
+	"ibex_relay_recovered_total",
+	"ibex_relay_batch_duration_seconds",
+	"ibex_relay_delivery_duration_seconds",
+	"ibex_relay_fence_check_duration_seconds",
+	"ibex_process_up",
+}
+
 // ForbiddenLabelNames must never appear on registered metrics.
 var ForbiddenLabelNames = []string{
 	"org_id",

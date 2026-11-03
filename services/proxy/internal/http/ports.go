@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 
+	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 )
 
@@ -16,4 +17,10 @@ type TokenValidator interface {
 // Concrete adapters live in services/proxy/internal/auth.
 type AgentVerifier interface {
 	Verify(ctx context.Context, bearer, agentID, orgID string) (*auth.AgentRecord, error)
+}
+
+// PolicySnapshotFetcher is the HTTP consumer port for policy snapshot issuance.
+// Concrete adapters live in services/proxy/internal/auth.
+type PolicySnapshotFetcher interface {
+	Issue(ctx context.Context, bearer, agentID string) (*policysnapshot.Envelope, error)
 }

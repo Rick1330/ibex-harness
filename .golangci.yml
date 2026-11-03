@@ -16,6 +16,9 @@ linters:
     - gocyclo
     - prealloc
   settings:
+    govet:
+      disable:
+        - inline
     revive:
       rules:
         - name: package-comments

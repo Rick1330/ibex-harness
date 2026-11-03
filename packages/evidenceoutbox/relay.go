@@ -7,20 +7,51 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/Rick1330/ibex-harness/packages/canonicaljson"
 	"github.com/google/uuid"
 )
 
-// Deliverer delivers one outbox row to a durable projection (ClickHouse, Redis, etc.).
-// Implementations must be idempotent on EventID + AggregateSeq.
+// Deliverer is the legacy single-row projection surface. Relay will not invoke
+// it unless the same value also implements TombstoneFencedDeliverer.
 type Deliverer interface {
 	Deliver(ctx context.Context, row OutboxRow) error
 }
+
+// TombstoneFencedDeliverer is the mandatory projection hook when the relay
+// applies a row. Implementations must check the org-scoped authoritative
+// tombstone/version fence and serialize that check with the projection write;
+// deduplicate EventID + AggregateSeq within OrgID, and fail closed when the
+// authoritative fence cannot be checked.
+type TombstoneFencedDeliverer interface {
+	DeliverWithTombstoneFence(ctx context.Context, row OutboxRow, fence TombstoneFence) error
+}
+
+// ErrTombstonedResource reports a terminal tombstone or stale-version decision
+// from an authoritative fence check; Relay records the row as poison without
+// applying it to the projection.
+var ErrTombstonedResource = errors.New("evidenceoutbox: resource is tombstoned or stale")
+
+// ErrUnsupportedFenceResource reports a tombstone fence whose resource type has
+// no authoritative lifecycle checker in this deployment; Relay records the row
+// as poison without retrying because replay can never make the fence checkable.
+var ErrUnsupportedFenceResource = errors.New("evidenceoutbox: unsupported fence resource type")
+
+var (
+	errRedactionUnclassified   = errors.New("evidenceoutbox: payload redaction class is unclassified")
+	errRedactionProhibited     = errors.New("evidenceoutbox: payload redaction class is prohibited")
+	errRedactionNotProjectable = errors.New("evidenceoutbox: redacted payload is not projectable")
+	errRedactionUnsupported    = errors.New("evidenceoutbox: payload redaction class is unsupported")
+	errTombstoneFenceMissing   = errors.New("evidenceoutbox: tombstone fence is required")
+	errTombstoneFenceInvalid   = errors.New("evidenceoutbox: tombstone fence is invalid")
+	errFencedDeliveryRequired  = errors.New("evidenceoutbox: tombstone-fenced delivery is required")
+)
 
 // Relay claims pending outbox rows and delivers them at-least-once.
 type Relay struct {
@@ -112,10 +143,15 @@ func (r *Relay) claimBatch(ctx context.Context) ([]OutboxRow, error) {
 }
 
 func (r *Relay) deliverOne(ctx context.Context, row OutboxRow, out *RelayBatchResult) error {
+	row.RedactionClass, row.TombstoneFence = parseOutboxMetadata(row.Payload)
 	if err := validateOutboxRow(row); err != nil {
 		return r.recordDeliveryFailure(ctx, row, out, err)
 	}
-	if err := r.deliverer.Deliver(ctx, row); err != nil {
+	deliverer, ok := r.deliverer.(TombstoneFencedDeliverer)
+	if !ok {
+		return r.recordDeliveryFailure(ctx, row, out, errFencedDeliveryRequired)
+	}
+	if err := deliverer.DeliverWithTombstoneFence(ctx, row, *row.TombstoneFence); err != nil {
 		return r.recordDeliveryFailure(ctx, row, out, err)
 	}
 	if err := r.markDelivered(ctx, row); err != nil {
@@ -130,7 +166,7 @@ func (r *Relay) recordDeliveryFailure(ctx context.Context, row OutboxRow, out *R
 		return markErr
 	}
 	// row.Attempts is already the post-claim count from claimPending.
-	if row.Attempts >= r.maxAttempts {
+	if row.Attempts >= r.maxAttempts || isPermanentDeliveryFailure(err) {
 		out.Poisoned++
 	} else {
 		out.Failed++
@@ -140,6 +176,13 @@ func (r *Relay) recordDeliveryFailure(ctx context.Context, row OutboxRow, out *R
 
 func validateOutboxRow(row OutboxRow) error {
 	if err := validateOutboxIdentity(row); err != nil {
+		return err
+	}
+	class, fence := parseOutboxMetadata(row.Payload)
+	if err := validateRedactionClass(class); err != nil {
+		return err
+	}
+	if err := validateTombstoneFence(fence); err != nil {
 		return err
 	}
 	if err := validateOutboxPayload(row); err != nil {
@@ -169,6 +212,74 @@ func validateOutboxIdentity(row OutboxRow) error {
 	}
 }
 
+func parseOutboxMetadata(payload []byte) (RedactionClass, *TombstoneFence) {
+	var metadata struct {
+		RedactionClass RedactionClass  `json:"redaction_class"`
+		TombstoneFence *TombstoneFence `json:"tombstone_fence"`
+	}
+	if err := json.Unmarshal(payload, &metadata); err != nil {
+		return RedactionClassUnclassified, nil
+	}
+	if metadata.RedactionClass == "" {
+		metadata.RedactionClass = RedactionClassUnclassified
+	}
+	return metadata.RedactionClass, metadata.TombstoneFence
+}
+
+func validateRedactionClass(class RedactionClass) error {
+	switch class {
+	case RedactionClassMetadata:
+		return nil
+	case RedactionClassUnclassified:
+		return errRedactionUnclassified
+	case RedactionClassRedacted:
+		return errRedactionNotProjectable
+	case RedactionClassProhibited:
+		return errRedactionProhibited
+	default:
+		return fmt.Errorf("%w: %q", errRedactionUnsupported, class)
+	}
+}
+
+func validateTombstoneFence(fence *TombstoneFence) error {
+	if fence == nil {
+		return errTombstoneFenceMissing
+	}
+	if strings.TrimSpace(fence.ResourceType) == "" {
+		return errTombstoneFenceInvalid
+	}
+	if strings.TrimSpace(fence.ResourceID) == "" {
+		return errTombstoneFenceInvalid
+	}
+	if fence.ResourceVersion <= 0 {
+		return errTombstoneFenceInvalid
+	}
+	return nil
+}
+
+// permanentDeliveryFailures are delivery errors that replay can never resolve;
+// a row failing with any of these is dead-lettered immediately.
+var permanentDeliveryFailures = []error{
+	errRedactionUnclassified,
+	errRedactionNotProjectable,
+	errRedactionProhibited,
+	errRedactionUnsupported,
+	errTombstoneFenceMissing,
+	errTombstoneFenceInvalid,
+	errFencedDeliveryRequired,
+	ErrUnsupportedFenceResource,
+	ErrTombstonedResource,
+}
+
+func isPermanentDeliveryFailure(err error) bool {
+	for _, target := range permanentDeliveryFailures {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
+}
+
 func validateOutboxPayload(row OutboxRow) error {
 	actualDigest := strings.TrimSpace(row.PayloadDigest)
 	switch {
@@ -180,11 +291,30 @@ func validateOutboxPayload(row OutboxRow) error {
 		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest must be a SHA-256 hex digest")
 	}
 
-	expected := sha256.Sum256(row.Payload)
-	if !strings.EqualFold(actualDigest, hex.EncodeToString(expected[:])) {
-		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest does not match payload")
+	expectedDigest, err := expectedOutboxPayloadDigest(row)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(actualDigest, expectedDigest) {
+		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest does not match payload (%s)", row.PayloadDigestScheme)
 	}
 	return nil
+}
+
+func expectedOutboxPayloadDigest(row OutboxRow) (string, error) {
+	switch row.PayloadDigestScheme {
+	case PayloadDigestSchemePostgresJSONBText:
+		sum := sha256.Sum256(row.Payload)
+		return hex.EncodeToString(sum[:]), nil
+	case PayloadDigestSchemeJCSV1:
+		_, digest, err := canonicaljson.Digest(row.Payload)
+		if err != nil {
+			return "", fmt.Errorf("evidenceoutbox: invalid row: payload is not canonicalizable: %w", err)
+		}
+		return digest, nil
+	default:
+		return "", fmt.Errorf("evidenceoutbox: invalid row: unsupported payload_digest_scheme %q", row.PayloadDigestScheme)
+	}
 }
 
 func isHexDigest(value string) bool {
@@ -219,10 +349,11 @@ func (r *Relay) RecoverInFlight(ctx context.Context, olderThan time.Duration) (i
 }
 
 func claimPending(ctx context.Context, tx *sql.Tx, limit int) ([]OutboxRow, error) {
-	// Cast payload to text so Scan bytes match the JSONB::text form hashed at enqueue.
+	// payload::text preserves legacy digest bytes; the scheme column selects the verifier.
 	rs, err := tx.QueryContext(ctx,
 		`SELECT id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,
-			event_type, payload::text, payload_digest, delivery_status, attempts, available_at,
+			event_type, payload::text, payload_digest, payload_digest_scheme,
+			delivery_status, attempts, available_at,
 			last_error, created_at, delivered_at
 		FROM ibex_core.evidence_outbox_claim_pending($1)`, limit)
 	if err != nil {
@@ -247,13 +378,14 @@ func scanOutboxRow(rs *sql.Rows) (OutboxRow, error) {
 	var payload []byte
 	if err := rs.Scan(
 		&row.ID, &row.OrgID, &row.EventID, &row.AggregateID, &row.AggregateSeq,
-		&row.SchemaVersion, &row.EventType, &payload, &row.PayloadDigest,
+		&row.SchemaVersion, &row.EventType, &payload, &row.PayloadDigest, &row.PayloadDigestScheme,
 		&row.DeliveryStatus, &row.Attempts, &row.AvailableAt, &row.LastError,
 		&row.CreatedAt, &delivered,
 	); err != nil {
 		return OutboxRow{}, fmt.Errorf("evidenceoutbox: claim scan: %w", err)
 	}
 	row.Payload = json.RawMessage(payload)
+	row.RedactionClass, row.TombstoneFence = parseOutboxMetadata(payload)
 	if delivered.Valid {
 		t := delivered.Time
 		row.DeliveredAt = &t
@@ -290,10 +422,15 @@ func (r *Relay) markFailure(ctx context.Context, row OutboxRow, deliverErr error
 	//nolint:errcheck
 	defer func() { _ = tx.Rollback() }()
 	status := StatusFailed
-	if row.Attempts >= r.maxAttempts {
+	if row.Attempts >= r.maxAttempts || isPermanentDeliveryFailure(deliverErr) {
 		status = StatusPoison
 	}
 	delaySecs := retryBackoffSeconds(row.Attempts)
+	if status == StatusPoison {
+		// The SQL helper requires a positive delay for every failure status.
+		// Poison rows are terminal and never reclaimed, so this value is inert.
+		delaySecs = 1
+	}
 	var n int64
 	if err := tx.QueryRowContext(ctx,
 		`SELECT ibex_core.evidence_outbox_mark_failure($1, $2, $3, $4, $5)`,

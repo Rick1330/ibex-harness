@@ -25,8 +25,12 @@ from app.tools import (
     Category,
     FeedbackKind,
     parse_feedback_args,
+    parse_lineage_args,
     parse_search_args,
     parse_write_args,
+)
+from app.tools import (
+    get_memory_lineage as run_get_memory_lineage,
 )
 from app.tools import (
     record_feedback as run_record_feedback,
@@ -80,10 +84,10 @@ def build_mcp_server(
     mcp = FastMCP(
         "ibex-mcp-memory",
         instructions=(
-            "IBEX memory MCP resource server (G6.M1 / 3.5.E.2–E.4). "
-            "search_memory, write_memory, and record_feedback call the memory "
-            "service over HTTP. Auth is required. Streamable HTTP is stateless "
-            "(no EventStore resumability)."
+            "IBEX memory MCP resource server (G6.M1 / 3.5.E.2–E.4 / 5.B.3). "
+            "search_memory, write_memory, record_feedback, and get_memory_lineage "
+            "call the memory service over HTTP. Auth is required. Streamable HTTP "
+            "is stateless (no EventStore resumability)."
         ),
         # Stateless + JSON responses: no session EventStore / resumable SSE
         # (explicitly out of scope for 3.5.E.1 — document in milestone MDX).
@@ -94,6 +98,7 @@ def build_mcp_server(
     _register_search_tool(mcp, bound)
     _register_write_tool(mcp, bound)
     _register_feedback_tool(mcp, bound)
+    _register_lineage_tool(mcp, bound)
     _forbid_undeclared_tool_args(mcp)
     return mcp
 
@@ -196,6 +201,38 @@ def _register_feedback_tool(mcp: FastMCP, wiring: McpServerWiring) -> None:
                     raw=raw,
                     runner=lambda payload: _run_feedback(
                         payload, wiring.memory_client, wiring.agent_verifier
+                    ),
+                ),
+            )
+        )
+
+
+def _register_lineage_tool(mcp: FastMCP, wiring: McpServerWiring) -> None:
+    limiter = wiring.rate_limiter or NoopMcpLimiter()
+
+    @mcp.tool(
+        name="get_memory_lineage",
+        description=(
+            "Read the bounded supersession/contradiction/specialization lineage "
+            "of one memory via GET /v1/memories/{id}/lineage."
+        ),
+    )
+    async def get_memory_lineage(
+        memory_id: UUID,
+        max_depth: Annotated[int, Field(default=3, ge=1, le=5)] = 3,
+    ) -> str:
+        return await _invoke_tool(
+            _ToolCall(
+                audit=wiring.audit,
+                rate_limiter=limiter,
+                request=_ToolRequest(
+                    tool_name="get_memory_lineage",
+                    raw={"memory_id": str(memory_id), "max_depth": max_depth},
+                    runner=lambda raw: run_get_memory_lineage(
+                        require_principal(),
+                        parse_lineage_args(raw),
+                        wiring.memory_client,
+                        wiring.agent_verifier,
                     ),
                 ),
             )

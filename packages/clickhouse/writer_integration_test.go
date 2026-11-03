@@ -51,9 +51,9 @@ func TestIntegration_Writer_InsertAndSelect(t *testing.T) {
 
 	var n uint64
 	err = conn.QueryRow(context.Background(), `
-		SELECT count() FROM ibex.llm_traces
-		WHERE org_id = {org:UUID} AND request_id = {id:String}`,
-		rec.OrgID, rec.RequestID).Scan(&n)
+			SELECT count() FROM ibex.llm_traces
+			WHERE org_id = {org:UUID} AND request_id = {id:String}`,
+		ch.Named("org", rec.OrgID.String()), ch.Named("id", rec.RequestID)).Scan(&n)
 	if err != nil {
 		t.Fatal(err)
 	}

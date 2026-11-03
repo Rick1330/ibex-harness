@@ -94,6 +94,39 @@ func TestUnit_ValidateRunInput_W3CIDs(t *testing.T) {
 	}
 }
 
+func TestUnit_ValidateRunInput_ModelAndTokenMetadata(t *testing.T) {
+	t.Parallel()
+	base := RunInput{
+		OrgID:     mustParseUUID("11111111-1111-1111-1111-111111111111"),
+		RequestID: "req", TraceID: "aabbccddeeff00112233445566778899",
+		ModelID: "gpt-4o-mini", TokenUsage: &TokenUsage{InputTokens: 120, OutputTokens: 45, TotalTokens: 165},
+	}
+	if err := validateRunInput(base); err != nil {
+		t.Fatalf("valid model/token metadata: %v", err)
+	}
+	cases := []struct {
+		name   string
+		mutate func(*RunInput)
+	}{
+		{"model contains free-form text", func(in *RunInput) { in.ModelID = "provider response\n" }},
+		{"negative token count", func(in *RunInput) { in.TokenUsage = &TokenUsage{InputTokens: -1, OutputTokens: 0, TotalTokens: 0} }},
+		{"inconsistent token total", func(in *RunInput) { in.TokenUsage = &TokenUsage{InputTokens: 120, OutputTokens: 45, TotalTokens: 164} }},
+		{"excessive token count", func(in *RunInput) {
+			in.TokenUsage = &TokenUsage{InputTokens: 1_000_000_000_001, OutputTokens: 0, TotalTokens: 1_000_000_000_001}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			invalid := base
+			tc.mutate(&invalid)
+			if err := validateRunInput(invalid); err == nil {
+				t.Fatal("expected metadata validation error")
+			}
+		})
+	}
+}
+
 func TestUnit_OutboxPayloadRoundTripCompatibility(t *testing.T) {
 	t.Parallel()
 	// Old consumer ignores unknown fields; new producer may add keys.

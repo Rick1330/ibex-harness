@@ -30,7 +30,7 @@ class EmbedCallable(Protocol):
     async def __call__(self, text: str) -> list[float]: ...
 
 
-CandidateLoader = Callable[[UUID, Sequence[UUID]], Awaitable[list[CandidateMemory]]]
+CandidateLoader = Callable[[UUID, UUID, Sequence[UUID]], Awaitable[list[CandidateMemory]]]
 
 
 def _validate_content(content: str, max_chars: int) -> str | None:
@@ -174,20 +174,18 @@ class ConflictStage:
             ctx.error = "agent_id_required"
             return ctx
 
-        candidates = await self._load(ctx.org_id, tuple(ctx.near_duplicate_candidates))
+        candidates = await self._load(
+            ctx.org_id, ctx.agent_id, tuple(ctx.near_duplicate_candidates)
+        )
         if not candidates:
             return ctx
 
         if ctx.valid_from is None:
-            evaluation_decisions, llm_calls = await self._escalate_missing_validity(
-                ctx, candidates
-            )
+            evaluation_decisions, llm_calls = await self._escalate_missing_validity(ctx, candidates)
         else:
             incoming = IncomingMemory(
                 content=ctx.content,
-                interval=ValidityInterval(
-                    valid_from=ctx.valid_from, valid_until=ctx.valid_until
-                ),
+                interval=ValidityInterval(valid_from=ctx.valid_from, valid_until=ctx.valid_until),
                 memory_id=ctx.existing_memory_id,
             )
             evaluation = await self._conflict.evaluate(incoming, candidates)
@@ -197,10 +195,16 @@ class ConflictStage:
         ctx.conflict_decisions = evaluation_decisions
         ctx.conflict_llm_calls = llm_calls
         ctx.pending_supersede_targets = [
-            d.candidate_id
-            for d in evaluation_decisions
-            if d.outcome == ConflictOutcome.SUPERSEDES
+            d.candidate_id for d in evaluation_decisions if d.outcome == ConflictOutcome.SUPERSEDES
         ]
+        observed_revisions = {
+            candidate.memory_id: candidate.lifecycle_revision for candidate in candidates
+        }
+        ctx.pending_supersede_revisions = {
+            target_id: observed_revisions[target_id]
+            for target_id in ctx.pending_supersede_targets
+            if target_id in observed_revisions
+        }
         _record_conflict_metrics(evaluation_decisions, llm_calls)
         return ctx
 
@@ -227,9 +231,7 @@ class ConflictStage:
         return decisions, llm_calls
 
 
-def _record_conflict_metrics(
-    decisions: list[ConflictDecision], llm_calls: int
-) -> None:
+def _record_conflict_metrics(decisions: list[ConflictDecision], llm_calls: int) -> None:
     for decision in decisions:
         conflict_metrics.record_outcome(decision.outcome.value)
     for _ in range(llm_calls):

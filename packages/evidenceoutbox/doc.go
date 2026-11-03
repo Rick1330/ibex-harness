@@ -13,6 +13,14 @@ package evidenceoutbox
 // SchemaVersion is the envelope version for evidence records and outbox payloads.
 const SchemaVersion = "evidence.v1"
 
+// Outbox payload digest schemes identify how payload_digest was computed.
+const (
+	// PayloadDigestSchemePostgresJSONBText identifies legacy SHA-256 digests over PostgreSQL jsonb::text.
+	PayloadDigestSchemePostgresJSONBText = "postgres-jsonb-text/v1"
+	// PayloadDigestSchemeJCSV1 identifies SHA-256 digests over RFC 8785 canonical JSON.
+	PayloadDigestSchemeJCSV1 = "jcs/v1"
+)
+
 // ScoreSchemaInterim labels the current context-assembly scoring mix (0.85/0.15).
 const ScoreSchemaInterim = "interim_v1"
 

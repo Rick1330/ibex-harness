@@ -22,6 +22,7 @@ func (r *ProxyRegistry) register(serviceName string) {
 	r.initContextAssembleMetrics()
 	r.initExtractionEnqueueMetrics()
 	r.initProviderFallbackMetrics()
+	r.initPolicySnapshotMetrics()
 	r.processUp = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name:        "ibex_process_up",
 		Help:        "1 if the service process is running.",
@@ -90,6 +91,8 @@ func (r *ProxyRegistry) authAndSessionCollectors() []prometheus.Collector {
 		r.budgetDeny,
 		r.budgetInvalidate,
 		r.budgetLRUSize,
+		r.budgetReservations,
+		r.budgetReservationSec,
 		r.sessionGetOrCreate,
 		r.sessionGetOrCreateSec,
 		r.sessionCheckpoint,
@@ -114,6 +117,7 @@ func (r *ProxyRegistry) storageAndTokenizerCollectors() []prometheus.Collector {
 		r.responsePipelineFailOpenTotal,
 		r.contextAssembleFallbackTotal,
 		r.extractionEnqueueTotal,
+		r.policySnapshotTotal,
 		r.processUp,
 	}
 }

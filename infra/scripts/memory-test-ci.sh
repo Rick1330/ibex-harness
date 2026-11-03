@@ -19,3 +19,4 @@ bash "$ROOT/infra/scripts/memory-uv-sync.sh"
   --cov-report=xml:coverage-memory.xml \
   --cov-report=term-missing \
   --cov-fail-under=95
+.venv/bin/python "$ROOT/benchmarks/memory/pii/recall_structured.py"

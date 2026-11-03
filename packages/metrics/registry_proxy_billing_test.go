@@ -28,6 +28,33 @@ func TestProxyRegistry_BudgetMetrics_NilSafe(t *testing.T) {
 	nilReg.IncBudgetDeny()
 	nilReg.IncBudgetInvalidate()
 	nilReg.SetBudgetLRUSize(0)
+	nilReg.IncBudgetReservation(BudgetReservationClaimed)
+	nilReg.ObserveBudgetReservationDurationSeconds(0.1)
+}
+
+func TestProxyRegistry_BudgetReservationMetrics(t *testing.T) {
+	t.Parallel()
+	reg := NewProxy("budget-reservation-metrics-test")
+	reg.IncBudgetReservation(BudgetReservationClaimed)
+	reg.IncBudgetReservation(BudgetReservationExceeded)
+	reg.IncBudgetReservation("not-a-real-outcome")
+	reg.ObserveBudgetReservationDurationSeconds(0.25)
+
+	families := gatherFamilies(t, reg.Gatherer())
+	counters := families["ibex_proxy_budget_reservations_total"]
+	if got := counterByLabel(counters, "outcome", BudgetReservationClaimed); got != 1 {
+		t.Fatalf("claimed=%v want 1", got)
+	}
+	if got := counterByLabel(counters, "outcome", BudgetReservationExceeded); got != 1 {
+		t.Fatalf("exceeded=%v want 1", got)
+	}
+	if got := counterByLabel(counters, "outcome", BudgetReservationUnavailable); got != 1 {
+		t.Fatalf("unknown outcome should clamp to unavailable: %v want 1", got)
+	}
+	hist := families["ibex_proxy_budget_reservation_duration_seconds"]
+	if hist == nil || len(hist.GetMetric()) != 1 || hist.GetMetric()[0].GetHistogram().GetSampleCount() != 1 {
+		t.Fatalf("duration histogram missing observation: %+v", hist)
+	}
 }
 
 func seedBudgetSamples(reg *ProxyRegistry) {

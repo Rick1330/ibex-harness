@@ -5,6 +5,7 @@ import { expect, type Page, test } from "@playwright/test"
 const require = createRequire(import.meta.url)
 const apiOrigin = "https://127.0.0.1:3283"
 const consoleOrigin = "https://127.0.0.1:3282"
+const runId = "11111111-1111-4111-8111-111111111111"
 
 type FixtureRequest = {
   method: string
@@ -45,15 +46,20 @@ async function seedOperatorCookies(page: Page): Promise<void> {
   ])
 }
 
-async function expectLiveDashboard(page: Page): Promise<void> {
-  await page.goto("/dashboard")
-  await expect(page.getByRole("heading", { name: "Live Workspace" })).toBeVisible()
-  await expect(page.getByText("admin · live-workspace")).toBeVisible()
+async function waitForHydration(page: Page): Promise<void> {
+  await page.locator('[data-console-hydrated="true"]').waitFor({ state: "attached" })
+}
+
+async function expectLiveOverview(page: Page): Promise<void> {
+  await page.goto("/")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible()
+  await expect(page.getByText(/Live Workspace · live-workspace/)).toBeVisible()
   await expect(page.getByText("7", { exact: true })).toBeVisible()
-  await expect(page.getByText("SSE connected")).toBeVisible({ timeout: 10_000 })
-  await expect(page.getByText("degraded · platform health")).toBeVisible()
+  await expect(page.getByText("Redis reported degraded")).toBeVisible()
+  await page.getByRole("tab", { name: /Sources and session/ }).click()
+  await expect(page.locator('[data-stream-state="connected"]')).toBeVisible({ timeout: 10_000 })
   await expect(page.getByText("Acme Corp")).toHaveCount(0)
-  await expect(page.getByText("No mock data is substituted").first()).toBeVisible()
 }
 
 async function expectNoAxeViolations(page: Page): Promise<void> {
@@ -151,7 +157,7 @@ async function expectForwardedCookiesAreAccessOnly(page: Page): Promise<void> {
 test("live D1 renders tenant-scoped API data and forwards only the access cookie", async ({ page }) => {
   await resetFixtureApi(page)
   await seedOperatorCookies(page)
-  await expectLiveDashboard(page)
+  await expectLiveOverview(page)
   await expectNoAxeViolations(page)
 
   expect(await page.evaluate(() => document.cookie)).not.toContain("ibex_session=")
@@ -165,20 +171,128 @@ test("live D1 renders tenant-scoped API data and forwards only the access cookie
 test("live D2 Explore and run inspector stay fixture-free with axe coverage", async ({ page }) => {
   await resetFixtureApi(page)
   await seedOperatorCookies(page)
-  await page.goto("/dashboard/explore?limit=50&status=ok")
-  await expect(page.getByRole("heading", { name: "Trace metadata" })).toBeVisible()
-  await expect(page.getByText("Sessions (deferred)")).toBeVisible()
+  await page.goto("/explore?limit=50&status=ok")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Explore", exact: true })).toBeVisible()
   await expect(page.getByText("trace-live-1")).toBeVisible()
   await expect(page.getByText("Acme Corp")).toHaveCount(0)
-  await expect(page.getByText("No mock values are substituted")).toHaveCount(0)
   await expectNoAxeViolations(page)
 
-  await page.goto("/dashboard/explore/r/11111111-1111-4111-8111-111111111111?return=%2Fdashboard%2Fexplore")
-  await expect(page.getByText("Trace Inspector · frozen metadata snapshot")).toBeVisible()
-  await expect(page.getByText("publication published")).toBeVisible()
-  await expect(page.getByText("Raw content, replay")).toBeVisible()
+  await page.goto(`/explore/r/${runId}?return=%2Fexplore`)
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: /^Run / })).toBeVisible()
+  await expect(page.getByText("trace-live-1").first()).toBeVisible()
+  await page.getByRole("tab", { name: "Evidence" }).click()
+  await expect(page.getByLabel("Evidence record").getByText("Published", { exact: true })).toBeVisible()
+  await expect(page.getByText(/sections are explicitly unrecorded/)).toBeVisible()
   await expectNoAxeViolations(page)
 
-  await page.goto("/dashboard/explore/r/22222222-2222-4222-8222-222222222222")
-  await expect(page.getByRole("heading", { name: "Trace not found" })).toBeVisible()
+  await page.goto("/explore/r/22222222-2222-4222-8222-222222222222")
+  await expect(page.getByRole("heading", { name: /Run evidence unavailable/ })).toBeVisible()
+})
+
+test("live Platform renders readiness, dependency state, and snapshot evidence", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+  await page.goto("/platform")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Platform", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "1 of 2 dependencies are not reporting ok." })).toBeVisible()
+  await expect(page.getByText("Database", { exact: true })).toBeVisible()
+  const redisRow = page.getByRole("row").filter({ hasText: "Redis" })
+  await expect(redisRow).toBeVisible()
+  await expect(redisRow.getByText("Degraded", { exact: true })).toBeVisible()
+  await expect(page.getByText("Check latency history")).toBeVisible()
+  await expect(page.getByText("Acme Corp")).toHaveCount(0)
+
+  await page.getByRole("tab", { name: "Snapshot payload" }).click()
+  await expect(page.locator("pre").filter({ hasText: '"dependency_health"' })).toBeVisible()
+  await expectNoAxeViolations(page)
+})
+
+test("live Agents renders the operator inventory and detail with axe coverage", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+
+  await page.goto("/agents")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible()
+  await expect(page.getByText("Showing 1 agent from the operator API.")).toBeVisible()
+  await expect(page.getByRole("link", { name: "Support Agent" })).toBeVisible()
+  await expect(page.getByText("support-agent", { exact: true })).toBeVisible()
+  await expect(page.getByText("openai · gpt-4.1")).toBeVisible()
+  await expect(page.getByText("42", { exact: true })).toBeVisible()
+  await expect(page.getByText("Acme Corp")).toHaveCount(0)
+  await expectNoAxeViolations(page)
+
+  const listRequests = await fetchFixtureRequests(page)
+  expect(listRequests.some((request) => request.path === "/v1/operator/agents")).toBe(true)
+  for (const request of listRequests.filter((entry) => entry.path === "/v1/operator/agents")) {
+    expect(request.cookieNames).toEqual(["ibex_session"])
+  }
+
+  await page.getByRole("link", { name: "Support Agent" }).click()
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Support Agent", exact: true })).toBeVisible()
+  await expect(
+    page.locator("dd").filter({ hasText: "33333333-3333-4333-8333-333333333333" }),
+  ).toBeVisible()
+  await expect(page.getByRole("button", { name: "Copy agent ID" })).toBeVisible()
+  await expect(page.getByText("901,234")).toBeVisible()
+  await expectNoAxeViolations(page)
+})
+
+test("live Memories renders the metadata index and detail with axe coverage", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+
+  await page.goto("/memories")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Memories", exact: true })).toBeVisible()
+  await expect(page.getByRole("link", { name: /44444444/ })).toBeVisible()
+  await expect(page.getByText("factual", { exact: true })).toBeVisible()
+  await expect(page.getByText("12", { exact: true })).toBeVisible()
+  await expect(page.getByText("Acme Corp")).toHaveCount(0)
+  await expectNoAxeViolations(page)
+
+  const listRequests = await fetchFixtureRequests(page)
+  expect(listRequests.some((request) => request.path === "/v1/operator/memories")).toBe(true)
+  for (const request of listRequests.filter((entry) => entry.path === "/v1/operator/memories")) {
+    expect(request.cookieNames).toEqual(["ibex_session"])
+  }
+
+  await page.getByRole("link", { name: /44444444/ }).click()
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: /Memory 44444444/ })).toBeVisible()
+  await expect(
+    page.locator("dd").filter({ hasText: "33333333-3333-4333-8333-333333333333" }),
+  ).toBeVisible()
+  await expect(page.getByText("Content tokens")).toBeVisible()
+  await expectNoAxeViolations(page)
+})
+
+test("live Sessions renders the turn ledger and trace link with axe coverage", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+
+  await page.goto("/sessions")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible()
+  await expect(page.getByRole("link", { name: /88888888/ })).toBeVisible()
+  await expect(page.locator("tr[data-session-row]").getByText("Completed", { exact: true })).toBeVisible()
+  await expect(page.getByText("Acme Corp")).toHaveCount(0)
+  await expectNoAxeViolations(page)
+
+  const listRequests = await fetchFixtureRequests(page)
+  expect(listRequests.some((request) => request.path === "/v1/operator/sessions")).toBe(true)
+  for (const request of listRequests.filter((entry) => entry.path === "/v1/operator/sessions")) {
+    expect(request.cookieNames).toEqual(["ibex_session"])
+  }
+
+  await page.getByRole("link", { name: /88888888/ }).click()
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: /Session 88888888/ })).toBeVisible()
+  await expect(page.getByRole("link", { name: /trace-live-1/ })).toBeVisible()
+  await expect(page.getByText("No evidence")).toHaveCount(0)
+  await expectNoAxeViolations(page)
 })

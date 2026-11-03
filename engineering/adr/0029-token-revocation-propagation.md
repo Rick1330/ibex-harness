@@ -1,0 +1,51 @@
+---
+title: "ADR-0029: Token revocation propagation via Redis pub/sub"
+description: "Accepted — Redis pub/sub invalidates proxy LRU by token_id on revoke; documents 30s LRU TTL vs 1s/5s SLA gap and reconnect follow-up."
+adrId: "0029"
+status: "Accepted"
+date: "2026-07-19"
+authors: "IBEX Harness team"
+---
+
+::decision-banner{status="Accepted" date="2026-07-19" id="0029"}
+::
+
+# ADR-0029: Token revocation propagation via Redis pub/sub
+
+- **Status:** Accepted (implemented in [2.2.2](/roadmap))
+- **Date:** 2026-07-19
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.2.2 Token revocation propagation](/roadmap)
+
+## Context
+
+Milestone 2.2.1 introduces an auth LRU cache with a **30-second maximum TTL**. Without active invalidation, a revoked token can remain usable until natural expiry. Phase 2 SLAs require revoked tokens rejected within **5 seconds** (exit gate) and ideally within **1 second** end-to-end after pub/sub delivery.
+
+Redis is already required for rate limiting. Pub/sub fans out revoke events to all proxy instances without new infrastructure.
+
+`RevokeToken` receives `token_id` + `org_id` only — never the raw bearer. Stored `tokens.hash` is **Argon2id**, which is **not** `authcache.TokenHash` (SHA-256 of the bearer). Therefore the pub/sub event cannot carry a cache digest derived at revoke time without an extra migration column.
+
+## Decision
+
+1. **Channel:** `ibex:token:revocations` (global; not org-scoped).
+2. **Event:** JSON `RevocationEvent` with schema version `v`, **`token_id`** (UUID string), `revoked_at`, and `org_id` (audit only).
+3. **Auth publisher:** After durable Postgres revoke, publish asynchronously (`REDIS_URL`). Redis failure must **not** fail `RevokeToken` — Postgres remains source of truth. Proxies that never wrapped the auth cache (empty/unreachable Redis at startup) already revalidate via gRPC on every request.
+4. **Proxy subscriber:** On message, call `CachingValidator.InvalidateByTokenID(tokenID)`. The claims LRU maintains a secondary `tokenID → digest` index populated on `putLRU`. Lifecycle owned by `packages/shutdown`. Proxy bootstrap wraps the cache **only** when Redis is present and Ping succeeds; otherwise WARN and skip wrap (no stale LRU without a revocation channel).
+5. **SLA vs TTL gap (documented):** Steady-state with healthy pub/sub meets ~1s invalidate / 5s exit SLA. If a proxy **misses messages** (disconnect, subscribe lag, process restart before resubscribe), the worst case is still the **30s LRU TTL** until natural expiry. That gap is accepted for Phase 2 with the follow-up below.
+
+## Optional follow-up (not Phase 2 blocking)
+
+On Redis reconnect (or subscriber start), optionally **fetch the full recent revocation set** (e.g. Redis SET / sorted set of token IDs since `now - LRU_TTL`, or a short Postgres poll of recently revoked tokens) and bulk-invalidate the local LRU. Closes the reconnect window without waiting for TTL.
+
+## Consequences
+
+- Milestone 2.2.2 implements publisher + subscriber per this ADR (`packages/revocation`).
+- Exit gate "revoked within 5s" assumes healthy pub/sub; reconnect window is explicitly documented; missed events fall back to LRU TTL.
+- Metrics: `ibex_auth_revocation_publish_total{result}`, `ibex_proxy_revocation_invalidate_total`; WARN on publish/subscribe failures.
+
+## Alternatives considered
+
+1. **Shorter LRU TTL (1–5s)** — increases auth gRPC load; rejected as primary fix.
+2. **gRPC streaming revoke channel** — extra coupling; Redis already present.
+3. **Ignore pub/sub; rely on TTL only** — fails 5s SLA.
+4. **Add `lookup_hash` (SHA-256) column** — works with hash-keyed invalidate but requires a migration; deferred. `token_id` secondary index avoids schema change.

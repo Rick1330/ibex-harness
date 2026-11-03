@@ -20,7 +20,7 @@ docker compose --env-file .env up -d
 | Postgres + pgvector | 5432 | OLTP and vectors | Compose healthcheck |
 | Redis Stack | 6379 | Cache, rate limits, Celery broker/results | Compose healthcheck |
 | ClickHouse | 8123 HTTP, 9002 native | Analytics and audit/traces | Compose healthcheck |
-| MinIO | 9000 API, 9001 console | Object storage | Init + liveness checks |
+| MinIO | 9100 API, 9101 console | Object storage | Init + liveness checks |
 | `worker` | 8006 metrics, 8007 enqueue/health | Celery extraction, billing, deletion, dead-letter tasks | No Compose healthcheck; verify process, `/health`, and metrics |
 | `worker-beat` | none | Scheduled task dispatch | Verify process/logs; no HTTP healthcheck |
 

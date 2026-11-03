@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ibexharness.com/schemas/context-assembly-benchmark-data.schema.json",
+  "title": "Context-assembly benchmark published data",
+  "description": "Stub-profile AssembleContext load harness result; live results are not published here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "profile",
+    "rps",
+    "duration_s",
+    "attempted",
+    "succeeded",
+    "failed",
+    "error_rate",
+    "mean_ms",
+    "p50_ms",
+    "p95_ms",
+    "p99_ms"
+  ],
+  "properties": {
+    "profile": { "const": "stub" },
+    "rps": { "type": "integer", "minimum": 1 },
+    "duration_s": { "type": "number", "exclusiveMinimum": 0 },
+    "attempted": { "type": "integer", "minimum": 0 },
+    "succeeded": { "type": "integer", "minimum": 0 },
+    "failed": { "type": "integer", "minimum": 0 },
+    "error_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "mean_ms": { "type": "number", "minimum": 0 },
+    "p50_ms": { "type": "number", "minimum": 0 },
+    "p95_ms": { "type": "number", "minimum": 0 },
+    "p99_ms": { "type": "number", "minimum": 0 }
+  }
+}

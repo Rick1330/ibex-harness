@@ -17,6 +17,17 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.budget_ledger import (
+    BudgetAdmissionDeniedError,
+    BudgetClaim,
+    BudgetClaimRequest,
+    BudgetLedger,
+    BudgetLedgerError,
+    BudgetLedgerUnavailableError,
+    budget_reservation_key,
+    estimate_prompt_tokens,
+    fingerprint_extraction_call,
+)
 from app.extraction.clickhouse_traces import ExtractionTraceRow, insert_extraction_trace
 from app.extraction.memory_writer import MemoryWriter, MemoryWriteRequest
 from app.extraction.prompt_v2 import EXTRACTION_SYSTEM_PROMPT_BATCH
@@ -55,6 +66,7 @@ class BatchJob:
     memory_writer: MemoryWriter
     clickhouse_dsn: str | None
     session_store: SessionStore
+    budget_ledger: BudgetLedger | None = None
 
 
 def format_batch_user_content(turns: list[TurnPayload]) -> str:
@@ -116,20 +128,29 @@ def require_exact_turn_indexes(
 
 def run_batch_extraction(job: BatchJob) -> BatchRunResult:
     """Extract, write memories per turn, advance pointer after each completed turn."""
-    pending = _filter_pending(job)
-    if isinstance(pending, BatchRunResult):
-        return pending
+    selected = _filter_pending(job)
+    if isinstance(selected, BatchRunResult):
+        return selected
+    pending, expected_session_revision = selected
     started = datetime.now(UTC)
     user_content = format_batch_user_content(pending)
     if len(user_content.encode("utf-8")) > MAX_BATCH_CONTENT_BYTES:
         raise ValueError("turns content exceeds UTF-8 byte cap")
-    call = job.provider.extract(
-        EXTRACTION_SYSTEM_PROMPT_BATCH,
-        user_content,
-    )
+    claim = _admit_budget(job, pending, user_content)
+    try:
+        call = job.provider.extract(
+            EXTRACTION_SYSTEM_PROMPT_BATCH,
+            user_content,
+        )
+    except ExtractionTransportError:
+        _release_budget(job, claim)
+        raise
+    _settle_budget(job, claim, call)
     completed = datetime.now(UTC)
     try:
-        written = _persist_parsed(job, pending, call)
+        written = _persist_parsed(
+            job, pending, call, expected_session_revision=expected_session_revision
+        )
     except Exception as exc:
         _log_trace(job, call, (started, completed), (False, type(exc).__name__))
         raise
@@ -137,15 +158,111 @@ def run_batch_extraction(job: BatchJob) -> BatchRunResult:
     return BatchRunResult(written, len(pending))
 
 
+def _admit_budget(
+    job: BatchJob, pending: list[TurnPayload], user_content: str
+) -> BudgetClaim | None:
+    """Claim a durable admission hold when the org has an active hard cap.
+
+    Returns None when no ledger is wired or the org has no hard_cap period.
+    Transient ledger outages surface as ExtractionTransportError so Celery
+    retries; denials (cap, competing owner, missing rate card) fail closed.
+    """
+    ledger = job.budget_ledger
+    if ledger is None:
+        return None
+    model = job.provider.supported_models[0] if job.provider.supported_models else ""
+    input_tokens, output_tokens = estimate_prompt_tokens(
+        system_prompt=EXTRACTION_SYSTEM_PROMPT_BATCH,
+        user_content=user_content,
+    )
+    request = BudgetClaimRequest(
+        org_id=job.org_id,
+        agent_id=job.agent_id,
+        key=budget_reservation_key(
+            session_id=job.session_id, first_turn_index=pending[0].turn_index
+        ),
+        request_hash=fingerprint_extraction_call(
+            provider=job.provider.name,
+            model=model,
+            system_prompt=EXTRACTION_SYSTEM_PROMPT_BATCH,
+            user_content=user_content,
+        ),
+        provider=job.provider.name,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+    try:
+        return ledger.claim(request)
+    except BudgetLedgerUnavailableError as exc:
+        raise ExtractionTransportError("budget admission unavailable") from exc
+    except BudgetAdmissionDeniedError as exc:
+        if exc.kind == "in_progress":
+            raise ExtractionTransportError("budget admission in progress") from exc
+        raise
+
+
+def _settle_budget(job: BatchJob, claim: BudgetClaim | None, call: ExtractionCall) -> None:
+    """Finalize the hold after the provider call; failures keep the audit row."""
+    if claim is None or job.budget_ledger is None:
+        return
+    try:
+        completeness = job.budget_ledger.finalize(
+            claim, input_tokens=call.input_tokens, output_tokens=call.output_tokens
+        )
+    except BudgetLedgerError:
+        # The lease keeps bounding capacity; the row stays for the reaper.
+        logger.warning(
+            "extraction_budget_settle_failed",
+            extra={
+                "org_id": str(job.org_id),
+                "session_id": str(job.session_id),
+                "reason": "ledger_error",
+            },
+        )
+        return
+    logger.info(
+        "extraction_budget_settled",
+        extra={
+            "org_id": str(job.org_id),
+            "session_id": str(job.session_id),
+            "completeness": completeness,
+        },
+    )
+
+
+def _release_budget(job: BatchJob, claim: BudgetClaim | None) -> None:
+    """Release the hold when the provider call never completed."""
+    if claim is None or job.budget_ledger is None:
+        return
+    try:
+        job.budget_ledger.release(claim)
+    except BudgetLedgerError:
+        logger.warning(
+            "extraction_budget_release_failed",
+            extra={
+                "org_id": str(job.org_id),
+                "session_id": str(job.session_id),
+                "reason": "ledger_error",
+            },
+        )
+
+
 def _persist_parsed(
-    job: BatchJob, pending: list[TurnPayload], call: ExtractionCall
+    job: BatchJob,
+    pending: list[TurnPayload],
+    call: ExtractionCall,
+    *,
+    expected_session_revision: int,
 ) -> int:
     batch = parse_batch_result(call.raw_json)
     require_exact_turn_indexes(pending, batch)
-    return _write_memories_per_turn(job, batch)
+    return _write_memories_per_turn(job, batch, expected_session_revision)
 
 
-def _filter_pending(job: BatchJob) -> list[TurnPayload] | BatchRunResult:
+def _filter_pending(
+    job: BatchJob,
+) -> tuple[list[TurnPayload], int] | BatchRunResult:
     snapshot = job.session_store.load(job.org_id, job.session_id)
     if snapshot is None:
         return BatchRunResult(0, 0, skipped="session_not_found")
@@ -154,21 +271,25 @@ def _filter_pending(job: BatchJob) -> list[TurnPayload] | BatchRunResult:
     pending = select_unprocessed_turns(job.turns, snapshot.last_extracted_turn)
     if not pending:
         return BatchRunResult(0, 0, skipped="no_unprocessed_turns")
-    return pending
+    return pending, snapshot.lifecycle_revision
 
 
-def _write_memories_per_turn(job: BatchJob, batch: BatchExtractionResult) -> int:
+def _write_memories_per_turn(
+    job: BatchJob, batch: BatchExtractionResult, expected_session_revision: int
+) -> int:
     """Write each turn's memories, then advance pointer for that turn only."""
     # Sort so pointer advances in turn_index order on partial failure mid-batch.
     turns = sorted(batch.turns, key=lambda item: item.turn_index)
     count = 0
     for turn in turns:
-        count += _write_turn_memories(job, turn)
-        _update_pointer_after_turn(job, turn.turn_index)
+        count += _write_turn_memories(job, turn, expected_session_revision)
+        _update_pointer_after_turn(job, turn.turn_index, expected_session_revision)
     return count
 
 
-def _write_turn_memories(job: BatchJob, turn: TurnExtraction) -> int:
+def _write_turn_memories(
+    job: BatchJob, turn: TurnExtraction, expected_session_revision: int
+) -> int:
     count = 0
     for ordinal, memory in enumerate(turn.memories):
         job.memory_writer.write(
@@ -179,17 +300,20 @@ def _write_turn_memories(job: BatchJob, turn: TurnExtraction) -> int:
                 turn_index=turn.turn_index,
                 memory=memory,
                 ordinal=ordinal,
+                expected_session_revision=expected_session_revision,
             )
         )
         count += 1
     return count
 
 
-def _update_pointer_after_turn(job: BatchJob, turn_index: int) -> None:
+def _update_pointer_after_turn(
+    job: BatchJob, turn_index: int, expected_session_revision: int
+) -> None:
     """Advance last_extracted_turn after one turn's writes succeed (ADR-0065)."""
     try:
         job.session_store.update_last_extracted_turn(
-            job.org_id, job.session_id, turn_index
+            job.org_id, job.session_id, turn_index, expected_session_revision
         )
     except (SQLAlchemyError, OSError) as exc:
         raise ExtractionTransportError("session pointer update failed") from exc

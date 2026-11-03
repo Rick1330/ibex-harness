@@ -12,6 +12,7 @@ from app.errors import RateLimitUnavailableError
 from app.ratelimit import (
     INCR_EXPIRE_LUA,
     KEY_TTL_SECONDS,
+    McpLimiterOptions,
     McpRateLimiter,
     NoopMcpLimiter,
     RateLimitResult,
@@ -70,7 +71,7 @@ async def test_redis_limiter_rejects_over_limit() -> None:
     script = AsyncMock(side_effect=[1, 2, 3])
     redis = MagicMock()
     redis.register_script.return_value = script
-    limiter = RedisMcpLimiter(redis, default_rpm=2, owned=False)
+    limiter = RedisMcpLimiter(redis, options=McpLimiterOptions(default_rpm=2, owned=False))
 
     first = await limiter.check(ORG)
     second = await limiter.check(ORG)
@@ -91,7 +92,7 @@ async def test_redis_limiter_org_override() -> None:
     redis = MagicMock()
     redis.register_script.return_value = script
     limiter = RedisMcpLimiter(
-        redis, default_rpm=100, org_overrides={ORG: 1}, owned=False
+        redis, options=McpLimiterOptions(default_rpm=100, org_overrides={ORG: 1}, owned=False)
     )
     assert (await limiter.check(ORG)).allowed is True
     assert (await limiter.check(ORG)).allowed is False
@@ -102,7 +103,7 @@ async def test_redis_limiter_fail_open_on_error() -> None:
     script = AsyncMock(side_effect=RedisError("down"))
     redis = MagicMock()
     redis.register_script.return_value = script
-    limiter = RedisMcpLimiter(redis, default_rpm=1, owned=False)
+    limiter = RedisMcpLimiter(redis, options=McpLimiterOptions(default_rpm=1, owned=False))
     result = await limiter.check(ORG)
     assert result.allowed is True
 
@@ -112,7 +113,9 @@ async def test_redis_limiter_fail_closed_on_protected_profile_error() -> None:
     script = AsyncMock(side_effect=RedisError("down"))
     redis = MagicMock()
     redis.register_script.return_value = script
-    limiter = RedisMcpLimiter(redis, default_rpm=1, owned=False, fail_closed=True)
+    limiter = RedisMcpLimiter(
+        redis, options=McpLimiterOptions(default_rpm=1, owned=False, fail_closed=True)
+    )
     with pytest.raises(RateLimitUnavailableError):
         await limiter.check(ORG)
 

@@ -1,0 +1,282 @@
+# IBEX Harness — Performance Engineering
+
+## 1) Purpose
+
+This document defines:
+
+- performance budgets (latency/throughput) per subsystem,
+- what “performance regression” means,
+- how we benchmark and profile,
+- and how we keep the proxy + context assembly fast over time.
+
+Performance is a product requirement for IBEX Harness:
+
+- the proxy sits on every inference call,
+- context assembly runs on every inference call,
+- any overhead compounds dramatically at scale.
+
+---
+
+## 2) Performance Budgets (Non‑Negotiable Targets)
+
+### 2.1 Proxy service budgets (overhead only)
+
+These numbers exclude upstream LLM provider latency.
+
+- Proxy enforcement overhead (mock provider, warm auth/rate-limit/directive caches, context assembly disabled):
+  - **p99 ≤ 20ms (ratified local/protected-profile target)**
+  - SLI: request accept to response headers; excludes provider time, post-header stream time, cold caches, and hosted/reference performance
+- Auth validation:
+  - cache hit p95 ≤ 2ms
+  - cache miss p95 ≤ 20ms
+- Rate limiting check:
+  - p95 ≤ 5ms
+- Context assembly RPC:
+  - 40ms client deadline (internal timeout, not an SLO)
+  - p95 ≤ 50ms / p99 ≤ 100ms are unmeasured targets, not ratified SLOs
+- Streaming:
+  - per-chunk processing overhead should be near-zero (avoid per-chunk allocations)
+
+### 2.2 Context assembly budgets
+
+These are targets pending a workload-qualified measurement. The 40ms client deadline is an internal timeout and is not a substitute for an SLO.
+
+- Total assembly p95 ≤ 50ms, p99 ≤ 100ms (unmeasured targets)
+- Cold retrieval (vector search) budget: ≤ 30ms (typical)
+- Ranking + packing budget: ≤ 15ms (100 candidates)
+- Formatting budget: ≤ 5ms
+
+### 2.3 Memory search budgets (Memory service)
+
+- p95 ≤ 100ms (typical dataset sizes up to 10M vectors per tenant with pgvector)
+- Preferred Phase 3+ index: **HNSW** (tune `ef_search` from benchmarks). IVFFlat numbers in older notes are historical.
+- Phase 5 hybrid / rerank paths must still respect context-assembly deadlines (degrade gracefully if reranker unavailable)
+- Rerank sub-budget (5.A.3): one cross-encoder *stage* per search, issued as 1..N `POST /rerank` requests split at
+  `IBEX_MEMORY_RERANK_CLIENT_BATCH_SIZE` (default 32, the TEI `--max-client-batch-size` default) and sent
+  concurrently. **Only the stage wait** is capped, at `IBEX_MEMORY_RERANK_TIMEOUT_MS` (default 100ms); a stage that
+  exceeds it cancels the requests in flight and degrades to the fused order. The cap does not bound the rest of the
+  request: the rerank window is hydrated before the stage, a degrade hydrates the admitted page (from rows it may
+  already hold), and retrieval itself is unbudgeted by this per-stage cap. Enabling rerank can
+  therefore push a request past the 100ms p95 target, and lowering `IBEX_MEMORY_RERANK_TIMEOUT_MS` below the caller's
+  remaining budget is an operator decision. Measured rerank latency and outcome counts are published from the
+  `ibex_memory_rerank_seconds` histogram and `ibex_memory_rerank_total`.
+- p99 ≤ 250ms
+
+### 2.4 Memory write budgets
+
+- p95 ≤ 200ms (including embedding in normal conditions)
+- Degraded mode: if embedder down, accept write (queued) ≤ 50ms response time
+
+### 2.5 Worker pipeline budgets (eventual)
+
+- Memory extraction job: median ≤ 5s, p95 ≤ 30s (LLM-dependent)
+- Conflict resolution job: median ≤ 2s, p95 ≤ 10s
+- Fingerprint computation: median ≤ 1s, p95 ≤ 5s
+
+---
+
+## 3) “Critical Path” Definition and Rules
+
+### 3.1 Critical path scope
+
+Critical path is:
+`Agent → Proxy → (Auth, Rate Limit, Context Assembly) → Provider → Proxy → Agent`
+
+Everything not required for the response must be async:
+
+- ClickHouse trace writes (buffer)
+- memory extraction triggers (queue)
+- billing events (buffer)
+- notifications (queue)
+
+### 3.2 Forbidden in critical path
+
+- synchronous writes to ClickHouse
+- synchronous writes to object storage
+- long DB transactions
+- unbounded retries
+- per-request dynamic regex compilation
+- per-chunk JSON re-parsing on streaming
+- per-request allocation of large maps/slices without reuse
+
+---
+
+## 4) Benchmarking Strategy (CI + Local)
+
+### 4.1 Go benchmarks (proxy/auth/ratelimit/streaming)
+
+For any hot path change, add/update benchmarks.
+
+Required benchmark categories:
+
+- auth validation (hit/miss)
+- rate limit check (single + concurrent)
+- context injection formatting
+- streaming handler overhead
+
+Benchmark output to track:
+
+- ns/op
+- allocs/op
+- bytes/op
+
+**Regression policy:**
+
+- >20% regression in ns/op, bytes/op, or allocs/op is a merge blocker unless justified with a documented reason and compensating improvement.
+- PRs run `BenchmarkProxyOverhead` and `BenchmarkProxyChatOverhead` (5 samples, medians) against a fresh base branch from `github.base_ref` (normally `main`) on the same CI runner. The blocking `benchmark-gate` job uses a 20% tolerance and fails on missing/malformed benchmark output. This gate compares warm-path means; it is not p99 evidence.
+- Scheduled/manual full-chat k6 remains the p99 measurement path for the ratified ≤20ms budget; no recent passing full-chat run is recorded.
+
+### 4.2 Python perf tests (context/memory)
+
+Python performance regressions often come from:
+
+- accidental N+1 queries
+- converting large objects repeatedly
+- unnecessary JSON serialization
+- slow loops instead of vectorized ops
+
+Approach:
+
+- add micro-bench tests for ranking/packing functions
+- integration perf tests that measure DB query latency (pgvector search)
+- guard with “performance budgets” where feasible (may be flaky; keep thresholds tolerant)
+
+### 4.3 TypeScript performance budgets (dashboard)
+
+We enforce:
+
+- bundle budgets (per route) via build analysis (optional)
+- page load times measured via Lighthouse CI (optional)
+- avoid heavy chart libraries and large deps
+
+---
+
+## 5) Profiling Playbooks
+
+### 5.1 Go proxy profiling
+
+Tools:
+
+- `pprof` CPU profile
+- `pprof` heap profile
+- execution tracing (`go tool trace`)
+- `-race` for concurrency issues
+
+Workflow:
+
+1. Reproduce with load generator (k6 or local benchmark)
+2. Capture profiles:
+   - CPU for 30s under representative load
+   - heap snapshot under steady load
+3. Identify top allocators and hot functions
+4. Optimize:
+   - remove allocations (reuse buffers, builders)
+   - reduce JSON parsing overhead (streaming decode)
+   - avoid interface{} conversions in hot path
+5. Re-run benchmark to verify improvement
+
+### 5.2 Python service profiling
+
+Tools:
+
+- `py-spy` for sampling CPU profiling in production-like runs
+- `cProfile` for focused profiling
+- SQLAlchemy logging for slow query detection
+- Postgres `EXPLAIN (ANALYZE, BUFFERS)` for vector queries
+
+Workflow:
+
+1. Identify whether the bottleneck is:
+   - CPU (Python loops)
+   - DB (slow query, missing index, poor filter)
+   - network (redis, embedder)
+2. For DB bottlenecks:
+   - capture query and run EXPLAIN ANALYZE
+   - verify it uses intended index
+3. For CPU bottlenecks:
+   - vectorize operations or reduce data processed
+   - cache computed values
+4. Verify improvements with perf tests
+
+### 5.3 ClickHouse profiling
+
+- use system tables: `system.query_log`
+- check merges backlog and disk usage
+- optimize ORDER BY and partitioning if queries scan too much data
+
+---
+
+## 6) Performance Regression Gates
+
+### 6.1 CI regression checks (implemented)
+
+- Every Go- or benchmark-affecting PR runs the blocking relative Go benchmark gate in `ci.yml`; `ci-gate-go` includes it in its required results.
+- The base comparison is a fresh base-branch worktree from `github.base_ref` (normally `main`) benchmarked on the same runner, not a pinned cross-runner number. The gate records `base_ref`, tolerance, and per-metric results in `go-bench-gate.json`.
+- `benchmark.yml` remains the scheduled/manual p99 and published-history path; the Go gate does not replace k6.
+- The scheduled k6 gate alerts/fails on absolute p99 >20 ms; `benchmarks/data-schema/baseline.json`'s p99 value is a policy ceiling, not a cross-run measured baseline. Only the stage `synthetic_rate_limit_us` baseline is used for percentage regression.
+
+### 6.2 Staging load tests
+
+Weekly or before major releases:
+
+- k6 scenario for proxy at 10x expected load
+- check p95/p99 overhead and error rate
+- check degraded mode behaviors (simulate Redis down, context timeout)
+
+---
+
+## 7) Data Access Performance Rules (DB and Cache)
+
+### 7.1 PostgreSQL query rules
+
+- no unbounded queries (always limit/paginate)
+- avoid OFFSET pagination for large tables
+- ensure indexes exist for every frequent filter pattern
+- prefer `EXPLAIN` verification for any new vector query
+
+### 7.2 pgvector tuning (initial guidance)
+
+- Preferred Phase 3+ index: **HNSW** (`m=16`, `ef_construction=64` as a starting build preference; tune query-time `ef_search` from recall/latency benches — production default `64`).
+- Older IVFFlat `lists ≈ sqrt(N)` / `probes` guidance is **historical** (pre-redesign). Do not start new deployments on IVFFlat without an ADR reversing ADR-0040-style HNSW preference.
+- Plan migration to Qdrant (or Postgres partitioning) only when:
+  - corpus/QPS clearly outgrows a single HNSW instance with evidence, **and**
+  - an ADR records the dual-write / cutover plan.
+
+### 7.3 Redis usage rules
+
+- enforce TTL for cache keys
+- avoid large values (store IDs; fetch details from DB if huge)
+- avoid high-frequency writes in hot path unless necessary
+- use Lua scripts for atomic operations that must be consistent across instances (rate limiting)
+
+---
+
+## 8) Observability for Performance (what to instrument)
+
+To debug latency, you must measure:
+
+- proxy stage timings
+- context stage timings
+- DB query timings
+- Redis latencies
+- provider latencies
+- fallback occurrences
+
+Without stage breakdown metrics, latency regressions become guesswork.
+
+---
+
+## 9) Checklist: Performance “Done” for Critical Changes
+
+Any change touching proxy/context must include:
+
+- [ ] benchmark updated or added (Go)
+- [ ] stage timings validated (metrics)
+- [ ] no new allocations in streaming hot loop (verified by benchmark allocs/op)
+- [ ] timeouts remain in place
+- [ ] fallbacks preserved (don’t trade correctness for speed)
+- [ ] load test plan updated if behavior changes significantly
+
+---
+
+Performance is part of correctness. A correct system that is too slow is not correct for IBEX Harness.

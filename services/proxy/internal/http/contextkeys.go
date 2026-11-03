@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/directive"
+	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
+	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
@@ -17,12 +19,15 @@ const (
 	ctxKeyRequestStart
 	ctxKeyErrorDocsBase
 	ctxKeyAgent
+	ctxKeyPrincipalContext
 	ctxKeyResolvedDirective
 	ctxKeyResolvedSession
 	ctxKeyAuthLatencyMs
 	ctxKeyDirectiveLatencyMs
 	ctxKeyContextAssembleMeta
 	ctxKeyProviderDurationMs
+	ctxKeyPolicySnapshot
+	ctxKeyBudgetReservation
 )
 
 // WithRequestID stores the request ID on the context.
@@ -88,6 +93,31 @@ func AgentFromContext(ctx context.Context) (auth.AgentRecord, bool) {
 	return rec, ok
 }
 
+// WithPrincipalContext stores the additive verified identity binding.
+func WithPrincipalContext(ctx context.Context, principal *authv1.PrincipalContext) context.Context {
+	return context.WithValue(ctx, ctxKeyPrincipalContext, principal)
+}
+
+// PrincipalContextFromContext returns the verified identity binding when present.
+func PrincipalContextFromContext(ctx context.Context) (*authv1.PrincipalContext, bool) {
+	principal, ok := ctx.Value(ctxKeyPrincipalContext).(*authv1.PrincipalContext)
+	return principal, ok && principal != nil
+}
+
+// WithPolicySnapshotClaims stores the verified policy snapshot claims on the
+// request context. Present only after PolicySnapshotMiddleware verified the
+// envelope for this request.
+func WithPolicySnapshotClaims(ctx context.Context, claims policysnapshot.Claims) context.Context {
+	return context.WithValue(ctx, ctxKeyPolicySnapshot, claims)
+}
+
+// PolicySnapshotClaimsFromContext returns the verified snapshot claims when
+// PolicySnapshotMiddleware ran and verification succeeded.
+func PolicySnapshotClaimsFromContext(ctx context.Context) (policysnapshot.Claims, bool) {
+	claims, ok := ctx.Value(ctxKeyPolicySnapshot).(policysnapshot.Claims)
+	return claims, ok
+}
+
 // WithResolvedDirective stores a successfully resolved directive on the request
 // context for downstream injection (2.3.3). Call only after Resolve succeeds.
 func WithResolvedDirective(ctx context.Context, resolved directive.Resolved) context.Context {
@@ -144,6 +174,18 @@ func withContextAssembleMeta(ctx context.Context, meta contextAssembleMeta) cont
 func contextAssembleMetaFromContext(ctx context.Context) (contextAssembleMeta, bool) {
 	meta, ok := ctx.Value(ctxKeyContextAssembleMeta).(contextAssembleMeta)
 	return meta, ok
+}
+
+func withBudgetReservation(ctx context.Context, res *budgetReservation) context.Context {
+	return context.WithValue(ctx, ctxKeyBudgetReservation, res)
+}
+
+func budgetReservationFromContext(ctx context.Context) *budgetReservation {
+	res, ok := ctx.Value(ctxKeyBudgetReservation).(*budgetReservation)
+	if !ok {
+		return nil
+	}
+	return res
 }
 
 func withProviderDurationMs(ctx context.Context, ms int64) context.Context {

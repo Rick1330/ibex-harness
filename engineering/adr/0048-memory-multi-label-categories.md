@@ -1,0 +1,89 @@
+---
+title: "ADR-0048: Memory multi-label categories"
+description: "Architecture decision record 0048 — ibex_core.memory_labels join table with org-safe FKs, FORCE RLS, and memories.category primary sync for Phase 2.5 Track E."
+adrId: "0048"
+status: "Accepted"
+date: "2026-08-25"
+authors: "IBEX Harness team"
+---
+
+::decision-banner{status="Accepted" date="2026-08-25" id="0048"}
+::
+
+# ADR-0048: Memory multi-label categories
+
+- **Status:** Accepted
+- **Date:** 2026-08-25
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.G5.M2 Multi-label category support](/roadmap)
+
+## Context
+
+A single `memories.category` enum cannot represent facts that span multiple taxonomy buckets (e.g. preference + factual). Track E ([2.5.G5](/roadmap)) needs the join table before Phase 3 writers and category-conditional scoring.
+
+The milestone sketch named the table `memory_categories` with only `REFERENCES memories(id)` and no `org_id`. Phase 3 sketches ([3.1.1](/roadmap), [3.C.4](/roadmap)) use `memory_labels` / `label`. Live tenancy rules require explicit `org_id` filtering and composite org-safe FKs ([ADR-0047](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0047-memory-temporal-validity.md)).
+
+## Decision
+
+### 1) Table name `memory_labels` (not `memory_categories`)
+
+Ship `ibex_core.memory_labels` with column `label` to match Phase 3 consumers and avoid a rename migration. Document the sketch advancement on the milestone page.
+
+### 2) Tenancy-first DDL
+
+- `org_id NOT NULL` + `FOREIGN KEY (memory_id, org_id) → memories(id, org_id) ON DELETE CASCADE`
+- `PRIMARY KEY (memory_id, label)`
+- Same taxonomy CHECK as `memories.category`
+- `confidence NUMERIC(3,2) NOT NULL DEFAULT 1.00 CHECK (0..1)`
+- Index `(org_id, label)` for tenant filters
+- `FORCE ROW LEVEL SECURITY` + `ibex_core.rls_org_visible(org_id)` (not subquery-on-memories RLS drafts)
+
+### 3) Primary sync via `memories.category`
+
+Keep the existing `category` column (do not add `primary_category` in M2). Trigger `sync_memory_primary_category` after INSERT/UPDATE/DELETE on labels:
+
+- When ≥1 label remains: set `category` to `ORDER BY confidence DESC, label ASC LIMIT 1`
+- When zero labels remain: leave `category` unchanged (`NOT NULL`)
+
+Labels are source of truth once present. No bidirectional sync from `category` → labels in this milestone (avoids recursion). Phase 3 writers should maintain ≥1 label.
+
+### 4) Backfill
+
+`INSERT … SELECT id, org_id, category, 1.00 FROM memories ON CONFLICT DO NOTHING` in the same `up` migration.
+
+### 5) Application writers (3.C.4)
+
+Phase 3.C.4 implements write-path population in the memory service orchestrator: optional `labels[]` on `POST /v1/memories`, validation in `resolve_write_labels`, `insert_labels_session` in the same transaction as memory insert, and `reload_memory_session` so HTTP responses reflect the trigger-updated scalar. The primary column remains **`memories.category`** (not `primary_category`; rename deferred per 3.1.1). Application code must not `UPDATE memories.category` directly — only the `sync_memory_primary_category` trigger updates it.
+
+### 6) Expand-contract with 3.1.1
+
+Those milestones must **not** `CREATE TABLE memory_labels`. They may later rename `category` → `primary_category` if needed; M2 does not dual-column.
+
+## 3.C.4 implementation note (2026-08-28)
+
+Write-path population landed in milestone [3.C.4](/roadmap): additive `labels[]` on memory create, backward-compatible scalar `category` synthesis when `labels` is omitted, and transactional insert into `ibex_core.memory_labels` inside the 3.C.5 orchestrator. Primary scalar remains `memories.category`; the existing trigger selects `ORDER BY confidence DESC, label ASC`.
+
+## Consequences
+
+### Positive
+
+- Phase 3 scoring/extraction can assume multi-label shape
+- Tenant isolation matches live FORCE RLS pattern
+- Deterministic primary selection
+
+### Negative
+
+- Sketch name `memory_categories` diverges (documented)
+- Direct updates to `memories.category` while labels exist can be overwritten by the next label write
+
+## Rollout
+
+- Migration: `infra/migrations/postgres/000015_create_memory_labels.{up,down}.sql`
+- Down is dev/test only; production forward-only per ADR-0005
+
+## References
+
+- [ADR-0005](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0005-postgres-migration-strategy.md)
+- [ADR-0047](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0047-memory-temporal-validity.md)
+- Milestone [2.5.G5.M2](/roadmap)
+- Milestones [3.1.1](/roadmap), [3.C.4](/roadmap)

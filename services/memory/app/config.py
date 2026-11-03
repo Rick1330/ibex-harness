@@ -177,7 +177,7 @@ class Settings(BaseSettings):
     redis_url: str | None = Field(
         default=None,
         validation_alias=AliasChoices("IBEX_MEMORY_REDIS_URL", "REDIS_URL"),
-        description="Redis URL for hot cache + idempotency (optional)",
+        description="Redis URL for hot cache (optional)",
     )
     redis_timeout_seconds: float = Field(default=0.5, gt=0)
 
@@ -188,14 +188,81 @@ class Settings(BaseSettings):
     )
     auth_timeout_ms: int = Field(default=50, ge=1)
 
-    idempotency_ttl_seconds: int = Field(default=86400, ge=60)
-    idempotency_pending_ttl_seconds: int = Field(default=540, ge=60)
-
     memory_cache_ttl_seconds: int = Field(default=3600, ge=60)
 
     search_fallback_enabled: bool = Field(
         default=True,
         description="Supplement sparse vector hits with GIN full-text search (3.D.1)",
+    )
+    # Hybrid retrieval (phase 5.A.1 + 5.A.2). Off by default until the gold-set
+    # comparison in 5.C.1 reads the change as an improvement; the code path is
+    # exercised by unit and integration tests and enabled in the dev stack.
+    search_hybrid_enabled: bool = Field(
+        default=False,
+        description="Run the full-text channel in parallel with vector search and fuse by RRF",
+    )
+    search_rrf_k: int = Field(
+        default=60,
+        ge=1,
+        le=1000,
+        description="Reciprocal rank fusion constant (Cormack et al. 2009; Elasticsearch default)",
+    )
+    # Cross-encoder reranking (phase 5.A.3). Off by default: it adds a network hop
+    # and a model inference to the read path, and only applies to the hybrid window.
+    rerank_enabled: bool = Field(
+        default=False,
+        description="Rerank the fused hybrid window with a TEI cross-encoder before composite scoring",
+    )
+    rerank_base_url: str = Field(
+        default="http://127.0.0.1:8006",
+        description="Base URL of the TEI reranker service (POST /rerank)",
+    )
+    rerank_api_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "IBEX_RERANK_API_TOKEN", "IBEX_MEMORY_RERANK_API_TOKEN"
+        ),
+        description="Optional bearer token for the reranker",
+    )
+    rerank_timeout_ms: int = Field(
+        default=100,
+        ge=1,
+        le=5000,
+        description=(
+            "Wall-clock budget for the whole rerank stage, including every split "
+            "request, before degrading to the fused order; defaults to the memory "
+            "search p95 target"
+        ),
+    )
+    rerank_connect_timeout_ms: int = Field(
+        default=50,
+        ge=1,
+        le=5000,
+        description="Connect timeout for the reranker",
+    )
+    rerank_max_retries: int = Field(
+        default=0,
+        ge=0,
+        le=3,
+        description="Retries inside the rerank budget; 0 keeps the read path inside its deadline",
+    )
+    rerank_max_candidates: int = Field(
+        default=50,
+        ge=1,
+        le=50,
+        description=(
+            "Upper bound on candidates sent to the reranker per search; the client "
+            "splits the window into requests of rerank_client_batch_size"
+        ),
+    )
+    rerank_client_batch_size: int = Field(
+        default=32,
+        ge=1,
+        le=64,
+        description=(
+            "Documents per POST /rerank request; must not exceed the TEI server's "
+            "--max-client-batch-size (default 32). Larger windows are split."
+        ),
     )
 
     @field_validator("database_url", mode="before")

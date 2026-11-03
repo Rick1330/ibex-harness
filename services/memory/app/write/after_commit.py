@@ -44,6 +44,7 @@ class AfterCommitHandler:
                     org_id=outcome.memory.org_id,
                     embedding=list(outcome.embedding),
                     embedding_model=outcome.embedding_model or self.embedding_model,
+                    expected_revision=outcome.memory.lifecycle_revision,
                 )
             )
         except (LookupError, OSError, DBAPIError):

@@ -1,6 +1,6 @@
 area/web:
   - changed-files:
-      - any-glob-to-any-file: 'web/**'
+      - any-glob-to-any-file: 'site/**'
 
 area/go:
   - changed-files:
@@ -18,7 +18,7 @@ area/benchmarks:
   - changed-files:
       - any-glob-to-any-file:
           - 'benchmarks/**'
-          - 'web/public/benchmarks/**'
+          - 'site/public/benchmarks/**'
 
 area/docs:
   - changed-files:

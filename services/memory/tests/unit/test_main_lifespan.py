@@ -96,3 +96,116 @@ def test_create_app_postgres_unreachable_not_ready() -> None:
             assert app.state.memory.ready is False
             assert app.state.memory.ready_error == "database not reachable"
             assert client.get("/ready").status_code == 503
+
+
+def test_build_rerank_is_none_when_the_flag_is_off() -> None:
+    from app.main import _build_rerank
+
+    assert _build_rerank(Settings(rerank_enabled=False)) is None
+
+
+def test_build_rerank_requires_hybrid_and_says_so() -> None:
+    from app.main import _build_rerank
+
+    cfg = Settings(rerank_enabled=True, search_hybrid_enabled=False)
+
+    with patch("app.main.logger.warning") as warning:
+        assert _build_rerank(cfg) is None
+
+    warning.assert_called_once()
+    assert "hybrid" in warning.call_args.args[0]
+
+
+def test_build_rerank_uses_the_budget_settings() -> None:
+    from app.clients.rerank import RerankClient
+    from app.main import _build_rerank
+
+    cfg = Settings(
+        rerank_enabled=True,
+        search_hybrid_enabled=True,
+        rerank_base_url="http://reranker.test:80",
+        rerank_timeout_ms=200,
+        rerank_connect_timeout_ms=25,
+        rerank_max_retries=1,
+    )
+
+    client = _build_rerank(cfg)
+
+    assert isinstance(client, RerankClient)
+    assert client._max_retries == 1
+    assert client._client.base_url.host == "reranker.test"
+    assert client._client.timeout.read == pytest.approx(0.2)
+    assert client._client.timeout.connect == pytest.approx(0.025)
+    # Defaults to TEI's own --max-client-batch-size; a split at 50 would 413.
+    assert client._batch_size == 32
+
+
+def test_build_rerank_honours_a_configured_batch_size() -> None:
+    from app.main import _build_rerank
+
+    cfg = Settings(
+        rerank_enabled=True,
+        search_hybrid_enabled=True,
+        rerank_base_url="http://reranker.test:80",
+        rerank_client_batch_size=16,
+    )
+
+    client = _build_rerank(cfg)
+
+    assert client is not None
+    assert client._batch_size == 16
+
+
+def test_build_rerank_warns_when_the_batch_size_exceeds_the_server_default() -> None:
+    """Above 32 the split no longer protects a stock server: it answers 413."""
+    from app.main import _build_rerank
+
+    cfg = Settings(
+        rerank_enabled=True,
+        search_hybrid_enabled=True,
+        rerank_base_url="http://reranker.test:80",
+        rerank_client_batch_size=48,
+    )
+
+    with patch("app.main.logger.warning") as warning:
+        client = _build_rerank(cfg)
+
+    assert client is not None
+    warning.assert_called_once()
+    assert "max-client-batch-size" in warning.call_args.args[0]
+    # The message names the request size a search can actually build.
+    assert warning.call_args.args[1] == 48
+
+
+def test_build_rerank_does_not_warn_when_the_window_cap_keeps_requests_small() -> None:
+    """A request carries at most ``min(batch size, window cap)`` texts."""
+    from app.main import _build_rerank
+
+    cfg = Settings(
+        rerank_enabled=True,
+        search_hybrid_enabled=True,
+        rerank_base_url="http://reranker.test:80",
+        rerank_client_batch_size=48,
+        rerank_max_candidates=10,
+    )
+
+    with patch("app.main.logger.warning") as warning:
+        assert _build_rerank(cfg) is not None
+
+    warning.assert_not_called()
+
+
+def test_build_rerank_does_not_warn_at_the_server_default() -> None:
+    from app.main import _build_rerank
+
+    cfg = Settings(
+        rerank_enabled=True,
+        search_hybrid_enabled=True,
+        rerank_base_url="http://reranker.test:80",
+        rerank_client_batch_size=32,
+    )
+
+    with patch("app.main.logger.warning") as warning:
+        assert _build_rerank(cfg) is not None
+
+    warning.assert_not_called()

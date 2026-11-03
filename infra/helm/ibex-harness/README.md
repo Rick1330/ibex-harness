@@ -24,7 +24,7 @@ The checked-in default, staging, and production values intentionally contain sen
 
 ## Rollback by digest
 
-See `web/engineering/runbooks/RUNBOOK-4p5-rollback-by-digest.md`.
+See `engineering/runbooks/RUNBOOK-4p5-rollback-by-digest.md`.
 
 ## Kyverno
 

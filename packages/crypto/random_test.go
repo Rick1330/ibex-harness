@@ -25,11 +25,11 @@ func TestGenerateRandomBytesLength(t *testing.T) {
 
 func TestRandomDuration_bounded(t *testing.T) {
 	t.Parallel()
-	max := 500 * time.Millisecond
+	upper := 500 * time.Millisecond
 	for i := 0; i < 100; i++ {
-		got := RandomDuration(max)
-		if got < 0 || got >= max {
-			t.Fatalf("duration out of range: %v (max %v)", got, max)
+		got := RandomDuration(upper)
+		if got < 0 || got >= upper {
+			t.Fatalf("duration out of range: %v (max %v)", got, upper)
 		}
 	}
 }

@@ -33,7 +33,11 @@ from app.tools import (
     write_idempotency_key,
     write_memory,
 )
-from tests.memory_fixtures import CreatedMemory, create_memory_response, memory_client_for
+from tests.memory_fixtures import (
+    CreatedMemory,
+    create_memory_response,
+    memory_client_for,
+)
 
 ORG_A = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 ORG_B = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -130,9 +134,7 @@ async def test_agent_scoped_token_rejects_foreign_agent_id_before_memory_http(
         )
     set_access_token(TOKEN)
     try:
-        with pytest.raises(
-            PermissionDeniedError, match="not authorized for the requested agent"
-        ):
+        with pytest.raises(PermissionDeniedError, match="not authorized for the requested agent"):
             await call
     finally:
         set_access_token(None)
@@ -204,6 +206,14 @@ def test_backend_rejected_default_code() -> None:
     assert err.code == "backend_error"
 
 
+def test_service_error_text_carries_the_code() -> None:
+    """MCP clients only receive text, so the code has to survive into it."""
+    err = BackendRejectedError("memory service HTTP 404", code="not_found")
+
+    assert str(err) == "not_found: memory service HTTP 404"
+    assert err.message == "memory service HTTP 404"
+
+
 def _status_handler(status: int) -> Callable[[httpx.Request], httpx.Response]:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(status, text="err")
@@ -227,9 +237,7 @@ def _transport_handler(_request: httpx.Request) -> httpx.Response:
         ("write", MEMORY_READ, {"content": "c"}),
     ],
 )
-async def test_local_permission_gate_skips_http(
-    tool: str, permissions: int, raw: dict
-) -> None:
+async def test_local_permission_gate_skips_http(tool: str, permissions: int, raw: dict) -> None:
     principal = Principal(org_id=ORG_A, permissions=permissions, agent_id=AGENT)
     hits = {"n": 0}
 
@@ -347,13 +355,9 @@ async def test_inactive_agent_denied_before_memory_http(
     deny = StaticAgentVerifier(allowed=set(), deny_message="agent is not active")
     client = memory_client_for(handler)
     if tool == "search":
-        call = search_memory(
-            principal, parse_search_args({"query": "q"}), client, deny
-        )
+        call = search_memory(principal, parse_search_args({"query": "q"}), client, deny)
     elif tool == "write":
-        call = write_memory(
-            principal, parse_write_args({"content": "note"}), client, deny
-        )
+        call = write_memory(principal, parse_write_args({"content": "note"}), client, deny)
     else:
         mid = uuid4()
         call = record_feedback(
@@ -428,9 +432,7 @@ async def test_search_backend_fail_closed(
         ("write", "timeout", None),
     ],
 )
-async def test_tool_dependency_unavailable(
-    tool: str, mode: str, match: str | None
-) -> None:
+async def test_tool_dependency_unavailable(tool: str, mode: str, match: str | None) -> None:
     """Unset URL and write-path timeouts fail closed without inventing success."""
     client = None if mode == "unset" else memory_client_for(_timeout_handler)
     set_access_token(TOKEN)
@@ -468,9 +470,7 @@ async def test_write_success_mcp_source_metadata_and_idempotency() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         seen_keys.append(request.headers["X-Idempotency-Key"])
         bodies.append(json.loads(request.content))
-        return create_memory_response(
-            CreatedMemory(memory_id=mid, org_id=ORG_A, agent_id=AGENT)
-        )
+        return create_memory_response(CreatedMemory(memory_id=mid, org_id=ORG_A, agent_id=AGENT))
 
     set_access_token(TOKEN)
     try:
@@ -491,9 +491,7 @@ async def test_write_success_mcp_source_metadata_and_idempotency() -> None:
     assert bodies[0]["confidence"] == 0.6
     assert "org_id" not in bodies[0]
     assert seen_keys[0] == seen_keys[1]
-    assert seen_keys[0] == write_idempotency_key(
-        org_id=ORG_A, agent_id=AGENT, content="remember"
-    )
+    assert seen_keys[0] == write_idempotency_key(org_id=ORG_A, agent_id=AGENT, content="remember")
     assert second["memory_id"] == mid
 
 
@@ -626,9 +624,7 @@ async def test_record_feedback_success() -> None:
     try:
         out = await record_feedback(
             Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
-            parse_feedback_args(
-                {"memory_id": mid, "feedback": "positive", "notes": "helped"}
-            ),
+            parse_feedback_args({"memory_id": mid, "feedback": "positive", "notes": "helped"}),
             memory_client_for(handler),
             _ALLOW,
         )
@@ -641,23 +637,25 @@ async def test_record_feedback_success() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("handler", "exc_type"),
+    ("handler", "exc_type", "code"),
     [
-        (_status_handler(404), BackendRejectedError),
-        (_status_handler(503), BackendUnavailableError),
-        (_timeout_handler, BackendUnavailableError),
+        (_status_handler(404), BackendRejectedError, "not_found"),
+        (_status_handler(503), BackendUnavailableError, "backend_unavailable"),
+        (_timeout_handler, BackendUnavailableError, "backend_unavailable"),
     ],
 )
 async def test_record_feedback_fail_closed(
     handler: Callable[[httpx.Request], httpx.Response],
     exc_type: type[BaseException],
+    code: str,
 ) -> None:
     principal = Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT)
     args = parse_feedback_args({"memory_id": str(AGENT), "feedback": "negative"})
     client = memory_client_for(handler)
     set_access_token(TOKEN)
     try:
-        with pytest.raises(exc_type):
+        with pytest.raises(exc_type) as excinfo:
             await record_feedback(principal, args, client, _ALLOW)
     finally:
         set_access_token(None)
+    assert excinfo.value.code == code

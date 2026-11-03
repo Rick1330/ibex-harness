@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/crypto"
+	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
@@ -42,6 +43,9 @@ type Config struct {
 	JWTRefreshTTL          time.Duration
 	JWTStepUpTTL           time.Duration
 	AuthServiceToken       string
+	PolicySigningKeyPEM    string
+	PolicySigningKeyID     string
+	PolicyEpoch            int64
 	Argon2                 token.Argon2Params
 	ShutdownTimeout        time.Duration
 	Telemetry              telemetry.Config
@@ -53,14 +57,15 @@ func Load() (Config, error) {
 
 func (c Config) Validate() error {
 	checks := []func() error{
-		func() error { return validateEnvironment(c.Environment) },
-		func() error { return validateServiceName(c.ServiceName) },
+		func() error { return validateEnvironment(c) },
+		func() error { return validateServiceName(c) },
 		func() error { return validateTCPPort("IBEX_PORT", c.Port) },
 		func() error { return validateTCPPort("IBEX_GRPC_PORT", c.GRPCPort) },
-		func() error { return validatePostgresDSN(c.PostgresDSN) },
+		func() error { return validatePostgresDSN(c) },
 		func() error { return validateCredentialsMasterKey(c) },
 		func() error { return validateTOTPSessionConfig(c) },
 		func() error { return validateAuthServiceToken(c) },
+		func() error { return validatePolicySigningConfig(c) },
 		func() error { return validateValidateTokenRPM(c.ValidateTokenRPM) },
 		func() error { return shutdown.ValidateTimeout(c.ShutdownTimeout) },
 	}
@@ -82,6 +87,39 @@ func validateAuthServiceToken(c Config) error {
 	return nil
 }
 
+// validatePolicySigningConfig requires and validates the AuthService
+// policy-signing key outside development (GAP-002, decision record 21 §2.1).
+func validatePolicySigningConfig(c Config) error {
+	if strings.TrimSpace(c.PolicySigningKeyPEM) == "" {
+		if c.Environment == "development" {
+			return nil
+		}
+		return fmt.Errorf("IBEX_AUTH_POLICY_SIGNING_KEY_PEM is required outside development")
+	}
+	if _, err := policysnapshot.NewIssuer(c.PolicyIssuerConfig()); err != nil {
+		return fmt.Errorf("IBEX_AUTH_POLICY_SIGNING_KEY_PEM: %w", err)
+	}
+	return nil
+}
+
+// PolicyIssuerConfig normalizes policy-signing settings for Issuer
+// construction: an unset key id defaults to v1 and an unset epoch to 1.
+func (c Config) PolicyIssuerConfig() policysnapshot.IssuerConfig {
+	keyID := strings.TrimSpace(c.PolicySigningKeyID)
+	if keyID == "" {
+		keyID = "v1"
+	}
+	epoch := c.PolicyEpoch
+	if epoch == 0 {
+		epoch = 1
+	}
+	return policysnapshot.IssuerConfig{
+		PrivateKeyPEM: strings.TrimSpace(c.PolicySigningKeyPEM),
+		KeyID:         keyID,
+		Epoch:         epoch,
+	}
+}
+
 func requiresAuthServiceToken(c Config) bool {
 	if c.Environment == "development" {
 		return false
@@ -89,15 +127,15 @@ func requiresAuthServiceToken(c Config) bool {
 	return c.TOTPEnabled || strings.TrimSpace(c.JWTPrivateKeyPEM) != ""
 }
 
-func validateServiceName(name string) error {
-	if strings.TrimSpace(name) == "" {
+func validateServiceName(c Config) error {
+	if strings.TrimSpace(c.ServiceName) == "" {
 		return fmt.Errorf("IBEX_SERVICE_NAME must not be empty")
 	}
 	return nil
 }
 
-func validatePostgresDSN(dsn string) error {
-	if dsn == "" {
+func validatePostgresDSN(c Config) error {
+	if c.PostgresDSN == "" {
 		return fmt.Errorf("POSTGRES_DSN is required for auth token validation")
 	}
 	return nil
@@ -138,8 +176,8 @@ func validateCredentialsMasterKey(c Config) error {
 	return nil
 }
 
-func validateEnvironment(env string) error {
-	switch env {
+func validateEnvironment(c Config) error {
+	switch c.Environment {
 	case "development", "staging", "production":
 		return nil
 	default:

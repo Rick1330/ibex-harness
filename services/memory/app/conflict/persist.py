@@ -11,13 +11,22 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.conflict.intervals import ValidityInterval
 from app.conflict.types import CandidateMemory, SupersedeApply
+from app.exceptions import StaleMemoryRevisionError
+from app.lifecycle import (
+    MemoryLifecycleEvent,
+    enqueue_memory_lifecycle_event,
+    lock_organization_for_memory_write,
+)
 from app.org_context import set_service_org
+from app.vectorstore.base import SearchMode
 
 
 @dataclass(frozen=True, slots=True)
 class CandidateLoad:
     org_id: UUID
+    agent_id: UUID
     memory_ids: tuple[UUID, ...]
+    search_mode: SearchMode
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +44,9 @@ async def load_candidate_memories(
     load: CandidateLoad,
 ) -> list[CandidateMemory]:
     """Load active candidate rows for conflict evaluation (org-scoped)."""
+    if load.search_mode is not SearchMode.HISTORICAL_CONFLICT_CANDIDATES:
+        msg = "candidate loading requires historical conflict-candidate mode"
+        raise ValueError(msg)
     if not load.memory_ids:
         return []
     async with factory() as session, session.begin():
@@ -47,16 +59,20 @@ async def load_candidate_memories(
                            content,
                            valid_from,
                            valid_until,
-                           confidence::float8 AS confidence
+                           confidence::float8 AS confidence,
+                           lifecycle_revision
                     FROM ibex_core.memories
                     WHERE org_id = :org_id
+                      AND agent_id = :agent_id
                       AND id = ANY(CAST(:ids AS uuid[]))
                       AND status = 'active'
                       AND deleted_at IS NULL
+                      AND tombstoned = FALSE
                     """
                 ),
                 {
                     "org_id": str(load.org_id),
+                    "agent_id": str(load.agent_id),
                     "ids": [str(i) for i in load.memory_ids],
                 },
             )
@@ -76,6 +92,7 @@ async def load_candidate_memories(
                     valid_until=_aware_opt(row.valid_until),
                 ),
                 confidence=float(row.confidence),
+                lifecycle_revision=int(row.lifecycle_revision),
             )
         )
     return out
@@ -87,7 +104,7 @@ async def apply_supersession_session(
 ) -> None:
     """Mark target superseded, close interval, insert supersedes edge (caller txn)."""
     closed_at = apply.closed_at or datetime.now(tz=UTC)
-    await set_service_org(session, apply.org_id)
+    await lock_organization_for_memory_write(session, apply.org_id)
     result = await session.execute(
         text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             """
@@ -98,8 +115,12 @@ async def apply_supersession_session(
                 updated_at = NOW()
             WHERE id = :target_id
               AND org_id = :org_id
+              AND agent_id = :agent_id
               AND status = 'active'
               AND deleted_at IS NULL
+              AND tombstoned = FALSE
+              AND lifecycle_revision = :expected_revision
+            RETURNING lifecycle_revision
             """
         ),
         {
@@ -107,11 +128,15 @@ async def apply_supersession_session(
             "closed_at": closed_at,
             "target_id": str(apply.target_memory_id),
             "org_id": str(apply.org_id),
+            "agent_id": str(apply.agent_id),
+            "expected_revision": apply.expected_revision,
         },
     )
-    if result.rowcount != 1:
-        msg = f"supersede update expected 1 row, got {result.rowcount}"
-        raise RuntimeError(msg)
+    updated = result.mappings().one_or_none()
+    if updated is None:
+        raise StaleMemoryRevisionError(
+            "Supersession target is missing, tombstoned, or no longer at the expected lifecycle revision"
+        )
     await session.execute(
         text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             """
@@ -134,6 +159,15 @@ async def apply_supersession_session(
             "notes": "m3.c.3 auto-supersede",
         },
     )
+    await enqueue_memory_lifecycle_event(
+        session,
+        MemoryLifecycleEvent(
+            org_id=apply.org_id,
+            memory_id=apply.target_memory_id,
+            revision=int(updated["lifecycle_revision"]),
+            event_type="superseded",
+        ),
+    )
 
 
 async def apply_supersession(
@@ -151,7 +185,7 @@ async def insert_relationship(
 ) -> None:
     """Insert a typed memory_relationships edge (org-scoped)."""
     async with factory() as session, session.begin():
-        await set_service_org(session, insert.org_id)
+        await lock_organization_for_memory_write(session, insert.org_id)
         await session.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                 """

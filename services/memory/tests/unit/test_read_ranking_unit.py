@@ -175,3 +175,57 @@ def test_multi_label_shortest_half_life_on_read_path() -> None:
     )
     multi_score = composite_score(hydrated[multi].composite_inputs(0.90, now=now))
     assert multi_score < primary_score
+
+
+def test_relevance_overrides_replace_the_retrieval_score() -> None:
+    stale_winner = uuid4()
+    rerank_winner = uuid4()
+    candidates = [
+        RankedCandidate(memory_id=stale_winner, score=0.95, source="vector"),
+        RankedCandidate(memory_id=rerank_winner, score=0.71, source="vector"),
+    ]
+    hydrated = {
+        stale_winner: hydrated_hit(HydratedHitSeed(memory_id=stale_winner)),
+        rerank_winner: hydrated_hit(HydratedHitSeed(memory_id=rerank_winner)),
+    }
+    opts = RankOptions(relevance_overrides={stale_winner: 0.2, rerank_winner: 0.9})
+
+    ranked = rank_hydrated_hits(candidates, hydrated, opts)
+
+    assert [item.id for item in ranked] == [rerank_winner, stale_winner]
+
+
+def test_relevance_overrides_are_clamped_to_the_unit_interval() -> None:
+    memory_id = uuid4()
+    candidates = [RankedCandidate(memory_id=memory_id, score=0.5, source="vector")]
+    hydrated = {memory_id: hydrated_hit(HydratedHitSeed(memory_id=memory_id))}
+
+    high = rank_hydrated_hits(
+        candidates, hydrated, RankOptions(relevance_overrides={memory_id: 3.0})
+    )
+    low = rank_hydrated_hits(
+        candidates, hydrated, RankOptions(relevance_overrides={memory_id: -2.0})
+    )
+
+    assert len(high) == 1
+    assert low == []
+
+
+def test_candidates_without_an_override_keep_their_channel_score() -> None:
+    overridden = uuid4()
+    plain = uuid4()
+    candidates = [
+        RankedCandidate(memory_id=overridden, score=0.3, source="vector"),
+        RankedCandidate(memory_id=plain, score=0.9, source="vector"),
+    ]
+    hydrated = {
+        overridden: hydrated_hit(HydratedHitSeed(memory_id=overridden)),
+        plain: hydrated_hit(HydratedHitSeed(memory_id=plain)),
+    }
+
+    ranked = rank_hydrated_hits(
+        candidates, hydrated, RankOptions(relevance_overrides={overridden: 0.35})
+    )
+
+    # `plain` keeps its 0.9 channel score and wins; only `overridden` is rescored.
+    assert [item.id for item in ranked] == [plain, overridden]
