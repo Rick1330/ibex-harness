@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -23,23 +24,17 @@ from modes import (
 )
 
 
-def _result(
-    mode: str,
-    *,
-    overall: float,
-    non_graph: float,
-    graph: float,
-    counts: dict[str, int] | None = None,
-    total: int | None = None,
-) -> ModeResult:
-    per_subset = counts or {"dense": 60, "lexical": 50, "graph": 40}
+def _result(mode: str, **scores: Any) -> ModeResult:
+    """Build a result from keyword scores; ``counts``/``total`` override the corpus shape."""
+    counts = scores.pop("counts", None) or {"dense": 60, "lexical": 50, "graph": 40}
+    total = scores.pop("total", None)
     return ModeResult(
         mode=mode,
-        overall=overall,
-        non_graph=non_graph,
-        graph=graph,
-        query_count=sum(per_subset.values()) if total is None else total,
-        per_subset_counts=per_subset,
+        overall=scores["overall"],
+        non_graph=scores["non_graph"],
+        graph=scores["graph"],
+        query_count=sum(counts.values()) if total is None else total,
+        per_subset_counts=counts,
     )
 
 
@@ -72,10 +67,20 @@ class TestModes:
     def test_dense_only_disables_the_phase5_stages(self) -> None:
         from app.config import Settings
 
-        settings = MODE_BY_NAME["dense_only"].settings_for(Settings())
+        # Start from a base where both stages are on, or the assertion proves nothing.
+        base = Settings(search_hybrid_enabled=True, rerank_enabled=True, search_fallback_enabled=True)
+        settings = MODE_BY_NAME["dense_only"].settings_for(base)
 
         assert settings.search_hybrid_enabled is False
         assert settings.rerank_enabled is False
+
+    def test_dense_only_cannot_be_refilled_with_full_text_hits(self) -> None:
+        from app.config import Settings
+
+        base = Settings(search_fallback_enabled=True)
+        settings = MODE_BY_NAME["dense_only"].settings_for(base)
+
+        assert settings.search_fallback_enabled is False
 
     def test_hybrid_rerank_enables_both_stages(self) -> None:
         from app.config import Settings
@@ -91,9 +96,7 @@ class TestModes:
         base = Settings(composite_relevance_floor=0.2, search_rrf_k=42)
 
         for mode in MODES:
-            if mode.conflict_suppression and not hasattr(
-                type(base), "model_fields"
-            ) or not _has_suppression_field(base):
+            if mode.conflict_suppression and not _has_suppression_field(base):
                 continue
             settings = mode.settings_for(base)
             assert settings.composite_relevance_floor == pytest.approx(0.2)

@@ -58,6 +58,20 @@ _CORPUS_SUBSETS: Final = frozenset({"dense", "lexical", "graph"})
 
 
 @dataclass(frozen=True, slots=True)
+class GatePolicy:
+    """Thresholds and the pair under comparison, bundled so the gate stays four arguments."""
+
+    reference_mode: str = "hybrid_rerank"
+    subject_mode: str = "full_graph"
+    max_drop_points: float = MAX_DROP_POINTS
+    max_gap_points: float = MAX_GRAPH_GAP_POINTS
+    min_queries: int = MIN_QUERIES_PER_SUBSET
+
+
+DEFAULT_POLICY: Final = GatePolicy()
+
+
+@dataclass(frozen=True, slots=True)
 class GateFailure:
     mode: str
     check: str
@@ -70,20 +84,17 @@ class GateFailure:
 def evaluate_gate(
     results: Mapping[str, ModeResult],
     baseline: Mapping[str, float],
-    *,
-    reference_mode: str = "hybrid_rerank",
-    subject_mode: str = "full_graph",
-    max_drop_points: float = MAX_DROP_POINTS,
-    max_gap_points: float = MAX_GRAPH_GAP_POINTS,
-    min_queries: int = MIN_QUERIES_PER_SUBSET,
+    policy: GatePolicy = DEFAULT_POLICY,
 ) -> list[GateFailure]:
     """Return every failing check; an empty list means the gate passes."""
     failures: list[GateFailure] = [*_validate_coverage(results, baseline)]
-    failures.extend(_validate_shapes(results, min_queries))
+    failures.extend(_validate_shapes(results, policy.min_queries))
     if failures:
         return failures
-    failures.extend(_check_baseline_drops(results, baseline, max_drop_points))
-    failures.extend(_check_graph_gap(results, reference_mode, subject_mode, max_gap_points))
+    failures.extend(_check_baseline_drops(results, baseline, policy.max_drop_points))
+    failures.extend(
+        _check_graph_gap(results, policy.reference_mode, policy.subject_mode, policy.max_gap_points)
+    )
     return failures
 
 
