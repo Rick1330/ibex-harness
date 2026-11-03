@@ -12,6 +12,8 @@ Decision records are not implementation evidence. A record can be **Proposed**, 
 
 Notable records:
 
+- [ADR-0095](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0095-retrieval-and-agreement-metrics.md) — nDCG@k, tail-extrapolated RBO, and Cohen's kappa defined once in `services/memory/app/eval`, shared by the
+  benchmark and the shadow path.
 - [ADR-0094](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0094-bounded-lineage-and-conflict-suppression.md) — depth-capped lineage traversal in SQL, and unresolved-conflict suppression keyed on pending escalations across search, hot cache, and context assembly.
 - [ADR-0093](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0093-cross-encoder-rerank-as-relevance.md) — cross-encoder rerank replaces the relevance component, default off, degrades to the fused order.
 - [ADR-0092](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0092-hybrid-retrieval-rrf-admission.md) — hybrid retrieval: RRF decides admission, composite scoring decides presentation, default off.
