@@ -41,6 +41,11 @@ class BenchmarkMode:
         Every other field is inherited untouched: a mode is a delta, not a new configuration,
         so an unrelated setting can never diverge between two published rows.
         """
+        if self.conflict_suppression and not _schema_has(base, "conflict_suppression_enabled"):
+            raise UnsupportedModeError(
+                f"mode {self.name!r} needs Settings.conflict_suppression_enabled, which the "
+                "service does not define; refusing to build a configuration that cannot apply it"
+            )
         settings = base.model_copy(update=dict(self.settings_delta))
         self._require_applied(settings)
         return settings
@@ -121,6 +126,15 @@ GATE_SUBJECT_MODE = "full_graph"
 GRAPH_SUBSET = "graph"
 
 
+def _schema_has(settings: Settings, field: str) -> bool:
+    """Whether ``Settings`` *declares* the field.
+
+    ``hasattr`` is not enough: ``model_copy(update=...)`` writes into the instance dict, so an
+    injected attribute would authorise a mode the service cannot run.
+    """
+    return field in type(settings).model_fields
+
+
 class UnsupportedModeError(RuntimeError):
     """The service cannot execute this mode yet, so its number would be fiction."""
 
@@ -135,7 +149,7 @@ def require_supported(mode: BenchmarkMode, base: Settings) -> None:
     """
     if not mode.conflict_suppression:
         return
-    if not hasattr(base, "conflict_suppression_enabled"):
+    if not _schema_has(base, "conflict_suppression_enabled"):
         raise UnsupportedModeError(
             f"mode {mode.name!r} needs Settings.conflict_suppression_enabled, which the service "
             "does not define yet; suppressing the row until the switch lands"

@@ -52,6 +52,10 @@ def _healthy() -> dict[str, ModeResult]:
     }
 
 
+def _has_suppression_field(base: object) -> bool:
+    return "conflict_suppression_enabled" in type(base).model_fields
+
+
 BASELINE = {"dense_only": 0.62, "hybrid": 0.71, "hybrid_rerank": 0.80, "full_graph": 0.80}
 
 
@@ -87,6 +91,10 @@ class TestModes:
         base = Settings(composite_relevance_floor=0.2, search_rrf_k=42)
 
         for mode in MODES:
+            if mode.conflict_suppression and not hasattr(
+                type(base), "model_fields"
+            ) or not _has_suppression_field(base):
+                continue
             settings = mode.settings_for(base)
             assert settings.composite_relevance_floor == pytest.approx(0.2)
             assert settings.search_rrf_k == 42

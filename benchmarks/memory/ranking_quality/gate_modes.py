@@ -14,6 +14,7 @@ reader thinks about a score drop ("three points of nDCG").
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
@@ -45,16 +46,15 @@ class ModeResult:
     def score_for(self, subset: str) -> float:
         """Score for a named subset; an unknown name is an error, not the graph score."""
         try:
-            return _SUBSET_FIELDS[subset]
+            field = _SUBSET_FIELDS[subset]
         except KeyError:
             raise ValueError(f"unknown subset {subset!r}") from None
-
-    def _score_for_field(self, subset: str) -> float:
-        field = _SUBSET_FIELDS[subset]
-        return getattr(self, "overall" if field == "overall" else field)
+        return getattr(self, field)
 
 
 _SUBSET_FIELDS: Final = {"overall": "overall", "non_graph": "non_graph", "graph": "graph"}
+# Names the corpus actually produces. "non_graph" is a derived group, not a corpus subset.
+_CORPUS_SUBSETS: Final = frozenset({"dense", "lexical", "graph"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,13 +142,33 @@ def _validate_subset_counts(
         GateFailure(
             mode=name,
             check="subset size",
+            detail=f"unknown subset {subset!r} in the breakdown",
+        )
+        for subset in sorted(result.per_subset_counts)
+        if subset not in _CORPUS_SUBSETS
+    ]
+    failures.extend(
+        GateFailure(
+            mode=name,
+            check="subset size",
             detail=f"{subset} was scored on {count} queries, below the {min_queries} required",
         )
         for subset, count in sorted(result.per_subset_counts.items())
-        if subset != GRAPH_SUBSET and count < min_queries
+        if subset in _CORPUS_SUBSETS and count < min_queries
+    )
+    missing = [
+        subset for subset in ("dense", "lexical", "graph") if subset not in result.per_subset_counts
     ]
+    failures.extend(
+        GateFailure(
+            mode=name,
+            check="subset size",
+            detail=f"{subset} has no query support, so its mean was never measured",
+        )
+        for subset in missing
+    )
     total = sum(result.per_subset_counts.values())
-    if result.per_subset_counts and total != result.query_count:
+    if total != result.query_count:
         failures.append(
             GateFailure(
                 mode=name,
@@ -187,6 +207,15 @@ def _check_baseline_drops(
                 )
             )
             continue
+        if not math.isfinite(baseline[name]):
+            failures.append(
+                GateFailure(
+                    mode=name,
+                    check="baseline",
+                    detail=f"committed baseline {baseline[name]!r} is not a finite number",
+                )
+            )
+            continue
         drop_points = (baseline[name] - result.overall) * POINTS
         if drop_points > max_drop_points + _EPSILON:
             failures.append(
@@ -214,10 +243,21 @@ def _check_graph_gap(
     the shape check already reports a baseline with no result. Only a *measured* pair can fail
     this one.
     """
-    reference = results.get(reference_mode)
-    subject = results.get(subject_mode)
-    if reference is None or subject is None:
-        return []
+    missing = [name for name in (reference_mode, subject_mode) if name not in results]
+    if missing:
+        return [
+            GateFailure(
+                mode=name,
+                check="coverage",
+                detail=(
+                    f"the {reference_mode} vs {subject_mode} comparison never ran; "
+                    "that comparison is the milestone's only relative check"
+                ),
+            )
+            for name in missing
+        ]
+    reference = results[reference_mode]
+    subject = results[subject_mode]
     gap_points = (reference.non_graph - subject.non_graph) * POINTS
     # Float subtraction makes an exactly-at-allowance gap land a hair over it.
     if gap_points <= max_gap_points + _EPSILON:
