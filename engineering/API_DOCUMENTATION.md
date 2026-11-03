@@ -1029,8 +1029,10 @@ relevance floor keep their ADR-0068 meaning. The HTTP `source` field still repor
 Only content that passes the read-path Tier-1 PII guard is sent to the reranker: blocked rows are filtered before the
 documents are built, so a stored email or SSN never reaches the inference endpoint.
 
-The rerank **call** is bounded by `IBEX_MEMORY_RERANK_TIMEOUT_MS` (default `100`) and has no retries by default; that cap
-does not bound the rest of the request, which already paid for retrieval and hydration. A timeout, transport error,
+The rerank **stage** is bounded by `IBEX_MEMORY_RERANK_TIMEOUT_MS` (default `100`) and has no retries by default. The
+window is sent as one `POST /rerank` when it fits `IBEX_MEMORY_RERANK_CLIENT_BATCH_SIZE` (default `32`), otherwise as
+that many concurrent requests, all of which must succeed. That cap does not bound the rest of the request, which already
+paid for retrieval and hydration. A timeout, transport error,
 auth failure, or malformed response increments `ibex_memory_rerank_total{result="degraded"}` and the request returns the
 fused order — a slow reranker never turns a search into an error. A page the relevance floor empties after reranking
 returns the fused order and increments `ibex_memory_rerank_total{result="emptied"}`; a page that is merely shorter than

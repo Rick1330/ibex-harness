@@ -42,9 +42,12 @@ The question this record settles is what a reranker is allowed to override.
    *how the page is ordered*.
 4. **The HTTP response still reports retrieval provenance** (`source` = `vector` or `full_text`). The reranker is a
    scoring stage, not a third retrieval channel, and overloading `source` would misreport where a memory came from.
-5. **A hard stop on the call, then degrade.** One rerank call per search, bounded by
-   `IBEX_MEMORY_RERANK_TIMEOUT_MS` (default `100`) and zero retries by default. That cap bounds the call, **not the
-   request**: retrieval and hydration have already happened, and a degrade may hydrate more rows. Timeout, transport
+5. **A hard stop on the stage, then degrade.** One rerank *stage* per search, bounded by
+   `IBEX_MEMORY_RERANK_TIMEOUT_MS` (default `100`) and zero retries by default. The stage is one `POST /rerank` when
+   the window fits `IBEX_MEMORY_RERANK_CLIENT_BATCH_SIZE` (default `32`), and otherwise that many concurrent requests;
+   all of them must succeed, because a partially scored window would rank rows against scores that never arrived. That
+   cap bounds the stage, **not the request**: retrieval and hydration have already happened, and a degrade may hydrate
+   more rows. Timeout, transport
    error, auth rejection, or a malformed response increments `ibex_memory_rerank_total{result="degraded"}` and returns
    the fused order. A slow reranker must never turn a search into an error; it can still cost latency, which is why the
    histogram exists and why enabling this is a measurement decision.
@@ -65,16 +68,22 @@ The question this record settles is what a reranker is allowed to override.
   the tenant and lifecycle fence identical to the rest of the read path.
 - **Retries inside the read deadline.** Rejected as a default: a retry queue behind a slow model is worse than the fused
   order it degrades to. Operators who can afford it raise `IBEX_MEMORY_RERANK_MAX_RETRIES`.
+- **Require the operator to raise TEI's `--max-client-batch-size`.** Rejected: the two defaults disagreed, and the
+  disagreement was silent. A 50-candidate window against a stock server (limit `32`) returns `413`, which the read path
+  correctly treats as "degrade", so rerank was a no-op on every default deployment while the counter said `degraded`
+  and the page looked normal. The client now owns the split, so the **window** is independent of a server flag;
+  the batch size is not — it must not exceed the server's `--max-client-batch-size`, and any smaller value works.
 - **A new `reranker` wrapper service** in front of TEI. Deferred: the memory service talks to TEI's `POST /rerank`
   directly with the same client conventions as the embedder, and a wrapper adds a hop without adding a contract. Add one
   only if auth, caching, or provider abstraction needs it.
 
 ## Consequences
 
-- Enabling rerank adds one network hop and one model inference to a searchable hybrid request, and the rerank path
-  hydrates a wider window before scoring (bounded by `IBEX_MEMORY_RERANK_MAX_CANDIDATES`). The per-call stop bounds one
-  call, so a request can exceed the memory search p95 target when rerank is on; the histogram and the outcome counter are
-  how that becomes visible instead of a mystery.
+- Enabling rerank adds one network hop and one model inference per request to a searchable hybrid request, and a
+  candidate window above `IBEX_MEMORY_RERANK_CLIENT_BATCH_SIZE` multiplies both (1..N concurrent `POST /rerank` calls);
+  the stage is bounded, not each call. The rerank path hydrates a wider window before scoring (bounded by
+  `IBEX_MEMORY_RERANK_MAX_CANDIDATES`). The stop bounds one stage, so a request can exceed the memory search p95 target
+  when rerank is on; the histogram and the outcome counter are how that becomes visible instead of a mystery.
 - The relevance floor now applies to a calibrated score. A cross-encoder can legitimately score an on-topic memory below
   `0.15`, which shortens or empties a page; a short page keeps the reranked order and an emptied one falls back to the
   fused order, so a floor surprise is a smaller page rather than an outage.
