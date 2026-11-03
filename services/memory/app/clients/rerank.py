@@ -131,7 +131,7 @@ class RerankClient:
             except (RerankUnavailableError, RerankTimeoutError) as exc:
                 if not self._may_retry(exc, attempt=attempt):
                     raise
-                await asyncio.sleep(jittered_backoff(attempt, max_seconds=_BACKOFF_MAX_SECONDS))
+                await asyncio.sleep(_retry_delay(exc, attempt=attempt))
         msg = "reranker retry loop exhausted without a result"  # pragma: no cover
         raise RerankUnavailableError(msg)  # pragma: no cover
 
@@ -163,6 +163,15 @@ class RerankClient:
         if resp.status_code == 200:
             return _parse_scores(resp, expected=expected)
         _raise_http_error(resp)
+
+
+def _retry_delay(exc: RerankUnavailableError | RerankTimeoutError, *, attempt: int) -> float:
+    """Short backoff, raised to the server's ``Retry-After`` when it asked for one."""
+    delay = jittered_backoff(attempt, base_seconds=0.05, max_seconds=_BACKOFF_MAX_SECONDS)
+    requested = exc.retry_after_seconds if isinstance(exc, RerankUnavailableError) else None
+    if requested is None:
+        return delay
+    return min(_BACKOFF_MAX_SECONDS, max(delay, requested))
 
 
 def _validate_request(query: str, documents: Sequence[str]) -> None:
@@ -206,13 +215,40 @@ def _load_json_list(resp: httpx.Response) -> list[Any]:
 
 
 def _as_finite_score(value: object, *, index: int) -> float:
+    _require_number(value, index=index)
+    score = _to_float(value, index=index)
+    _require_finite(score, index=index)
+    # ``raw_scores=false`` promises a normalized score; anything else means the
+    # server ignored the flag and the value cannot be a composite relevance.
+    _require_normalized(score, index=index)
+    return score
+
+
+def _require_number(value: object, *, index: int) -> None:
     # bool is a subclass of int — reject explicitly.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise RerankInvalidResponseError(f"score for index {index} must be a number")
-    score = float(value)
+
+
+def _to_float(value: object, *, index: int) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except OverflowError as exc:  # an integer literal too large for a float
+        raise RerankInvalidResponseError(
+            f"score for index {index} is not a representable number"
+        ) from exc
+
+
+def _require_finite(score: float, *, index: int) -> None:
     if not math.isfinite(score):
         raise RerankInvalidResponseError(f"score for index {index} must be finite")
-    return score
+
+
+def _require_normalized(score: float, *, index: int) -> None:
+    if score < 0.0 or score > 1.0:
+        raise RerankInvalidResponseError(
+            f"score for index {index} is outside the normalized range [0, 1]"
+        )
 
 
 def _parse_scores(resp: httpx.Response, *, expected: int) -> list[float]:

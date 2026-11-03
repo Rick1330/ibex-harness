@@ -248,8 +248,11 @@ class Settings(BaseSettings):
     rerank_max_candidates: int = Field(
         default=50,
         ge=1,
-        le=200,
-        description="Upper bound on candidates sent to the reranker per search",
+        le=50,
+        description=(
+            "Upper bound on candidates sent to the reranker per search; "
+            "must stay within the client batch limit"
+        ),
     )
 
     @field_validator("database_url", mode="before")

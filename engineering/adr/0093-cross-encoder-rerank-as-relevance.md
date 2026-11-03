@@ -42,13 +42,17 @@ The question this record settles is what a reranker is allowed to override.
    *how the page is ordered*.
 4. **The HTTP response still reports retrieval provenance** (`source` = `vector` or `full_text`). The reranker is a
    scoring stage, not a third retrieval channel, and overloading `source` would misreport where a memory came from.
-5. **A hard latency stop, then degrade.** One rerank call per search, bounded by
-   `IBEX_MEMORY_RERANK_TIMEOUT_MS` (default `100`, the memory search p95 target) and zero retries by default. Timeout,
-   transport error, auth rejection, or a malformed response increments
-   `ibex_memory_rerank_total{result="degraded"}` and returns the fused order. A slow reranker must never turn a search
-   into an error or blow the read budget.
-6. **A page the reranker empties falls back to the fused order.** If every reranked score lands below the relevance
-   floor, the request returns the fused ranking rather than an empty page.
+5. **A hard stop on the call, then degrade.** One rerank call per search, bounded by
+   `IBEX_MEMORY_RERANK_TIMEOUT_MS` (default `100`) and zero retries by default. That cap bounds the call, **not the
+   request**: retrieval and hydration have already happened, and a degrade may hydrate more rows. Timeout, transport
+   error, auth rejection, or a malformed response increments `ibex_memory_rerank_total{result="degraded"}` and returns
+   the fused order. A slow reranker must never turn a search into an error; it can still cost latency, which is why the
+   histogram exists and why enabling this is a measurement decision.
+6. **Only a page the reranker empties falls back.** If every reranked score lands below the relevance floor, the
+   request returns the fused ranking and records `result="emptied"`. A page that is merely shorter than `limit` keeps
+   the reranked order — mixing reranked and unreranked relevance in one page would be worse than a short page.
+7. **Blocked content never reaches the reranker.** The read-path Tier-1 PII guard runs before the documents are built,
+   so a row the API would withhold is not sent to an inference endpoint either.
 
 ## Alternatives considered
 
@@ -67,11 +71,13 @@ The question this record settles is what a reranker is allowed to override.
 
 ## Consequences
 
-- Enabling rerank adds one network hop and one model inference to a searchable hybrid request. The hard stop bounds the
-  added latency, but a reranker that routinely hits the stop degrades most requests — the histogram is how that becomes
-  visible instead of a mystery.
+- Enabling rerank adds one network hop and one model inference to a searchable hybrid request, and the rerank path
+  hydrates a wider window before scoring (bounded by `IBEX_MEMORY_RERANK_MAX_CANDIDATES`). The per-call stop bounds one
+  call, so a request can exceed the memory search p95 target when rerank is on; the histogram and the outcome counter are
+  how that becomes visible instead of a mystery.
 - The relevance floor now applies to a calibrated score. A cross-encoder can legitimately score an on-topic memory below
-  `0.15`, which shortens or empties a page; the fused-order fallback keeps that from becoming an outage.
+  `0.15`, which shortens or empties a page; a short page keeps the reranked order and an emptied one falls back to the
+  fused order, so a floor surprise is a smaller page rather than an outage.
 - `ts_rank_cd`'s fixed `0.5` composite sentinel no longer matters when rerank is on, because every admitted candidate
   gets a real relevance score. The sentinel remains the fallback behaviour.
 - The reranker is a new external dependency on the read path. It is default-off, and its absence is a degrade, not a

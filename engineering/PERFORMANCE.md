@@ -51,10 +51,13 @@ These are targets pending a workload-qualified measurement. The 40ms client dead
 - p95 ≤ 100ms (typical dataset sizes up to 10M vectors per tenant with pgvector)
 - Preferred Phase 3+ index: **HNSW** (tune `ef_search` from benchmarks). IVFFlat numbers in older notes are historical.
 - Phase 5 hybrid / rerank paths must still respect context-assembly deadlines (degrade gracefully if reranker unavailable)
-- Rerank sub-budget (5.A.3): one cross-encoder call per search, hard-stopped at `IBEX_MEMORY_RERANK_TIMEOUT_MS`
-  (default 100ms, the p95 target). A call that would exceed it degrades to the fused order, so enabling rerank cannot
-  push a request past the p95 target on its own; measured rerank latency is published from the
-  `ibex_memory_rerank_seconds` histogram.
+- Rerank sub-budget (5.A.3): one cross-encoder call per search. **Only the call wait** is capped, at
+  `IBEX_MEMORY_RERANK_TIMEOUT_MS` (default 100ms); a call that exceeds it degrades to the fused order. The cap does not
+  bound the rest of the request: the rerank window is hydrated before the call, a degrade hydrates the admitted page
+  (from rows it may already hold), and retrieval itself is unbudgeted by this per-call cap. Enabling rerank can
+  therefore push a request past the 100ms p95 target, and lowering `IBEX_MEMORY_RERANK_TIMEOUT_MS` below the caller's
+  remaining budget is an operator decision. Measured rerank latency and outcome counts are published from the
+  `ibex_memory_rerank_seconds` histogram and `ibex_memory_rerank_total`.
 - p99 ≤ 250ms
 
 ### 2.4 Memory write budgets

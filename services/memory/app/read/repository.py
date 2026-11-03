@@ -195,17 +195,22 @@ class MemoryReadRepository:
         )
         overrides = await self._rerank_scores(client, query, window, hydrated)
         if overrides is None:
-            return await self._rank_fused_window(query, fused, rank_opts)
+            return await self._rank_fused_window(
+                query, fused, rank_opts, hydrated=hydrated
+            )
         ranked = rank_hydrated_hits(
             window,
             hydrated,
             replace(rank_opts, relevance_overrides=overrides),
-        )
-        if len(ranked) >= query.limit:
-            return ranked[: query.limit]
-        # The reranker can drop candidates under the relevance floor; refill from the
-        # fused order without rerank scores rather than returning a short page.
-        return await self._rank_fused_window(query, fused, rank_opts)
+        )[: query.limit]
+        if ranked:
+            RERANK.labels(result="applied").inc()
+            return ranked
+        # The relevance floor emptied the page the reranker scored. Falling back is
+        # the only way to return something, but mixing reranked and unreranked
+        # relevance inside one page is not: the whole page comes from the fused order.
+        RERANK.labels(result="emptied").inc()
+        return await self._rank_fused_window(query, fused, rank_opts, hydrated=hydrated)
 
     async def _rerank_scores(
         self,
@@ -214,7 +219,19 @@ class MemoryReadRepository:
         window: list[RankedCandidate],
         hydrated: Mapping[UUID, HydratedHit],
     ) -> dict[UUID, float] | None:
-        ids = [item.memory_id for item in window if item.memory_id in hydrated]
+        # Content the read guard would block must not reach a third-party inference
+        # endpoint, so the same Tier-1 filter runs before the documents are built.
+        allowed = {
+            item.id
+            for item in filter_pii_blocked_results(
+                [hit.result for hit in hydrated.values()]
+            )
+        }
+        ids = [
+            item.memory_id
+            for item in window
+            if item.memory_id in hydrated and item.memory_id in allowed
+        ]
         if len(ids) < 2:
             # Nothing to reorder: a single candidate already holds the page.
             RERANK.labels(result="skipped").inc()
@@ -235,8 +252,9 @@ class MemoryReadRepository:
                 self._settings.rerank_timeout_ms,
             )
             return None
-        RERANK_LATENCY.observe(time.monotonic() - started)
-        RERANK.labels(result="applied").inc()
+        finally:
+            # A timed-out call is the slow call the latency panel must show.
+            RERANK_LATENCY.observe(time.monotonic() - started)
         return dict(zip(ids, scores, strict=True))
 
     async def _rank_fused_window(
@@ -244,6 +262,8 @@ class MemoryReadRepository:
         query: FindSimilarQuery,
         fused: list[RankedCandidate],
         rank_opts: RankOptions,
+        *,
+        hydrated: Mapping[UUID, HydratedHit] | None = None,
     ) -> list[MemorySearchResult]:
         """Hydrate the fused window, then refill only if the page came up short.
 
@@ -253,26 +273,39 @@ class MemoryReadRepository:
         it must not shorten the page while eligible fused candidates wait behind
         it. The union is bounded by ``2 * limit``, so the refill is one extra
         batch at most.
+
+        ``hydrated`` lets a caller that has already paid for a wider window (the
+        rerank path) hand its rows over, so a degrade does not re-query rows it
+        already has.
         """
+        rows: dict[UUID, HydratedHit] = dict(hydrated or {})
         admitted = fused[: query.limit]
-        hydrated = await self._hydrate_hits(
-            org_id=query.org_id,
-            candidates=admitted,
-            min_confidence=query.min_confidence,
+        rows.update(
+            await self._hydrate_missing(query, admitted, rows)
         )
-        ranked = rank_hydrated_hits(admitted, hydrated, rank_opts)
+        ranked = rank_hydrated_hits(admitted, rows, rank_opts)
         remaining = fused[query.limit :]
         if not remaining or len(ranked) >= query.limit:
             return ranked[: query.limit]
-        hydrated.update(
-            await self._hydrate_hits(
-                org_id=query.org_id,
-                candidates=remaining,
-                min_confidence=query.min_confidence,
-            )
-        )
+        rows.update(await self._hydrate_missing(query, remaining, rows))
         # Refilling replaces the dropped slots; it does not widen the page.
-        return rank_hydrated_hits(fused, hydrated, rank_opts)[: query.limit]
+        return rank_hydrated_hits(fused, rows, rank_opts)[: query.limit]
+
+    async def _hydrate_missing(
+        self,
+        query: FindSimilarQuery,
+        candidates: list[RankedCandidate],
+        known: Mapping[UUID, HydratedHit],
+    ) -> dict[UUID, HydratedHit]:
+        """Hydrate only the candidates the caller does not already hold."""
+        missing = [item for item in candidates if item.memory_id not in known]
+        if not missing:
+            return {}
+        return await self._hydrate_hits(
+            org_id=query.org_id,
+            candidates=missing,
+            min_confidence=query.min_confidence,
+        )
 
     async def _find_similar_fallback(
         self, query: FindSimilarQuery

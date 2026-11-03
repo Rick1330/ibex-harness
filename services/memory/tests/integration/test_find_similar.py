@@ -543,3 +543,69 @@ async def test_hybrid_rerank_failure_falls_back_to_the_fused_order(
     ).find_similar(query)
 
     assert [item.id for item in degraded] == [item.id for item in baseline]
+
+
+class _RecordingReranker:
+    """Records the documents it was asked to score; scores them in order."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    async def rerank(self, _query: str, documents: list[str]) -> list[float]:
+        self.calls.append(list(documents))
+        return [0.8 - 0.1 * position for position in range(len(documents))]
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_find_similar_rerank_cross_org_isolation(
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    store: PgVectorStore,
+) -> None:
+    """The reranker must only ever receive the requesting tenant's content.
+
+    Two memories per org with identical text, so a missing predicate would be
+    visible both in what the reranker sees and in what the caller gets back.
+    """
+    content = "prefers concise technical summaries with exact tokens"
+    org_a, agent_a, mem_a = await seed_org_agent_memory(session_factory, content=content)
+    org_b, agent_b, _mem_b = await seed_org_agent_memory(session_factory, content=content)
+    extra_a = await insert_active_memory(
+        session_factory,
+        InsertActiveMemoryParams(org_id=org_a, agent_id=agent_a, content=content),
+    )
+    extra_b = await insert_active_memory(
+        session_factory,
+        InsertActiveMemoryParams(org_id=org_b, agent_id=agent_b, content=content),
+    )
+    query_vec = await upsert_embedding(store, session_factory, org_id=org_a, memory_id=mem_a, hotspot=1)
+    for memory_id, org_id in ((extra_a, org_a), (extra_b, org_b)):
+        await upsert_embedding(store, session_factory, org_id=org_id, memory_id=memory_id, hotspot=1)
+
+    reranker = _RecordingReranker()
+    repo = build_read_repository(
+        session_factory,
+        store,
+        settings.model_copy(update={"search_hybrid_enabled": True, "rerank_enabled": True}),
+        rerank_client=reranker,
+    )
+
+    results = await repo.find_similar(
+        FindSimilarQuery(
+            org_id=org_a,
+            agent_id=agent_a,
+            query_embedding=query_vec,
+            query_text="concise technical summaries",
+            limit=10,
+            min_similarity=0.0,
+        )
+    )
+
+    assert reranker.calls, "reranker must run for a searchable hybrid query"
+    # Both orgs' memories carry the same text, so the only safe assertion is the
+    # count: exactly the requesting tenant's two rows, never the other tenant's.
+    assert sum(len(call) for call in reranker.calls) == 2
+    assert {item.id for item in results} == {mem_a, extra_a}

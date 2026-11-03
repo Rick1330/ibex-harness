@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -149,3 +150,77 @@ async def test_hybrid_rerank_skips_a_single_candidate_window() -> None:
     assert [item.id for item in results] == [memory_id]
     rerank.assert_not_awaited()
     assert _rerank_counter("skipped") > before
+
+
+@pytest.mark.asyncio
+async def test_hybrid_rerank_keeps_scores_when_the_window_is_already_short() -> None:
+    # Two eligible memories, limit 10: a complete window must not be thrown away
+    # just because it cannot fill the requested page.
+    first, second = UUID(int=1), UUID(int=2)
+
+    results, rerank = await _run_rerank([first, second], scores=[0.20, 0.95], limit=10)
+
+    assert [item.id for item in results] == [second, first]
+    rerank.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_rerank_records_an_emptied_page_separately() -> None:
+    first, second = UUID(int=1), UUID(int=2)
+    before = _rerank_counter("emptied")
+
+    results, _ = await _run_rerank([first, second], scores=[0.01, 0.02])
+
+    assert results
+    assert _rerank_counter("emptied") > before
+
+
+@pytest.mark.asyncio
+async def test_hybrid_rerank_never_sends_blocked_content() -> None:
+    blocked = UUID(int=1)
+    allowed = [UUID(int=2), UUID(int=3)]
+    repo, rerank = _reranking_repo([blocked, *allowed], scores=[0.9, 0.8])
+    blocked_hit = replace(_result(blocked), content="mail me at a@b.co")
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map([blocked_hit, *[_result(mid) for mid in allowed]])
+    )
+
+    with patch("app.read.repository.full_text_search", AsyncMock(return_value=[])):
+        await repo.find_similar(_query(limit=3))
+
+    # The blocked row is filtered before the documents are built, so it never
+    # leaves the service.
+    assert rerank.await_args.args[1] == ["content", "content"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_rerank_degrade_does_not_hydrate_the_window_twice() -> None:
+    ids = [UUID(int=1), UUID(int=2)]
+    repo, _ = _reranking_repo(ids, scores=RerankTimeoutError("slow"))
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map([_result(mid) for mid in ids])
+    )
+
+    with patch("app.read.repository.full_text_search", AsyncMock(return_value=[])):
+        await repo.find_similar(_query(limit=2))
+
+    # One row fetch for the rerank window; the fused fallback reuses it.
+    assert repo._hydrate_hits.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_hybrid_rerank_observes_latency_on_degrade() -> None:
+    from app.read.metrics import RERANK_LATENCY
+
+    def _observations() -> float:
+        return next(
+            sample.value
+            for sample in RERANK_LATENCY.collect()[0].samples
+            if sample.name.endswith("_count")
+        )
+
+    before = _observations()
+
+    await _run_rerank([UUID(int=1), UUID(int=2)], scores=RerankTimeoutError("slow"))
+
+    assert _observations() == before + 1

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import httpx
 import pytest
 import respx
@@ -316,4 +318,52 @@ async def test_non_object_entry_is_an_invalid_response() -> None:
     with pytest.raises(RerankInvalidResponseError, match="entry"):
         await client.rerank("query", ["a", "b"])
 
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("score", [-0.01, 1.01, 42.0], ids=["below-zero", "above-one", "unnormalized"])
+@respx.mock
+async def test_scores_outside_the_normalized_range_are_rejected(score: float) -> None:
+    respx.post(_URL).mock(return_value=Response(200, json=[{"index": 0, "score": score}]))
+    client = _client()
+
+    with pytest.raises(RerankInvalidResponseError, match="normalized range"):
+        await client.rerank("query", ["document"])
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_an_integer_too_large_for_a_float_is_an_invalid_response() -> None:
+    # A 400-digit integer literal parses as a Python int, and float() overflows it.
+    huge = b"1" + b"0" * 400
+    respx.post(_URL).mock(
+        return_value=Response(200, content=b'[{"index": 0, "score": ' + huge + b"}]")
+    )
+    client = _client()
+
+    with pytest.raises(RerankInvalidResponseError):
+        await client.rerank("query", ["document"])
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_retry_honors_retry_after_when_the_operator_enables_retries() -> None:
+    route = respx.post(_URL).mock(
+        side_effect=[
+            Response(429, headers={"Retry-After": "1"}),
+            Response(200, json=[{"index": 0, "score": 0.5}]),
+        ]
+    )
+    client = _client(max_retries=1)
+
+    with patch("app.clients.rerank.asyncio.sleep", AsyncMock()) as sleep:
+        await client.rerank("query", ["document"])
+
+    assert route.calls.call_count == 2
+    assert sleep.await_args.args[0] == pytest.approx(0.5)
     await client.aclose()
