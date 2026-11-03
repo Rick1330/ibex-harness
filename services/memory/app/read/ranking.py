@@ -14,6 +14,7 @@ floor ``> 0.5``.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
@@ -81,6 +82,8 @@ class RankOptions:
     now: datetime | None = None
     relevance_floor: float = DEFAULT_COMPOSITE_RELEVANCE_FLOOR
     weights: RankWeights | None = None
+    #: Per-memory relevance that overrides the retrieval score (cross-encoder rerank).
+    relevance_overrides: Mapping[UUID, float] | None = None
 
 
 def merge_candidates(
@@ -128,6 +131,23 @@ def relevance_for_composite(candidate: RankedCandidate) -> float:
     return FTS_COMPOSITE_RELEVANCE
 
 
+def _relevance_for(candidate: RankedCandidate, opts: RankOptions) -> float:
+    """Rerank score when one exists, else the candidate's own retrieval score.
+
+    TEI returns a normalized ``[0, 1]`` score for a reranker, so it is directly the
+    composite relevance component. The clamp is defensive: a composite input outside
+    the unit interval is a contract violation, and dropping the whole page over it
+    would be worse than saturating the component.
+    """
+    overrides = opts.relevance_overrides
+    if overrides is None:
+        return relevance_for_composite(candidate)
+    override = overrides.get(candidate.memory_id)
+    if override is None:
+        return relevance_for_composite(candidate)
+    return min(1.0, max(0.0, override))
+
+
 def rank_hydrated_hits(
     candidates: list[RankedCandidate],
     hydrated: dict[UUID, HydratedHit],
@@ -146,7 +166,7 @@ def rank_hydrated_hits(
         ranked = candidate_by_id.get(memory_id)
         if ranked is None:
             continue
-        relevance = relevance_for_composite(ranked)
+        relevance = _relevance_for(ranked, opts)
         if not passes_relevance_floor(relevance, opts.relevance_floor):
             continue
         composite = composite_score(

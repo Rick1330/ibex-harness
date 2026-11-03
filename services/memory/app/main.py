@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.auth.client import GRPCTokenValidator, TokenValidator
 from app.clients.embedding import EmbeddingClient
+from app.clients.rerank import RerankClient, RerankClientConfig
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory
 from app.feedback.service import MemoryFeedbackService
@@ -53,6 +54,7 @@ class MemoryAppState:
     read_repository: MemoryReadRepository | None = field(default=None, repr=False)
     hot_cache_reader: MemoryHotCacheReader | None = field(default=None, repr=False)
     embedding_client: EmbeddingClient | None = field(default=None, repr=False)
+    rerank_client: RerankClient | None = field(default=None, repr=False)
     pii: PiiService | None = field(default=None, repr=False)
     cache_writer: MemoryCacheWriter | None = field(default=None, repr=False)
     feedback_service: MemoryFeedbackService | None = field(default=None, repr=False)
@@ -137,6 +139,7 @@ async def _memory_service_lifespan(
     embedding_holder: dict[str, EmbeddingClient | None] = {"client": None}
     embed_callable = _build_embed(cfg, embedding_holder)
     state.embedding_client = embedding_holder.get("client")
+    state.rerank_client = _build_rerank(cfg)
     _configure_write_and_read_paths(
         _WriteReadBootstrap(
             state=state,
@@ -153,7 +156,12 @@ async def _memory_service_lifespan(
     try:
         yield
     finally:
-        await _shutdown_memory(state, auth=auth, engine=engine, embedding_holder=embedding_holder)
+        await _shutdown_memory(
+            state,
+            auth=auth,
+            engine=engine,
+            embedding_holder=embedding_holder,
+        )
 
 
 def _configure_redis(cfg: Settings, state: MemoryAppState) -> _RedisResources:
@@ -190,6 +198,7 @@ def _configure_write_and_read_paths(bootstrap: _WriteReadBootstrap) -> None:
         bootstrap.session_factory,
         bootstrap.store,
         bootstrap.cfg,
+        rerank_client=bootstrap.state.rerank_client,
     )
     bootstrap.state.hot_cache_reader = MemoryHotCacheReader(
         bootstrap.redis.client,
@@ -229,6 +238,8 @@ async def _shutdown_memory(
     client = embedding_holder.get("client")
     if client is not None:
         await client.aclose()
+    if state.rerank_client is not None:
+        await state.rerank_client.aclose()
     if state.redis is not None:
         await state.redis.aclose()
     await auth.aclose()
@@ -251,6 +262,28 @@ def _build_embed(
     client = EmbeddingClient(cfg.embedding_base_url, token)
     holder["client"] = client
     return build_embedding_callable(client)
+
+
+def _build_rerank(cfg: Settings) -> RerankClient | None:
+    """Reranking is opt-in, and only meaningful on the fused hybrid window."""
+    if not cfg.rerank_enabled:
+        return None
+    if not cfg.search_hybrid_enabled:
+        logger.warning(
+            "IBEX_MEMORY_RERANK_ENABLED is set but hybrid retrieval is off; "
+            "reranking applies to the fused window only and will not run"
+        )
+        return None
+    token = cfg.rerank_api_token.get_secret_value() if cfg.rerank_api_token else None
+    return RerankClient(
+        cfg.rerank_base_url,
+        token,
+        config=RerankClientConfig(
+            connect_timeout=cfg.rerank_connect_timeout_ms / 1000,
+            read_timeout=cfg.rerank_timeout_ms / 1000,
+            max_retries=cfg.rerank_max_retries,
+        ),
+    )
 
 
 async def _postgres_ready(engine: AsyncEngine) -> bool:

@@ -900,9 +900,10 @@ Here the episodic memory has **higher cosine similarity** (0.91) but ranks **sec
 
 **Errors:** `400` validation, `401`/`403` auth, `503` embedder unavailable (`EMBEDDING_FAILED`) or read path not configured.
 
-**Observability:** `ibex_memory_search_fallback_total{triggered="true|false"}` and
-`ibex_memory_search_hybrid_total{vector="true|false",full_text="true|false"}` — Grafana panels on the Memory Service
-dashboard.
+**Observability:** `ibex_memory_search_fallback_total{triggered="true|false"}`,
+`ibex_memory_search_hybrid_total{vector="true|false",full_text="true|false"}`, and
+`ibex_memory_rerank_total{result="applied|degraded|skipped"}` with the
+`ibex_memory_rerank_seconds` histogram — Grafana panels on the Memory Service dashboard.
 
 **Retrieval modes.** Two modes exist; the mode is chosen per request, not per caller:
 
@@ -911,12 +912,33 @@ dashboard.
 | Sparse fallback (default) | `IBEX_MEMORY_SEARCH_FALLBACK_ENABLED` | Vector ANN first. The GIN full-text channel runs **only** when the vector page is short and the query is searchable. Duplicates keep the vector candidate. |
 | Hybrid | `IBEX_MEMORY_SEARCH_HYBRID_ENABLED` | Both channels run in parallel for every searchable query, regardless of how full the vector page is. The union is ordered by reciprocal rank fusion, `Σ 1/(k + rank)` with `k = IBEX_MEMORY_SEARCH_RRF_K` (default `60`). Ranks start at 1, a hit both channels return sums both terms, and ties break on memory id. |
 
-In hybrid mode each channel is capped at `limit`, so the fused union is at most `2 × limit`; only the top `limit`
-fused candidates are admitted, so hydration stays bounded by the page size. Fusion decides **which** candidates are
-admitted — the only stage that can weigh a cosine rank against a `ts_rank_cd` rank — and composite scoring (ADR-0068)
-still decides the presented order inside that window. A candidate keeps its own channel score (cosine for vector,
+In hybrid mode each channel is capped at `limit`, so the fused union is at most `2 × limit`. With reranking **off**,
+only the top `limit` fused candidates are admitted, so hydration stays bounded by the page size; a page that comes up
+short after a confidence, relevance, or PII drop is refilled from the remaining fused candidates. With reranking **on**,
+the admitted window is the fused union capped by `IBEX_MEMORY_RERANK_MAX_CANDIDATES`, so a candidate beyond fused
+position `limit` can still enter the page. Fusion decides **which** candidates are admitted — the only stage that can
+weigh a cosine rank against a `ts_rank_cd` rank — and composite scoring (ADR-0068) still decides the presented order
+inside that window. A candidate keeps its own channel score (cosine for vector,
 clamped `ts_rank_cd` for full text) and a duplicate keeps the vector score. Hybrid defaults to **off** until the phase
 5.C.1 gold-set comparison reads the change as an improvement; the dev compose bundle enables it.
+
+**Cross-encoder rerank (optional, phase 5.A.3).** With `IBEX_MEMORY_RERANK_ENABLED=true` and hybrid on, the fused window
+— capped at `IBEX_MEMORY_RERANK_MAX_CANDIDATES` (default `50`) — is hydrated and scored by a TEI reranker
+(`POST /rerank`, `BAAI/bge-reranker-v2-m3` or any served reranker). The cross-encoder score **replaces the relevance
+component** of composite scoring; it does not replace the ordering, so recency, confidence, usefulness, and the
+relevance floor keep their ADR-0068 meaning. The HTTP `source` field still reports retrieval provenance
+(`vector`/`full_text`), not the reranker.
+
+Only content that passes the read-path Tier-1 PII guard is sent to the reranker: blocked rows are filtered before the
+documents are built, so a stored email or SSN never reaches the inference endpoint.
+
+The rerank **call** is bounded by `IBEX_MEMORY_RERANK_TIMEOUT_MS` (default `100`) and has no retries by default; that cap
+does not bound the rest of the request, which already paid for retrieval and hydration. A timeout, transport error,
+auth failure, or malformed response increments `ibex_memory_rerank_total{result="degraded"}` and the request returns the
+fused order — a slow reranker never turns a search into an error. A page the relevance floor empties after reranking
+returns the fused order and increments `ibex_memory_rerank_total{result="emptied"}`; a page that is merely shorter than
+`limit` keeps the reranked order. The flag is off by default and has no effect unless hybrid retrieval is enabled;
+enabling it is a latency decision that needs the measurement phase 5.C.3 defines.
 
 Tenant scoping is identical in both modes: each channel carries explicit `org_id` and `agent_id` predicates plus the
 status, tombstone, and validity fence. Fusion only reorders ids and reads no data.
