@@ -91,7 +91,7 @@ class _Refill:
 
 @dataclass(frozen=True, slots=True)
 class _RerankWindow:
-    """The hydrated window one rerank call scores, and the request's guard."""
+    """The hydrated window one rerank stage scores, and the request's guard."""
 
     query: FindSimilarQuery
     window: list[RankedCandidate]
@@ -275,7 +275,7 @@ class MemoryReadRepository:
             return await self._rank_fused_window(
                 query, fused, rank_opts, _Refill(hydrated, guard)
             )
-        # Blocked rows are excluded from ranking as well as from the rerank call: a
+        # Blocked rows are excluded from ranking as well as from the rerank stage: a
         # blocked row holding its retrieval relevance could keep `ranked` non-empty
         # while the caller's final PII filter removes the only entry, turning a
         # recoverable page into an empty one.

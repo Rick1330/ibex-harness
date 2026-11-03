@@ -229,8 +229,9 @@ class Settings(BaseSettings):
         ge=1,
         le=5000,
         description=(
-            "Wall-clock budget for one rerank call before degrading to the fused order; "
-            "defaults to the memory search p95 target"
+            "Wall-clock budget for the whole rerank stage, including every split "
+            "request, before degrading to the fused order; defaults to the memory "
+            "search p95 target"
         ),
     )
     rerank_connect_timeout_ms: int = Field(
@@ -250,8 +251,17 @@ class Settings(BaseSettings):
         ge=1,
         le=50,
         description=(
-            "Upper bound on candidates sent to the reranker per search; "
-            "must stay within the client batch limit"
+            "Upper bound on candidates sent to the reranker per search; the client "
+            "splits the window into requests of rerank_client_batch_size"
+        ),
+    )
+    rerank_client_batch_size: int = Field(
+        default=32,
+        ge=1,
+        le=64,
+        description=(
+            "Documents per POST /rerank request; must not exceed the TEI server's "
+            "--max-client-batch-size (default 32). Larger windows are split."
         ),
     )
 

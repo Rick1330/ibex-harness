@@ -84,6 +84,11 @@ class RerankClientConfig:
     connect_timeout: float = 0.05
     read_timeout: float = 0.15
     max_retries: int = 0
+    # TEI rejects a request larger than its ``--max-client-batch-size`` (default 32)
+    # with 413, and the read path treats a rejection as "degrade to the fused order".
+    # Splitting keeps the candidate window independent of the server's setting: a
+    # 50-candidate window against a stock server used to rerank nothing at all.
+    client_batch_size: int = 32
 
 
 class RerankClient:
@@ -101,6 +106,7 @@ class RerankClient:
             raise ValueError(msg)
         cfg = config or RerankClientConfig()
         self._max_retries = max(0, cfg.max_retries)
+        self._batch_size = max(1, cfg.client_batch_size)
         token = (api_token or "").strip()
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
@@ -117,10 +123,43 @@ class RerankClient:
         await self._client.aclose()
 
     async def rerank(self, query: str, documents: Sequence[str]) -> list[float]:
-        """Score ``documents`` against ``query``, returning scores in input order."""
+        """Score ``documents`` against ``query``, returning scores in input order.
+
+        A window larger than ``client_batch_size`` is split across concurrent
+        requests, because a stock TEI server returns 413 above its own limit. All
+        batches must succeed: a partially scored window would rank rows against
+        scores that never arrived, so the first failure cancels the requests still
+        in flight and propagates, and the caller degrades to the fused order as
+        usual.
+        """
         _validate_request(query, documents)
-        payload = {"query": query, "texts": list(documents), "raw_scores": False}
-        return await self._post_with_retries(payload, expected=len(documents))
+        batches = _split_batches(documents, self._batch_size)
+        if len(batches) == 1:
+            payload = _payload(query, batches[0])
+            return await self._post_with_retries(payload, expected=len(batches[0]))
+        tasks = [
+            asyncio.create_task(
+                self._post_with_retries(_payload(query, batch), expected=len(batch))
+            )
+            for batch in batches
+        ]
+        try:
+            # ``gather`` without ``return_exceptions`` surfaces the first failure
+            # immediately instead of waiting for every sibling to settle.
+            batches_scores = await asyncio.gather(*tasks)
+        except BaseException:
+            # The window is all-or-nothing, so a doomed stage must stop paying for
+            # inference whose scores will be discarded. Gathering the cancelled
+            # tasks also consumes their exceptions, which would otherwise be
+            # reported as "never retrieved".
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        scores: list[float] = []
+        for batch_scores in batches_scores:
+            scores.extend(batch_scores)
+        return scores
 
     async def _post_with_retries(self, payload: dict[str, Any], *, expected: int) -> list[float]:
         for attempt in range(self._max_retries + 1):
@@ -172,6 +211,20 @@ def _retry_delay(exc: RerankUnavailableError | RerankTimeoutError, *, attempt: i
     if requested is None:
         return delay
     return min(_BACKOFF_MAX_SECONDS, max(delay, requested))
+
+
+def _payload(query: str, documents: Sequence[str]) -> dict[str, Any]:
+    return {"query": query, "texts": list(documents), "raw_scores": False}
+
+
+def _split_batches(
+    documents: Sequence[str], batch_size: int
+) -> list[Sequence[str]]:
+    """Consecutive slices of at most ``batch_size``; order is preserved."""
+    return [
+        documents[start : start + batch_size]
+        for start in range(0, len(documents), batch_size)
+    ]
 
 
 def _validate_request(query: str, documents: Sequence[str]) -> None:
