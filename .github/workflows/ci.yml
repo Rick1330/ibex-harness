@@ -83,6 +83,9 @@ jobs:
       - name: CI aggregate gate regression tests
         run: bash .github/scripts/test-ci-gate.sh
 
+      - name: PR tracking guard regression tests
+        run: bash .github/scripts/test-check-pr-tracking.sh
+
       - name: CI tiering policy tests
         run: bash infra/scripts/test-ci-tiering.sh
       - name: Bundle smoke URL guard tests
