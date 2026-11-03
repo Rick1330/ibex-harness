@@ -54,12 +54,35 @@ if [[ -z "$issue_num" ]]; then
   exit 1
 fi
 
-if ! gh issue view "$issue_num" --repo "$REPO" --json state -q .state >/dev/null 2>&1; then
+# A GitHub API hiccup must not be reported as "the issue does not exist": both PR #1104 and
+# PR #1108 were failed by this check while the issue was open and linked, because `gh` exited
+# non-zero during an API 502/timeout and the message attributed it to the data. Retry a few
+# times, and if the API is still unreachable say so instead of guessing at the cause.
+read_issue_state() {
+  local issue="$1" attempt state
+  for attempt in 1 2 3; do
+    if state="$(gh issue view "$issue" --repo "$REPO" --json state -q .state 2>/dev/null)"; then
+      printf '%s' "$state"
+      return 0
+    fi
+    if [[ "$attempt" -lt 3 ]]; then
+      sleep "$((attempt * 2))"
+    fi
+  done
+  return 1
+}
+
+if ! issue_state="$(read_issue_state "$issue_num")"; then
+  echo "Could not read linked issue #$issue_num after 3 attempts."
+  echo "That is a GitHub API failure, not evidence that the issue is missing — re-run this job."
+  exit 1
+fi
+
+if [[ -z "$issue_state" ]]; then
   echo "Linked issue #$issue_num does not exist"
   exit 1
 fi
 
-issue_state="$(gh issue view "$issue_num" --repo "$REPO" --json state -q .state)"
 if [[ "$issue_state" == "CLOSED" ]]; then
   echo "Linked issue #$issue_num is already closed; open a new issue or re-open before linking"
   exit 1
