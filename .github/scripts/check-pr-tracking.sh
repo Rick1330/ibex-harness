@@ -54,29 +54,72 @@ if [[ -z "$issue_num" ]]; then
   exit 1
 fi
 
-# A GitHub API hiccup must not be reported as "the issue does not exist": both PR #1104 and
-# PR #1108 were failed by this check while the issue was open and linked, because `gh` exited
-# non-zero during an API 502/timeout and the message attributed it to the data. Retry a few
-# times, and if the API is still unreachable say so instead of guessing at the cause.
-read_issue_state() {
-  local issue="$1" attempt state
-  for attempt in 1 2 3; do
-    if state="$(gh issue view "$issue" --repo "$REPO" --json state -q .state 2>/dev/null)"; then
-      printf '%s' "$state"
+# A GitHub API hiccup must not be reported as "the issue does not exist": PR #1104 and
+# PR #1108 were both failed by this check while the issue was open and linked, because `gh`
+# exited non-zero during an API 502/timeout and the message blamed the data.
+#
+# Only transient failures are retried (AGENTS.md §8.3): a 5xx, a timeout, or a transport
+# error. A "could not resolve" answer is a real answer about the data, so it is reported as
+# such immediately rather than retried.
+is_transient_gh_failure() {
+  case "$1" in
+    *"i/o timeout"* | *"timed out"* | *"timeout"* | *"connection reset"* | \
+      *"Could not connect"* | *"Connection refused"* | *"EOF"* | *"TLS handshake"* | \
+      *"502"* | *"503"* | *"504"* | *"Server Error"* | *"Bad Gateway"* | \
+      *"Service Unavailable"* | *"Gateway Timeout"*)
       return 0
-    fi
-    if [[ "$attempt" -lt 3 ]]; then
-      sleep "$((attempt * 2))"
-    fi
-  done
+      ;;
+  esac
   return 1
 }
 
-if ! issue_state="$(read_issue_state "$issue_num")"; then
-  echo "Could not read linked issue #$issue_num after 3 attempts."
-  echo "That is a GitHub API failure, not evidence that the issue is missing — re-run this job."
-  exit 1
-fi
+# Exit codes: 0 read, 1 transient failures exhausted, 2 non-transient failure.
+# The payload for 2 is the gh error after the "FATAL:" prefix.
+read_issue_state() {
+  local issue="$1" attempt state error delay
+  local error_file
+  error_file="$(mktemp)"
+  for attempt in 1 2 3; do
+    if state="$(gh issue view "$issue" --repo "$REPO" --json state -q .state 2>"$error_file")"; then
+      rm -f "$error_file"
+      printf '%s' "$state"
+      return 0
+    fi
+    error="$(cat "$error_file")"
+    if ! is_transient_gh_failure "$error"; then
+      rm -f "$error_file"
+      printf 'FATAL:%s' "$error"
+      return 2
+    fi
+    if [[ "$attempt" -lt 3 ]]; then
+      # Exponential backoff with jitter, so retries do not line up across runs.
+      delay=$((2 ** (attempt - 1)))
+      sleep "$((delay + RANDOM % 2))"
+    fi
+  done
+  rm -f "$error_file"
+  return 1
+}
+
+set +e
+issue_state="$(read_issue_state "$issue_num")"
+read_status=$?
+set -e
+
+case "$read_status" in
+  0) ;;
+  2)
+    echo "Could not read linked issue #$issue_num: ${issue_state#FATAL:}"
+    echo "That is not a transient error, so it was not retried."
+    exit 1
+    ;;
+  *)
+    echo "Could not read linked issue #$issue_num after 3 attempts."
+    echo "GitHub kept returning transient errors (5xx, timeout, or transport)."
+    echo "That is not evidence that the issue is missing — re-run this job."
+    exit 1
+    ;;
+esac
 
 if [[ -z "$issue_state" ]]; then
   echo "Linked issue #$issue_num does not exist"
