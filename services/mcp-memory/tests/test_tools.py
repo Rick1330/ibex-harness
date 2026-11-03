@@ -206,6 +206,14 @@ def test_backend_rejected_default_code() -> None:
     assert err.code == "backend_error"
 
 
+def test_service_error_text_carries_the_code() -> None:
+    """MCP clients only receive text, so the code has to survive into it."""
+    err = BackendRejectedError("memory service HTTP 404", code="not_found")
+
+    assert str(err) == "not_found: memory service HTTP 404"
+    assert err.message == "memory service HTTP 404"
+
+
 def _status_handler(status: int) -> Callable[[httpx.Request], httpx.Response]:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(status, text="err")
