@@ -4,10 +4,21 @@ from __future__ import annotations
 
 
 class MCPServiceError(Exception):
+    """Tool failure with a stable code.
+
+    The MCP wire format carries only ``isError`` and a text block, so the code has
+    to appear in the text: a client that sees "memory service HTTP 404" cannot tell
+    ``not_found`` from ``backend_rejected`` without parsing prose. ``message`` stays
+    the human sentence; ``str()`` is the code-prefixed form the server emits.
+    """
+
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+
+    def __str__(self) -> str:
+        return f"{self.code}: {self.message}"
 
 
 class AuthFailedError(MCPServiceError):
