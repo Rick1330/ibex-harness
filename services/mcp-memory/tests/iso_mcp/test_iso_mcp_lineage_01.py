@@ -102,9 +102,14 @@ def test_iso_mcp_lineage_01_own_memory_is_traversable(
     iso_app_counted: IsoAppCounted,
     iso_env: dict[str, str],
 ) -> None:
-    """Control case: a memory in the caller's own tenant still succeeds."""
+    """Control case: a memory in the caller's own tenant still succeeds.
+
+    Uses the agent-scoped Org A token: ``write_memory`` needs an agent, and taking
+    it from the principal also exercises the agent-scoped ``get_memory_lineage``
+    path, which resolves the agent from the token rather than from an argument.
+    """
     client = iso_app_counted.client
-    headers = mcp_session(client, iso_env["token_org"])
+    headers = mcp_session(client, iso_env["token_a"])
 
     written = tools_call(
         client,

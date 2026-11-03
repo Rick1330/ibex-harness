@@ -131,6 +131,8 @@ async def test_get_memory_lineage_not_visible_maps_to_not_found() -> None:
     finally:
         set_access_token(None)
     assert excinfo.value.code == "not_found"
+    # The MCP wire format has no structured code field: the text is the contract.
+    assert "not_found" in str(excinfo.value)
 
 
 @pytest.mark.asyncio
