@@ -40,33 +40,53 @@ class ProfileError(ValueError):
 
 def normalise_weights(weights: Mapping[str, float]) -> dict[str, float]:
     """Scale weights to unit L2 norm, rejecting anything that is not a usable profile."""
+    _require_usable_profile(weights)
+    clean = {topic: _validated_weight(topic, weight) for topic, weight in weights.items()}
+    norm = math.sqrt(sum(value * value for value in clean.values()))
+    _require_nonzero_norm(norm)
+    return {topic: value / norm for topic, value in clean.items()}
+
+
+def _require_usable_profile(weights: Mapping[str, float]) -> None:
     if not weights:
         raise ProfileError("embedding_profile must name at least one topic")
     if len(weights) > MAX_TOPICS_PER_PROFILE:
         raise ProfileError(
             f"embedding_profile has {len(weights)} topics, more than {MAX_TOPICS_PER_PROFILE}"
         )
-    clean = {topic: _validated_weight(topic, weight) for topic, weight in weights.items()}
-    norm = math.sqrt(sum(value * value for value in clean.values()))
+
+
+def _require_nonzero_norm(norm: float) -> None:
     if norm <= 0.0:
         raise ProfileError("embedding_profile has zero norm")
-    return {topic: value / norm for topic, value in clean.items()}
 
 
 def _validated_weight(topic: object, weight: object) -> float:
+    _require_topic_name(topic)
+    value = _as_number(topic, weight)
+    _require_unit_range(topic, value, weight)
+    return value
+
+
+def _require_topic_name(topic: object) -> None:
     if not isinstance(topic, str) or not topic:
         raise ProfileError("embedding_profile topic names must be non-empty strings")
+
+
+def _as_number(topic: object, weight: object) -> float:
     try:
-        value = float(weight)  # type: ignore[arg-type]
+        return float(weight)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         raise ProfileError(
             f"embedding_profile[{topic!r}] must be a number, got {weight!r}"
         ) from None
+
+
+def _require_unit_range(topic: object, value: float, weight: object) -> None:
     if not math.isfinite(value):
         raise ProfileError(f"embedding_profile[{topic!r}] must be finite, got {weight!r}")
     if not 0.0 < value <= 1.0:
         raise ProfileError(f"embedding_profile[{topic!r}] must be in (0, 1], got {weight!r}")
-    return value
 
 
 def profile_cosine(

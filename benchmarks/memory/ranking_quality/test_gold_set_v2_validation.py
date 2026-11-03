@@ -41,32 +41,39 @@ def _profile_at(topic: str, other: str, cosine: float) -> dict[str, float]:
     return {topic: cosine, other: math.sqrt(max(0.0, 1.0 - cosine * cosine))}
 
 
-def _memory(
-    key: str,
-    *,
-    profile: dict[str, float],
-    age: int,
-    category: str = "factual",
-    content: str | None = None,
-    conflicts_with: list[str] | None = None,
-) -> dict[str, Any]:
+def _memory(key: str, profile: dict[str, float], age: int, **extra: object) -> dict[str, Any]:
+    """One corpus row; ``extra`` carries the optional fields a case needs."""
     row: dict[str, Any] = {
         "content_key": key,
-        "content": content or "Durable statement recorded for the ranking gold corpus.",
-        "category": category,
+        "content": extra.pop("content", "Durable statement recorded for the ranking gold corpus."),
+        "category": extra.pop("category", "factual"),
         "valid_from_days_ago": age,
         "confidence": 0.9,
         "usefulness_score": 0.6,
         "embedding_profile": profile,
     }
-    if conflicts_with:
-        row["conflicts_with"] = conflicts_with
+    row.update(extra)
     return row
 
 
 def _valid_corpus() -> dict[str, Any]:
     memories: list[dict[str, Any]] = []
     queries: list[dict[str, Any]] = []
+    _add_dense(memories, queries)
+    _add_lexical(memories, queries)
+    _add_graph(memories, queries)
+    _add_filler(memories)
+    return {
+        "schema_version": 2,
+        "gold_set": "ranking_quality_v2",
+        "topics": dict(TOPICS),
+        "min_similarity": BENCH_MIN_SIMILARITY,
+        "memories": memories,
+        "queries": queries,
+    }
+
+
+def _add_dense(memories: list[dict[str, Any]], queries: list[dict[str, Any]]) -> None:
 
     # 40 dense answers: unique best match at cosine 0.9 against the query profile.
     for index in range(40):
@@ -89,7 +96,8 @@ def _valid_corpus() -> dict[str, Any]:
             }
         )
 
-    # 40 lexical answers: orthogonal to the query profile, carrying the rare token.
+def _add_lexical(memories: list[dict[str, Any]], queries: list[dict[str, Any]]) -> None:
+    """Orthogonal to the query profile, carrying the rare token the sparse channel needs."""
     for index in range(40):
         topic = f"topic-{index % 5}"
         token = f"DEC-{4400 + index}"
@@ -113,7 +121,8 @@ def _valid_corpus() -> dict[str, Any]:
             }
         )
 
-    # 40 graph answers: an active twin in a pending conflict, close enough to co-retrieve.
+def _add_graph(memories: list[dict[str, Any]], queries: list[dict[str, Any]]) -> None:
+    """An active twin in a pending conflict, close enough that both would be retrieved."""
     for index in range(40):
         topic = f"topic-{10 + index % 5}"
         twin_key = f"gold.twin.{index}"
@@ -137,7 +146,8 @@ def _valid_corpus() -> dict[str, Any]:
             }
         )
 
-    # Filler to reach the corpus size floor, all weaker than the graded answers above.
+def _add_filler(memories: list[dict[str, Any]]) -> None:
+    """Reach the corpus size floor without outranking any graded answer."""
     while len(memories) < 420:
         index = len(memories)
         memories.append(
@@ -148,16 +158,6 @@ def _valid_corpus() -> dict[str, Any]:
                 category=CATEGORIES[index % 5],
             )
         )
-
-    return {
-        "schema_version": 2,
-        "gold_set": "ranking_quality_v2",
-        "topics": dict(TOPICS),
-        "min_similarity": BENCH_MIN_SIMILARITY,
-        "memories": memories,
-        "queries": queries,
-    }
-
 
 @pytest.fixture
 def corpus() -> dict[str, Any]:

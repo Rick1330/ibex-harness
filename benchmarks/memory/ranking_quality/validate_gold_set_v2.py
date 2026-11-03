@@ -97,18 +97,26 @@ def validate_gold_set_v2(payload: object) -> list[str]:
 
 
 def _validate_header(payload: Mapping[str, Any]) -> list[str]:
-    errors: list[str] = []
-    if payload.get("schema_version") != SCHEMA_VERSION:
-        errors.append(
-            f"schema_version must be {SCHEMA_VERSION}, got {payload.get('schema_version')!r}"
-        )
-    if payload.get("gold_set") != GOLD_SET_NAME:
-        errors.append(f"gold_set must be {GOLD_SET_NAME!r}")
-    errors.extend(validate_topics(payload.get("topics")))
-    errors.extend(_validate_similarity_floor(payload.get("min_similarity")))
-    for field in ("memories", "queries"):
-        errors.extend(_validate_collection(payload.get(field), field))
-    return errors
+    return [
+        *_validate_version(payload.get("schema_version")),
+        *_validate_name(payload.get("gold_set")),
+        *validate_topics(payload.get("topics")),
+        *_validate_similarity_floor(payload.get("min_similarity")),
+        *_validate_collection(payload.get("memories"), "memories"),
+        *_validate_collection(payload.get("queries"), "queries"),
+    ]
+
+
+def _validate_version(value: object) -> list[str]:
+    if value == SCHEMA_VERSION:
+        return []
+    return [f"schema_version must be {SCHEMA_VERSION}, got {value!r}"]
+
+
+def _validate_name(value: object) -> list[str]:
+    if value == GOLD_SET_NAME:
+        return []
+    return [f"gold_set must be {GOLD_SET_NAME!r}"]
 
 
 def _validate_collection(value: object, field: str) -> list[str]:
@@ -166,22 +174,51 @@ def _validate_memory(
     topics: Mapping[str, int],
     profiles_usable: bool,
 ) -> list[str]:
-    errors: list[str] = []
-    key = row.get("content_key")
-    if not isinstance(key, str) or not key.strip():
-        errors.append(f"{prefix} content_key must be a non-empty string")
-    content = row.get("content")
-    if not isinstance(content, str) or len(content.strip()) < MIN_CONTENT_CHARS:
-        errors.append(f"{prefix} content must be a string of at least {MIN_CONTENT_CHARS} characters")
-    if row.get("category") not in CATEGORIES:
-        errors.append(f"{prefix} invalid category {row.get('category')!r}")
-    errors.extend(_unit_interval(row.get("confidence"), "confidence", prefix))
-    errors.extend(_unit_interval(row.get("usefulness_score"), "usefulness_score", prefix))
-    errors.extend(_age(row.get("valid_from_days_ago"), prefix))
-    if profiles_usable:
-        errors.extend(_validate_profile(row.get("embedding_profile"), f"{prefix}.embedding_profile", topics))
-    errors.extend(_key_list(row.get("conflicts_with"), "conflicts_with", prefix))
-    return errors
+    return [
+        *_validate_memory_identity(row, prefix),
+        *_unit_interval(row.get("confidence"), "confidence", prefix),
+        *_unit_interval(row.get("usefulness_score"), "usefulness_score", prefix),
+        *_age(row.get("valid_from_days_ago"), prefix),
+        *_validate_profile_field(row.get("embedding_profile"), prefix, topics, profiles_usable),
+        *_key_list(row.get("conflicts_with"), "conflicts_with", prefix),
+    ]
+
+
+def _validate_memory_identity(row: Mapping[str, Any], prefix: str) -> list[str]:
+    return [
+        *_validate_key(row.get("content_key"), prefix),
+        *_validate_content(row.get("content"), prefix),
+        *_validate_category(row.get("category"), prefix),
+    ]
+
+
+def _validate_key(value: object, prefix: str) -> list[str]:
+    if isinstance(value, str) and value.strip():
+        return []
+    return [f"{prefix} content_key must be a non-empty string"]
+
+
+def _validate_content(value: object, prefix: str) -> list[str]:
+    if isinstance(value, str) and len(value.strip()) >= MIN_CONTENT_CHARS:
+        return []
+    return [f"{prefix} content must be a string of at least {MIN_CONTENT_CHARS} characters"]
+
+
+def _validate_category(value: object, prefix: str) -> list[str]:
+    if value in CATEGORIES:
+        return []
+    return [f"{prefix} invalid category {value!r}"]
+
+
+def _validate_profile_field(
+    profile: object,
+    prefix: str,
+    topics: Mapping[str, int],
+    profiles_usable: bool,
+) -> list[str]:
+    if not profiles_usable:
+        return []
+    return _validate_profile(profile, f"{prefix}.embedding_profile", topics)
 
 
 def _unit_interval(value: object, field: str, prefix: str) -> list[str]:
@@ -263,18 +300,32 @@ def _validate_query(
     topics: Mapping[str, int],
     profiles_usable: bool,
 ) -> list[str]:
-    errors: list[str] = []
-    if not isinstance(row.get("query_id"), str) or not str(row.get("query_id")).strip():
-        errors.append(f"{prefix} query_id must be a non-empty string")
-    if not isinstance(row.get("query_text"), str) or not str(row.get("query_text")).strip():
-        errors.append(f"{prefix} query_text must be a non-empty string")
-    if row.get("subset") not in SUBSETS:
-        errors.append(f"{prefix} subset must be one of {sorted(SUBSETS)}, got {row.get('subset')!r}")
-    errors.extend(_expected_keys(row.get("expected_content_keys"), prefix))
-    if profiles_usable:
-        errors.extend(_validate_profile(row.get("embedding_profile"), f"{prefix}.embedding_profile", topics))
-    errors.extend(_key_list(row.get("lexical_tokens"), "lexical_tokens", prefix))
-    return errors
+    return [
+        *_validate_query_identity(row, prefix),
+        *_expected_keys(row.get("expected_content_keys"), prefix),
+        *_validate_profile_field(row.get("embedding_profile"), prefix, topics, profiles_usable),
+        *_key_list(row.get("lexical_tokens"), "lexical_tokens", prefix),
+    ]
+
+
+def _validate_query_identity(row: Mapping[str, Any], prefix: str) -> list[str]:
+    return [
+        *_validate_text(row.get("query_id"), "query_id", prefix),
+        *_validate_text(row.get("query_text"), "query_text", prefix),
+        *_validate_subset(row.get("subset"), prefix),
+    ]
+
+
+def _validate_text(value: object, field: str, prefix: str) -> list[str]:
+    if isinstance(value, str) and value.strip():
+        return []
+    return [f"{prefix} {field} must be a non-empty string"]
+
+
+def _validate_subset(value: object, prefix: str) -> list[str]:
+    if value in SUBSETS:
+        return []
+    return [f"{prefix} subset must be one of {sorted(SUBSETS)}, got {value!r}"]
 
 
 def _expected_keys(value: object, prefix: str) -> list[str]:
