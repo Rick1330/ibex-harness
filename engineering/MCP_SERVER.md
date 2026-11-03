@@ -64,7 +64,9 @@ the supersession tip ([ADR-0094](adr/0094-bounded-lineage-and-conflict-suppressi
 break are enforced inside the traversal query, so the tool cannot ask for an unbounded walk. A memory outside the
 caller's organization, or outside an agent-scoped token's agent, is a 404 from the memory service and surfaces as
 `BackendRejectedError(code="not_found")` — the tool never returns an empty chain for something it cannot see.
-`ISO-MCP-LINEAGE-01` covers the cross-tenant answer and a same-tenant control.
+`ISO-MCP-LINEAGE-01` checks that a foreign UUID returns `not_found` with no graph data, and that a same-tenant memory
+traverses. It does not seed a foreign memory, so it does not by itself prove the root lookup filters by `org_id`; that
+proof is in the memory integration suite (`services/memory/tests/integration/test_lineage_traversal.py`).
 
 A memory-service `404` maps to `not_found` for **every** tool that names a memory id (`write_memory`,
 `record_feedback`, `get_memory_lineage`), not only lineage. That is a deliberate 2026-11-03 change to the published

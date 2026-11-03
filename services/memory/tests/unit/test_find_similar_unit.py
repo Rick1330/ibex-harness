@@ -582,7 +582,8 @@ async def test_hybrid_conflict_pair_keeps_the_page_full() -> None:
     ids = {item.id for item in results}
     assert len(results) == 2
     assert third in ids
-    assert len({first, second} & ids) == 1
+    assert first in ids
+    assert second not in ids
 
 
 @pytest.mark.asyncio
@@ -610,5 +611,5 @@ async def test_fallback_drops_the_lower_side_of_a_conflict() -> None:
         results = await repo.find_similar(_query(query_text="conflict", limit=5))
 
     assert len(results) == 1
-    assert results[0].id in {winner, loser}
+    assert results[0].id == winner
     assert results[0].conflict_groups == (group,)

@@ -260,3 +260,18 @@ def test_collapse_is_order_independent_for_disjoint_groups() -> None:
     second = _hit("second", groups=[str(uuid4())])
 
     assert collapse_conflicts([first, second]) == collapse_conflicts([second, first])
+
+
+def test_dedupe_unions_conflict_groups_across_copies() -> None:
+    """Hot and cold read the escalation table independently; keep both verdicts."""
+    from app.pipeline import _dedupe_hits
+
+    memory_id = str(uuid4())
+    group = str(uuid4())
+    hot = replace(_hit("hot copy"), memory_id=memory_id, conflict_groups=())
+    cold = replace(_hit("cold copy"), memory_id=memory_id, conflict_groups=(group,))
+
+    merged = _dedupe_hits([hot, cold])
+
+    assert len(merged) == 1
+    assert merged[0].conflict_groups == (group,)

@@ -171,3 +171,28 @@ async def test_get_hot_memories_drops_the_lower_side_of_a_pending_conflict() -> 
     )
 
     assert [item.id for item in results] == [winner]
+
+
+@pytest.mark.asyncio
+async def test_get_hot_memories_refills_from_the_bounded_reserve() -> None:
+    """A suppressed pair must not leave a hole while an eligible entry waits."""
+    org_id = uuid4()
+    agent_id = uuid4()
+    first, second, third = uuid4(), uuid4(), uuid4()
+    group = str(uuid4())
+    reader = _hot_reader(
+        [
+            {**_mapping_row(first, org_id, agent_id), "conflict_groups": [group]},
+            {**_mapping_row(second, org_id, agent_id), "conflict_groups": [group]},
+            _mapping_row(third, org_id, agent_id),
+        ],
+        [(first, 0.9), (second, 0.8), (third, 0.7)],
+        org_id,
+        agent_id,
+    )
+
+    results = await reader.get_hot_memories(
+        HotMemoryQuery(org_id=org_id, agent_id=agent_id, limit=2)
+    )
+
+    assert [item.id for item in results] == [first, third]

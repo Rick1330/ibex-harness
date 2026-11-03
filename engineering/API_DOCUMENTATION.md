@@ -742,7 +742,9 @@ Authorization: Bearer {token}
 - `supersession_tip` is the current tip of the supersession chain, resolved by `ibex_core.resolve_supersession_tip`
   within that helper's own 5-hop cap. It is a property of the memory, not of the walk: narrowing `max_depth` never
   changes which memory is current. It equals `memory_id` when nothing superseded the memory, and also when the chain
-  head belongs to another agent — an agent-scoped caller is never handed a peer's memory id through this field.
+  head belongs to another agent — an agent-scoped caller is never handed a peer's memory id through this field. It is
+  `null` when the chain is longer than the helper's 5-hop cap: the true head is unknown, and naming an intermediate
+  would be wrong. A client should treat `null` as "superseded, current version unresolved", not as "no successor".
 - An agent-scoped token only traverses nodes that belong to its own agent; an edge pointing at another agent's memory is
   not returned. An org-scoped token sees the whole organization's graph.
 - `other.status` / `other.tombstoned` come from a join, so a replacement that was later deleted reads as deleted rather

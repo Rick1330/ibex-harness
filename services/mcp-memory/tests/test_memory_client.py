@@ -266,3 +266,19 @@ async def test_get_lineage_rejects_a_malformed_edge() -> None:
         await memory_client_for(handler).get_lineage(
             token="tok", memory_id=UUID(mid), max_depth=3
         )
+
+
+@pytest.mark.asyncio
+async def test_get_lineage_accepts_an_unresolved_tip() -> None:
+    mid = str(uuid4())
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return lineage_response(
+            LineageResponseSpec(memory_id=mid, unresolved=True, edges=())
+        )
+
+    result = await memory_client_for(handler).get_lineage(
+        token="tok", memory_id=UUID(mid), max_depth=3
+    )
+
+    assert result.supersession_tip is None

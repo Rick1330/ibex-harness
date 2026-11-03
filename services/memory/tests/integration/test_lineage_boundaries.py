@@ -150,6 +150,14 @@ async def test_diamond_reports_each_edge_once_at_its_shallowest_depth(
         (edge.source_memory_id, edge.target_memory_id): edge.depth
         for edge in result.edges
     }
+    from_ids = {
+        (edge.source_memory_id, edge.target_memory_id): edge.from_memory_id
+        for edge in result.edges
+    }
+    assert from_ids[(root, left)] == root
+    assert from_ids[(root, right)] == root
+    assert from_ids[(left, bottom)] == left
+    assert from_ids[(right, bottom)] == right
     assert depths[(root, left)] == 1
     assert depths[(root, right)] == 1
     assert depths[(left, bottom)] == 2
@@ -176,3 +184,46 @@ async def test_all_six_relationship_types_are_walked(
         edge.relationship_type: edge.other.memory_id for edge in result.edges
     } == neighbours
     assert all(edge.depth == 1 for edge in result.edges)
+
+
+@pytest.mark.asyncio
+async def test_supersession_tip_is_unresolved_past_the_cap(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A chain longer than the 5-hop resolver reports `null`, not a stale link."""
+    graph, root = await LineageGraph.seed(session_factory, "long chain root")
+    chain = [root]
+    for index in range(6):
+        node = await graph.memory(f"long chain {index}")
+        await graph.link(node, chain[-1])
+        chain.append(node)
+
+    result = await graph.repo().get_lineage(
+        LineageQuery(org_id=graph.org_id, memory_id=root, max_depth=1)
+    )
+
+    assert result is not None
+    assert result.root.supersession_tip is None
+
+
+@pytest.mark.asyncio
+async def test_diamond_reports_the_hop_each_edge_was_reached_from(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    graph, root = await LineageGraph.seed(session_factory, "hop root")
+    left = await graph.memory("hop left")
+    bottom = await graph.memory("hop bottom")
+    await graph.link(root, left, "derived_from")
+    await graph.link(left, bottom, "derived_from")
+
+    result = await graph.repo().get_lineage(
+        LineageQuery(org_id=graph.org_id, memory_id=root, max_depth=5)
+    )
+
+    assert result is not None
+    from_ids = {
+        (edge.source_memory_id, edge.target_memory_id): edge.from_memory_id
+        for edge in result.edges
+    }
+    assert from_ids[(root, left)] == root
+    assert from_ids[(left, bottom)] == left

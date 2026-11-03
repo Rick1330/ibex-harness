@@ -94,8 +94,12 @@ class MemoryHotCacheReader:
             return []
 
         key = hot_memories_key(query.org_id, query.agent_id)
+        # Fetch a bounded reserve: suppression drops entries, and stopping at
+        # ``limit`` would return a short page while an eligible entry sat just
+        # below the cut. The reserve is the same 2x bound the fused path uses.
+        fetch = min(query.limit * 2, HOT_CACHE_CAPACITY)
         try:
-            raw = await self.redis.zrevrange(key, 0, query.limit - 1, withscores=True)
+            raw = await self.redis.zrevrange(key, 0, fetch - 1, withscores=True)
         except (OSError, RedisError) as exc:
             HOT_CACHE_READ.labels(result="error").inc()
             logger.warning(
@@ -137,7 +141,7 @@ class MemoryHotCacheReader:
         allowed = filter_pii_blocked_results(ordered)
         kept = collapse_conflict_pairs(allowed)
         record_suppressed(len(allowed), len(kept))
-        return kept
+        return kept[: query.limit]
 
     async def _hydrate_hot(self, request: _HydrateHotRequest) -> dict[UUID, MemorySearchResult]:
         if not request.memory_ids:

@@ -92,7 +92,8 @@ class LineageResult:
     memory_id: str
     status: str
     tombstoned: bool
-    supersession_tip: str
+    # None when the supersession chain is longer than the 5-hop resolution cap.
+    supersession_tip: str | None
     max_depth: int
     truncated: bool
     edges: tuple[LineageEdge, ...]
@@ -197,7 +198,7 @@ class _LineageBody(BaseModel):
     memory_id: UUID
     status: str
     tombstoned: bool
-    supersession_tip: UUID
+    supersession_tip: UUID | None
     max_depth: int = Field(ge=1, le=5)
     truncated: bool
     edges: list[_LineageEdgeBody]
@@ -446,7 +447,9 @@ def _parse_lineage_result(response: httpx.Response) -> LineageResult:
         memory_id=str(body.memory_id),
         status=body.status,
         tombstoned=body.tombstoned,
-        supersession_tip=str(body.supersession_tip),
+        supersession_tip=(
+            str(body.supersession_tip) if body.supersession_tip is not None else None
+        ),
         max_depth=body.max_depth,
         truncated=body.truncated,
         edges=tuple(

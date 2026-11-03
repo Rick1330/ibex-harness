@@ -45,7 +45,8 @@ class MemoryLineageData(BaseModel):
     memory_id: UUID
     status: str
     tombstoned: bool
-    supersession_tip: UUID
+    # null when the supersession chain is longer than the 5-hop resolution cap.
+    supersession_tip: UUID | None
     max_depth: int = Field(ge=1, le=5)
     truncated: bool
     edges: list[LineageEdgeSchema]

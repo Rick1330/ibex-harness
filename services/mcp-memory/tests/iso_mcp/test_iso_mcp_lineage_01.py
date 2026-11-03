@@ -4,17 +4,19 @@ What this proves at the MCP boundary: an id that belongs to another tenant is
 answered with a fail-closed ``not_found`` error rather than a 200 with an empty
 edge list, and no edge, status, or tip reaches the caller.
 
-What it does **not** prove: that the root lookup filters by ``org_id``. The probe
-is an ``agents.id`` from Org B, and ids are not shared between ``agents`` and
-``memories``, so a traversal missing its org predicate would still return
-nothing for it. The org-predicate proof lives where a real second-tenant memory
-can be seeded: ``services/memory/tests/integration/test_lineage_traversal.py::
+What it does **not** prove unless ``IBEX_ISO_MCP_ORG_B_MEMORY_ID`` is set: that
+the root lookup filters by ``org_id``. Without that variable the probe is an
+``agents.id`` from Org B, and ids are not shared between ``agents`` and
+``memories``, so a traversal missing its org predicate would still return nothing
+for it. The org-predicate proof lives where a real second-tenant memory can be
+seeded: ``services/memory/tests/integration/test_lineage_traversal.py::
 test_cross_tenant_edges_are_never_traversed``.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import pytest
@@ -66,11 +68,16 @@ def test_iso_mcp_lineage_01_cross_org_id_is_not_found(
     headers = mcp_session(client, iso_env["token_org"])
     events_before = len(sink.events)
 
-    # An Org B UUID: it exists in the other tenant, but not as a memory.
+    # Prefer a real Org B memory when the environment provisions one; the
+    # agent id is the fallback probe and cannot prove the org predicate.
+    memory_id = (
+        os.environ.get("IBEX_ISO_MCP_ORG_B_MEMORY_ID", "").strip()
+        or str(iso_ids["agent_b"])
+    )
     response = _call_lineage(
         client=iso_app_counted,
         headers=headers,
-        memory_id=str(iso_ids["agent_b"]),
+        memory_id=memory_id,
         request_id=42,
     )
 

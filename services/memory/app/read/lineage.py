@@ -54,11 +54,26 @@ STATEMENT_TIMEOUT = "500ms"
 # turn it into "the immediate successor". The lateral join re-applies the
 # tenant and agent boundary to the tip itself, so an agent-scoped caller can
 # never receive another agent's memory id through this field.
+#
+# The helper stops at five hops. In a supersession chain nothing supersedes the
+# true head, so a resolved node that is still the *target* of a supersedes edge
+# means the chain continues past the cap and the head is unknown: the field is
+# NULL ("unresolved") instead of naming a stale intermediate.
 _ROOT_SQL = """
 SELECT m.id,
        m.status,
        m.tombstoned,
-       COALESCE(tip.id, m.id) AS tip
+       CASE
+         WHEN tip.id IS NULL THEN m.id
+         WHEN EXISTS (
+           SELECT 1
+           FROM ibex_core.memory_relationships onward
+           WHERE onward.org_id = :org_id
+             AND onward.target_memory_id = tip.id
+             AND onward.relationship_type = 'supersedes'
+         ) THEN NULL
+         ELSE tip.id
+       END AS tip
 FROM ibex_core.memories m
 LEFT JOIN LATERAL (
     SELECT t.id
@@ -181,7 +196,9 @@ class LineageRoot:
     memory_id: UUID
     status: str
     tombstoned: bool
-    supersession_tip: UUID
+    # ``None`` means the chain is longer than the 5-hop resolution cap: the
+    # current head is unknown, and naming an intermediate would be wrong.
+    supersession_tip: UUID | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,7 +311,9 @@ class MemoryLineageRepository:
                 memory_id=UUID(str(root_row["id"])),
                 status=str(root_row["status"]),
                 tombstoned=bool(root_row["tombstoned"]),
-                supersession_tip=UUID(str(root_row["tip"])),
+                supersession_tip=(
+                    UUID(str(root_row["tip"])) if root_row["tip"] is not None else None
+                ),
             ),
             edges=_edges_from_rows(edge_rows),
             truncated=len(edge_rows) > MAX_LINEAGE_EDGES,

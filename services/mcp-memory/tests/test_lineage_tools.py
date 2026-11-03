@@ -92,8 +92,11 @@ async def test_get_memory_lineage_success() -> None:
     assert out["memory_id"] == mid
     assert out["max_depth"] == 4
     assert out["truncated"] is False
-    assert out["edges"][0]["relationship_type"] == "specializes"
-    assert out["edges"][0]["other"]["status"] == "superseded"
+    edge = out["edges"][0]
+    assert edge["relationship_type"] == "specializes"
+    assert edge["from_memory_id"] == mid
+    assert edge["other"]["memory_id"] == str(UUID(edge["target_memory_id"]))
+    assert edge["other"]["status"] == "superseded"
 
 
 @pytest.mark.asyncio

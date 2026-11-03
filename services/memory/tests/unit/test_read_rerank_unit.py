@@ -271,4 +271,5 @@ async def test_rerank_path_suppresses_a_pending_conflict() -> None:
     ids = {item.id for item in results}
     assert len(results) == 2
     assert third in ids
-    assert len({winner, loser} & ids) == 1
+    assert winner in ids
+    assert loser not in ids

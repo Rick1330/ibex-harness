@@ -99,6 +99,29 @@ class _RerankWindow:
     guard: PiiReadGuard
 
 
+# One snapshot for the merged fallback page. The vector and full-text hydration
+# statements run at different moments, so a row read early can carry an empty
+# conflict set while its counterpart read later names the escalation. Re-reading
+# the groups for the whole candidate set makes the suppression decision
+# consistent with a single point in time.
+_CONFLICT_GROUPS_SNAPSHOT_SQL = """
+SELECT m.id AS memory_id,
+       COALESCE(
+         (
+           SELECT array_agg(e.id ORDER BY e.id)
+           FROM ibex_core.memory_conflict_escalations e
+           WHERE e.org_id = m.org_id
+             AND e.status = 'pending'
+             AND (e.new_memory_id = m.id OR e.candidate_memory_id = m.id)
+         ),
+         ARRAY[]::uuid[]
+       ) AS conflict_groups
+FROM ibex_core.memories m
+WHERE m.org_id = :org_id
+  AND m.id = ANY(CAST(:memory_ids AS uuid[]))
+"""
+
+
 def _validate_find_similar_query(query: FindSimilarQuery) -> None:
     if query.limit < 1:
         msg = "limit must be >= 1"
@@ -368,6 +391,43 @@ class MemoryReadRepository:
         record_suppressed(len(allowed), len(kept))
         return kept[: query.limit]
 
+    async def _conflict_groups_snapshot(
+        self,
+        org_id: UUID,
+        hydrated: Mapping[UUID, HydratedHit],
+    ) -> dict[UUID, HydratedHit]:
+        """Re-read pending conflict groups for the whole candidate set at once."""
+        if not hydrated:
+            return dict(hydrated)
+        async with self._session_factory() as session, session.begin():
+            await set_service_org(session, org_id)
+            rows = (
+                await session.execute(
+                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text  # nosec B608
+                        _CONFLICT_GROUPS_SNAPSHOT_SQL
+                    ),
+                    {
+                        "org_id": str(org_id),
+                        "memory_ids": [str(memory_id) for memory_id in hydrated],
+                    },
+                )
+            ).mappings().all()
+        groups = {
+            UUID(str(row["memory_id"])): tuple(
+                UUID(str(value)) for value in row["conflict_groups"]
+            )
+            for row in rows
+        }
+        return {
+            memory_id: HydratedHit(
+                result=replace(hit.result, conflict_groups=groups.get(memory_id, ())),
+                valid_from=hit.valid_from,
+                usefulness_score=hit.usefulness_score,
+                retrieval_count=hit.retrieval_count,
+            )
+            for memory_id, hit in hydrated.items()
+        }
+
     async def _hydrate_missing(
         self,
         query: FindSimilarQuery,
@@ -431,6 +491,11 @@ class MemoryReadRepository:
             min_confidence=query.min_confidence,
         )
         all_hydrated = {**fts_hydrated, **vector_hydrated}
+        # Only worth a second read when some row already names a pending
+        # escalation: otherwise no conflict could have been visible at either
+        # snapshot, and the page is conflict-free by construction.
+        if any(hit.result.conflict_groups for hit in all_hydrated.values()):
+            all_hydrated = await self._conflict_groups_snapshot(query.org_id, all_hydrated)
         ranked = rank_hydrated_hits(merged, all_hydrated, rank_opts)
         allowed = pii.allow(ranked)
         kept = collapse_conflict_pairs(allowed)

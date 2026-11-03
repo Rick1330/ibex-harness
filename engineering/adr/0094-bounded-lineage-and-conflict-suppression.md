@@ -58,7 +58,8 @@ The question this record settles is where traversal limits and conflict suppress
    own maximum depth, not with the caller's `max_depth`; otherwise `max_depth=1` would report the immediate successor
    as "current" for a three-link chain, and a client that trusts the field would re-serve a superseded memory. The
    resolution is re-scoped to the caller's tenant and agent, falling back to the memory itself, so the field cannot
-   become a cross-agent id leak.
+   become a cross-agent id leak. When the resolved node still supersedes something, the chain is longer than the cap and
+   the field is `null` — an explicit "unresolved" instead of a stale intermediate.
 7. **Pending conflict escalations are the authority for "unresolved".** Not `contradicts` edges: suppressing on a
    relationship type nothing writes would suppress nothing and look correct in tests. `contradicts` edges remain a
    first-class lineage edge when one exists (the operator may write them), but escalation status decides suppression.
@@ -73,20 +74,25 @@ The question this record settles is where traversal limits and conflict suppress
    the kept set is dropped. The survivor set is guaranteed to contain no conflicting pair, which is the property the
    packer needs.
 10. **Suppression runs before the page is cut**, so a conflicting pair costs one slot rather than shortening the page.
+    Hot cache fetches a bounded reserve (2x the page, capped by the ZSET capacity) for the same reason.
     In the hybrid path the dropped slot is refilled from the remaining fused candidates; in the sparse fallback the
     full-text supplement is sized from the post-suppression page, so an eligible GIN match fills it. The reranked path
     has no unhydrated remainder inside its window (the window is already the widest the settings allow), so a reranked
     page may legitimately come back one shorter. Hot cache applies the same collapse to its ZSET order.
-11. **The Tier-1 PII re-check runs before the collapse.** A blocked higher-ranked side would otherwise suppress its
+11. **The fallback merge re-reads conflict groups in one snapshot.** Vector rows and full-text rows are hydrated by
+    separate statements, so a row read early can carry an empty conflict set while its counterpart read later names the
+    escalation. When any row already names a pending escalation, the merged candidate set is re-resolved once before the
+    collapse; the hybrid path hydrates once and needs no second read.
+12. **The Tier-1 PII re-check runs before the collapse.** A blocked higher-ranked side would otherwise suppress its
     counterpart and then vanish itself, turning two recoverable hits into a short or empty page — the same hazard the
     rerank stage already avoids by excluding blocked rows from the ranking input. This holds on the hot-cache page too.
-12. **Context assembly reruns the rule across hot + cold.** The memory service cannot see across two pages, so the
+13. **Context assembly reruns the rule across hot + cold.** The memory service cannot see across two pages, so the
     merge re-applies it with the same sets, ordered by the packer's interim score (the only comparable ordering across
     a write-time ZSET score and a query similarity). Both sides never reach the formatter.
-13. **"A superseded memory never outranks its successor" is structural, not a scoring rule.** Both hydration statements
+14. **"A superseded memory never outranks its successor" is structural, not a scoring rule.** Both hydration statements
     fence `status = 'active'`, so a superseded memory is not a candidate. This ADR records the property and the
     regression test that proves it rather than inventing a scoring adjustment for something already true.
-14. **The traversal carries its own statement timeout.** The edge cap bounds the response, not the recursive work: path
+15. **The traversal carries its own statement timeout.** The edge cap bounds the response, not the recursive work: path
     enumeration grows with fan-out, and a dense graph could hold a pooled connection far longer than a read may. A local
     `statement_timeout` of `500ms` turns that into a fast `503` instead of a request that never returns.
 
@@ -139,6 +145,22 @@ The question this record settles is where traversal limits and conflict suppress
   traversal's correctness (depth cap, cycle, tenant and agent scope, truncation) and a smoke latency bound; producing
   the published 3-hop/5-hop P99 requires the benchmark environment and a `benchmarks/memory` runner. Until that number
   exists, no latency claim is made.
+
+## Rollout / Migration Plan
+
+1. Apply `000057_memory_conflict_new_lookup_index` and then
+   `000058_memory_conflict_candidate_lookup_index`. Both are `CREATE INDEX CONCURRENTLY` in their own migration file, so
+   neither is wrapped in the implicit multi-statement transaction; they build online and do not block writes to
+   `memory_conflict_escalations`.
+2. Deploy the memory service with the read-path change. Suppression is inert until a pending escalation exists, so no
+   backfill or flag flip is required; `conflict_groups` is additive and defaults to an empty list.
+3. Deploy `services/context` and `services/mcp-memory` afterwards. They tolerate a memory service that predates
+   `conflict_groups` and a `null` `supersession_tip`.
+4. Observe `ibex_memory_conflict_suppressed_total`, `ibex_memory_lineage_queries_total{result}`, and the
+   `ibex_memory_lineage_seconds` histogram for one release window before enabling any rerank default.
+5. Rollback: redeploy the previous memory service, then drop both indexes
+   (`DROP INDEX CONCURRENTLY IF EXISTS`). Dropping them only returns the lookup to a sequential scan; no data is
+   written or lost, and suppression stops when the previous service is restored.
 
 ## References
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Self
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -50,6 +51,15 @@ def _result(
     )
 
 
+def _repo(store, settings) -> MemoryReadRepository:
+    """Repository for page/fill assertions; the cross-statement refresh is separate."""
+    repo = MemoryReadRepository(MagicMock(), store, settings)
+    repo._conflict_groups_snapshot = AsyncMock(  # type: ignore[method-assign]
+        side_effect=lambda _org_id, hydrated: dict(hydrated)
+    )
+    return repo
+
+
 def _hydrated(results: list[MemorySearchResult]) -> dict[UUID, HydratedHit]:
     now = datetime.now(UTC)
     return {
@@ -74,8 +84,7 @@ async def test_conflict_drop_in_the_vector_page_refills_from_full_text() -> None
             SearchHit(memory_id=loser, similarity=0.90),
         ]
     )
-    repo = MemoryReadRepository(
-        MagicMock(),
+    repo = _repo(
         store,
         make_settings(search_hybrid_enabled=False, search_fallback_enabled=True),
     )
@@ -120,8 +129,7 @@ async def test_conflict_drop_below_a_full_vector_page_still_refills() -> None:
             SearchHit(memory_id=b, similarity=0.92),
         ]
     )
-    repo = MemoryReadRepository(
-        MagicMock(),
+    repo = _repo(
         store,
         make_settings(search_hybrid_enabled=False, search_fallback_enabled=True),
     )
@@ -158,9 +166,7 @@ async def test_zero_conflict_page_is_unchanged() -> None:
             SearchHit(memory_id=b, similarity=0.92),
         ]
     )
-    repo = MemoryReadRepository(
-        MagicMock(), store, make_settings(search_hybrid_enabled=False)
-    )
+    repo = _repo(store, make_settings(search_hybrid_enabled=False))
     repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
         return_value=_hydrated([_result(a), _result(b)])
     )
@@ -189,9 +195,7 @@ async def test_pii_blocked_winner_does_not_take_the_loser_with_it() -> None:
             SearchHit(memory_id=loser, similarity=0.90),
         ]
     )
-    repo = MemoryReadRepository(
-        MagicMock(), store, make_settings(search_hybrid_enabled=False)
-    )
+    repo = _repo(store, make_settings(search_hybrid_enabled=False))
     winner_hit = replace(
         _result(winner, confidence=0.95, conflict_groups=(CONFLICT,)),
         content="contact me at someone@example.com",
@@ -229,9 +233,7 @@ async def test_a_suppressed_supplement_hit_is_replaced_by_the_next_one() -> None
             SearchHit(memory_id=third, similarity=0.90),
         ]
     )
-    repo = MemoryReadRepository(
-        MagicMock(), store, make_settings(search_hybrid_enabled=False)
-    )
+    repo = _repo(store, make_settings(search_hybrid_enabled=False))
     repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
         side_effect=[
             _hydrated(
@@ -285,8 +287,7 @@ async def test_pii_recheck_runs_once_per_hydrated_row() -> None:
             SearchHit(memory_id=third, similarity=0.90),
         ]
     )
-    repo = MemoryReadRepository(
-        MagicMock(),
+    repo = _repo(
         store,
         make_settings(search_hybrid_enabled=True, rerank_enabled=False),
     )
@@ -306,3 +307,102 @@ async def test_pii_recheck_runs_once_per_hydrated_row() -> None:
 
     after = PII_RECONFIRM.labels(result="passed")._value.get()
     assert after - before == 3, "each hydrated row must be re-checked exactly once"
+
+
+class _SnapshotResult:
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = rows
+
+    def mappings(self) -> _SnapshotResult:
+        return self
+
+    def all(self) -> list[dict]:
+        return self._rows
+
+
+class _SnapshotSession:
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = rows
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
+
+    def begin(self) -> _SnapshotSession:
+        return self
+
+    async def execute(self, statement: object, _params: dict | None = None) -> _SnapshotResult:
+        if "set_config" in str(statement):
+            return _SnapshotResult([])
+        return _SnapshotResult(self._rows)
+
+
+@pytest.mark.asyncio
+async def test_conflict_groups_snapshot_refreshes_the_merged_set() -> None:
+    org_id = uuid4()
+    early, late = uuid4(), uuid4()
+    group = uuid4()
+    session = _SnapshotSession(
+        [
+            {"memory_id": early, "conflict_groups": [str(group)]},
+            {"memory_id": late, "conflict_groups": [str(group)]},
+        ]
+    )
+    repo = MemoryReadRepository(
+        lambda: session, MagicMock(), make_settings()  # type: ignore[arg-type]
+    )
+    hydrated = _hydrated([_result(early), _result(late)])
+
+    refreshed = await repo._conflict_groups_snapshot(org_id, hydrated)
+
+    assert refreshed[early].result.conflict_groups == (group,)
+    assert refreshed[late].result.conflict_groups == (group,)
+
+
+@pytest.mark.asyncio
+async def test_fallback_merge_refreshes_groups_when_a_row_names_one() -> None:
+    """A conflict created between the vector and full-text reads is still caught."""
+    named, counterpart = uuid4(), uuid4()
+    store = MagicMock()
+    store.search = AsyncMock(
+        return_value=[SearchHit(memory_id=named, similarity=0.93)]
+    )
+    repo = _repo(store, make_settings(search_hybrid_enabled=False))
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[
+            _hydrated([_result(named, conflict_groups=(CONFLICT,))]),
+            _hydrated([_result(counterpart, source="full_text")]),
+        ]
+    )
+    refreshed = _hydrated(
+        [
+            _result(named, conflict_groups=(CONFLICT,)),
+            _result(counterpart, conflict_groups=(CONFLICT,), source="full_text"),
+        ]
+    )
+    repo._conflict_groups_snapshot = AsyncMock(return_value=refreshed)  # type: ignore[method-assign]
+
+    with patch(
+        "app.read.repository.full_text_search",
+        AsyncMock(return_value=[FullTextHit(memory_id=counterpart, rank=0.9)]),
+    ):
+        results = await repo.find_similar(make_query(query_text="sky", limit=5))
+
+    repo._conflict_groups_snapshot.assert_awaited_once()
+    assert counterpart not in {hit.id for hit in results}
+
+
+@pytest.mark.asyncio
+async def test_fallback_merge_skips_the_refresh_without_groups() -> None:
+    store = MagicMock()
+    store.search = AsyncMock(return_value=[SearchHit(memory_id=uuid4(), similarity=0.93)])
+    repo = _repo(store, make_settings(search_hybrid_enabled=False))
+    repo._hydrate_hits = AsyncMock(return_value=_hydrated([_result(store.search.return_value[0].memory_id)]))
+    repo._conflict_groups_snapshot = AsyncMock()  # type: ignore[method-assign]
+
+    with patch("app.read.repository.full_text_search", AsyncMock(return_value=[])):
+        await repo.find_similar(make_query(query_text="sky", limit=5))
+
+    repo._conflict_groups_snapshot.assert_not_awaited()
