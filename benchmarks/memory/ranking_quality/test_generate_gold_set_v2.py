@@ -57,7 +57,48 @@ class TestGeneratedCorpus:
 
         assert len(tokens) == len(set(tokens))
 
-    def test_every_memory_has_a_content_key_and_profile(self, corpus: dict[str, Any]) -> None:
+    def test_every_dense_query_asks_about_the_aspect_it_labels(self, corpus: dict[str, Any]) -> None:
         for row in corpus["memories"]:
             assert row["content_key"]
             assert row["embedding_profile"]
+
+
+class TestOutputPathGuard:
+    """The output path comes from argv, so the guard is the only thing keeping writes local."""
+
+    def test_default_path(self) -> None:
+        assert gen._output_path(None) == gen.OUTPUT_PATH
+
+    def test_allowed_path_inside_the_benchmark_dir(self, tmp_path: Any) -> None:
+        allowed = Path(gen._RANK_DIR) / "out-under-test.json"
+
+        assert gen._output_path(["gen", str(allowed)]) == allowed.resolve()
+
+    def test_parent_reference_is_refused(self, tmp_path: Any) -> None:
+        escape = Path(gen._RANK_DIR) / ".." / "escape.json"
+
+        with pytest.raises(SystemExit, match="refusing to write outside"):
+            gen._output_path(["gen", str(escape)])
+
+    def test_absolute_path_outside_is_refused(self, tmp_path: Any) -> None:
+        with pytest.raises(SystemExit, match="refusing to write outside"):
+            gen._output_path(["gen", str(tmp_path / "escape.json")])
+
+    def test_symlink_escape_is_refused(self, tmp_path: Any) -> None:
+        link = Path(gen._RANK_DIR) / "escape-link.json"
+        link.unlink(missing_ok=True)
+        link.symlink_to(tmp_path / "target.json")
+        try:
+            with pytest.raises(SystemExit, match="refusing to write outside"):
+                gen._output_path(["gen", str(link)])
+        finally:
+            link.unlink(missing_ok=True)
+
+    def test_directory_is_refused(self, tmp_path: Any) -> None:
+        directory = Path(gen._RANK_DIR) / "out-dir-under-test"
+        directory.mkdir(exist_ok=True)
+        try:
+            with pytest.raises(SystemExit, match="is a directory"):
+                gen._output_path(["gen", str(directory)])
+        finally:
+            directory.rmdir()

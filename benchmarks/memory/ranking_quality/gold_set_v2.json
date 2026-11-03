@@ -7087,6 +7087,7 @@
  "min_similarity": 0.5,
  "queries": [
   {
+   "aspect": "value",
    "embedding_profile": {
     "backup retention": 1.0
    },
@@ -7098,6 +7099,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "backup retention": 1.0
    },
@@ -7105,10 +7107,11 @@
     "gold.dense.0.1"
    ],
    "query_id": "q_dense_0_1",
-   "query_text": "what is the threshold for backup retention",
+   "query_text": "what is the owner for backup retention",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "incident severity": 1.0
    },
@@ -7120,6 +7123,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "incident severity": 1.0
    },
@@ -7127,10 +7131,11 @@
     "gold.dense.1.1"
    ],
    "query_id": "q_dense_1_1",
-   "query_text": "what is the threshold for incident severity",
+   "query_text": "what is the owner for incident severity",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "deploy freeze": 1.0
    },
@@ -7142,6 +7147,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "deploy freeze": 1.0
    },
@@ -7149,10 +7155,11 @@
     "gold.dense.2.1"
    ],
    "query_id": "q_dense_2_1",
-   "query_text": "what is the threshold for deploy freeze",
+   "query_text": "what is the owner for deploy freeze",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "database failover": 1.0
    },
@@ -7164,6 +7171,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "database failover": 1.0
    },
@@ -7171,10 +7179,11 @@
     "gold.dense.3.1"
    ],
    "query_id": "q_dense_3_1",
-   "query_text": "what is the threshold for database failover",
+   "query_text": "what is the owner for database failover",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "cache eviction": 1.0
    },
@@ -7186,6 +7195,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "cache eviction": 1.0
    },
@@ -7193,10 +7203,11 @@
     "gold.dense.4.1"
    ],
    "query_id": "q_dense_4_1",
-   "query_text": "what is the threshold for cache eviction",
+   "query_text": "what is the owner for cache eviction",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "log retention": 1.0
    },
@@ -7208,6 +7219,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "log retention": 1.0
    },
@@ -7215,10 +7227,11 @@
     "gold.dense.5.1"
    ],
    "query_id": "q_dense_5_1",
-   "query_text": "what is the threshold for log retention",
+   "query_text": "what is the owner for log retention",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "rate limit policy": 1.0
    },
@@ -7230,6 +7243,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "rate limit policy": 1.0
    },
@@ -7237,10 +7251,11 @@
     "gold.dense.6.1"
    ],
    "query_id": "q_dense_6_1",
-   "query_text": "what is the threshold for rate limit policy",
+   "query_text": "what is the owner for rate limit policy",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "tenant onboarding": 1.0
    },
@@ -7252,6 +7267,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "tenant onboarding": 1.0
    },
@@ -7259,10 +7275,11 @@
     "gold.dense.7.1"
    ],
    "query_id": "q_dense_7_1",
-   "query_text": "what is the threshold for tenant onboarding",
+   "query_text": "what is the owner for tenant onboarding",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "key rotation": 1.0
    },
@@ -7274,6 +7291,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "key rotation": 1.0
    },
@@ -7281,10 +7299,11 @@
     "gold.dense.8.1"
    ],
    "query_id": "q_dense_8_1",
-   "query_text": "what is the threshold for key rotation",
+   "query_text": "what is the owner for key rotation",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "schema migration": 1.0
    },
@@ -7296,6 +7315,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "schema migration": 1.0
    },
@@ -7303,10 +7323,11 @@
     "gold.dense.9.1"
    ],
    "query_id": "q_dense_9_1",
-   "query_text": "what is the threshold for schema migration",
+   "query_text": "what is the owner for schema migration",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "queue backpressure": 1.0
    },
@@ -7318,6 +7339,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "queue backpressure": 1.0
    },
@@ -7325,10 +7347,11 @@
     "gold.dense.10.1"
    ],
    "query_id": "q_dense_10_1",
-   "query_text": "what is the threshold for queue backpressure",
+   "query_text": "what is the owner for queue backpressure",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "price rounding": 1.0
    },
@@ -7340,6 +7363,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "price rounding": 1.0
    },
@@ -7347,10 +7371,11 @@
     "gold.dense.11.1"
    ],
    "query_id": "q_dense_11_1",
-   "query_text": "what is the threshold for price rounding",
+   "query_text": "what is the owner for price rounding",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "invoice numbering": 1.0
    },
@@ -7362,6 +7387,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "invoice numbering": 1.0
    },
@@ -7369,10 +7395,11 @@
     "gold.dense.12.1"
    ],
    "query_id": "q_dense_12_1",
-   "query_text": "what is the threshold for invoice numbering",
+   "query_text": "what is the owner for invoice numbering",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "tax residency": 1.0
    },
@@ -7384,6 +7411,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "tax residency": 1.0
    },
@@ -7391,10 +7419,11 @@
     "gold.dense.13.1"
    ],
    "query_id": "q_dense_13_1",
-   "query_text": "what is the threshold for tax residency",
+   "query_text": "what is the owner for tax residency",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "refund window": 1.0
    },
@@ -7406,6 +7435,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "refund window": 1.0
    },
@@ -7413,10 +7443,11 @@
     "gold.dense.14.1"
    ],
    "query_id": "q_dense_14_1",
-   "query_text": "what is the threshold for refund window",
+   "query_text": "what is the owner for refund window",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "chargeback handling": 1.0
    },
@@ -7428,6 +7459,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "chargeback handling": 1.0
    },
@@ -7435,10 +7467,11 @@
     "gold.dense.15.1"
    ],
    "query_id": "q_dense_15_1",
-   "query_text": "what is the threshold for chargeback handling",
+   "query_text": "what is the owner for chargeback handling",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "trial length": 1.0
    },
@@ -7450,6 +7483,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "trial length": 1.0
    },
@@ -7457,10 +7491,11 @@
     "gold.dense.16.1"
    ],
    "query_id": "q_dense_16_1",
-   "query_text": "what is the threshold for trial length",
+   "query_text": "what is the owner for trial length",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "seat counting": 1.0
    },
@@ -7472,6 +7507,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "seat counting": 1.0
    },
@@ -7479,10 +7515,11 @@
     "gold.dense.17.1"
    ],
    "query_id": "q_dense_17_1",
-   "query_text": "what is the threshold for seat counting",
+   "query_text": "what is the owner for seat counting",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "plan upgrade path": 1.0
    },
@@ -7494,6 +7531,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "plan upgrade path": 1.0
    },
@@ -7501,10 +7539,11 @@
     "gold.dense.18.1"
    ],
    "query_id": "q_dense_18_1",
-   "query_text": "what is the threshold for plan upgrade path",
+   "query_text": "what is the owner for plan upgrade path",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "dunning schedule": 1.0
    },
@@ -7516,6 +7555,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "dunning schedule": 1.0
    },
@@ -7523,10 +7563,11 @@
     "gold.dense.19.1"
    ],
    "query_id": "q_dense_19_1",
-   "query_text": "what is the threshold for dunning schedule",
+   "query_text": "what is the owner for dunning schedule",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "password policy": 1.0
    },
@@ -7538,6 +7579,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "password policy": 1.0
    },
@@ -7545,10 +7587,11 @@
     "gold.dense.20.1"
    ],
    "query_id": "q_dense_20_1",
-   "query_text": "what is the threshold for password policy",
+   "query_text": "what is the owner for password policy",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "session lifetime": 1.0
    },
@@ -7560,6 +7603,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "session lifetime": 1.0
    },
@@ -7567,10 +7611,11 @@
     "gold.dense.21.1"
    ],
    "query_id": "q_dense_21_1",
-   "query_text": "what is the threshold for session lifetime",
+   "query_text": "what is the owner for session lifetime",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "mfa enrolment": 1.0
    },
@@ -7582,6 +7627,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "mfa enrolment": 1.0
    },
@@ -7589,10 +7635,11 @@
     "gold.dense.22.1"
    ],
    "query_id": "q_dense_22_1",
-   "query_text": "what is the threshold for mfa enrolment",
+   "query_text": "what is the owner for mfa enrolment",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "api token scope": 1.0
    },
@@ -7604,6 +7651,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "api token scope": 1.0
    },
@@ -7611,10 +7659,11 @@
     "gold.dense.23.1"
    ],
    "query_id": "q_dense_23_1",
-   "query_text": "what is the threshold for api token scope",
+   "query_text": "what is the owner for api token scope",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "audit logging": 1.0
    },
@@ -7626,6 +7675,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "audit logging": 1.0
    },
@@ -7633,10 +7683,11 @@
     "gold.dense.24.1"
    ],
    "query_id": "q_dense_24_1",
-   "query_text": "what is the threshold for audit logging",
+   "query_text": "what is the owner for audit logging",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "data residency": 1.0
    },
@@ -7648,6 +7699,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "data residency": 1.0
    },
@@ -7655,10 +7707,11 @@
     "gold.dense.25.1"
    ],
    "query_id": "q_dense_25_1",
-   "query_text": "what is the threshold for data residency",
+   "query_text": "what is the owner for data residency",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "pii redaction": 1.0
    },
@@ -7670,6 +7723,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "pii redaction": 1.0
    },
@@ -7677,10 +7731,11 @@
     "gold.dense.26.1"
    ],
    "query_id": "q_dense_26_1",
-   "query_text": "what is the threshold for pii redaction",
+   "query_text": "what is the owner for pii redaction",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "export format": 1.0
    },
@@ -7692,6 +7747,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "export format": 1.0
    },
@@ -7699,10 +7755,11 @@
     "gold.dense.27.1"
    ],
    "query_id": "q_dense_27_1",
-   "query_text": "what is the threshold for export format",
+   "query_text": "what is the owner for export format",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "webhook retry": 1.0
    },
@@ -7714,6 +7771,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "webhook retry": 1.0
    },
@@ -7721,10 +7779,11 @@
     "gold.dense.28.1"
    ],
    "query_id": "q_dense_28_1",
-   "query_text": "what is the threshold for webhook retry",
+   "query_text": "what is the owner for webhook retry",
    "subset": "dense"
   },
   {
+   "aspect": "value",
    "embedding_profile": {
     "idempotency window": 1.0
    },
@@ -7736,6 +7795,7 @@
    "subset": "dense"
   },
   {
+   "aspect": "owner",
    "embedding_profile": {
     "idempotency window": 1.0
    },
@@ -7743,7 +7803,7 @@
     "gold.dense.29.1"
    ],
    "query_id": "q_dense_29_1",
-   "query_text": "what is the threshold for idempotency window",
+   "query_text": "what is the owner for idempotency window",
    "subset": "dense"
   },
   {

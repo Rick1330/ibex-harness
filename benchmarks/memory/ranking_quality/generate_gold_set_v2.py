@@ -169,21 +169,24 @@ def _dense_block(plan: TopicPlan) -> tuple[list[dict[str, Any]], list[dict[str, 
                 age=AGE_MIN + (index % (AGE_MAX - AGE_MIN)),
             )
         )
-    queries = [
-        _dense_query(plan, slot, f"gold.dense.{plan.index}.{slot}", aspects=("value", "threshold"))
-        for slot in range(DENSE_QUERIES_PER_TOPIC)
-    ]
+    queries = [_dense_query(plan, slot) for slot in range(DENSE_QUERIES_PER_TOPIC)]
     return memories, queries
 
 
-def _dense_query(plan: TopicPlan, slot: int, key: str, *, aspects: tuple[str, ...] = ("value",)) -> dict[str, Any]:
-    aspect = aspects[slot % len(aspects)]
+def _dense_query(plan: TopicPlan, slot: int) -> dict[str, Any]:
+    """Ask about the aspect the memory at ``slot`` actually records.
+
+    The question and the expected key are derived from one aspect, so the labelled answer
+    cannot be a row that answers a different question.
+    """
+    aspect = ASPECTS[slot]
     return {
         "query_id": f"q_dense_{plan.index}_{slot}",
         "query_text": f"what is the {aspect} for {plan.name}",
         "subset": "dense",
+        "aspect": aspect,
         "embedding_profile": {plan.name: 1.0},
-        "expected_content_keys": [key],
+        "expected_content_keys": [f"gold.dense.{plan.index}.{slot}"],
     }
 
 
@@ -332,6 +335,8 @@ def _output_path(argv: list[str] | None) -> Path:
         return OUTPUT_PATH
     candidate = Path(argv[1]).resolve()
     root = _RANK_DIR.resolve()
+    if candidate.is_dir():
+        raise SystemExit(f"output path is a directory: {candidate}")
     if root not in candidate.parents and candidate != root:
         raise SystemExit(f"refusing to write outside {root}: {candidate}")
     return candidate
