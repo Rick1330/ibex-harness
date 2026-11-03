@@ -16,7 +16,6 @@ from app.clients.rerank import RerankClient, RerankClientError
 from app.config import Settings
 from app.org_context import set_service_org
 from app.read.conflicts import (
-    CONFLICT_GROUPS_SQL,
     collapse_conflict_pairs,
     conflict_groups_from_row,
     record_suppressed,
@@ -42,9 +41,7 @@ from app.vectorstore.base import SearchHit, SearchMode, SearchRequest, VectorSto
 
 logger = logging.getLogger(__name__)
 
-# The only interpolated fragment is CONFLICT_GROUPS_SQL, a module constant; no caller input
-# reaches the SQL text. Everything the caller supplies is a bind parameter.
-_HYDRATE_SQL = f"""
+_HYDRATE_SQL = """
 SELECT m.id, m.org_id, m.agent_id, m.content, m.category, m.confidence, m.status,
        m.created_at, m.updated_at, m.valid_from, m.usefulness_score, m.retrieval_count,
        m.lifecycle_revision,
@@ -56,7 +53,16 @@ SELECT m.id, m.org_id, m.agent_id, m.content, m.category, m.confidence, m.status
          ),
          ARRAY[m.category]
        ) AS categories,
-       {CONFLICT_GROUPS_SQL}
+       COALESCE(
+         (
+           SELECT array_agg(e.id ORDER BY e.id)
+           FROM ibex_core.memory_conflict_escalations e
+           WHERE e.org_id = m.org_id
+             AND e.status = 'pending'
+             AND (e.new_memory_id = m.id OR e.candidate_memory_id = m.id)
+         ),
+         ARRAY[]::uuid[]
+       ) AS conflict_groups
 FROM ibex_core.memories m
 WHERE m.org_id = :org_id
   AND m.id = ANY(CAST(:memory_ids AS uuid[]))

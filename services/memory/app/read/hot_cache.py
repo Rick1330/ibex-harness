@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.cache.hot_keys import HOT_CACHE_CAPACITY, hot_memories_key
 from app.org_context import set_service_org
 from app.read.conflicts import (
-    CONFLICT_GROUPS_SQL,
     collapse_conflict_pairs,
     conflict_groups_from_row,
     record_suppressed,
@@ -26,12 +25,19 @@ from app.read.pii_guard import filter_pii_blocked_results
 
 logger = logging.getLogger(__name__)
 
-# The only interpolated fragment is CONFLICT_GROUPS_SQL, a module constant; no caller input
-# reaches the SQL text. Everything the caller supplies is a bind parameter.
-_HYDRATE_HOT_SQL = f"""
+_HYDRATE_HOT_SQL = """
 SELECT m.id, m.org_id, m.agent_id, m.content, m.category, m.confidence, m.status,
        m.created_at, m.updated_at, m.lifecycle_revision,
-       {CONFLICT_GROUPS_SQL}
+       COALESCE(
+         (
+           SELECT array_agg(e.id ORDER BY e.id)
+           FROM ibex_core.memory_conflict_escalations e
+           WHERE e.org_id = m.org_id
+             AND e.status = 'pending'
+             AND (e.new_memory_id = m.id OR e.candidate_memory_id = m.id)
+         ),
+         ARRAY[]::uuid[]
+       ) AS conflict_groups
 FROM ibex_core.memories m
 WHERE m.org_id = :org_id
   AND m.agent_id = :agent_id

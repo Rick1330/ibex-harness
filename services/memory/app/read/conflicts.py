@@ -26,21 +26,6 @@ from uuid import UUID
 from app.read.metrics import CONFLICT_SUPPRESSED
 from app.read.models import MemorySearchResult
 
-# Correlated subquery shared by both hydration statements. Row-local on
-# purpose: it is two index probes per hydrated row, not a second query.
-CONFLICT_GROUPS_SQL = """
-COALESCE(
-  (
-    SELECT array_agg(e.id ORDER BY e.id)
-    FROM ibex_core.memory_conflict_escalations e
-    WHERE e.org_id = m.org_id
-      AND e.status = 'pending'
-      AND (e.new_memory_id = m.id OR e.candidate_memory_id = m.id)
-  ),
-  ARRAY[]::uuid[]
-) AS conflict_groups
-"""
-
 
 def conflict_groups_from_row(row: Mapping[str, object]) -> tuple[UUID, ...]:
     """Read the hydrated escalation-id array; tolerate a driver returning a list."""
