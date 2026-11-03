@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 from collections import Counter
 from collections.abc import Mapping
@@ -36,7 +37,7 @@ for _path in (_BENCH_MEMORY, _RANK_DIR):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from path_guard import resolve_bench_input_path
+from path_guard import UnsafePathError, resolve_bench_input_path
 from profiles import ProfileError, profile_cosine, validate_topics
 
 SCHEMA_VERSION = 2
@@ -247,7 +248,7 @@ def _age(value: object, prefix: str) -> list[str]:
 def _validate_profile(profile: object, prefix: str, topics: Mapping[str, int]) -> list[str]:
     if not isinstance(profile, Mapping):
         return [f"{prefix} must be an object of topic → weight"]
-    unknown = sorted(topic for topic in profile if topic not in topics)
+    unknown = sorted((topic for topic in profile if topic not in topics), key=str)
     if unknown:
         return [f"{prefix} uses undeclared topics: {unknown}"]
     try:
@@ -428,7 +429,7 @@ def _validate_lexical(corpus: Corpus, query: Mapping[str, Any]) -> list[str]:
     if not tokens:
         errors.append(f"queries[{query['query_id']}] lexical subset needs lexical_tokens")
         return errors
-    missing_from_query = [token for token in tokens if token not in str(query["query_text"]).lower()]
+    missing_from_query = [token for token in tokens if not _contains_token(str(query["query_text"]), token)]
     if missing_from_query:
         errors.append(
             f"queries[{query['query_id']}] query_text is missing {missing_from_query}: the "
@@ -436,7 +437,37 @@ def _validate_lexical(corpus: Corpus, query: Mapping[str, Any]) -> list[str]:
         )
     for row in _expected_rows(corpus, query):
         errors.extend(_validate_lexical_answer(corpus, query, row, tokens))
+        errors.extend(_validate_token_rarity(corpus, query, row, tokens))
     return errors
+
+
+def _validate_token_rarity(
+    corpus: Corpus,
+    query: Mapping[str, Any],
+    row: Mapping[str, Any],
+    tokens: list[str],
+) -> list[str]:
+    """A token that matches the whole corpus would not single the answer out."""
+    matching = sum(
+        1
+        for other in corpus.memories.values()
+        if all(_contains_token(str(other["content"]), token) for token in tokens)
+    )
+    if matching < corpus.ann_limit + 1:
+        return []
+    return [
+        (
+            f"queries[{query['query_id']}] lexical tokens {tokens} match {matching} memories, "
+            f"so {row['content_key']!r} is not singled out and the subset does not isolate the "
+            "sparse channel"
+        )
+    ]
+
+
+def _contains_token(text: str, token: str) -> bool:
+    """Whole-token match: ``dec-4400`` must not match inside ``dec-44001``."""
+    pattern = rf"(?<![0-9a-z]){re.escape(token)}(?![0-9a-z])"
+    return re.search(pattern, text.lower()) is not None
 
 
 def _validate_lexical_answer(
@@ -453,7 +484,7 @@ def _validate_lexical_answer(
             f"{similarity:.3f} >= floor {corpus.min_similarity}: dense retrieval would already "
             "admit it, so the subset proves nothing"
         )
-    missing_from_answer = [token for token in tokens if token not in str(row["content"]).lower()]
+    missing_from_answer = [token for token in tokens if not _contains_token(str(row["content"]), token)]
     if missing_from_answer:
         errors.append(
             f"queries[{query['query_id']}] lexical answer {row['content_key']!r} is missing "
@@ -496,6 +527,7 @@ def _validate_conflict_pair(
     errors.extend(_validate_window(corpus, query, row))
     errors.extend(_validate_window(corpus, query, twin))
     errors.extend(_validate_floor(corpus, query, row))
+    errors.extend(_validate_recency(query, row, twin))
     twin_similarity = profile_cosine(row["embedding_profile"], twin["embedding_profile"])
     if twin_similarity < GRAPH_PAIR_MIN_COSINE:
         errors.append(
@@ -511,6 +543,22 @@ def _validate_conflict_pair(
             "not competing and suppression is never exercised"
         )
     return errors
+
+
+def _validate_recency(
+    query: Mapping[str, Any],
+    row: Mapping[str, Any],
+    twin: Mapping[str, Any],
+) -> list[str]:
+    if row["valid_from_days_ago"] <= twin["valid_from_days_ago"]:
+        return []
+    return [
+        (
+            f"queries[{query['query_id']}] expected {row['content_key']!r} is older than its "
+            f"conflict twin {twin['content_key']!r}; a pending conflict is a newer statement "
+            "against an existing one, so the corpus should not ask for the stale side"
+        )
+    ]
 
 
 def _validate_floor(corpus: Corpus, query: Mapping[str, Any], row: Mapping[str, Any]) -> list[str]:
@@ -554,9 +602,14 @@ _SUBSET_RULES = {
 
 def main(argv: list[str] | None = None) -> int:
     path = _RANK_DIR / "gold_set_v2.json"
-    if argv and len(argv) > 1:
-        path = resolve_bench_input_path(Path(argv[1]), bench_dir=_RANK_DIR)
-    payload = json.loads(path.read_text(encoding="utf-8"))  # NOSONAR pythonsecurity:S2083
+    try:
+        if argv and len(argv) > 1:
+            path = resolve_bench_input_path(Path(argv[1]), bench_dir=_RANK_DIR)
+        payload = json.loads(path.read_text(encoding="utf-8"))  # NOSONAR pythonsecurity:S2083
+    except (UnsafePathError, FileNotFoundError, json.JSONDecodeError) as exc:
+        # A missing or unreadable corpus is a validation result, not a traceback.
+        print(f"cannot read gold set: {exc}", file=sys.stderr)
+        return 1
     errors = validate_gold_set_v2(payload)
     if errors:
         print(f"gold set v2 validation failed ({len(errors)} errors):", file=sys.stderr)

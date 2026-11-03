@@ -76,7 +76,7 @@ def _require_topic_name(topic: object) -> None:
 def _as_number(topic: object, weight: object) -> float:
     try:
         return float(weight)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise ProfileError(
             f"embedding_profile[{topic!r}] must be a number, got {weight!r}"
         ) from None
@@ -112,12 +112,14 @@ def profile_vector(
     same cosine against another profile as :func:`profile_cosine` reports. That equality is
     tested, because the whole corpus design rests on it.
     """
+    unit = normalise_weights(weights)
+    for topic in unit:
+        _topic_base(topic, topics, dim)
     duplicates = duplicate_bases(topics)
     if duplicates:
         raise ProfileError(
             f"topic map reuses basis indices {duplicates}; profiles would merge clusters"
         )
-    unit = normalise_weights(weights)
     vector = [0.0] * dim
     for topic, weight in unit.items():
         base = _topic_base(topic, topics, dim)

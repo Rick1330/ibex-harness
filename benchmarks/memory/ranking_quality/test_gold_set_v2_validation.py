@@ -575,6 +575,56 @@ class TestReviewHardening:
         assert _has(validate_gold_set_v2(corpus), "can fall outside the top")
 
 
+class TestSecondReviewRound:
+    def test_overflowing_weight_is_a_profile_error(self) -> None:
+        with pytest.raises(ProfileError, match="must be a number"):
+            normalise_weights({"a": 10**400})  # type: ignore[dict-item]
+
+    def test_unhashable_basis_is_a_profile_error(self) -> None:
+        with pytest.raises(ProfileError, match="must be an integer"):
+            profile_vector({"a": 1.0}, {"a": ["not", "an", "index"]})  # type: ignore[dict-item]
+
+    def test_mixed_type_profile_keys_do_not_break_the_sort(self, corpus: dict[str, Any]) -> None:
+        corpus["memories"][0]["embedding_profile"] = {"topic-0": 1.0, 7: 0.5}
+
+        assert _has(validate_gold_set_v2(corpus), "undeclared topics")
+
+    def test_token_must_match_whole(self, corpus: dict[str, Any]) -> None:
+        # "DEC-4400" must not be satisfied by "DEC-44001".
+        query = _query(corpus, "lexical")
+        answer = _memory_row(corpus, query["expected_content_keys"][0])
+        answer["content"] = "The ticket DEC-44001 covers a neighbouring change only."
+
+        assert _has(validate_gold_set_v2(corpus), "is missing")
+
+    def test_common_token_is_rejected(self, corpus: dict[str, Any]) -> None:
+        query = _query(corpus, "lexical")
+        token = query["lexical_tokens"][0]
+        for index in range(ANN_LIMIT + 2):
+            corpus["memories"].append(
+                _memory(f"gold.common.{index}", profile={"topic-35": 1.0}, age=30,
+                        content=f"Shared boilerplate mentioning {token} for every memory.")
+            )
+
+        assert _has(validate_gold_set_v2(corpus), "does not isolate the sparse channel")
+
+    def test_stale_expected_answer_is_rejected(self, corpus: dict[str, Any]) -> None:
+        query = _query(corpus, "graph")
+        answer = _memory_row(corpus, query["expected_content_keys"][0])
+        twin = _memory_row(corpus, answer["conflicts_with"][0])
+        answer["valid_from_days_ago"] = 300
+        twin["valid_from_days_ago"] = 10
+
+        assert _has(validate_gold_set_v2(corpus), "is older than its")
+
+    def test_missing_corpus_returns_a_clean_failure(self, capsys: Any) -> None:
+        from validate_gold_set_v2 import main
+
+        # A relative name resolves inside the bench directory, which the path guard allows.
+        assert main(["validate", "gold_set_v2_absent.json"]) == 1
+        assert "cannot read gold set" in capsys.readouterr().err
+
+
 class TestQueryRules:
     def test_duplicate_query_id(self, corpus: dict[str, Any]) -> None:
         corpus["queries"].append(copy.deepcopy(corpus["queries"][0]))
