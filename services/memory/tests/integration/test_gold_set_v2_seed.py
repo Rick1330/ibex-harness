@@ -14,7 +14,7 @@ for _path in (_REPO_ROOT / "services" / "memory", _RANK_DIR.parent, _RANK_DIR):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-import seed  # noqa: E402
+import seed
 
 pytestmark = pytest.mark.asyncio
 
