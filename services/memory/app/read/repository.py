@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Iterable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from uuid import UUID
 
 from sqlalchemy import text
@@ -15,6 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.clients.rerank import RerankClient, RerankClientError
 from app.config import Settings
 from app.org_context import set_service_org
+from app.read.conflicts import (
+    collapse_conflict_pairs,
+    conflict_groups_from_row,
+    record_suppressed,
+)
 from app.read.full_text import (
     FullTextHit,
     FullTextSearchQuery,
@@ -23,7 +28,7 @@ from app.read.full_text import (
 )
 from app.read.metrics import RERANK, RERANK_LATENCY, SEARCH_FALLBACK, SEARCH_HYBRID
 from app.read.models import FindSimilarQuery, MemorySearchResult
-from app.read.pii_guard import filter_pii_blocked_results
+from app.read.pii_guard import PiiReadGuard
 from app.read.ranking import (
     HydratedHit,
     RankedCandidate,
@@ -47,7 +52,17 @@ SELECT m.id, m.org_id, m.agent_id, m.content, m.category, m.confidence, m.status
            WHERE ml.memory_id = m.id AND ml.org_id = m.org_id
          ),
          ARRAY[m.category]
-       ) AS categories
+       ) AS categories,
+       COALESCE(
+         (
+           SELECT array_agg(e.id ORDER BY e.id)
+           FROM ibex_core.memory_conflict_escalations e
+           WHERE e.org_id = m.org_id
+             AND e.status = 'pending'
+             AND (e.new_memory_id = m.id OR e.candidate_memory_id = m.id)
+         ),
+         ARRAY[]::uuid[]
+       ) AS conflict_groups
 FROM ibex_core.memories m
 WHERE m.org_id = :org_id
   AND m.id = ANY(CAST(:memory_ids AS uuid[]))
@@ -58,6 +73,52 @@ WHERE m.org_id = :org_id
   AND (m.expires_at IS NULL OR m.expires_at > CURRENT_TIMESTAMP)
   AND m.valid_from <= CURRENT_TIMESTAMP
   AND (m.valid_until IS NULL OR m.valid_until > CURRENT_TIMESTAMP)
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class _Refill:
+    """Rows and guard already paid for by an earlier ranking pass.
+
+    Bundled so the refill entry point stays under the argument limit and the
+    two values travel together: a refill without the request's guard would
+    re-scan rows the first pass already judged.
+    """
+
+    hydrated: Mapping[UUID, HydratedHit] | None = None
+    guard: PiiReadGuard | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _RerankWindow:
+    """The hydrated window one rerank call scores, and the request's guard."""
+
+    query: FindSimilarQuery
+    window: list[RankedCandidate]
+    hydrated: Mapping[UUID, HydratedHit]
+    guard: PiiReadGuard
+
+
+# One snapshot for the merged fallback page. The vector and full-text hydration
+# statements run at different moments, so a row read early can carry an empty
+# conflict set while its counterpart read later names the escalation. Re-reading
+# the groups for the whole candidate set makes the suppression decision
+# consistent with a single point in time.
+_CONFLICT_GROUPS_SNAPSHOT_SQL = """
+SELECT m.id AS memory_id,
+       COALESCE(
+         (
+           SELECT array_agg(e.id ORDER BY e.id)
+           FROM ibex_core.memory_conflict_escalations e
+           WHERE e.org_id = m.org_id
+             AND e.status = 'pending'
+             AND (e.new_memory_id = m.id OR e.candidate_memory_id = m.id)
+         ),
+         ARRAY[]::uuid[]
+       ) AS conflict_groups
+FROM ibex_core.memories m
+WHERE m.org_id = :org_id
+  AND m.id = ANY(CAST(:memory_ids AS uuid[]))
 """
 
 
@@ -84,9 +145,9 @@ def _fts_fallback_enabled(
     )
 
 
-def _pii_allowed(hits: Iterable[HydratedHit]) -> set[UUID]:
+def _pii_allowed(hits: Iterable[HydratedHit], guard: PiiReadGuard) -> set[UUID]:
     """Ids the read-path Tier-1 guard would return for this window."""
-    return {item.id for item in filter_pii_blocked_results([hit.result for hit in hits])}
+    return {item.id for item in guard.allow([hit.result for hit in hits])}
 
 
 def _hybrid_enabled(settings: Settings, *, query_text: str) -> bool:
@@ -160,12 +221,13 @@ class MemoryReadRepository:
             vector=str(bool(vector_candidates)).lower(),
             full_text=str(bool(fts_candidates)).lower(),
         ).inc()
+        # One guard per request: a refill must not re-scan (or re-count) rows the
+        # first pass already judged.
+        guard = PiiReadGuard()
         if self._rerank_available():
-            return filter_pii_blocked_results(
-                await self._rank_reranked(query, fused, rank_opts)
-            )
-        return filter_pii_blocked_results(
-            await self._rank_fused_window(query, fused, rank_opts)
+            return await self._rank_reranked(query, fused, rank_opts, guard)
+        return await self._rank_fused_window(
+            query, fused, rank_opts, _Refill(guard=guard)
         )
 
     def _rerank_available(self) -> bool:
@@ -176,6 +238,7 @@ class MemoryReadRepository:
         query: FindSimilarQuery,
         fused: list[RankedCandidate],
         rank_opts: RankOptions,
+        guard: PiiReadGuard,
     ) -> list[MemorySearchResult]:
         """Cross-encode the fused window, then composite-score it.
 
@@ -188,30 +251,42 @@ class MemoryReadRepository:
         The window is the fused union capped by ``rerank_max_candidates``, so a
         rerank never sees the corpus. Any failure degrades to the fused order --
         a slow reranker must not turn a search into an error.
+
+        Conflict suppression runs after the rerank order is decided. Unlike the
+        fused path there is nothing to refill from: the reranked window is
+        already the widest the settings allow, so a suppressed pair costs a slot
+        here rather than a wider hydration.
         """
         client = self._rerank_client
         if client is None:  # pragma: no cover - _rerank_available() guards the call
-            return await self._rank_fused_window(query, fused, rank_opts)
+            return await self._rank_fused_window(
+                query, fused, rank_opts, _Refill(guard=guard)
+            )
         window = fused[: self._settings.rerank_max_candidates]
         hydrated = await self._hydrate_hits(
             org_id=query.org_id,
             candidates=window,
             min_confidence=query.min_confidence,
         )
-        overrides, allowed = await self._rerank_scores(client, query, window, hydrated)
+        overrides, allowed = await self._rerank_scores(
+            client, _RerankWindow(query, window, hydrated, guard)
+        )
         if overrides is None:
             return await self._rank_fused_window(
-                query, fused, rank_opts, hydrated=hydrated
+                query, fused, rank_opts, _Refill(hydrated, guard)
             )
         # Blocked rows are excluded from ranking as well as from the rerank call: a
         # blocked row holding its retrieval relevance could keep `ranked` non-empty
         # while the caller's final PII filter removes the only entry, turning a
         # recoverable page into an empty one.
-        ranked = rank_hydrated_hits(
+        scored = rank_hydrated_hits(
             [item for item in window if item.memory_id in allowed],
             hydrated,
             replace(rank_opts, relevance_overrides=overrides),
-        )[: query.limit]
+        )
+        kept = collapse_conflict_pairs(scored)
+        record_suppressed(len(scored), len(kept))
+        ranked = kept[: query.limit]
         if ranked:
             RERANK.labels(result="applied").inc()
             return ranked
@@ -219,14 +294,14 @@ class MemoryReadRepository:
         # the only way to return something, but mixing reranked and unreranked
         # relevance inside one page is not: the whole page comes from the fused order.
         RERANK.labels(result="emptied").inc()
-        return await self._rank_fused_window(query, fused, rank_opts, hydrated=hydrated)
+        return await self._rank_fused_window(
+            query, fused, rank_opts, _Refill(hydrated, guard)
+        )
 
     async def _rerank_scores(
         self,
         client: RerankClient,
-        query: FindSimilarQuery,
-        window: list[RankedCandidate],
-        hydrated: Mapping[UUID, HydratedHit],
+        spec: _RerankWindow,
     ) -> tuple[dict[UUID, float] | None, set[UUID]]:
         """Score the window, returning the overrides and the rows the guard allows.
 
@@ -234,21 +309,21 @@ class MemoryReadRepository:
         endpoint, so the same Tier-1 filter runs before the documents are built. The
         caller reuses the allowed set so blocked rows are also excluded from ranking.
         """
-        allowed = _pii_allowed(hydrated.values())
+        allowed = _pii_allowed(spec.hydrated.values(), spec.guard)
         ids = [
             item.memory_id
-            for item in window
-            if item.memory_id in hydrated and item.memory_id in allowed
+            for item in spec.window
+            if item.memory_id in spec.hydrated and item.memory_id in allowed
         ]
         if len(ids) < 2:
             # Nothing to reorder: a single candidate already holds the page.
             RERANK.labels(result="skipped").inc()
             return None, allowed
-        documents = [hydrated[memory_id].result.content for memory_id in ids]
+        documents = [spec.hydrated[memory_id].result.content for memory_id in ids]
         started = time.monotonic()
         try:
             scores = await asyncio.wait_for(
-                client.rerank(query.query_text, documents),
+                client.rerank(spec.query.query_text, documents),
                 timeout=self._settings.rerank_timeout_ms / 1000,
             )
         except (TimeoutError, RerankClientError) as exc:
@@ -270,8 +345,7 @@ class MemoryReadRepository:
         query: FindSimilarQuery,
         fused: list[RankedCandidate],
         rank_opts: RankOptions,
-        *,
-        hydrated: Mapping[UUID, HydratedHit] | None = None,
+        refill: _Refill | None = None,
     ) -> list[MemorySearchResult]:
         """Hydrate the fused window, then refill only if the page came up short.
 
@@ -285,19 +359,74 @@ class MemoryReadRepository:
         ``hydrated`` lets a caller that has already paid for a wider window (the
         rerank path) hand its rows over, so a degrade does not re-query rows it
         already has.
+
+        Conflict suppression runs before the page is cut, so a pair costs one
+        slot rather than shortening the page: the dropped side is replaced by the
+        next eligible candidate, exactly like a confidence or PII drop.
+
+        The PII re-check runs *before* the collapse, not after: a blocked
+        higher-ranked side would otherwise suppress its counterpart and then
+        disappear itself, turning two recoverable hits into a short page.
         """
-        rows: dict[UUID, HydratedHit] = dict(hydrated or {})
+        carried = refill or _Refill()
+        pii = carried.guard or PiiReadGuard()
+        rows: dict[UUID, HydratedHit] = dict(carried.hydrated or {})
         admitted = fused[: query.limit]
         rows.update(
             await self._hydrate_missing(query, admitted, rows)
         )
         ranked = rank_hydrated_hits(admitted, rows, rank_opts)
+        allowed = pii.allow(ranked)
+        kept = collapse_conflict_pairs(allowed)
         remaining = fused[query.limit :]
-        if not remaining or len(ranked) >= query.limit:
-            return ranked[: query.limit]
+        if len(kept) >= query.limit or not remaining:
+            record_suppressed(len(allowed), len(kept))
+            return kept[: query.limit]
         rows.update(await self._hydrate_missing(query, remaining, rows))
-        # Refilling replaces the dropped slots; it does not widen the page.
-        return rank_hydrated_hits(fused, rows, rank_opts)[: query.limit]
+        # Refilling replaces the dropped slots; it does not widen the page. The
+        # first pass is not counted: its drops are speculative until this one.
+        refilled = rank_hydrated_hits(fused, rows, rank_opts)
+        allowed = pii.allow(refilled)
+        kept = collapse_conflict_pairs(allowed)
+        record_suppressed(len(allowed), len(kept))
+        return kept[: query.limit]
+
+    async def _conflict_groups_snapshot(
+        self,
+        org_id: UUID,
+        hydrated: Mapping[UUID, HydratedHit],
+    ) -> dict[UUID, HydratedHit]:
+        """Re-read pending conflict groups for the whole candidate set at once."""
+        if not hydrated:
+            return dict(hydrated)
+        async with self._session_factory() as session, session.begin():
+            await set_service_org(session, org_id)
+            rows = (
+                await session.execute(
+                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text  # nosec B608
+                        _CONFLICT_GROUPS_SNAPSHOT_SQL
+                    ),
+                    {
+                        "org_id": str(org_id),
+                        "memory_ids": [str(memory_id) for memory_id in hydrated],
+                    },
+                )
+            ).mappings().all()
+        groups = {
+            UUID(str(row["memory_id"])): tuple(
+                UUID(str(value)) for value in row["conflict_groups"]
+            )
+            for row in rows
+        }
+        return {
+            memory_id: HydratedHit(
+                result=replace(hit.result, conflict_groups=groups.get(memory_id, ())),
+                valid_from=hit.valid_from,
+                usefulness_score=hit.usefulness_score,
+                retrieval_count=hit.retrieval_count,
+            )
+            for memory_id, hit in hydrated.items()
+        }
 
     async def _hydrate_missing(
         self,
@@ -329,21 +458,31 @@ class MemoryReadRepository:
             relevance_floor=floor,
             weights=self._settings.rank_weights(),
         )
+        pii = PiiReadGuard()
         vector_ranked = rank_hydrated_hits(
             vector_candidates,
             vector_hydrated,
             rank_opts,
         )
-        if len(vector_ranked) >= query.limit:
-            return filter_pii_blocked_results(vector_ranked[: query.limit])
+        allowed = pii.allow(vector_ranked)
+        vector_kept = collapse_conflict_pairs(allowed)
+        vector_page = vector_kept[: query.limit]
+        if len(vector_page) >= query.limit:
+            record_suppressed(len(allowed), len(vector_kept))
+            return vector_page
 
+        # The full-text supplement is sized from the page the caller will see, not
+        # from the pre-suppression count: a suppressed hit leaves the same missing
+        # slot as a confidence drop, and ignoring it would shorten the page while
+        # an eligible full-text candidate waited.
         fts_candidates = await self._fts_candidates(
             query,
-            vector_ranked=vector_ranked,
+            vector_ranked=vector_page,
             vector_candidates=vector_candidates,
         )
         if not fts_candidates:
-            return filter_pii_blocked_results(vector_ranked)
+            record_suppressed(len(allowed), len(vector_kept))
+            return vector_page
 
         merged = merge_candidates(vector_candidates, fts_candidates)
         fts_hydrated = await self._hydrate_hits(
@@ -352,9 +491,16 @@ class MemoryReadRepository:
             min_confidence=query.min_confidence,
         )
         all_hydrated = {**fts_hydrated, **vector_hydrated}
-        return filter_pii_blocked_results(
-            rank_hydrated_hits(merged, all_hydrated, rank_opts)[: query.limit]
-        )
+        # Only worth a second read when some row already names a pending
+        # escalation: otherwise no conflict could have been visible at either
+        # snapshot, and the page is conflict-free by construction.
+        if any(hit.result.conflict_groups for hit in all_hydrated.values()):
+            all_hydrated = await self._conflict_groups_snapshot(query.org_id, all_hydrated)
+        ranked = rank_hydrated_hits(merged, all_hydrated, rank_opts)
+        allowed = pii.allow(ranked)
+        kept = collapse_conflict_pairs(allowed)
+        record_suppressed(len(allowed), len(kept))
+        return kept[: query.limit]
 
     async def _vector_candidates(self, query: FindSimilarQuery) -> list[RankedCandidate]:
         vector_hits = await self._vector_store.search(
@@ -386,20 +532,23 @@ class MemoryReadRepository:
 
         # Exclude every vector ANN hit (including below-floor gated IDs) so FTS cannot
         # reintroduce them via the 0.5 sentinel or waste slots on duplicates.
-        remaining = query.limit - len(vector_ranked)
         exclude = frozenset(item.memory_id for item in vector_candidates)
+        # Size the supplement by the page, not by the deficit. A supplement hit can
+        # itself be the losing side of a conflict, and truncating to the deficit
+        # would then return a short page while further eligible GIN matches were
+        # already fetched.
         fts_hits = await full_text_search(
             self._session_factory,
             FullTextSearchQuery(
                 org_id=query.org_id,
                 agent_id=query.agent_id,
                 query_text=query.query_text,
-                limit=remaining + len(exclude),
+                limit=query.limit + len(exclude),
                 min_confidence=query.min_confidence,
                 exclude_ids=exclude,
             ),
         )
-        fts_candidates = _fts_candidates(fts_hits, cap=remaining)
+        fts_candidates = _fts_candidates(fts_hits, cap=query.limit)
         if not fts_candidates:
             return []
 
@@ -452,6 +601,7 @@ class MemoryReadRepository:
                     updated_at=row["updated_at"],
                     categories=_categories_from_row(row),
                     lifecycle_revision=int(row.get("lifecycle_revision", 1)),
+                    conflict_groups=conflict_groups_from_row(row),
                 ),
                 valid_from=row["valid_from"],
                 usefulness_score=float(row["usefulness_score"]),

@@ -14,6 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.cache.hot_keys import HOT_CACHE_CAPACITY, hot_memories_key
 from app.org_context import set_service_org
+from app.read.conflicts import (
+    collapse_conflict_pairs,
+    conflict_groups_from_row,
+    record_suppressed,
+)
 from app.read.metrics import HOT_CACHE_READ
 from app.read.models import HotMemoryQuery, MemorySearchResult
 from app.read.pii_guard import filter_pii_blocked_results
@@ -21,19 +26,29 @@ from app.read.pii_guard import filter_pii_blocked_results
 logger = logging.getLogger(__name__)
 
 _HYDRATE_HOT_SQL = """
-SELECT id, org_id, agent_id, content, category, confidence, status,
-       created_at, updated_at, lifecycle_revision
-FROM ibex_core.memories
-WHERE org_id = :org_id
-  AND agent_id = :agent_id
-  AND id = ANY(CAST(:memory_ids AS uuid[]))
-  AND confidence >= :min_confidence
-  AND status = 'active'
-  AND deleted_at IS NULL
-  AND tombstoned = FALSE
-  AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
-  AND valid_from <= CURRENT_TIMESTAMP
-  AND (valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)
+SELECT m.id, m.org_id, m.agent_id, m.content, m.category, m.confidence, m.status,
+       m.created_at, m.updated_at, m.lifecycle_revision,
+       COALESCE(
+         (
+           SELECT array_agg(e.id ORDER BY e.id)
+           FROM ibex_core.memory_conflict_escalations e
+           WHERE e.org_id = m.org_id
+             AND e.status = 'pending'
+             AND (e.new_memory_id = m.id OR e.candidate_memory_id = m.id)
+         ),
+         ARRAY[]::uuid[]
+       ) AS conflict_groups
+FROM ibex_core.memories m
+WHERE m.org_id = :org_id
+  AND m.agent_id = :agent_id
+  AND m.id = ANY(CAST(:memory_ids AS uuid[]))
+  AND m.confidence >= :min_confidence
+  AND m.status = 'active'
+  AND m.deleted_at IS NULL
+  AND m.tombstoned = FALSE
+  AND (m.expires_at IS NULL OR m.expires_at > CURRENT_TIMESTAMP)
+  AND m.valid_from <= CURRENT_TIMESTAMP
+  AND (m.valid_until IS NULL OR m.valid_until > CURRENT_TIMESTAMP)
 """
 
 
@@ -79,8 +94,12 @@ class MemoryHotCacheReader:
             return []
 
         key = hot_memories_key(query.org_id, query.agent_id)
+        # Fetch a bounded reserve: suppression drops entries, and stopping at
+        # ``limit`` would return a short page while an eligible entry sat just
+        # below the cut. The reserve is the same 2x bound the fused path uses.
+        fetch = min(query.limit * 2, HOT_CACHE_CAPACITY)
         try:
-            raw = await self.redis.zrevrange(key, 0, query.limit - 1, withscores=True)
+            raw = await self.redis.zrevrange(key, 0, fetch - 1, withscores=True)
         except (OSError, RedisError) as exc:
             HOT_CACHE_READ.labels(result="error").inc()
             logger.warning(
@@ -117,7 +136,12 @@ class MemoryHotCacheReader:
 
         HOT_CACHE_READ.labels(result="hit").inc()
         ordered = [hydrated[memory_id] for memory_id in ordered_ids if memory_id in hydrated]
-        return filter_pii_blocked_results(ordered)
+        # PII before collapse, as on the search paths: a blocked winner must not
+        # suppress its counterpart and then disappear itself.
+        allowed = filter_pii_blocked_results(ordered)
+        kept = collapse_conflict_pairs(allowed)
+        record_suppressed(len(allowed), len(kept))
+        return kept[: query.limit]
 
     async def _hydrate_hot(self, request: _HydrateHotRequest) -> dict[UUID, MemorySearchResult]:
         if not request.memory_ids:
@@ -154,5 +178,6 @@ class MemoryHotCacheReader:
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
                 lifecycle_revision=int(row.get("lifecycle_revision", 1)),
+                conflict_groups=conflict_groups_from_row(row),
             )
         return out

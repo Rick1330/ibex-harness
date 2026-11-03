@@ -14,6 +14,7 @@ from app.auth.errors import AuthFailedError, AuthUnavailableError
 from app.feedback.service import MemoryFeedbackService
 from app.permissions import MEMORY_READ, MEMORY_WRITE, has_permission
 from app.read.hot_cache import MemoryHotCacheReader
+from app.read.lineage import MemoryLineageRepository
 from app.read.repository import MemoryReadRepository
 from app.write.cache import MemoryCacheWriter
 from app.write.orchestrator import MemoryWriteOrchestrator
@@ -146,6 +147,25 @@ class HotMemoryContext:
 class FeedbackMemoryContext:
     token: ValidateResult
     feedback_service: MemoryFeedbackService
+
+
+@dataclass(frozen=True, slots=True)
+class LineageMemoryContext:
+    token: ValidateResult
+    lineage_repository: MemoryLineageRepository
+
+
+def get_lineage_repository(request: Request) -> MemoryLineageRepository:
+    return _require_memory_component(
+        request, "lineage_repository", message="Lineage read path not configured"
+    )
+
+
+def get_lineage_memory_context(
+    token: Annotated[ValidateResult, Depends(require_memory_read)],
+    lineage_repository: Annotated[MemoryLineageRepository, Depends(get_lineage_repository)],
+) -> LineageMemoryContext:
+    return LineageMemoryContext(token=token, lineage_repository=lineage_repository)
 
 
 def get_feedback_service(request: Request) -> MemoryFeedbackService:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -542,3 +542,74 @@ async def test_hybrid_refill_does_not_widen_the_page_past_limit() -> None:
     assert repo._hydrate_hits.await_count == 2
     assert len(results) == 3
     assert len({item.id for item in results}) == 3
+
+
+def _grouped(memory_id, group):
+    return replace(_result(memory_id, confidence=0.9), conflict_groups=(group,))
+
+
+@pytest.mark.asyncio
+async def test_hybrid_conflict_pair_keeps_the_page_full() -> None:
+    # A and B are the two sides of one pending contradiction; C refills the slot
+    # so the page is not shortened by the suppression.
+    first, second, third = uuid4(), uuid4(), uuid4()
+    group = uuid4()
+    store = MagicMock()
+    store.search = AsyncMock(
+        return_value=[
+            SearchHit(memory_id=first, similarity=0.9),
+            SearchHit(memory_id=second, similarity=0.8),
+            SearchHit(memory_id=third, similarity=0.7),
+        ]
+    )
+    repo = _repo(store, _settings(search_hybrid_enabled=True))
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map(
+            [
+                _grouped(first, group),
+                _grouped(second, group),
+                _result(third, confidence=0.9),
+            ]
+        )
+    )
+
+    with patch(
+        "app.read.repository.full_text_search",
+        AsyncMock(return_value=[]),
+    ):
+        results = await repo.find_similar(_query(query_text="conflict", limit=2))
+
+    ids = {item.id for item in results}
+    assert len(results) == 2
+    assert third in ids
+    assert first in ids
+    assert second not in ids
+
+
+@pytest.mark.asyncio
+async def test_fallback_drops_the_lower_side_of_a_conflict() -> None:
+    winner, loser = uuid4(), uuid4()
+    group = uuid4()
+    store = MagicMock()
+    store.search = AsyncMock(
+        return_value=[
+            SearchHit(memory_id=winner, similarity=0.9),
+            SearchHit(memory_id=loser, similarity=0.4),
+        ]
+    )
+    repo = _repo(store)
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map(
+            [_grouped(winner, group), _grouped(loser, group)]
+        )
+    )
+
+    with patch(
+        "app.read.repository.full_text_search",
+        AsyncMock(return_value=[]),
+    ):
+        results = await repo.find_similar(_query(query_text="conflict", limit=5))
+
+    assert len(results) == 1
+    assert results[0].id == winner
+    assert results[0].conflict_groups == (group,)

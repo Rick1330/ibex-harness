@@ -34,6 +34,24 @@ HOT_CACHE_READ = Counter(
     ["result"],
 )
 
+LINEAGE_QUERIES = Counter(
+    "ibex_memory_lineage_queries_total",
+    "Bounded relationship-lineage traversals, by outcome",
+    ["result"],
+)
+
+LINEAGE_LATENCY = Histogram(
+    "ibex_memory_lineage_seconds",
+    "Relationship-lineage traversal latency (root state + walk)",
+    buckets=(0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5),
+)
+
+CONFLICT_SUPPRESSED = Counter(
+    "ibex_memory_conflict_suppressed_total",
+    "Search and hot-cache hits dropped because they share an unresolved conflict "
+    "with a higher-ranked hit",
+)
+
 PII_RECONFIRM = Counter(
     "ibex_memory_read_pii_reconfirm_total",
     "Tier-1 structured PII read-path re-check on hydrated results",

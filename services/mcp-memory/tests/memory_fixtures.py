@@ -87,6 +87,74 @@ def feedback_response(spec: FeedbackResultSpec | None = None) -> httpx.Response:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class LineageEdgeSpec:
+    """Fixture knobs for one edge in a lineage response."""
+
+    relationship_type: str = "supersedes"
+    depth: int = 1
+    confidence: float = 0.9
+    other_status: str = "superseded"
+
+
+@dataclass(frozen=True, slots=True)
+class LineageResponseSpec:
+    """Fixture knobs for one GET /v1/memories/{id}/lineage response body."""
+
+    memory_id: str | None = None
+    status: str = "superseded"
+    tip: str | None = None
+    edges: tuple[LineageEdgeSpec, ...] = (LineageEdgeSpec(),)
+    truncated: bool = False
+    max_depth: int = 3
+    unresolved: bool = False
+
+
+def _lineage_edge(memory_id: str, edge: LineageEdgeSpec) -> dict[str, object]:
+    """One edge whose endpoints agree the way production output does.
+
+    ``from_memory_id`` is the root, ``source_memory_id`` is that same node, and
+    ``other`` is the target, so a swapped mapping fails the tests.
+    """
+    other_id = str(uuid4())
+    return {
+        "source_memory_id": memory_id,
+        "target_memory_id": other_id,
+        "relationship_type": edge.relationship_type,
+        "confidence": edge.confidence,
+        "depth": edge.depth,
+        "from_memory_id": memory_id,
+        "other": {
+            "memory_id": other_id,
+            "status": edge.other_status,
+            "tombstoned": False,
+        },
+    }
+
+
+def lineage_response(spec: LineageResponseSpec | None = None) -> httpx.Response:
+    resolved = spec or LineageResponseSpec()
+    mid = resolved.memory_id or str(uuid4())
+    return httpx.Response(
+        200,
+        json={
+            "data": {
+                "memory_id": mid,
+                "status": resolved.status,
+                "tombstoned": False,
+                "supersession_tip": (
+                    None if resolved.unresolved else (resolved.tip or mid)
+                ),
+                "max_depth": resolved.max_depth,
+                "truncated": resolved.truncated,
+                "edges": [
+                    _lineage_edge(mid, edge) for edge in resolved.edges
+                ],
+            }
+        },
+    )
+
+
 def _feedback_memory_id(path: str) -> str | None:
     """Return memory_id for `/v1/memories/{id}/feedback`, else None."""
     prefix = "/v1/memories/"

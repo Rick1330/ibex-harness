@@ -135,6 +135,7 @@ def search_response_from_results(results: list[MemorySearchResult]) -> SearchMem
                 created_at=item.created_at,
                 updated_at=item.updated_at,
                 lifecycle_revision=item.lifecycle_revision,
+                conflict_groups=list(item.conflict_groups),
             ),
             similarity=item.similarity,
             rank=index,

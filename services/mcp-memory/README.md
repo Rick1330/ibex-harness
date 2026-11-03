@@ -6,7 +6,8 @@ Python MCP resource server for tenant-scoped memory tools. The current surface u
 
 - **Transport:** Streamable HTTP at `/mcp`; stdio is local-only and must be disabled in production.
 - **Auth:** Bearer token → `AuthService.ValidateToken`; rejects fail closed and are audited.
-- **Tools:** `search_memory`, `write_memory`, and `record_feedback` through `IBEX_MEMORY_HTTP_URL` with `metadata.mcp_source=mcp_explicit`.
+- **Tools:** `search_memory`, `write_memory`, `record_feedback`, and `get_memory_lineage` through `IBEX_MEMORY_HTTP_URL` with `metadata.mcp_source=mcp_explicit` for writes. `get_memory_lineage` reads the bounded relationship chain (`max_depth` 1–5, default 3) and passes `ValidateAgent` for agent-scoped principals.
+- **Failure codes:** `unauthorized`, `auth_unavailable`, `permission_denied`, `invalid_params`, `rate_limited`, `rate_limit_unavailable`, `backend_unavailable`, `not_found`, `backend_error`. A memory-service `404` (entity outside the caller's org or agent) maps to `not_found` for every memory tool; it is never an empty success.
 - **Rate limit:** org-wide Redis calendar-minute budget; over-limit returns `isError` / `rate_limited`. Development may use the explicit no-Redis exception; staging and production require Redis and return `rate_limit_unavailable` rather than admitting calls when Redis fails.
 - **Probes:** `/health`, `/ready`, `/metrics`, and `/.well-known/oauth-protected-resource`.
 

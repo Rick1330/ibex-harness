@@ -36,7 +36,12 @@ class MemoryHttpConfig:
 
 @dataclass(frozen=True, slots=True)
 class MemoryHitPayload:
-    """Normalized search/hot hit for RetrievalResult.MemoryHit mapping."""
+    """Normalized search/hot hit for RetrievalResult.MemoryHit mapping.
+
+    ``conflict_groups`` carries the memory service's unresolved-conflict
+    escalation ids. Optional on the wire: a memory service that predates the
+    field simply sends nothing and every hit is treated as conflict-free.
+    """
 
     memory_id: str
     org_id: str
@@ -47,6 +52,7 @@ class MemoryHitPayload:
     similarity: float
     rank: int
     source: str
+    conflict_groups: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +216,18 @@ def _hit_from_item(item: object) -> MemoryHitPayload:
         similarity=_require_finite_float(item.get("similarity"), "similarity"),
         rank=_require_positive_int(item.get("rank"), "rank"),
         source=_require_str(item.get("source"), "source"),
+        conflict_groups=_conflict_groups(memory.get("conflict_groups")),
+    )
+
+
+def _conflict_groups(value: object) -> tuple[str, ...]:
+    """Parse the optional pending-conflict escalation ids; absent means none."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise MemoryHttpError("memory.conflict_groups must be a list")
+    return tuple(
+        _require_uuid_str(item, "memory.conflict_groups[]") for item in value
     )
 
 

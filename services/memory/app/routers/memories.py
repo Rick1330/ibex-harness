@@ -16,10 +16,12 @@ from app.deps import (
     CreateMemoryContext,
     FeedbackMemoryContext,
     HotMemoryContext,
+    LineageMemoryContext,
     SearchMemoryContext,
     get_create_memory_context,
     get_feedback_memory_context,
     get_hot_memory_context,
+    get_lineage_memory_context,
     get_memory_cache_writer,
     get_search_memory_context,
     get_session_factory,
@@ -36,7 +38,9 @@ from app.exceptions import (
 from app.feedback.models import ApplyFeedbackCommand, FeedbackKind
 from app.feedback.persist import require_agent_id
 from app.lifecycle import ForgetMemory, forget_memory_session
+from app.read.lineage import DEFAULT_LINEAGE_DEPTH, MAX_LINEAGE_DEPTH, LineageQuery
 from app.read.models import HotMemoryQuery
+from app.routers.memory_lineage_support import lineage_response_from_result
 from app.routers.memory_search_support import (
     SearchMemoriesExecution,
     embed_query_text,
@@ -64,6 +68,7 @@ from app.schemas.feedback import (
     RecordFeedbackRequest,
     RecordFeedbackResponse,
 )
+from app.schemas.lineage import LineageErrorEnvelope, MemoryLineageResponse
 from app.schemas.memories import (
     CreateMemoryRequest,
     ForgetMemoryData,
@@ -279,6 +284,55 @@ async def list_hot_memories(
         log_search_database_failure(exc, org_id=ctx.token.org_id)
         raise http_error_for_search(exc) from exc
     return search_response_from_results(results)
+
+
+@router.get(
+    "/{memory_id}/lineage",
+    summary="Read the bounded relationship lineage of a memory",
+    responses={
+        404: {
+            "model": LineageErrorEnvelope,
+            "description": "Memory not visible to this organization and agent",
+        },
+        503: {
+            "model": LineageErrorEnvelope,
+            "description": "Database unavailable while walking the relationship graph",
+        },
+    },
+)
+async def read_memory_lineage(
+    memory_id: UUID,
+    ctx: Annotated[LineageMemoryContext, Depends(get_lineage_memory_context)],
+    max_depth: Annotated[int, Query(ge=1, le=MAX_LINEAGE_DEPTH)] = DEFAULT_LINEAGE_DEPTH,
+) -> MemoryLineageResponse:
+    """Walk typed relationship edges from one memory, in both directions.
+
+    The depth cap and the cycle break are part of the traversal query, so no
+    request can ask for an unbounded walk. An agent-scoped token only sees
+    memories belonging to its own agent, and a memory outside the token
+    organization is a plain 404 -- making "wrong tenant" distinguishable from
+    "does not exist" would be an existence leak, not a UX improvement.
+    """
+    try:
+        result = await ctx.lineage_repository.get_lineage(
+            LineageQuery(
+                org_id=ctx.token.org_id,
+                memory_id=memory_id,
+                agent_id=ctx.token.agent_id,
+                max_depth=max_depth,
+            )
+        )
+    except ValueError as exc:
+        raise http_error_for_search(exc) from exc
+    except SQLAlchemyError as exc:
+        log_search_database_failure(exc, org_id=ctx.token.org_id)
+        raise http_error_for_search(exc) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "Memory not found"},
+        )
+    return lineage_response_from_result(result)
 
 
 @router.post(

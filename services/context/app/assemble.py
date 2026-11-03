@@ -29,9 +29,8 @@ from app.config import ContextSettings
 from app.estimate import estimate_tokens
 from app.formatter import ContextFormatter, FormatRequest, FormattedContext
 from app.packer import BUCKET_SIZE, ContextPacker, PackedMemories, ScoredMemory
-from app.pipeline import _dedupe_hits
+from app.pipeline import score_retrieval_hits
 from app.retrieval import ParallelRetriever, RetrievalRequest, RetrievalResult
-from app.scoring import score_hits
 
 logger = logging.getLogger(__name__)
 
@@ -306,8 +305,9 @@ def _score_candidates(
     if level == "L2":
         scored: list[ScoredMemory] = []
     else:
-        merged = _dedupe_hits(retrieval.hot_memories + retrieval.cold_memories)
-        scored = score_hits(merged)
+        scored = score_retrieval_hits(
+            retrieval.hot_memories + retrieval.cold_memories
+        )
         if options.max_memories > 0:
             scored = scored[: options.max_memories]
     return scored, _elapsed_ms(t_rank)

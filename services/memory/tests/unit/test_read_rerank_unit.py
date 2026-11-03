@@ -246,3 +246,30 @@ async def test_hybrid_rerank_does_not_let_a_blocked_row_mask_an_emptied_page() -
     # Fused fallback ran, and the caller still sees a non-empty allowed page.
     assert results
     assert blocked not in {item.id for item in results}
+
+
+@pytest.mark.asyncio
+async def test_rerank_path_suppresses_a_pending_conflict() -> None:
+    # The reranked window is the widest the settings allow, so suppression can
+    # shorten the page here -- but it must never return both sides.
+    winner, loser, third = uuid4(), uuid4(), uuid4()
+    group = uuid4()
+    repo, _ = _reranking_repo([winner, loser, third], scores=[0.9, 0.2, 0.5])
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map(
+            [
+                replace(_result(winner), conflict_groups=(group,)),
+                replace(_result(loser), conflict_groups=(group,)),
+                _result(third),
+            ]
+        )
+    )
+
+    with patch("app.read.repository.full_text_search", AsyncMock(return_value=[])):
+        results = await repo.find_similar(_query(limit=3))
+
+    ids = {item.id for item in results}
+    assert len(results) == 2
+    assert third in ids
+    assert winner in ids
+    assert loser not in ids

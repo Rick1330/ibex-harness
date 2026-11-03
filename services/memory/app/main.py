@@ -27,6 +27,7 @@ from app.http_validation import request_validation_error_handler
 from app.pii.service import PiiService
 from app.probes import probe_router
 from app.read.hot_cache import MemoryHotCacheReader
+from app.read.lineage import MemoryLineageRepository
 from app.read.repository import MemoryReadRepository
 from app.routers.memories import router as memories_router
 from app.vectorstore.pgvector_store import PgVectorStore
@@ -53,6 +54,7 @@ class MemoryAppState:
     write_orchestrator: MemoryWriteOrchestrator | None = field(default=None, repr=False)
     read_repository: MemoryReadRepository | None = field(default=None, repr=False)
     hot_cache_reader: MemoryHotCacheReader | None = field(default=None, repr=False)
+    lineage_repository: MemoryLineageRepository | None = field(default=None, repr=False)
     embedding_client: EmbeddingClient | None = field(default=None, repr=False)
     rerank_client: RerankClient | None = field(default=None, repr=False)
     pii: PiiService | None = field(default=None, repr=False)
@@ -202,6 +204,9 @@ def _configure_write_and_read_paths(bootstrap: _WriteReadBootstrap) -> None:
     )
     bootstrap.state.hot_cache_reader = MemoryHotCacheReader(
         bootstrap.redis.client,
+        bootstrap.session_factory,
+    )
+    bootstrap.state.lineage_repository = MemoryLineageRepository(
         bootstrap.session_factory,
     )
     bootstrap.state.feedback_service = MemoryFeedbackService(

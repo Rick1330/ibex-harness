@@ -16,8 +16,11 @@ from app.clients.memory import (
 )
 from tests.memory_fixtures import (
     CreatedMemory,
+    LineageEdgeSpec,
+    LineageResponseSpec,
     create_memory_response,
     empty_search_response,
+    lineage_response,
     memory_client_for,
 )
 
@@ -197,3 +200,85 @@ async def test_record_feedback_rejects_invalid_feedback_enum() -> None:
             memory_id=UUID(mid),
             body={"feedback": "positive"},
         )
+
+
+@pytest.mark.asyncio
+async def test_get_lineage_sends_depth_and_parses_edges() -> None:
+    mid = str(uuid4())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == f"/v1/memories/{mid}/lineage"
+        assert request.url.params["max_depth"] == "2"
+        assert request.headers["Authorization"] == "Bearer tok"
+        return lineage_response(
+            LineageResponseSpec(
+                memory_id=mid,
+                edges=(
+                    LineageEdgeSpec(relationship_type="supersedes", depth=1),
+                    LineageEdgeSpec(relationship_type="contradicts", depth=2),
+                ),
+                max_depth=2,
+            )
+        )
+
+    result = await memory_client_for(handler).get_lineage(
+        token="tok", memory_id=UUID(mid), max_depth=2
+    )
+
+    assert result.memory_id == mid
+    assert result.status == "superseded"
+    assert result.max_depth == 2
+    assert result.truncated is False
+    assert [edge.relationship_type for edge in result.edges] == [
+        "supersedes",
+        "contradicts",
+    ]
+    assert result.edges[0].other_status == "superseded"
+
+
+@pytest.mark.asyncio
+async def test_get_lineage_surfaces_404_as_an_error_status() -> None:
+    mid = str(uuid4())
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="nope")
+
+    with pytest.raises(MemoryHttpError) as excinfo:
+        await memory_client_for(handler).get_lineage(
+            token="tok", memory_id=UUID(mid), max_depth=3
+        )
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_lineage_rejects_a_malformed_edge() -> None:
+    mid = str(uuid4())
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return lineage_response(
+            LineageResponseSpec(
+                memory_id=mid, edges=(LineageEdgeSpec(confidence=1.5),)
+            )
+        )
+
+    with pytest.raises(MemoryHttpError, match="lineage response invalid"):
+        await memory_client_for(handler).get_lineage(
+            token="tok", memory_id=UUID(mid), max_depth=3
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_lineage_accepts_an_unresolved_tip() -> None:
+    mid = str(uuid4())
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return lineage_response(
+            LineageResponseSpec(memory_id=mid, unresolved=True, edges=())
+        )
+
+    result = await memory_client_for(handler).get_lineage(
+        token="tok", memory_id=UUID(mid), max_depth=3
+    )
+
+    assert result.supersession_tip is None
