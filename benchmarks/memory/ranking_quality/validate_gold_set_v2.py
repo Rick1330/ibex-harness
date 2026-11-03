@@ -392,6 +392,7 @@ def _validate_dense(corpus: Corpus, query: Mapping[str, Any]) -> list[str]:
 
 def _validate_dense_answer(corpus: Corpus, query: Mapping[str, Any], row: Mapping[str, Any]) -> list[str]:
     errors: list[str] = []
+    errors.extend(_validate_aspect(query, row))
     similarity = profile_cosine(query["embedding_profile"], row["embedding_profile"])
     if similarity < DENSE_MIN_COSINE:
         errors.append(
@@ -400,6 +401,21 @@ def _validate_dense_answer(corpus: Corpus, query: Mapping[str, Any], row: Mappin
         )
     errors.extend(_validate_window(corpus, query, row))
     return errors
+
+
+def _validate_aspect(query: Mapping[str, Any], row: Mapping[str, Any]) -> list[str]:
+    """A labelled answer must record the aspect the question asks about."""
+    asked = query.get("aspect")
+    if asked is None:
+        return []
+    if row.get("aspect") == asked:
+        return []
+    return [
+        (
+            f"queries[{query['query_id']}] asks about {asked!r} but {row['content_key']!r} "
+            f"records {row.get('aspect')!r}: the labelling rewards the wrong row"
+        )
+    ]
 
 
 def _validate_window(corpus: Corpus, query: Mapping[str, Any], row: Mapping[str, Any]) -> list[str]:

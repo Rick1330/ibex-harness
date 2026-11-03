@@ -416,6 +416,14 @@ class TestDenseSeparations:
 
         assert _has(errors, "can fall outside the top")
 
+    def test_dense_query_aspect_must_match_its_answer(self, corpus: dict[str, Any]) -> None:
+        query = _query(corpus, "dense")
+        answer = _memory_row(corpus, query["expected_content_keys"][0])
+        query["aspect"] = "value"
+        answer["aspect"] = "an-aspect-nobody-asked-about"
+
+        assert _has(validate_gold_set_v2(corpus), "rewards the wrong row")
+
     def test_unknown_expected_key(self, corpus: dict[str, Any]) -> None:
         corpus["queries"][0]["expected_content_keys"] = ["gold.nope"]
 
