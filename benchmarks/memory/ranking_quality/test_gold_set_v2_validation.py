@@ -30,9 +30,9 @@ from validate_gold_set_v2 import (
     validate_gold_set_v2,
 )
 
-TOPICS = {f"topic-{index}": index * 5 for index in range(20)}
+TOPICS = {f"topic-{index}": index * 5 for index in range(40)}
 # A topic no corpus memory uses, so a margin test can isolate one cosine from the crowd.
-TOPICS["topic-margin"] = 100
+TOPICS["topic-margin"] = 400
 CATEGORIES = ["factual", "procedural", "preference", "behavioral", "episodic"]
 
 
@@ -104,7 +104,7 @@ def _add_lexical(memories: list[dict[str, Any]], queries: list[dict[str, Any]]) 
         memories.append(
             _memory(
                 f"gold.lexical.{index}",
-                profile={f"topic-{15 + index % 5}": 1.0},
+                profile={f"topic-{10 + index % 10}": 1.0},
                 age=40 + index,
                 category=CATEGORIES[index % 5],
                 content=f"The change ticket {token} pins the retention window for {topic}.",
@@ -124,7 +124,7 @@ def _add_lexical(memories: list[dict[str, Any]], queries: list[dict[str, Any]]) 
 def _add_graph(memories: list[dict[str, Any]], queries: list[dict[str, Any]]) -> None:
     """An active twin in a pending conflict, close enough that both would be retrieved."""
     for index in range(40):
-        topic = f"topic-{10 + index % 5}"
+        topic = f"topic-{20 + index % 15}"
         twin_key = f"gold.twin.{index}"
         new_key = f"gold.current.{index}"
         memories.append(_memory(twin_key, profile=_profile_at(topic, "topic-0", GRAPH_PAIR_MIN_COSINE), age=90 + index))
@@ -153,7 +153,7 @@ def _add_filler(memories: list[dict[str, Any]]) -> None:
         memories.append(
             _memory(
                 f"gold.filler.{index}",
-                profile={"topic-0": 0.5, "topic-1": math.sqrt(0.75)},
+                profile={"topic-35": 0.5, "topic-36": math.sqrt(0.75)},
                 age=20 + index % 100,
                 category=CATEGORIES[index % 5],
             )
@@ -414,7 +414,7 @@ class TestDenseSeparations:
 
         errors = validate_gold_set_v2(corpus)
 
-        assert _has(errors, "never enters the top")
+        assert _has(errors, "can fall outside the top")
 
     def test_unknown_expected_key(self, corpus: dict[str, Any]) -> None:
         corpus["queries"][0]["expected_content_keys"] = ["gold.nope"]
@@ -448,14 +448,14 @@ class TestLexicalSeparations:
         answer = _memory_row(corpus, query["expected_content_keys"][0])
         answer["content"] = "The retention window moved without naming any ticket."
 
-        assert _has(validate_gold_set_v2(corpus), "contains none of the query tokens")
+        assert _has(validate_gold_set_v2(corpus), "is missing")
 
     def test_query_text_must_contain_the_token(self, corpus: dict[str, Any]) -> None:
         # The sparse channel tokenises the query text, so a token only in the corpus is
         # invisible to BM25 and the answer would be unreachable by either channel.
         _query(corpus, "lexical")["query_text"] = "retention window please"
 
-        assert _has(validate_gold_set_v2(corpus), "query_text contains none")
+        assert _has(validate_gold_set_v2(corpus), "query_text is missing")
 
     def test_lexical_subset_requires_tokens(self, corpus: dict[str, Any]) -> None:
         del _query(corpus, "lexical")["lexical_tokens"]
@@ -470,16 +470,20 @@ class TestGraphSeparations:
         assert _has(validate_gold_set_v2(corpus), "no pending conflict twin")
 
     def test_pair_at_the_margin_passes(self, corpus: dict[str, Any]) -> None:
-        answer = _memory_row(corpus, "gold.current.0")
+        query = _query(corpus, "graph")
+        topic = next(iter(query["embedding_profile"]))
+        answer = _memory_row(corpus, query["expected_content_keys"][0])
         twin = _memory_row(corpus, answer["conflicts_with"][0])
-        twin["embedding_profile"] = _profile_at("topic-10", "topic-0", GRAPH_PAIR_MIN_COSINE)
+        twin["embedding_profile"] = _profile_at(topic, "topic-0", GRAPH_PAIR_MIN_COSINE)
 
         assert validate_gold_set_v2(corpus) == []
 
     def test_pair_just_below_the_margin_fails(self, corpus: dict[str, Any]) -> None:
-        answer = _memory_row(corpus, "gold.current.0")
+        query = _query(corpus, "graph")
+        topic = next(iter(query["embedding_profile"]))
+        answer = _memory_row(corpus, query["expected_content_keys"][0])
         twin = _memory_row(corpus, answer["conflicts_with"][0])
-        twin["embedding_profile"] = _profile_at("topic-10", "topic-0", GRAPH_PAIR_MIN_COSINE - 0.01)
+        twin["embedding_profile"] = _profile_at(topic, "topic-0", GRAPH_PAIR_MIN_COSINE - 0.01)
 
         assert _has(validate_gold_set_v2(corpus), "suppression is never exercised")
 
@@ -502,6 +506,73 @@ class TestGraphSeparations:
         query["expected_content_keys"].append(answer["conflicts_with"][0])
 
         assert _has(validate_gold_set_v2(corpus), "expects the conflicting memory")
+
+
+class TestReviewHardening:
+    """Cases raised in review: each one used to pass or crash instead of reporting."""
+
+    def test_non_finite_floor_is_rejected(self, corpus: dict[str, Any]) -> None:
+        corpus["min_similarity"] = "NaN"
+
+        assert _has(validate_gold_set_v2(corpus), "must be finite")
+
+    def test_malformed_category_is_reported_not_raised(self, corpus: dict[str, Any]) -> None:
+        corpus["memories"][0]["category"] = ["factual"]
+
+        assert _has(validate_gold_set_v2(corpus), "invalid category")
+
+    def test_malformed_subset_is_reported_not_raised(self, corpus: dict[str, Any]) -> None:
+        corpus["queries"][0]["subset"] = ["dense"]
+
+        assert _has(validate_gold_set_v2(corpus), "subset must be one of")
+
+    def test_ties_can_push_the_answer_out_of_the_window(self, corpus: dict[str, Any]) -> None:
+        # Strictly-closer counting misses this: ten memories tied at the answer's cosine can
+        # take the window, because the vector channel sorts by distance only.
+        query = _query(corpus, "dense")
+        answer = _memory_row(corpus, query["expected_content_keys"][0])
+        answer["embedding_profile"] = _profile_at("topic-margin", "topic-0", 0.9)
+        query["embedding_profile"] = {"topic-margin": 1.0}
+        for index in range(ANN_LIMIT):
+            corpus["memories"].append(
+                _memory(
+                    f"gold.tie.{index}",
+                    profile=_profile_at("topic-margin", "topic-1", 0.9),
+                    age=50,
+                )
+            )
+
+        assert _has(validate_gold_set_v2(corpus), "ties or loses to")
+
+    def test_every_dense_answer_is_checked(self, corpus: dict[str, Any]) -> None:
+        # Recall counts every expected key, so a second, unreachable answer makes the query
+        # unsatisfiable even though the first one is perfect.
+        query = _query(corpus, "dense")
+        corpus["memories"].append(_memory("gold.orthogonal", profile={"topic-35": 1.0}, age=30))
+        query["expected_content_keys"].append("gold.orthogonal")
+
+        assert _has(validate_gold_set_v2(corpus), "vector search would not admit it")
+
+    def test_lexical_token_must_reach_the_answer(self, corpus: dict[str, Any]) -> None:
+        # The sparse channel ANDs the query terms, so a token present in the query but absent
+        # from the answer makes the answer unreachable by both channels.
+        query = _query(corpus, "lexical")
+        query["lexical_tokens"] = [*query["lexical_tokens"], "quasar"]
+        query["query_text"] = f"{query['query_text']} quasar"
+
+        assert _has(validate_gold_set_v2(corpus), "is missing")
+
+    def test_graph_answer_must_fit_the_window(self, corpus: dict[str, Any]) -> None:
+        query = _query(corpus, "graph")
+        topic = next(iter(query["embedding_profile"]))
+        answer = _memory_row(corpus, query["expected_content_keys"][0])
+        answer["embedding_profile"] = _profile_at(topic, "topic-0", 0.81)
+        for index in range(ANN_LIMIT):
+            corpus["memories"].append(
+                _memory(f"gold.graphblock.{index}", profile={topic: 1.0}, age=40)
+            )
+
+        assert _has(validate_gold_set_v2(corpus), "can fall outside the top")
 
 
 class TestQueryRules:

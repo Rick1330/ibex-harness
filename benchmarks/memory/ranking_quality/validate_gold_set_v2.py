@@ -22,6 +22,7 @@ Every rule reports a line a human can act on, and one run lists every failure.
 from __future__ import annotations
 
 import json
+import math
 import sys
 from collections import Counter
 from collections.abc import Mapping
@@ -134,6 +135,8 @@ def _validate_similarity_floor(value: object) -> list[str]:
         floor = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return [f"min_similarity must be numeric, got {value!r}"]
+    if not math.isfinite(floor):
+        return [f"min_similarity must be finite, got {value!r}"]
     if abs(floor - BENCH_MIN_SIMILARITY) > 1e-9:
         return [
             (
@@ -205,7 +208,7 @@ def _validate_content(value: object, prefix: str) -> list[str]:
 
 
 def _validate_category(value: object, prefix: str) -> list[str]:
-    if value in CATEGORIES:
+    if isinstance(value, str) and value in CATEGORIES:
         return []
     return [f"{prefix} invalid category {value!r}"]
 
@@ -323,7 +326,7 @@ def _validate_text(value: object, field: str, prefix: str) -> list[str]:
 
 
 def _validate_subset(value: object, prefix: str) -> list[str]:
-    if value in SUBSETS:
+    if isinstance(value, str) and value in SUBSETS:
         return []
     return [f"{prefix} subset must be one of {sorted(SUBSETS)}, got {value!r}"]
 
@@ -376,27 +379,47 @@ def _expected_rows(corpus: Corpus, query: Mapping[str, Any]) -> list[dict[str, A
 
 def _validate_dense(corpus: Corpus, query: Mapping[str, Any]) -> list[str]:
     errors = _validate_expected_exist(corpus, query)
-    top = query["expected_content_keys"][0]
-    if top not in corpus.memories:
-        return errors
-    profile = query["embedding_profile"]
-    similarity = profile_cosine(profile, corpus.memories[top]["embedding_profile"])
+    for key in query["expected_content_keys"]:
+        row = corpus.memories.get(key)
+        if row is None:
+            continue
+        errors.extend(_validate_dense_answer(corpus, query, row))
+    return errors
+
+
+def _validate_dense_answer(corpus: Corpus, query: Mapping[str, Any], row: Mapping[str, Any]) -> list[str]:
+    errors: list[str] = []
+    similarity = profile_cosine(query["embedding_profile"], row["embedding_profile"])
     if similarity < DENSE_MIN_COSINE:
         errors.append(
-            f"queries[{query['query_id']}] dense answer {top!r} has cosine {similarity:.3f} "
-            f"< {DENSE_MIN_COSINE}: vector search would not admit it"
+            f"queries[{query['query_id']}] dense answer {row['content_key']!r} has cosine "
+            f"{similarity:.3f} < {DENSE_MIN_COSINE}: vector search would not admit it"
         )
+    errors.extend(_validate_window(corpus, query, row))
+    return errors
+
+
+def _validate_window(corpus: Corpus, query: Mapping[str, Any], row: Mapping[str, Any]) -> list[str]:
+    """Count memories that tie or beat ``row``: the vector channel sorts by distance only.
+
+    Strictly-greater is not enough. With ``ann_limit`` distractors tied at the answer's
+    cosine, the answer can be the one left out of the window.
+    """
+    similarity = profile_cosine(query["embedding_profile"], row["embedding_profile"])
     ahead = sum(
         1
-        for row in corpus.memories.values()
-        if profile_cosine(profile, row["embedding_profile"]) > similarity
+        for other in corpus.memories.values()
+        if other["content_key"] != row["content_key"]
+        and profile_cosine(query["embedding_profile"], other["embedding_profile"]) >= similarity
     )
-    if ahead >= corpus.ann_limit:
-        errors.append(
-            f"queries[{query['query_id']}] dense answer {top!r} ranks behind {ahead} memories "
-            f"and never enters the top {corpus.ann_limit} the vector channel fetches"
+    if ahead < corpus.ann_limit:
+        return []
+    return [
+        (
+            f"queries[{query['query_id']}] {row['content_key']!r} ties or loses to {ahead} "
+            f"memories and can fall outside the top {corpus.ann_limit} the vector channel fetches"
         )
-    return errors
+    ]
 
 
 def _validate_lexical(corpus: Corpus, query: Mapping[str, Any]) -> list[str]:
@@ -405,10 +428,11 @@ def _validate_lexical(corpus: Corpus, query: Mapping[str, Any]) -> list[str]:
     if not tokens:
         errors.append(f"queries[{query['query_id']}] lexical subset needs lexical_tokens")
         return errors
-    if not any(token in str(query["query_text"]).lower() for token in tokens):
+    missing_from_query = [token for token in tokens if token not in str(query["query_text"]).lower()]
+    if missing_from_query:
         errors.append(
-            f"queries[{query['query_id']}] query_text contains none of {tokens}: the sparse "
-            "channel tokenises the query text, so it could not find the answer either"
+            f"queries[{query['query_id']}] query_text is missing {missing_from_query}: the "
+            "sparse channel ANDs the tokenised query terms, so it could not find the answer"
         )
     for row in _expected_rows(corpus, query):
         errors.extend(_validate_lexical_answer(corpus, query, row, tokens))
@@ -429,10 +453,12 @@ def _validate_lexical_answer(
             f"{similarity:.3f} >= floor {corpus.min_similarity}: dense retrieval would already "
             "admit it, so the subset proves nothing"
         )
-    if not any(token in str(row["content"]).lower() for token in tokens):
+    missing_from_answer = [token for token in tokens if token not in str(row["content"]).lower()]
+    if missing_from_answer:
         errors.append(
-            f"queries[{query['query_id']}] lexical answer {row['content_key']!r} contains none "
-            f"of the query tokens {tokens}"
+            f"queries[{query['query_id']}] lexical answer {row['content_key']!r} is missing "
+            f"{missing_from_answer}; the sparse channel ANDs the query terms, so an answer "
+            "missing one of them is unreachable"
         )
     return errors
 
@@ -467,6 +493,9 @@ def _validate_conflict_pair(
     twin = corpus.memories.get(twin_key)
     if twin is None:
         return [*errors, f"{row['content_key']!r} conflicts_with unknown key {twin_key!r}"]
+    errors.extend(_validate_window(corpus, query, row))
+    errors.extend(_validate_window(corpus, query, twin))
+    errors.extend(_validate_floor(corpus, query, row))
     twin_similarity = profile_cosine(row["embedding_profile"], twin["embedding_profile"])
     if twin_similarity < GRAPH_PAIR_MIN_COSINE:
         errors.append(
@@ -482,6 +511,19 @@ def _validate_conflict_pair(
             "not competing and suppression is never exercised"
         )
     return errors
+
+
+def _validate_floor(corpus: Corpus, query: Mapping[str, Any], row: Mapping[str, Any]) -> list[str]:
+    similarity = profile_cosine(query["embedding_profile"], row["embedding_profile"])
+    if similarity >= corpus.min_similarity:
+        return []
+    return [
+        (
+            f"queries[{query['query_id']}] would never retrieve {row['content_key']!r} "
+            f"(cosine {similarity:.3f} < floor {corpus.min_similarity}), so the pair is not "
+            "competing and suppression is never exercised"
+        )
+    ]
 
 
 def _validate_expected_exist(corpus: Corpus, query: Mapping[str, Any]) -> list[str]:
@@ -531,4 +573,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv))
