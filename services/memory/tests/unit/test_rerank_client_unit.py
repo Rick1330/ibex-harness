@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -366,4 +368,122 @@ async def test_retry_honors_retry_after_when_the_operator_enables_retries() -> N
 
     assert route.calls.call_count == 2
     assert sleep.await_args.args[0] == pytest.approx(0.5)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_rerank_splits_the_window_at_the_client_batch_size() -> None:
+    """TEI rejects a request above ``--max-client-batch-size`` (default 32) with 413.
+
+    The candidate window is 50, so a single POST can never succeed against a stock
+    server; the client must split and reassemble the scores in input order.
+    """
+    seen_sizes: list[int] = []
+
+    def handler(request: httpx.Request) -> Response:
+        body = json.loads(request.content)
+        texts = body["texts"]
+        seen_sizes.append(len(texts))
+        if len(texts) > 32:
+            return Response(413, json={"error": "batch size exceeded"})
+        return Response(
+            200,
+            json=[{"index": index, "score": index / 100} for index in range(len(texts))],
+        )
+
+    respx.post(_URL).mock(side_effect=handler)
+    client = RerankClient(
+        _BASE,
+        "test-token",
+        config=RerankClientConfig(connect_timeout=0.05, read_timeout=0.15, client_batch_size=32),
+    )
+
+    scores = await client.rerank("query", [f"doc-{index}" for index in range(50)])
+
+    assert seen_sizes == [32, 18]
+    assert len(scores) == 50
+    assert scores[0] == pytest.approx(0.0)
+    assert scores[31] == pytest.approx(0.31)
+    # The second batch restarts its indexes at 0, so these must be offset back.
+    assert scores[32] == pytest.approx(0.0)
+    assert scores[49] == pytest.approx(0.17)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_rerank_never_returns_partial_scores_when_one_batch_fails() -> None:
+    """A half-scored window would rank rows against scores that never arrived."""
+    responses = [
+        Response(200, json=[{"index": index, "score": 0.5} for index in range(32)]),
+        Response(503, json={"error": "unavailable"}),
+    ]
+    respx.post(_URL).mock(side_effect=responses)
+    client = RerankClient(
+        _BASE,
+        "test-token",
+        config=RerankClientConfig(connect_timeout=0.05, read_timeout=0.15, client_batch_size=32),
+    )
+
+    with pytest.raises(RerankUnavailableError):
+        await client.rerank("query", [f"doc-{index}" for index in range(50)])
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_rerank_sends_one_request_when_the_window_fits_the_batch() -> None:
+    route = respx.post(_URL).mock(
+        return_value=Response(
+            200, json=[{"index": index, "score": 0.5} for index in range(3)]
+        )
+    )
+    client = _client()
+
+    await client.rerank("query", ["a", "b", "c"])
+
+    assert len(route.calls) == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_a_failed_batch_cancels_the_requests_still_in_flight() -> None:
+    """The window is all-or-nothing, so a doomed stage must stop paying for it.
+
+    Without cancellation the stage waits for the slowest sibling before it can
+    degrade, which spends the whole latency budget on scores that are discarded.
+    """
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> Response:
+        if len(json.loads(request.content)["texts"]) == 32:
+            # Let the sibling start first so the cancellation is observable.
+            await asyncio.sleep(0.02)
+            return Response(413, json={"error": "batch size exceeded"})
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    respx.post(_URL).mock(side_effect=handler)
+    client = RerankClient(
+        _BASE,
+        "test-token",
+        config=RerankClientConfig(connect_timeout=0.05, read_timeout=5.0),
+    )
+
+    with pytest.raises(RerankRejectedError):
+        await asyncio.wait_for(
+            client.rerank("query", [f"doc-{index}" for index in range(50)]),
+            timeout=2.0,
+        )
+
+    assert started.is_set()
+    assert cancelled.is_set()
     await client.aclose()

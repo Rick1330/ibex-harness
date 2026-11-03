@@ -269,6 +269,12 @@ def _build_embed(
     return build_embedding_callable(client)
 
 
+# TEI's default ``--max-client-batch-size``. The client splits at the configured
+# batch size, so anything above this only works if the operator raised the server
+# flag too; otherwise the server answers 413 and every search degrades silently.
+_TEI_DEFAULT_CLIENT_BATCH_SIZE = 32
+
+
 def _build_rerank(cfg: Settings) -> RerankClient | None:
     """Reranking is opt-in, and only meaningful on the fused hybrid window."""
     if not cfg.rerank_enabled:
@@ -279,6 +285,14 @@ def _build_rerank(cfg: Settings) -> RerankClient | None:
             "reranking applies to the fused window only and will not run"
         )
         return None
+    if cfg.rerank_client_batch_size > _TEI_DEFAULT_CLIENT_BATCH_SIZE:
+        logger.warning(
+            "IBEX_MEMORY_RERANK_CLIENT_BATCH_SIZE=%d exceeds the TEI default "
+            "--max-client-batch-size=%d; a server left at its default answers 413 "
+            "and every rerank degrades to the fused order",
+            cfg.rerank_client_batch_size,
+            _TEI_DEFAULT_CLIENT_BATCH_SIZE,
+        )
     token = cfg.rerank_api_token.get_secret_value() if cfg.rerank_api_token else None
     return RerankClient(
         cfg.rerank_base_url,
@@ -287,6 +301,7 @@ def _build_rerank(cfg: Settings) -> RerankClient | None:
             connect_timeout=cfg.rerank_connect_timeout_ms / 1000,
             read_timeout=cfg.rerank_timeout_ms / 1000,
             max_retries=cfg.rerank_max_retries,
+            client_batch_size=cfg.rerank_client_batch_size,
         ),
     )
 

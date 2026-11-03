@@ -136,3 +136,56 @@ def test_build_rerank_uses_the_budget_settings() -> None:
     assert client._client.base_url.host == "reranker.test"
     assert client._client.timeout.read == pytest.approx(0.2)
     assert client._client.timeout.connect == pytest.approx(0.025)
+    # Defaults to TEI's own --max-client-batch-size; a split at 50 would 413.
+    assert client._batch_size == 32
+
+
+def test_build_rerank_honours_a_configured_batch_size() -> None:
+    from app.main import _build_rerank
+
+    cfg = Settings(
+        rerank_enabled=True,
+        search_hybrid_enabled=True,
+        rerank_base_url="http://reranker.test:80",
+        rerank_client_batch_size=16,
+    )
+
+    client = _build_rerank(cfg)
+
+    assert client is not None
+    assert client._batch_size == 16
+
+
+def test_build_rerank_warns_when_the_batch_size_exceeds_the_server_default() -> None:
+    """Above 32 the split no longer protects a stock server: it answers 413."""
+    from app.main import _build_rerank
+
+    cfg = Settings(
+        rerank_enabled=True,
+        search_hybrid_enabled=True,
+        rerank_base_url="http://reranker.test:80",
+        rerank_client_batch_size=48,
+    )
+
+    with patch("app.main.logger.warning") as warning:
+        client = _build_rerank(cfg)
+
+    assert client is not None
+    warning.assert_called_once()
+    assert "max-client-batch-size" in warning.call_args.args[0]
+
+
+def test_build_rerank_does_not_warn_at_the_server_default() -> None:
+    from app.main import _build_rerank
+
+    cfg = Settings(
+        rerank_enabled=True,
+        search_hybrid_enabled=True,
+        rerank_base_url="http://reranker.test:80",
+        rerank_client_batch_size=32,
+    )
+
+    with patch("app.main.logger.warning") as warning:
+        assert _build_rerank(cfg) is not None
+
+    warning.assert_not_called()

@@ -485,10 +485,11 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | `IBEX_MEMORY_RERANK_ENABLED` | No | `false` | Cross-encoder rerank of the fused hybrid window via TEI `POST /rerank` (5.A.3) | Requires hybrid retrieval; metric `ibex_memory_rerank_total{result}` (`applied`, `degraded`, `emptied`, `skipped`) |
 | `IBEX_MEMORY_RERANK_BASE_URL` | No | `http://127.0.0.1:8006` | TEI reranker base URL | Only read when rerank is enabled |
 | `IBEX_MEMORY_RERANK_API_TOKEN` | No | (none) | Optional bearer for the reranker | Never logged |
-| `IBEX_MEMORY_RERANK_TIMEOUT_MS` | No | `100` | Hard stop for one rerank call; it does not bound the rest of the request | Lower it below the caller's remaining budget |
+| `IBEX_MEMORY_RERANK_TIMEOUT_MS` | No | `100` | Hard stop for the whole rerank stage (all `POST /rerank` batches); it does not bound the rest of the request | Lower it below the caller's remaining budget |
 | `IBEX_MEMORY_RERANK_CONNECT_TIMEOUT_MS` | No | `50` | Reranker connect timeout | |
 | `IBEX_MEMORY_RERANK_MAX_RETRIES` | No | `0` | Retries inside the rerank budget | `0` keeps the read path inside its deadline |
-| `IBEX_MEMORY_RERANK_MAX_CANDIDATES` | No | `50` | Upper bound on documents sent to the reranker per search (`1..50`, within the client batch limit) | The reranker never sees the corpus |
+| `IBEX_MEMORY_RERANK_MAX_CANDIDATES` | No | `50` | Upper bound on documents sent to the reranker per search (`1..50`) | The reranker never sees the corpus |
+| `IBEX_MEMORY_RERANK_CLIENT_BATCH_SIZE` | No | `32` | Documents per `POST /rerank` request (`1..64`); larger windows are split into concurrent requests | Must not exceed the TEI server's `--max-client-batch-size` (default `32`) or the server answers `413` and every search degrades to the fused order; startup logs a warning above `32` |
 
 ### Worker service (Celery — m3.5.A.1+)
 
