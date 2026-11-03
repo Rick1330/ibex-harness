@@ -67,8 +67,15 @@ def _query(**kwargs: object) -> FindSimilarQuery:
 def _repo(
     store: MagicMock | None = None,
     settings: Settings | None = None,
+    *,
+    rerank_client: object | None = None,
 ) -> MemoryReadRepository:
-    return MemoryReadRepository(MagicMock(), store or MagicMock(), settings or _settings())
+    return MemoryReadRepository(
+        MagicMock(),
+        store or MagicMock(),
+        settings or _settings(),
+        rerank_client=rerank_client,  # type: ignore[arg-type]
+    )
 
 
 def _vector_repo(

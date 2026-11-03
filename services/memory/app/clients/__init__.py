@@ -1,4 +1,4 @@
-"""Embedder HTTP clients."""
+"""HTTP clients for the embedder and reranker services."""
 
 from app.clients.embedding import (
     EmbeddingClient,
@@ -10,6 +10,15 @@ from app.clients.embedding import (
     EmbeddingTimeoutError,
     EmbeddingUnavailableError,
 )
+from app.clients.rerank import (
+    RerankClient,
+    RerankClientConfig,
+    RerankClientError,
+    RerankInvalidResponseError,
+    RerankRejectedError,
+    RerankTimeoutError,
+    RerankUnavailableError,
+)
 
 __all__ = [
     "EmbeddingClient",
@@ -20,4 +29,11 @@ __all__ = [
     "EmbeddingResult",
     "EmbeddingTimeoutError",
     "EmbeddingUnavailableError",
+    "RerankClient",
+    "RerankClientConfig",
+    "RerankClientError",
+    "RerankInvalidResponseError",
+    "RerankRejectedError",
+    "RerankTimeoutError",
+    "RerankUnavailableError",
 ]

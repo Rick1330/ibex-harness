@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from collections.abc import Mapping
+from dataclasses import replace
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.clients.rerank import RerankClient, RerankClientError
 from app.config import Settings
 from app.org_context import set_service_org
 from app.read.full_text import (
@@ -17,7 +21,7 @@ from app.read.full_text import (
     full_text_search,
     is_searchable_query,
 )
-from app.read.metrics import SEARCH_FALLBACK, SEARCH_HYBRID
+from app.read.metrics import RERANK, RERANK_LATENCY, SEARCH_FALLBACK, SEARCH_HYBRID
 from app.read.models import FindSimilarQuery, MemorySearchResult
 from app.read.pii_guard import filter_pii_blocked_results
 from app.read.ranking import (
@@ -29,6 +33,8 @@ from app.read.ranking import (
     rank_hydrated_hits,
 )
 from app.vectorstore.base import SearchHit, SearchMode, SearchRequest, VectorStore
+
+logger = logging.getLogger(__name__)
 
 _HYDRATE_SQL = """
 SELECT m.id, m.org_id, m.agent_id, m.content, m.category, m.confidence, m.status,
@@ -95,10 +101,13 @@ class MemoryReadRepository:
         session_factory: async_sessionmaker[AsyncSession],
         vector_store: VectorStore,
         settings: Settings,
+        *,
+        rerank_client: RerankClient | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._vector_store = vector_store
         self._settings = settings
+        self._rerank_client = rerank_client
 
     async def find_similar(self, query: FindSimilarQuery) -> list[MemorySearchResult]:
         _validate_find_similar_query(query)
@@ -146,9 +155,89 @@ class MemoryReadRepository:
             vector=str(bool(vector_candidates)).lower(),
             full_text=str(bool(fts_candidates)).lower(),
         ).inc()
+        if self._rerank_available():
+            return filter_pii_blocked_results(
+                await self._rank_reranked(query, fused, rank_opts)
+            )
         return filter_pii_blocked_results(
             await self._rank_fused_window(query, fused, rank_opts)
         )
+
+    def _rerank_available(self) -> bool:
+        return self._settings.rerank_enabled and self._rerank_client is not None
+
+    async def _rank_reranked(
+        self,
+        query: FindSimilarQuery,
+        fused: list[RankedCandidate],
+        rank_opts: RankOptions,
+    ) -> list[MemorySearchResult]:
+        """Cross-encode the fused window, then composite-score it.
+
+        The reranker replaces the *relevance* component, not the order: a
+        cross-encoder answers "how well does this document answer this query",
+        which is exactly what cosine similarity and ``ts_rank_cd`` approximate on
+        incomparable scales. Recency, confidence, usefulness, and the relevance
+        floor keep their ADR-0068 meaning.
+
+        The window is the fused union capped by ``rerank_max_candidates``, so a
+        rerank never sees the corpus. Any failure degrades to the fused order --
+        a slow reranker must not turn a search into an error.
+        """
+        client = self._rerank_client
+        if client is None:  # pragma: no cover - _rerank_available() guards the call
+            return await self._rank_fused_window(query, fused, rank_opts)
+        window = fused[: self._settings.rerank_max_candidates]
+        hydrated = await self._hydrate_hits(
+            org_id=query.org_id,
+            candidates=window,
+            min_confidence=query.min_confidence,
+        )
+        overrides = await self._rerank_scores(client, query, window, hydrated)
+        if overrides is None:
+            return await self._rank_fused_window(query, fused, rank_opts)
+        ranked = rank_hydrated_hits(
+            window,
+            hydrated,
+            replace(rank_opts, relevance_overrides=overrides),
+        )
+        if len(ranked) >= query.limit:
+            return ranked[: query.limit]
+        # The reranker can drop candidates under the relevance floor; refill from the
+        # fused order without rerank scores rather than returning a short page.
+        return await self._rank_fused_window(query, fused, rank_opts)
+
+    async def _rerank_scores(
+        self,
+        client: RerankClient,
+        query: FindSimilarQuery,
+        window: list[RankedCandidate],
+        hydrated: Mapping[UUID, HydratedHit],
+    ) -> dict[UUID, float] | None:
+        ids = [item.memory_id for item in window if item.memory_id in hydrated]
+        if len(ids) < 2:
+            # Nothing to reorder: a single candidate already holds the page.
+            RERANK.labels(result="skipped").inc()
+            return None
+        documents = [hydrated[memory_id].result.content for memory_id in ids]
+        started = time.monotonic()
+        try:
+            scores = await asyncio.wait_for(
+                client.rerank(query.query_text, documents),
+                timeout=self._settings.rerank_timeout_ms / 1000,
+            )
+        except (TimeoutError, RerankClientError) as exc:
+            RERANK.labels(result="degraded").inc()
+            logger.warning(
+                "rerank degraded (%s) candidates=%d timeout_ms=%d",
+                type(exc).__name__,
+                len(ids),
+                self._settings.rerank_timeout_ms,
+            )
+            return None
+        RERANK_LATENCY.observe(time.monotonic() - started)
+        RERANK.labels(result="applied").inc()
+        return dict(zip(ids, scores, strict=True))
 
     async def _rank_fused_window(
         self,

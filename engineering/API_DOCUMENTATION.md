@@ -900,9 +900,10 @@ Here the episodic memory has **higher cosine similarity** (0.91) but ranks **sec
 
 **Errors:** `400` validation, `401`/`403` auth, `503` embedder unavailable (`EMBEDDING_FAILED`) or read path not configured.
 
-**Observability:** `ibex_memory_search_fallback_total{triggered="true|false"}` and
-`ibex_memory_search_hybrid_total{vector="true|false",full_text="true|false"}` — Grafana panels on the Memory Service
-dashboard.
+**Observability:** `ibex_memory_search_fallback_total{triggered="true|false"}`,
+`ibex_memory_search_hybrid_total{vector="true|false",full_text="true|false"}`, and
+`ibex_memory_rerank_total{result="applied|degraded|skipped"}` with the
+`ibex_memory_rerank_seconds` histogram — Grafana panels on the Memory Service dashboard.
 
 **Retrieval modes.** Two modes exist; the mode is chosen per request, not per caller:
 
@@ -917,6 +918,19 @@ admitted — the only stage that can weigh a cosine rank against a `ts_rank_cd` 
 still decides the presented order inside that window. A candidate keeps its own channel score (cosine for vector,
 clamped `ts_rank_cd` for full text) and a duplicate keeps the vector score. Hybrid defaults to **off** until the phase
 5.C.1 gold-set comparison reads the change as an improvement; the dev compose bundle enables it.
+
+**Cross-encoder rerank (optional, phase 5.A.3).** With `IBEX_MEMORY_RERANK_ENABLED=true` and hybrid on, the fused window
+— capped at `IBEX_MEMORY_RERANK_MAX_CANDIDATES` (default `50`) — is hydrated and scored by a TEI reranker
+(`POST /rerank`, `BAAI/bge-reranker-v2-m3` or any served reranker). The cross-encoder score **replaces the relevance
+component** of composite scoring; it does not replace the ordering, so recency, confidence, usefulness, and the
+relevance floor keep their ADR-0068 meaning. The HTTP `source` field still reports retrieval provenance
+(`vector`/`full_text`), not the reranker.
+
+The rerank call is bounded by `IBEX_MEMORY_RERANK_TIMEOUT_MS` (default `100`, the memory search p95 target) and has no
+retries by default. A timeout, transport error, auth failure, or malformed response increments
+`ibex_memory_rerank_total{result="degraded"}` and the request returns the fused order — a slow reranker never turns a
+search into an error. The flag is off by default and has no effect unless hybrid retrieval is enabled; enabling it is a
+latency decision that needs the measurement phase 5.C.3 defines.
 
 Tenant scoping is identical in both modes: each channel carries explicit `org_id` and `agent_id` predicates plus the
 status, tombstone, and validity fence. Fusion only reorders ids and reads no data.

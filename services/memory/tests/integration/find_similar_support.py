@@ -334,8 +334,15 @@ def build_read_repository(
     session_factory: async_sessionmaker[AsyncSession],
     store: PgVectorStore,
     settings: Settings,
+    *,
+    rerank_client: object | None = None,
 ) -> MemoryReadRepository:
-    return MemoryReadRepository(session_factory, store, settings)
+    return MemoryReadRepository(
+        session_factory,
+        store,
+        settings,
+        rerank_client=rerank_client,  # type: ignore[arg-type]
+    )
 
 
 @asynccontextmanager

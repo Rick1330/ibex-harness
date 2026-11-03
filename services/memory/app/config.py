@@ -207,6 +207,50 @@ class Settings(BaseSettings):
         le=1000,
         description="Reciprocal rank fusion constant (Cormack et al. 2009; Elasticsearch default)",
     )
+    # Cross-encoder reranking (phase 5.A.3). Off by default: it adds a network hop
+    # and a model inference to the read path, and only applies to the hybrid window.
+    rerank_enabled: bool = Field(
+        default=False,
+        description="Rerank the fused hybrid window with a TEI cross-encoder before composite scoring",
+    )
+    rerank_base_url: str = Field(
+        default="http://127.0.0.1:8006",
+        description="Base URL of the TEI reranker service (POST /rerank)",
+    )
+    rerank_api_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "IBEX_RERANK_API_TOKEN", "IBEX_MEMORY_RERANK_API_TOKEN"
+        ),
+        description="Optional bearer token for the reranker",
+    )
+    rerank_timeout_ms: int = Field(
+        default=100,
+        ge=1,
+        le=5000,
+        description=(
+            "Wall-clock budget for one rerank call before degrading to the fused order; "
+            "defaults to the memory search p95 target"
+        ),
+    )
+    rerank_connect_timeout_ms: int = Field(
+        default=50,
+        ge=1,
+        le=5000,
+        description="Connect timeout for the reranker",
+    )
+    rerank_max_retries: int = Field(
+        default=0,
+        ge=0,
+        le=3,
+        description="Retries inside the rerank budget; 0 keeps the read path inside its deadline",
+    )
+    rerank_max_candidates: int = Field(
+        default=50,
+        ge=1,
+        le=200,
+        description="Upper bound on candidates sent to the reranker per search",
+    )
 
     @field_validator("database_url", mode="before")
     @classmethod
