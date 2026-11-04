@@ -92,8 +92,10 @@ class TestScoring:
         assert counts == {"dense": 2, "lexical": 0, "graph": 1}
 
     def test_an_unknown_subset_is_rejected(self) -> None:
+        outcome = _outcome("q1", "vibes", ["a"], ["a"])
+
         with pytest.raises(ValueError, match="unknown subset"):
-            bench.score_mode([_outcome("q1", "vibes", ["a"], ["a"])])
+            bench.score_mode([outcome])
 
     def test_an_empty_run_scores_zero_rather_than_dividing_by_zero(self) -> None:
         result = bench.score_mode([])
@@ -229,44 +231,35 @@ class TestRecordedRun:
         # better mean and still clears the per-subset minimum-count check.
         complete = _perfect_outcomes()
         thinned = [row for row in complete if row["query_id"] != "q_graph-3"]
+        target = self._write(tmp_path, {"hybrid": complete, "full_graph": thinned})
 
         with pytest.raises(ValueError, match="not comparable"):
-            bench.load_recorded(
-                self._write(tmp_path, {"hybrid": complete, "full_graph": thinned})
-            )
+            bench.load_recorded(target)
 
     def test_the_error_names_the_mode_and_the_missing_query(
         self, tmp_path: Path
     ) -> None:
         complete = _perfect_outcomes()
         thinned = [row for row in complete if row["query_id"] != "q_graph-3"]
+        target = self._write(tmp_path, {"hybrid": complete, "full_graph": thinned})
 
         with pytest.raises(ValueError, match="full_graph.*missing 1"):
-            bench.load_recorded(
-                self._write(tmp_path, {"hybrid": complete, "full_graph": thinned})
-            )
+            bench.load_recorded(target)
 
     def test_a_mode_that_scored_extra_queries_is_rejected(self, tmp_path: Path) -> None:
         complete = _perfect_outcomes()
+        extra = {
+            "query_id": "q_extra",
+            "subset": "dense",
+            "ranked_ids": ["a"],
+            "expected_ids": ["a"],
+        }
+        target = self._write(
+            tmp_path, {"hybrid": complete, "full_graph": [*complete, extra]}
+        )
 
         with pytest.raises(ValueError, match="the baseline did not"):
-            bench.load_recorded(
-                self._write(
-                    tmp_path,
-                    {
-                        "hybrid": complete,
-                        "full_graph": [
-                            *complete,
-                            {
-                                "query_id": "q_extra",
-                                "subset": "dense",
-                                "ranked_ids": ["a"],
-                                "expected_ids": ["a"],
-                            },
-                        ],
-                    },
-                )
-            )
+            bench.load_recorded(target)
 
     def test_a_mode_that_changed_the_expectations_is_rejected(
         self, tmp_path: Path
@@ -274,11 +267,10 @@ class TestRecordedRun:
         complete = _perfect_outcomes()
         tampered = [dict(row) for row in complete]
         tampered[0]["expected_ids"] = ["something-else"]
+        target = self._write(tmp_path, {"hybrid": complete, "full_graph": tampered})
 
         with pytest.raises(ValueError, match="differ in subset or expectations"):
-            bench.load_recorded(
-                self._write(tmp_path, {"hybrid": complete, "full_graph": tampered})
-            )
+            bench.load_recorded(target)
 
     def test_a_mode_that_changed_the_subset_is_rejected(self, tmp_path: Path) -> None:
         # Re-labelling a failed graph query as dense would move it out of the subset the gate
@@ -286,20 +278,18 @@ class TestRecordedRun:
         complete = _perfect_outcomes()
         tampered = [dict(row) for row in complete]
         tampered[0]["subset"] = "dense" if tampered[0]["subset"] != "dense" else "graph"
+        target = self._write(tmp_path, {"hybrid": complete, "full_graph": tampered})
 
         with pytest.raises(ValueError, match="differ in subset or expectations"):
-            bench.load_recorded(
-                self._write(tmp_path, {"hybrid": complete, "full_graph": tampered})
-            )
+            bench.load_recorded(target)
 
     def test_row_order_may_differ_between_modes(self, tmp_path: Path) -> None:
         complete = _perfect_outcomes()
-
-        loaded = bench.load_recorded(
-            self._write(
-                tmp_path, {"hybrid": complete, "full_graph": list(reversed(complete))}
-            )
+        target = self._write(
+            tmp_path, {"hybrid": complete, "full_graph": list(reversed(complete))}
         )
+
+        loaded = bench.load_recorded(target)
 
         assert set(loaded) == {"hybrid", "full_graph"}
 
@@ -310,21 +300,23 @@ class TestRecordedRun:
         reordered = [dict(row) for row in complete]
         for row in reordered:
             row["expected_ids"] = list(reversed(row["expected_ids"]))
+        target = self._write(tmp_path, {"hybrid": complete, "full_graph": reordered})
 
-        bench.load_recorded(
-            self._write(tmp_path, {"hybrid": complete, "full_graph": reordered})
-        )
+        bench.load_recorded(target)
 
     def test_a_row_missing_a_key_names_the_key_and_row(self, tmp_path: Path) -> None:
         broken = _perfect_outcomes()
         del broken[4]["ranked_ids"]
+        target = self._write(tmp_path, {"hybrid": broken})
 
         with pytest.raises(ValueError, match=r"hybrid.*row 4.*'ranked_ids'"):
-            bench.load_recorded(self._write(tmp_path, {"hybrid": broken}))
+            bench.load_recorded(target)
 
     def test_an_outcomes_file_with_no_modes_is_rejected(self, tmp_path: Path) -> None:
+        target = self._write(tmp_path, {})
+
         with pytest.raises(ValueError, match="no modes to score"):
-            bench.load_recorded(self._write(tmp_path, {}))
+            bench.load_recorded(target)
 
     def test_the_end_to_end_path_refuses_an_incomparable_run(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -341,7 +333,9 @@ class TestRecordedRun:
 
 
 class TestMalformedRecords:
-    def test_a_row_that_is_not_an_object_names_the_mode_and_row(self, tmp_path: Path) -> None:
+    def test_a_row_that_is_not_an_object_names_the_mode_and_row(
+        self, tmp_path: Path
+    ) -> None:
         target = tmp_path / "outcomes.json"
         target.write_text(json.dumps({"modes": {"hybrid": ["not-a-row"]}}))
 

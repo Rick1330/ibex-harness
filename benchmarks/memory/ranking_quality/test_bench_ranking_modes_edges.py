@@ -58,8 +58,10 @@ class TestScoringArithmetic:
     def test_a_repeated_id_in_a_page_is_rejected_rather_than_credited_twice(
         self,
     ) -> None:
+        outcome = _outcome("q1", "dense", ["a", "a"], ["a"])
+
         with pytest.raises(ValueError, match="duplicate ids"):
-            bench.score_mode([_outcome("q1", "dense", ["a", "a"], ["a"])])
+            bench.score_mode([outcome])
 
     def test_duplicate_expected_ids_do_not_inflate_the_score(self) -> None:
         duplicated = bench.score_mode([_outcome("q1", "dense", ["a"], ["a", "a"])])
@@ -102,19 +104,21 @@ class TestScoringArithmetic:
     def test_a_query_with_no_expected_ids_is_rejected_not_scored_zero(self) -> None:
         # An unresolved gold key looks like a total miss; scoring it 0.0 would drag the
         # published number down with no diagnostic.
+        outcome = _outcome("q1", "dense", ["a"], [])
+
         with pytest.raises(ValueError, match="no expected ids"):
-            _score([_outcome("q1", "dense", ["a"], [])])
+            _score([outcome])
 
     def test_a_repeated_query_row_is_rejected(self) -> None:
         # Weighting one query twice leaves query_count and the subset counts consistent, so
         # nothing downstream could notice.
+        repeated = [
+            _outcome("q1", "graph", ["a"], ["a"]),
+            _outcome("q1", "graph", ["a"], ["a"]),
+        ]
+
         with pytest.raises(ValueError, match="duplicate query_id"):
-            _score(
-                [
-                    _outcome("q1", "graph", ["a"], ["a"]),
-                    _outcome("q1", "graph", ["a"], ["a"]),
-                ]
-            )
+            _score(repeated)
 
     def test_duplicate_expected_ids_do_not_double_count_a_query(self) -> None:
         result = _score([_outcome("q1", "dense", ["a", "b"], ["a", "a", "b"])])
@@ -157,8 +161,10 @@ class TestSubsetAggregation:
         assert counts == {"dense": 2, "lexical": 0, "graph": 1}
 
     def test_the_derived_non_graph_name_is_not_an_accepted_input_subset(self) -> None:
+        outcome = _outcome("q1", "non_graph", ["a"], ["a"])
+
         with pytest.raises(ValueError, match="unknown subset"):
-            bench.score_mode([_outcome("q1", "non_graph", ["a"], ["a"])])
+            bench.score_mode([outcome])
 
     def test_the_gate_rejects_a_run_that_measured_no_lexical_queries(self) -> None:
         result = bench.with_mode(

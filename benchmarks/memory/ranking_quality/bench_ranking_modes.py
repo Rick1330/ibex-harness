@@ -70,7 +70,7 @@ def grades_from_expected(expected_ids: Sequence[str]) -> dict[str, float]:
     corpus states which memories answer the query, not how good each one is. When the labelers
     add graded judgments (5.C.1c) this is the one place that has to change.
     """
-    return {memory_id: 1.0 for memory_id in expected_ids}
+    return dict.fromkeys(expected_ids, 1.0)
 
 
 def validate_outcomes(outcomes: Iterable[QueryOutcome]) -> list[QueryOutcome]:
@@ -247,8 +247,17 @@ def _preview(ids: Sequence[str], limit: int = 3) -> str:
 
 
 def load_recorded(path: Path) -> dict[str, list[QueryOutcome]]:
-    """Read a recorded run and refuse one whose modes are not scored on the same queries."""
-    recorded = json.loads(path.read_text(encoding="utf-8"))
+    """Read a recorded run and refuse one whose modes are not scored on the same queries.
+
+    The path is the operator's own CLI argument: this runs with the invoking user's privileges,
+    on a file that user named, so there is no boundary to traverse, and the CI invocation passes
+    a temp file it just wrote. NOSONAR records that here rather than leaving a gate nobody can
+    explain; the alternative -- confining reads to one directory -- would only break callers.
+    """
+    recorded = json.loads(
+        path.read_text(encoding="utf-8")
+    )  # NOSONAR(S8707): operator-supplied CLI path, no privilege boundary
+
     modes = recorded.get("modes") if isinstance(recorded, Mapping) else None
     if not isinstance(modes, Mapping) or not modes:
         raise ValueError(f"{path} has no modes to score")
