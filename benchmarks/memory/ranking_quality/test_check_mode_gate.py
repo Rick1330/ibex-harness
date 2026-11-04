@@ -301,3 +301,94 @@ class TestCommittedBaseline:
         baseline = gate_cli.load_baseline(gate_cli.BASELINE_PATH)
 
         assert baseline.reranker == RERANKER
+
+
+class TestRejectedRunsStillReport:
+    def test_a_provenance_mismatch_writes_a_failed_verdict(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # CI fails correctly either way; the difference is whether the reviewer has to open the
+        # job log to find out why.
+        monkeypatch.setattr(gate_cli, "_RANK_DIR", tmp_path)
+        baseline = _baseline()
+        baseline["reranker"] = "bge-reranker-v2-m3"
+        report_path = tmp_path / "out" / "modes-gate.json"
+
+        code = gate_cli.main(
+            [
+                "gate",
+                "--artifact",
+                str(_write(tmp_path, "m.json", _artifact())),
+                "--baseline",
+                str(_write(tmp_path, "b.json", baseline)),
+                "--report-out",
+                str(report_path),
+            ]
+        )
+
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert code == 1
+        assert report["status"] == "fail"
+        assert report["failures"][0]["check"] == "provenance"
+        # Both files parsed, so the numbers are still shown next to the reason they were refused.
+        assert report["modes"]["hybrid"]["overall"] == 0.80
+
+    def test_an_unreadable_artifact_writes_a_failed_verdict(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(gate_cli, "_RANK_DIR", tmp_path)
+        broken = tmp_path / "m.json"
+        broken.write_text("{not json", encoding="utf-8")
+        report_path = tmp_path / "out" / "modes-gate.json"
+
+        code = gate_cli.main(
+            [
+                "gate",
+                "--artifact",
+                str(broken),
+                "--baseline",
+                str(_write(tmp_path, "b.json", _baseline())),
+                "--report-out",
+                str(report_path),
+            ]
+        )
+
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert code == 2
+        assert report["status"] == "fail"
+        assert report["failures"][0]["check"] == "input"
+
+    def test_a_refused_input_exits_differently_from_a_regression(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `2` means "we did not measure this"; `1` means "the measurement moved". A caller that
+        # cannot tell them apart treats a broken gold set as a performance drop.
+        monkeypatch.setattr(gate_cli, "_RANK_DIR", tmp_path)
+        broken = tmp_path / "m.json"
+        broken.write_text("{not json", encoding="utf-8")
+        refused = gate_cli.main(
+            [
+                "gate",
+                "--artifact",
+                str(broken),
+                "--baseline",
+                str(_write(tmp_path, "b.json", _baseline())),
+                "--report-out",
+                str(tmp_path / "out" / "refused.json"),
+            ]
+        )
+        artifact = _artifact()
+        artifact["modes"]["hybrid"] = _mode_row(0.70)
+        regressed = gate_cli.main(
+            [
+                "gate",
+                "--artifact",
+                str(_write(tmp_path, "m2.json", artifact)),
+                "--baseline",
+                str(_write(tmp_path, "b2.json", _baseline())),
+                "--report-out",
+                str(tmp_path / "out" / "regressed.json"),
+            ]
+        )
+
+        assert (refused, regressed) == (2, 1)

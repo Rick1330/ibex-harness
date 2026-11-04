@@ -235,24 +235,73 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = _parse_args(argv[1:] if argv else None)
-    artifact = load_artifact(
-        resolve_bench_input_path(args.artifact, bench_dir=_RANK_DIR)
-    )
-    baseline = load_baseline(
-        resolve_bench_input_path(args.baseline, bench_dir=_RANK_DIR)
-    )
-    require_same_experiment(artifact, baseline)
-    failures = evaluate_gate(artifact.results, baseline.scores)
+def _report_path(args: argparse.Namespace) -> Path:
+    return resolve_bench_output_path(args.report_out, bench_dir=_RANK_DIR)
+
+
+def _input_failure_report(detail: str) -> dict[str, Any]:
+    """The verdict for a run that could not even be read.
+
+    There are no mode rows to table, but there is still a reason, and it belongs in the file the
+    job uploads rather than only in a traceback someone has to go find.
+    """
+    return {
+        "schema_version": 1,
+        "benchmark": "ranking_quality",
+        "status": "fail",
+        "failures": [{"mode": "-", "check": "input", "detail": detail}],
+    }
+
+
+def _emit(
+    args: argparse.Namespace,
+    artifact: Artifact,
+    baseline: Baseline,
+    failures: Sequence[GateFailure],
+) -> int:
     print(render_report(artifact.results, failures, baseline.scores))
     # Written before the exit code, so a failing gate still leaves its verdict for the job that
     # uploads it. A gate that only fails the build is a gate nobody can read afterwards.
-    write_json_atomic(
-        resolve_bench_output_path(args.report_out, bench_dir=_RANK_DIR),
-        build_report(artifact, baseline, failures),
-    )
+    write_json_atomic(_report_path(args), build_report(artifact, baseline, failures))
     return 1 if failures else 0
+
+
+def _reject(args: argparse.Namespace, exc: GateInputError) -> int:
+    """A run that cannot be compared exits differently from one that regressed.
+
+    ``2`` means the gate refused the input; ``1`` means it read the input and the numbers failed.
+    Conflating them would make "we did not measure this" look like "the measurement moved".
+    """
+    write_json_atomic(_report_path(args), _input_failure_report(str(exc)))
+    print(f"gate rejected: {exc}", file=sys.stderr)
+    return 2
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parse_args(argv[1:] if argv else None)
+    try:
+        artifact = load_artifact(
+            resolve_bench_input_path(args.artifact, bench_dir=_RANK_DIR)
+        )
+        baseline = load_baseline(
+            resolve_bench_input_path(args.baseline, bench_dir=_RANK_DIR)
+        )
+    except GateInputError as exc:
+        return _reject(args, exc)
+    try:
+        require_same_experiment(artifact, baseline)
+    except GateInputError as exc:
+        # Both files parsed, so the table is worth printing: a reader can see the numbers and
+        # why they were refused side by side.
+        return _emit(
+            args,
+            artifact,
+            baseline,
+            [GateFailure(mode="-", check="provenance", detail=str(exc))],
+        )
+    return _emit(
+        args, artifact, baseline, evaluate_gate(artifact.results, baseline.scores)
+    )
 
 
 if __name__ == "__main__":
