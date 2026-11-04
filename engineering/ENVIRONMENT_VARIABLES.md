@@ -491,6 +491,8 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | `IBEX_MEMORY_RERANK_MAX_RETRIES` | No | `0` | Retries inside the rerank budget | `0` keeps the read path inside its deadline |
 | `IBEX_MEMORY_RERANK_MAX_CANDIDATES` | No | `50` | Upper bound on documents sent to the reranker per search (`1..50`) | The reranker never sees the corpus |
 | `IBEX_MEMORY_RERANK_CLIENT_BATCH_SIZE` | No | `32` | Documents per `POST /rerank` request (`1..64`); larger windows are split into concurrent requests | Must not exceed the TEI server's `--max-client-batch-size` (default `32`). Above it, a search whose window holds more documents than the server limit gets `413` and degrades to the fused order; windows at or below the limit still succeed. Startup warns when the largest possible request would exceed `32` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP/HTTP collector endpoint (e.g. `http://collector:4318/v1/traces`); empty disables span export while keeping context propagation | Alias: `IBEX_OTEL_EXPORTER_OTLP_ENDPOINT` |
+| `OTEL_SAMPLE_RATIO` | No | `1.0` | Root span sampling ratio (`0.0..1.0`) via `ParentBased(TraceIdRatioBased)` | Subordinate spans continue parent sampling decision |
 
 ### Worker service (Celery — m3.5.A.1+)
 

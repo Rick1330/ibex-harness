@@ -22,6 +22,7 @@ from app.read.conflicts import (
 from app.read.metrics import HOT_CACHE_READ
 from app.read.models import HotMemoryQuery, MemorySearchResult
 from app.read.pii_guard import filter_pii_blocked_results
+from app.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -98,17 +99,24 @@ class MemoryHotCacheReader:
         # ``limit`` would return a short page while an eligible entry sat just
         # below the cut. The reserve is the same 2x bound the fused path uses.
         fetch = min(query.limit * 2, HOT_CACHE_CAPACITY)
-        try:
-            raw = await self.redis.zrevrange(key, 0, fetch - 1, withscores=True)
-        except (OSError, RedisError) as exc:
-            HOT_CACHE_READ.labels(result="error").inc()
-            logger.warning(
-                "hot cache read failed org_id=%s agent_id=%s",
-                query.org_id,
-                query.agent_id,
-                exc_info=exc,
-            )
-            return []
+        with get_tracer().start_as_current_span(
+            "redis.read_hot",
+            attributes={
+                "db.system": "redis",
+                "db.operation": "zrevrange",
+            },
+        ):
+            try:
+                raw = await self.redis.zrevrange(key, 0, fetch - 1, withscores=True)
+            except (OSError, RedisError) as exc:
+                HOT_CACHE_READ.labels(result="error").inc()
+                logger.warning(
+                    "hot cache read failed org_id=%s agent_id=%s",
+                    query.org_id,
+                    query.agent_id,
+                    exc_info=exc,
+                )
+                return []
 
         if not raw:
             HOT_CACHE_READ.labels(result="empty").inc()

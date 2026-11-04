@@ -30,6 +30,7 @@ from app.read.hot_cache import MemoryHotCacheReader
 from app.read.lineage import MemoryLineageRepository
 from app.read.repository import MemoryReadRepository
 from app.routers.memories import router as memories_router
+from app.tracing import TracingMiddleware, configure_tracing, shutdown_tracing
 from app.vectorstore.pgvector_store import PgVectorStore
 from app.write.after_commit import AfterCommitHandler
 from app.write.cache import MemoryCacheWriter
@@ -103,6 +104,7 @@ def create_app(
     application.include_router(probe_router)
     application.include_router(memories_router)
     application.add_middleware(HTTPMetricsMiddleware)
+    application.add_middleware(TracingMiddleware)
     return application
 
 
@@ -113,6 +115,7 @@ async def _memory_service_lifespan(
     validator: TokenValidator | None,
 ) -> AsyncGenerator[None, None]:
     logger.info("memory service starting port=%s", cfg.port)
+    configure_tracing(cfg.otel_endpoint)
     auth = validator or GRPCTokenValidator(
         cfg.auth_grpc_addr,
         timeout_seconds=cfg.auth_timeout_ms / 1000.0,
@@ -248,6 +251,7 @@ async def _shutdown_memory(
     if state.redis is not None:
         await state.redis.aclose()
     await auth.aclose()
+    shutdown_tracing()
     await engine.dispose()
     logger.info("memory service shutdown complete")
 

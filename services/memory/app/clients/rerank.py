@@ -119,6 +119,10 @@ class RerankClient:
     def __repr__(self) -> str:
         return f"RerankClient(max_retries={self._max_retries})"
 
+    @property
+    def host(self) -> str:
+        return self._client.base_url.host or ""
+
     async def aclose(self) -> None:
         await self._client.aclose()
 

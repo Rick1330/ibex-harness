@@ -268,6 +268,17 @@ Every service must publish these metrics:
 
 ### 7.3 Memory Service (Python)
 
+**OpenTelemetry Tracing:**
+- Inbound HTTP span: `memory.http` (continues inbound W3C `traceparent` context).
+- Dependency spans:
+  - `vector_search` (`db.system: "postgresql"`, `db.operation: "vector_search"`)
+  - `full_text_search` (`db.system: "postgresql"`, `db.operation: "full_text_search"`)
+  - `hydration` (`db.system: "postgresql"`, `db.operation: "hydrate_hits"`)
+  - `rerank` (`server.address`, `rerank.endpoint_host`, `rerank.outcome: "applied" | "degraded"`)
+  - `embedder.embed` (`server.address`, `embedder.batch_size`)
+  - `redis.read_hot` (`db.system: "redis"`, `db.operation: "zrevrange"`)
+- Security & Cardinality: Spans never record memory text, queries, or auth tokens.
+
 - `ibex_memory_write_total{status}`
 - `ibex_memory_write_duration_seconds_bucket{status}`
 - `ibex_memory_search_total{status}`
@@ -455,6 +466,13 @@ Use consistent names:
 - `context.assemble`
 - `memory.search`
 - `memory.write`
+- `memory.http`
+- `vector_search`
+- `full_text_search`
+- `hydration`
+- `rerank`
+- `embedder.embed`
+- `redis.read_hot`
 - `auth.validate_token`
 
 ### 9.2 Span attributes (low cardinality)

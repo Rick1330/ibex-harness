@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.org_context import set_service_org
+from app.tracing import get_tracer
 
 # Shared with EXPLAIN plan tests — keep in sync with full_text_search().
 FTS_SQL = """
@@ -62,28 +63,35 @@ async def full_text_search(
     if query.limit < 1 or not is_searchable_query(query.query_text):
         return []
 
-    async with session_factory() as session, session.begin():
-        await set_service_org(session, query.org_id)
-        result = await session.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text  # nosec B608
-                FTS_SQL
-            ),
-            {
-                "org_id": str(query.org_id),
-                "agent_id": str(query.agent_id),
-                "query_text": query.query_text.strip(),
-                "min_confidence": query.min_confidence,
-                "limit": query.limit,
-            },
-        )
-        rows = result.mappings().all()
+    with get_tracer().start_as_current_span(
+        "full_text_search",
+        attributes={
+            "db.system": "postgresql",
+            "db.operation": "full_text_search",
+        },
+    ):
+        async with session_factory() as session, session.begin():
+            await set_service_org(session, query.org_id)
+            result = await session.execute(
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text  # nosec B608
+                    FTS_SQL
+                ),
+                {
+                    "org_id": str(query.org_id),
+                    "agent_id": str(query.agent_id),
+                    "query_text": query.query_text.strip(),
+                    "min_confidence": query.min_confidence,
+                    "limit": query.limit,
+                },
+            )
+            rows = result.mappings().all()
 
-    hits: list[FullTextHit] = []
-    for row in rows:
-        memory_id = UUID(str(row["memory_id"]))
-        if memory_id in query.exclude_ids:
-            continue
-        hits.append(FullTextHit(memory_id=memory_id, rank=float(row["rank"])))
-        if len(hits) >= query.limit:
-            break
-    return hits
+        hits: list[FullTextHit] = []
+        for row in rows:
+            memory_id = UUID(str(row["memory_id"]))
+            if memory_id in query.exclude_ids:
+                continue
+            hits.append(FullTextHit(memory_id=memory_id, rank=float(row["rank"])))
+            if len(hits) >= query.limit:
+                break
+        return hits

@@ -18,6 +18,7 @@ from uuid import UUID
 import httpx
 
 from app.clients._http import RedactedBearerAuth, jittered_backoff, retry_after_seconds
+from app.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +125,16 @@ class EmbeddingClient:
 
     async def embed(self, texts: Sequence[str], *, org_id: UUID) -> EmbeddingResult:
         _validate_texts(texts)
-        payload = {"texts": list(texts), "org_id": str(org_id)}
-        return await self._post_with_retry(payload, batch_size=len(texts))
+        host = self._client.base_url.host or ""
+        with get_tracer().start_as_current_span(
+            "embedder.embed",
+            attributes={
+                "server.address": host,
+                "embedder.batch_size": len(texts),
+            },
+        ):
+            payload = {"texts": list(texts), "org_id": str(org_id)}
+            return await self._post_with_retry(payload, batch_size=len(texts))
 
     async def _post_with_retry(
         self, payload: dict[str, Any], *, batch_size: int
