@@ -10,7 +10,7 @@ a run seeds one at a time — `seed_gold_set` purges the org before inserting.
 | File | `gold_set_v1.json` | `gold_set_v2.json` |
 | Size | 50 memories, 20 queries | 150 queries over 60 / 50 / 40 dense / lexical / graph |
 | Embeddings | one-hot hotspot via `zero_embedding` | weighted profile over named topics (`profiles.py`) |
-| Similarity | 1.0 or 0.0, nothing in between | designed: 1.0 / 0.8 / 0.6 / 0.0, asserted by the validator |
+| Similarity | 1.0 or 0.0, nothing in between | graded and *designed*: profiles are weighted combinations, and the validator asserts the margins each subset needs (a dense answer at least 0.55, a conflict pair at least 0.8) rather than a fixed ladder of values |
 | Configurations | one (`find_similar` with fallback off) | four named modes (`modes.py`) |
 | Gate | `regression_gate.py`, percent tolerance | `check_mode_gate.py`, absolute points |
 | Claim | regression gate for composite ranking | retrieval-mode comparison, CI stub reranker |
@@ -84,9 +84,14 @@ measurement moved":
 
 | code | meaning | report |
 |---|---|---|
-| 0 | the run is at or above its baseline | `output/modes-gate.json`, `status: pass` |
+| 0 | no check failed | `output/modes-gate.json`, `status: pass` |
 | 1 | a measured regression, or a run from another gold set or reranker | report written, with the mode table |
-| 2 | an input that could not be read at all | report written, `check: input` |
+| 2 | an input that is missing or cannot be read | report written, `check: input` |
+
+Passing (0) is not the same as "did not move": a mode may still sit up to 3 points below its
+baseline, and `full_graph` may still trail `hybrid_rerank` by up to 2 points on non-graph
+queries. Those are the allowances in `gate_modes.py`; the gate reports a drop as a number, so a
+run that passes can still have given something back.
 
 Embeddings use deterministic `zero_embedding(hotspot=…)` so vector similarity is
 stable without a live embedder. Category-decay cases use distinct topics/ages from
