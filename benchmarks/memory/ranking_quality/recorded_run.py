@@ -14,9 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# Files and rows name themselves through these; keeping them together means a row missing any
-# of them is reported once, not field by field.
+from comparability import incomparable_modes
+
+# A row names itself through these; keeping them together means a row missing any of them is
+# reported once, not field by field.
 ROW_FIELDS = ("query_id", "subset", "ranked_ids", "expected_ids")
+STRING_FIELDS = ("query_id", "subset")
 
 
 class RecordedRunError(ValueError):
@@ -60,6 +63,19 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return seen
 
 
+def _load_document(path: Path) -> Mapping[str, Any]:
+    """Decode the recording, rejecting repeated keys and a non-object root."""
+    try:
+        document = json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_keys
+        )
+    except ValueError as exc:
+        raise RecordedRunError(f"{path.name}: {exc}") from exc
+    if not isinstance(document, Mapping):
+        raise RecordedRunError(f"{path.name} is not a JSON object")
+    return document
+
+
 def _required_label(document: Mapping[str, Any], field: str, source: str) -> str:
     value = document.get(field)
     if not isinstance(value, str) or not value:
@@ -76,12 +92,6 @@ def _optional_label(document: Mapping[str, Any], field: str, source: str) -> str
     return value
 
 
-def _string_field(mode: str, index: int, field: str, value: Any) -> str:
-    if not isinstance(value, str):
-        raise RecordedRunError(f"mode {mode!r} row {index} field {field!r} must be a string")
-    return value
-
-
 def _id_list(mode: str, index: int, field: str, value: Any) -> tuple[str, ...]:
     """Ids are a list of strings, never a string.
 
@@ -93,22 +103,31 @@ def _id_list(mode: str, index: int, field: str, value: Any) -> tuple[str, ...]:
     return tuple(value)
 
 
-def _row_fields(mode: str, index: int, row: Mapping[str, Any]) -> dict[str, Any]:
+def _row_values(mode: str, index: int, row: Mapping[str, Any]) -> dict[str, Any]:
     try:
         return {name: row[name] for name in ROW_FIELDS}
     except KeyError as exc:
         raise RecordedRunError(f"mode {mode!r} row {index} is missing {exc.args[0]!r}") from exc
 
 
+def _require_strings(mode: str, index: int, values: Mapping[str, Any]) -> None:
+    for field in STRING_FIELDS:
+        if not isinstance(values[field], str):
+            raise RecordedRunError(
+                f"mode {mode!r} row {index} field {field!r} must be a string"
+            )
+
+
 def _parse_row(mode: str, index: int, row: Any) -> QueryOutcome:
     if not isinstance(row, Mapping):
         raise RecordedRunError(f"mode {mode!r} row {index} is not an object")
-    fields = _row_fields(mode, index, row)
+    values = _row_values(mode, index, row)
+    _require_strings(mode, index, values)
     return QueryOutcome(
-        query_id=_string_field(mode, index, "query_id", fields["query_id"]),
-        subset=_string_field(mode, index, "subset", fields["subset"]),
-        ranked_ids=_id_list(mode, index, "ranked_ids", fields["ranked_ids"]),
-        expected_ids=_id_list(mode, index, "expected_ids", fields["expected_ids"]),
+        query_id=values["query_id"],
+        subset=values["subset"],
+        ranked_ids=_id_list(mode, index, "ranked_ids", values["ranked_ids"]),
+        expected_ids=_id_list(mode, index, "expected_ids", values["expected_ids"]),
     )
 
 
@@ -123,62 +142,21 @@ def parse_outcomes(mode: str, rows: Any) -> list[QueryOutcome]:
     return [_parse_row(mode, index, row) for index, row in enumerate(rows)]
 
 
-def _preview(ids: Sequence[str], limit: int = 3) -> str:
-    shown = ", ".join(ids[:limit])
-    return f"{shown}{', …' if len(ids) > limit else ''}"
-
-
-def _comparability_problems(
-    gold: Mapping[str, tuple[str, tuple[str, ...]]],
-    keys: Mapping[str, tuple[str, tuple[str, ...]]],
-) -> list[str]:
-    missing = sorted(set(gold) - set(keys))
-    extra = sorted(set(keys) - set(gold))
-    differing = sorted(q for q in set(gold) & set(keys) if gold[q] != keys[q])
-    problems: list[str] = []
-    if missing:
-        problems.append(f"missing {len(missing)} queries ({_preview(missing)})")
-    if extra:
-        problems.append(f"scored {len(extra)} queries the baseline did not ({_preview(extra)})")
-    if differing:
-        problems.append(
-            f"{len(differing)} queries differ in subset or expectations ({_preview(differing)})"
+def _require_rows(mode: str, rows: Any) -> None:
+    if isinstance(rows, list) and not rows:
+        # With a single mode there is nothing to compare against, so an empty run would
+        # otherwise publish ndcg 0.0 over zero queries as if it were a measurement.
+        raise RecordedRunError(
+            f"mode {mode!r} has no rows; a scored mode needs at least one query"
         )
-    return problems
 
 
-def assert_comparable(modes: Mapping[str, Sequence[QueryOutcome]]) -> None:
-    """Every mode must be scored on the same queries, with the same gold expectations.
-
-    The gate compares modes against each other, so a mode that silently dropped its hard
-    queries would report a better mean while still clearing the per-subset minimum-count
-    check. Cross-checking the gold keys is the only thing that catches that.
-    """
-    gold: dict[str, tuple[str, tuple[str, ...]]] | None = None
-    baseline = ""
-    for name, outcomes in modes.items():
-        keys = {o.query_id: (o.subset, tuple(sorted(o.expected_ids))) for o in outcomes}
-        if gold is None:
-            gold, baseline = keys, name
-            continue
-        problems = _comparability_problems(gold, keys)
-        if problems:
-            raise RecordedRunError(
-                f"mode {name!r} is not comparable to {baseline!r}: " + "; ".join(problems)
-            )
-
-
-def _load_document(path: Path) -> Mapping[str, Any]:
-    """Decode the recording, rejecting repeated keys and a non-object root."""
-    try:
-        document = json.loads(
-            path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_keys
-        )
-    except ValueError as exc:
-        raise RecordedRunError(f"{path.name}: {exc}") from exc
-    if not isinstance(document, Mapping):
-        raise RecordedRunError(f"{path.name} is not a JSON object")
-    return document
+def _mode_rows(modes: Mapping[str, Any], source: str) -> dict[str, list[QueryOutcome]]:
+    parsed: dict[str, list[QueryOutcome]] = {}
+    for name, rows in modes.items():
+        _require_rows(name, rows)
+        parsed[name] = parse_outcomes(name, rows)
+    return parsed
 
 
 def _parse_modes(document: Mapping[str, Any], source: str) -> dict[str, list[QueryOutcome]]:
@@ -186,16 +164,10 @@ def _parse_modes(document: Mapping[str, Any], source: str) -> dict[str, list[Que
     modes = document.get("modes")
     if not isinstance(modes, Mapping) or not modes:
         raise RecordedRunError(f"{source} has no modes to score")
-    parsed: dict[str, list[QueryOutcome]] = {}
-    for name, rows in modes.items():
-        if isinstance(rows, list) and not rows:
-            # With a single mode there is nothing to compare against, so an empty run would
-            # otherwise publish ndcg 0.0 over zero queries as if it were a measurement.
-            raise RecordedRunError(
-                f"mode {name!r} has no rows; a scored mode needs at least one query"
-            )
-        parsed[name] = parse_outcomes(name, rows)
-    assert_comparable(parsed)
+    parsed = _mode_rows(modes, source)
+    problems = incomparable_modes(parsed)
+    if problems:
+        raise RecordedRunError("; ".join(problems))
     return parsed
 
 
