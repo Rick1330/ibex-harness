@@ -37,7 +37,9 @@ def _outcome(query_id: str, subset: str, ranked: list[str], expected: list[str])
 def _hits(subset: str, count: int) -> list[bench.QueryOutcome]:
     """``count`` perfect answers in one subset."""
     return [
-        _outcome(f"{subset}-{index}", subset, [f"{subset}{index}"], [f"{subset}{index}"])
+        _outcome(
+            f"{subset}-{index}", subset, [f"{subset}{index}"], [f"{subset}{index}"]
+        )
         for index in range(count)
     ]
 
@@ -46,12 +48,16 @@ def _subset_failures(failures: list[Any], mode: str, needle: str) -> list[Any]:
     return [
         failure
         for failure in failures
-        if failure.mode == mode and failure.check == "subset size" and needle in failure.detail
+        if failure.mode == mode
+        and failure.check == "subset size"
+        and needle in failure.detail
     ]
 
 
 class TestScoringArithmetic:
-    def test_a_repeated_id_in_a_page_is_rejected_rather_than_credited_twice(self) -> None:
+    def test_a_repeated_id_in_a_page_is_rejected_rather_than_credited_twice(
+        self,
+    ) -> None:
         with pytest.raises(ValueError, match="duplicate ids"):
             bench.score_mode([_outcome("q1", "dense", ["a", "a"], ["a"])])
 
@@ -64,7 +70,9 @@ class TestScoringArithmetic:
         # Expected a and b, returned only a: DCG 1/log2(2) over ideal 1/log2(2) + 1/log2(3).
         result = bench.score_mode([_outcome("q1", "dense", ["a"], ["a", "b"])])
 
-        assert result.overall == pytest.approx(1.0 / (1.0 + 1.0 / math.log2(3)), rel=1e-12)
+        assert result.overall == pytest.approx(
+            1.0 / (1.0 + 1.0 / math.log2(3)), rel=1e-12
+        )
 
     def test_an_empty_page_with_expected_documents_scores_zero(self) -> None:
         result = bench.score_mode([_outcome("q1", "dense", [], ["a"])])
@@ -85,7 +93,9 @@ class TestScoringArithmetic:
 
     def test_a_perfect_page_is_one_even_when_more_documents_are_relevant(self) -> None:
         expected = [f"e{index}" for index in range(bench.TOP_K + 1)]
-        result = bench.score_mode([_outcome("q1", "dense", expected[: bench.TOP_K], expected)])
+        result = bench.score_mode(
+            [_outcome("q1", "dense", expected[: bench.TOP_K], expected)]
+        )
 
         assert result.overall == pytest.approx(1.0)
 
@@ -99,7 +109,12 @@ class TestScoringArithmetic:
         # Weighting one query twice leaves query_count and the subset counts consistent, so
         # nothing downstream could notice.
         with pytest.raises(ValueError, match="duplicate query_id"):
-            _score([_outcome("q1", "graph", ["a"], ["a"]), _outcome("q1", "graph", ["a"], ["a"])])
+            _score(
+                [
+                    _outcome("q1", "graph", ["a"], ["a"]),
+                    _outcome("q1", "graph", ["a"], ["a"]),
+                ]
+            )
 
     def test_duplicate_expected_ids_do_not_double_count_a_query(self) -> None:
         result = _score([_outcome("q1", "dense", ["a", "b"], ["a", "a", "b"])])
@@ -123,7 +138,11 @@ class TestSubsetAggregation:
         assert bench.score_mode(outcomes).overall == pytest.approx(0.75)
 
     def test_the_graph_subset_never_counts_towards_non_graph(self) -> None:
-        outcomes = [*_hits("dense", 1), *_hits("lexical", 1), _outcome("g", "graph", ["x"], ["y"])]
+        outcomes = [
+            *_hits("dense", 1),
+            *_hits("lexical", 1),
+            _outcome("g", "graph", ["x"], ["y"]),
+        ]
 
         result = bench.score_mode(outcomes)
 
@@ -142,7 +161,9 @@ class TestSubsetAggregation:
             bench.score_mode([_outcome("q1", "non_graph", ["a"], ["a"])])
 
     def test_the_gate_rejects_a_run_that_measured_no_lexical_queries(self) -> None:
-        result = bench.with_mode(bench.score_mode([*_hits("dense", 10), *_hits("graph", 10)]), "m")
+        result = bench.with_mode(
+            bench.score_mode([*_hits("dense", 10), *_hits("graph", 10)]), "m"
+        )
 
         failures = evaluate_gate({"m": result}, {"m": 1.0})
 
@@ -181,7 +202,11 @@ class TestPayload:
 
     def test_a_score_one_unit_below_rounding_does_not_round_above_one(self) -> None:
         payload = bench.build_payload(
-            {"m": self._result(overall=1.0 - 1e-10, non_graph=1.0 - 1e-10, graph=1.0 - 1e-10)},
+            {
+                "m": self._result(
+                    overall=1.0 - 1e-10, non_graph=1.0 - 1e-10, graph=1.0 - 1e-10
+                )
+            },
             gold_set="g",
             reranker="r",
         )
@@ -223,7 +248,9 @@ class TestPayload:
             "per_subset_counts",
         ]
 
-    def test_modes_are_published_in_sorted_order_whatever_the_caller_order(self) -> None:
+    def test_modes_are_published_in_sorted_order_whatever_the_caller_order(
+        self,
+    ) -> None:
         result = self._result(overall=0.5, non_graph=0.5, graph=0.5)
 
         payload = bench.build_payload(
@@ -239,23 +266,34 @@ class TestMain:
         path.write_text(json.dumps(document), encoding="utf-8")
         return path
 
-    def test_a_mode_with_no_outcomes_is_written_honestly_as_zero(self, tmp_path: Path, monkeypatch: Any) -> None:
+    def test_a_mode_with_no_outcomes_is_rejected_rather_than_published_as_zero(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        # A mode scored on zero queries is not comparable with one scored on thirty. Publishing
+        # it as 0.0 would hand the gate a number no run produced.
         output = tmp_path / "out"
         monkeypatch.setattr(bench, "OUTPUT_DIR", output)
         outcomes = self._outcomes_file(
             tmp_path,
-            {"modes": {"empty": [], "measured": [
-                {"query_id": "q", "subset": "dense", "ranked_ids": ["a"], "expected_ids": ["a"]}
-            ]}},
+            {
+                "modes": {
+                    "empty": [],
+                    "measured": [
+                        {
+                            "query_id": "q",
+                            "subset": "dense",
+                            "ranked_ids": ["a"],
+                            "expected_ids": ["a"],
+                        }
+                    ],
+                }
+            },
         )
 
-        assert bench.main(["bench", "--outcomes", str(outcomes)]) == 0
+        with pytest.raises(ValueError, match="not comparable"):
+            bench.main(["bench", "--outcomes", str(outcomes)])
 
-        published = json.loads((output / "modes-latest.json").read_text(encoding="utf-8"))
-        empty = published["modes"]["empty"]
-        assert empty["query_count"] == 0
-        assert empty["per_subset_counts"] == {"dense": 0, "lexical": 0, "graph": 0}
-        assert empty["ndcg_at_10"] == 0.0
+        assert not (output / "modes-latest.json").exists()
 
     def test_a_malformed_outcome_fails_loudly_and_leaves_the_artifact_alone(
         self, tmp_path: Path, monkeypatch: Any
@@ -267,10 +305,14 @@ class TestMain:
         monkeypatch.setattr(bench, "OUTPUT_DIR", output)
         outcomes = self._outcomes_file(
             tmp_path,
-            {"modes": {"m": [{"query_id": "q", "subset": "dense", "ranked_ids": ["a"]}]}},
+            {
+                "modes": {
+                    "m": [{"query_id": "q", "subset": "dense", "ranked_ids": ["a"]}]
+                }
+            },
         )
 
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match=r"row 0 is missing 'expected_ids'"):
             bench.main(["bench", "--outcomes", str(outcomes)])
 
         assert artifact.read_text(encoding="utf-8") == '{"previous": true}\n'
@@ -282,9 +324,18 @@ class TestMain:
         monkeypatch.setattr(bench, "OUTPUT_DIR", output)
         outcomes = self._outcomes_file(
             tmp_path,
-            {"modes": {"m": [
-                {"query_id": "q", "subset": "dense", "ranked_ids": ["a", "a"], "expected_ids": ["a"]}
-            ]}},
+            {
+                "modes": {
+                    "m": [
+                        {
+                            "query_id": "q",
+                            "subset": "dense",
+                            "ranked_ids": ["a", "a"],
+                            "expected_ids": ["a"],
+                        }
+                    ]
+                }
+            },
         )
 
         with pytest.raises(ValueError, match="duplicate ids"):
@@ -292,7 +343,9 @@ class TestMain:
 
         assert not (output / "modes-latest.json").exists()
 
-    def test_the_written_artifact_is_strict_json(self, tmp_path: Path, monkeypatch: Any) -> None:
+    def test_the_written_artifact_is_strict_json(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
         def _reject(token: str) -> None:
             raise AssertionError(f"non-finite number published as {token}")
 
@@ -300,16 +353,30 @@ class TestMain:
         monkeypatch.setattr(bench, "OUTPUT_DIR", output)
         outcomes = self._outcomes_file(
             tmp_path,
-            {"modes": {"none": [], "measured": [
-                {"query_id": "q", "subset": "dense", "ranked_ids": ["a"], "expected_ids": ["a"]}
-            ]}},
+            {
+                "modes": {
+                    "measured": [
+                        {
+                            "query_id": "q",
+                            "subset": "dense",
+                            "ranked_ids": ["a"],
+                            "expected_ids": ["a"],
+                        }
+                    ]
+                }
+            },
         )
 
         bench.main(["bench", "--outcomes", str(outcomes)])
 
-        json.loads((output / "modes-latest.json").read_text(encoding="utf-8"), parse_constant=_reject)
+        json.loads(
+            (output / "modes-latest.json").read_text(encoding="utf-8"),
+            parse_constant=_reject,
+        )
 
-    def test_the_artifact_is_written_inside_the_benchmark_directory(self, tmp_path: Path, monkeypatch: Any) -> None:
+    def test_the_artifact_is_written_inside_the_benchmark_directory(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
         assert bench.OUTPUT_DIR.parent == Path(bench.__file__).resolve().parent
         assert bench.OUTPUT_DIR.name == "output"
 
@@ -317,9 +384,18 @@ class TestMain:
         monkeypatch.setattr(bench, "OUTPUT_DIR", output)
         outcomes = self._outcomes_file(
             tmp_path,
-            {"modes": {"m": [
-                {"query_id": "q", "subset": "dense", "ranked_ids": ["a"], "expected_ids": ["a"]}
-            ]}},
+            {
+                "modes": {
+                    "m": [
+                        {
+                            "query_id": "q",
+                            "subset": "dense",
+                            "ranked_ids": ["a"],
+                            "expected_ids": ["a"],
+                        }
+                    ]
+                }
+            },
         )
 
         bench.main(["bench", "--outcomes", str(outcomes)])

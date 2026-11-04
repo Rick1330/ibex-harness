@@ -37,7 +37,9 @@ from validate_gold_set_v2 import GOLD_SET_NAME
 
 try:  # the service package is only needed by the live driver, not by the scoring tests
     from app.eval.ranking import ndcg_at_k
-except ModuleNotFoundError:  # pragma: no cover - exercised only when run without the venv
+except (
+    ModuleNotFoundError
+):  # pragma: no cover - exercised only when run without the venv
     ndcg_at_k = None  # type: ignore[assignment]
 
 OUTPUT_DIR = _RANK_DIR / "output"
@@ -71,37 +73,60 @@ def grades_from_expected(expected_ids: Sequence[str]) -> dict[str, float]:
     return {memory_id: 1.0 for memory_id in expected_ids}
 
 
+def validate_outcomes(outcomes: Iterable[QueryOutcome]) -> list[QueryOutcome]:
+    """Reject the rows that would make a score quietly wrong, before any arithmetic runs.
+
+    Kept separate from `score_mode` so the scoring loop stays a loop: every rule here exists
+    because the failure it prevents is invisible downstream.
+    """
+    validated: list[QueryOutcome] = []
+    seen: set[str] = set()
+    for outcome in outcomes:
+        if outcome.subset not in SUBSET_ORDER:
+            raise ValueError(
+                f"unknown subset {outcome.subset!r} on {outcome.query_id!r}"
+            )
+        if outcome.query_id in seen:
+            # A repeated row would be weighted twice and the gate's counts invariant would
+            # still hold, so nothing downstream could notice.
+            raise ValueError(f"duplicate query_id {outcome.query_id!r}")
+        if not outcome.expected_ids:
+            # An unresolved gold key looks exactly like a total miss. Scoring it 0.0 would drag
+            # the published number down with no diagnostic.
+            raise ValueError(
+                f"{outcome.query_id!r} has no expected ids; resolve the gold keys"
+            )
+        seen.add(outcome.query_id)
+        validated.append(outcome)
+    return validated
+
+
 def score_mode(outcomes: Iterable[QueryOutcome]) -> ModeResult:
     """Aggregate one mode's per-query outcomes into the numbers the gate consumes."""
     if ndcg_at_k is None:  # pragma: no cover
         raise RuntimeError("the memory service package is required to score a run")
 
+    validated = validate_outcomes(outcomes)
     per_subset: dict[str, list[float]] = {subset: [] for subset in SUBSET_ORDER}
     overall: list[float] = []
-    seen: set[str] = set()
-    for outcome in outcomes:
-        if outcome.subset not in per_subset:
-            raise ValueError(f"unknown subset {outcome.subset!r} on {outcome.query_id!r}")
-        if outcome.query_id in seen:
-            # A repeated row would be weighted twice and the gate's counts invariant would
-            # still hold, so nothing downstream could notice.
-            raise ValueError(f"duplicate query_id {outcome.query_id!r}")
-        seen.add(outcome.query_id)
-        if not outcome.expected_ids:
-            # An unresolved gold key looks exactly like a total miss. Scoring it 0.0 would drag
-            # the published number down with no diagnostic.
-            raise ValueError(f"{outcome.query_id!r} has no expected ids; resolve the gold keys")
-        score = ndcg_at_k(list(outcome.ranked_ids), grades_from_expected(outcome.expected_ids), TOP_K)
+    for outcome in validated:
+        score = ndcg_at_k(
+            list(outcome.ranked_ids), grades_from_expected(outcome.expected_ids), TOP_K
+        )
         per_subset[outcome.subset].append(score)
         overall.append(score)
 
     return ModeResult(
         mode="",  # filled by the caller that knows which mode ran
         overall=_mean(overall),
-        non_graph=_mean([s for subset in NON_GRAPH_SUBSETS for s in per_subset[subset]]),
+        non_graph=_mean(
+            [s for subset in NON_GRAPH_SUBSETS for s in per_subset[subset]]
+        ),
         graph=_mean(per_subset[GRAPH_SUBSET]),
         query_count=len(overall),
-        per_subset_counts={subset: len(scores) for subset, scores in per_subset.items()},
+        per_subset_counts={
+            subset: len(scores) for subset, scores in per_subset.items()
+        },
     )
 
 
@@ -149,6 +174,89 @@ def build_payload(
     }
 
 
+def _parse_outcomes(mode: str, rows: Sequence[Mapping[str, Any]]) -> list[QueryOutcome]:
+    """Turn one mode's recorded rows into outcomes, naming the bad row when one is malformed."""
+    outcomes: list[QueryOutcome] = []
+    for index, row in enumerate(rows):
+        try:
+            outcomes.append(
+                QueryOutcome(
+                    query_id=row["query_id"],
+                    subset=row["subset"],
+                    ranked_ids=tuple(row["ranked_ids"]),
+                    expected_ids=tuple(row["expected_ids"]),
+                )
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"mode {mode!r} row {index} is missing {exc.args[0]!r}"
+            ) from exc
+        except TypeError as exc:
+            raise ValueError(
+                f"mode {mode!r} row {index} is not a mapping: {exc}"
+            ) from exc
+    return outcomes
+
+
+def assert_comparable(modes: Mapping[str, Sequence[QueryOutcome]]) -> None:
+    """Every mode must be scored on the same queries, with the same gold expectations.
+
+    The gate compares modes against each other, so a mode that silently dropped its hard
+    queries would report a better mean while still clearing the per-subset minimum-count
+    check. Cross-checking the gold keys is the only thing that catches that.
+    """
+    gold: dict[str, tuple[str, tuple[str, ...]]] | None = None
+    baseline = ""
+    for name, outcomes in modes.items():
+        keys = {o.query_id: (o.subset, tuple(sorted(o.expected_ids))) for o in outcomes}
+        if gold is None:
+            gold, baseline = keys, name
+            continue
+        problems = _comparability_problems(gold, keys)
+        if problems:
+            raise ValueError(
+                f"mode {name!r} is not comparable to {baseline!r}: "
+                + "; ".join(problems)
+            )
+
+
+def _comparability_problems(
+    gold: Mapping[str, tuple[str, tuple[str, ...]]],
+    keys: Mapping[str, tuple[str, tuple[str, ...]]],
+) -> list[str]:
+    missing = sorted(set(gold) - set(keys))
+    extra = sorted(set(keys) - set(gold))
+    differing = sorted(q for q in set(gold) & set(keys) if gold[q] != keys[q])
+    problems: list[str] = []
+    if missing:
+        problems.append(f"missing {len(missing)} queries ({_preview(missing)})")
+    if extra:
+        problems.append(
+            f"scored {len(extra)} queries the baseline did not ({_preview(extra)})"
+        )
+    if differing:
+        problems.append(
+            f"{len(differing)} queries differ in subset or expectations ({_preview(differing)})"
+        )
+    return problems
+
+
+def _preview(ids: Sequence[str], limit: int = 3) -> str:
+    shown = ", ".join(ids[:limit])
+    return f"{shown}{', …' if len(ids) > limit else ''}"
+
+
+def load_recorded(path: Path) -> dict[str, list[QueryOutcome]]:
+    """Read a recorded run and refuse one whose modes are not scored on the same queries."""
+    recorded = json.loads(path.read_text(encoding="utf-8"))
+    modes = recorded.get("modes") if isinstance(recorded, Mapping) else None
+    if not isinstance(modes, Mapping) or not modes:
+        raise ValueError(f"{path} has no modes to score")
+    parsed = {name: _parse_outcomes(name, rows) for name, rows in modes.items()}
+    assert_comparable(parsed)
+    return parsed
+
+
 def main(argv: list[str] | None = None) -> int:
     """Score a recorded run and write the artifact.
 
@@ -156,30 +264,26 @@ def main(argv: list[str] | None = None) -> int:
     this entry point can be exercised from a recorded result file in CI and in tests.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--outcomes", type=Path, required=True, help="recorded per-query outcomes")
+    parser.add_argument(
+        "--outcomes", type=Path, required=True, help="recorded per-query outcomes"
+    )
     parser.add_argument("--gold-set", default=GOLD_SET_NAME)
     parser.add_argument("--reranker", default="stub/lexical-overlap@1")
     args = parser.parse_args(argv[1:] if argv else None)
 
-    recorded = json.loads(args.outcomes.read_text(encoding="utf-8"))
-    results: dict[str, ModeResult] = {}
-    for mode_name, outcomes in recorded["modes"].items():
-        scored = score_mode(
-            QueryOutcome(
-                query_id=outcome["query_id"],
-                subset=outcome["subset"],
-                ranked_ids=outcome["ranked_ids"],
-                expected_ids=outcome["expected_ids"],
-            )
-            for outcome in outcomes
-        )
-        results[mode_name] = with_mode(scored, mode_name)
+    recorded = load_recorded(args.outcomes)
+    results = {
+        name: with_mode(score_mode(outcomes), name)
+        for name, outcomes in recorded.items()
+    }
 
     payload = build_payload(results, gold_set=args.gold_set, reranker=args.reranker)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     target = OUTPUT_DIR / "modes-latest.json"
     target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {target.name}: {len(payload['modes'])} modes over {payload['gold_set']}")
+    print(
+        f"wrote {target.name}: {len(payload['modes'])} modes over {payload['gold_set']}"
+    )
     return 0
 
 

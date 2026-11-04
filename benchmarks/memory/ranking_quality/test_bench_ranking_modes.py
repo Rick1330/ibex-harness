@@ -105,7 +105,11 @@ class TestScoring:
 class TestPayload:
     def test_the_payload_names_the_definitions(self) -> None:
         payload = bench.build_payload(
-            {"hybrid": bench.with_mode(bench.score_mode([_outcome("q1", "dense", ["a"], ["a"])]), "hybrid")},
+            {
+                "hybrid": bench.with_mode(
+                    bench.score_mode([_outcome("q1", "dense", ["a"], ["a"])]), "hybrid"
+                )
+            },
             gold_set="ranking_quality_v2",
             reranker="stub/lexical-overlap@1",
         )
@@ -116,7 +120,12 @@ class TestPayload:
 
     def test_scores_are_rounded_to_published_precision(self) -> None:
         payload = bench.build_payload(
-            {"hybrid": bench.with_mode(bench.score_mode([_outcome("q1", "dense", ["x", "a"], ["a"])]), "hybrid")},
+            {
+                "hybrid": bench.with_mode(
+                    bench.score_mode([_outcome("q1", "dense", ["x", "a"], ["a"])]),
+                    "hybrid",
+                )
+            },
             gold_set="g",
             reranker="r",
         )
@@ -131,26 +140,217 @@ class TestEndToEnd:
     ) -> None:
         monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "output")
         outcomes = tmp_path / "outcomes.json"
-        outcomes.write_text(json.dumps(_perfect_run(["dense_only", "hybrid", "hybrid_rerank", "full_graph"])))
+        outcomes.write_text(
+            json.dumps(
+                _perfect_run(["dense_only", "hybrid", "hybrid_rerank", "full_graph"])
+            )
+        )
 
         assert bench.main(["bench", "--outcomes", str(outcomes)]) == 0
 
         payload = json.loads((bench.OUTPUT_DIR / "modes-latest.json").read_text())
-        results = {
-            name: bench.with_mode(
-                bench.score_mode(
-                    bench.QueryOutcome(
-                        query_id=o["query_id"],
-                        subset=o["subset"],
-                        ranked_ids=o["ranked_ids"],
-                        expected_ids=o["expected_ids"],
-                    )
-                    for o in _perfect_outcomes()
-                ),
-                name,
-            )
-            for name in payload["modes"]
-        }
+        results = results_from_payload(payload)
+
+        # The gate is fed the numbers the artifact *saved*, not numbers recomputed from the
+        # fixtures: a wrong score or count written by main() has to fail here.
+        for result in results.values():
+            assert result.overall == pytest.approx(1.0)
+            assert result.query_count == 30
+            assert result.per_subset_counts == {"dense": 10, "lexical": 10, "graph": 10}
+        assert evaluate_gate(results, {name: 1.0 for name in results}) == []
+
+    def test_a_mode_that_ranked_worse_fails_the_gate_on_its_saved_score(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "output")
+        recorded = _perfect_run(["dense_only", "hybrid", "hybrid_rerank", "full_graph"])
+        # One mode answers at rank 2 instead of rank 1 — a real regression, expressed only as
+        # a worse ranking, never as a precomputed score.
+        for row in recorded["modes"]["full_graph"]:
+            row["ranked_ids"] = [f"noise-{row['query_id']}", *row["ranked_ids"]]
+        outcomes = tmp_path / "outcomes.json"
+        outcomes.write_text(json.dumps(recorded))
+
+        assert bench.main(["bench", "--outcomes", str(outcomes)]) == 0
+
+        payload = json.loads((bench.OUTPUT_DIR / "modes-latest.json").read_text())
+        results = results_from_payload(payload)
         baseline = {name: 1.0 for name in results}
 
-        assert evaluate_gate(results, baseline) == []
+        assert results["full_graph"].overall < 1.0
+        assert evaluate_gate(results, baseline) != []
+
+    def test_corrupting_the_saved_score_flips_the_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Proves the gate reads the artifact: the same run passes until the number is wrong."""
+        monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "output")
+        outcomes = tmp_path / "outcomes.json"
+        outcomes.write_text(json.dumps(_perfect_run(["hybrid_rerank", "full_graph"])))
+        assert bench.main(["bench", "--outcomes", str(outcomes)]) == 0
+
+        payload = json.loads((bench.OUTPUT_DIR / "modes-latest.json").read_text())
+        baseline = {name: 1.0 for name in payload["modes"]}
+        assert evaluate_gate(results_from_payload(payload), baseline) == []
+
+        payload["modes"]["full_graph"]["ndcg_at_10"] = 0.5
+        assert evaluate_gate(results_from_payload(payload), baseline) != []
+
+
+def results_from_payload(payload: dict[str, Any]) -> dict[str, bench.ModeResult]:
+    """Rebuild the gate's input from the artifact's own fields.
+
+    Deliberately not a rescoring call: a test that recomputes the expected value from the same
+    fixture the production code read cannot detect a wrong number in the artifact.
+    """
+    return {
+        name: bench.ModeResult(
+            mode=name,
+            overall=body["ndcg_at_10"],
+            non_graph=body["non_graph_ndcg_at_10"],
+            graph=body["graph_ndcg_at_10"],
+            query_count=body["query_count"],
+            per_subset_counts=body["per_subset_counts"],
+        )
+        for name, body in payload["modes"].items()
+    }
+
+
+class TestRecordedRun:
+    """The gate compares modes, so the modes must be comparable before anything is scored."""
+
+    def _write(self, tmp_path: Path, modes: dict[str, Any]) -> Path:
+        target = tmp_path / "outcomes.json"
+        target.write_text(json.dumps({"modes": modes}))
+        return target
+
+    def test_a_mode_that_dropped_a_hard_query_is_rejected(self, tmp_path: Path) -> None:
+        # Without this, the mode that quietly dropped a query it could not answer reports a
+        # better mean and still clears the per-subset minimum-count check.
+        complete = _perfect_outcomes()
+        thinned = [row for row in complete if row["query_id"] != "q_graph-3"]
+
+        with pytest.raises(ValueError, match="not comparable"):
+            bench.load_recorded(
+                self._write(tmp_path, {"hybrid": complete, "full_graph": thinned})
+            )
+
+    def test_the_error_names_the_mode_and_the_missing_query(
+        self, tmp_path: Path
+    ) -> None:
+        complete = _perfect_outcomes()
+        thinned = [row for row in complete if row["query_id"] != "q_graph-3"]
+
+        with pytest.raises(ValueError, match="full_graph.*missing 1"):
+            bench.load_recorded(
+                self._write(tmp_path, {"hybrid": complete, "full_graph": thinned})
+            )
+
+    def test_a_mode_that_scored_extra_queries_is_rejected(self, tmp_path: Path) -> None:
+        complete = _perfect_outcomes()
+
+        with pytest.raises(ValueError, match="the baseline did not"):
+            bench.load_recorded(
+                self._write(
+                    tmp_path,
+                    {
+                        "hybrid": complete,
+                        "full_graph": [
+                            *complete,
+                            {
+                                "query_id": "q_extra",
+                                "subset": "dense",
+                                "ranked_ids": ["a"],
+                                "expected_ids": ["a"],
+                            },
+                        ],
+                    },
+                )
+            )
+
+    def test_a_mode_that_changed_the_expectations_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        complete = _perfect_outcomes()
+        tampered = [dict(row) for row in complete]
+        tampered[0]["expected_ids"] = ["something-else"]
+
+        with pytest.raises(ValueError, match="differ in subset or expectations"):
+            bench.load_recorded(
+                self._write(tmp_path, {"hybrid": complete, "full_graph": tampered})
+            )
+
+    def test_a_mode_that_changed_the_subset_is_rejected(self, tmp_path: Path) -> None:
+        # Re-labelling a failed graph query as dense would move it out of the subset the gate
+        # compares, which is the same cheat as dropping it.
+        complete = _perfect_outcomes()
+        tampered = [dict(row) for row in complete]
+        tampered[0]["subset"] = "dense" if tampered[0]["subset"] != "dense" else "graph"
+
+        with pytest.raises(ValueError, match="differ in subset or expectations"):
+            bench.load_recorded(
+                self._write(tmp_path, {"hybrid": complete, "full_graph": tampered})
+            )
+
+    def test_row_order_may_differ_between_modes(self, tmp_path: Path) -> None:
+        complete = _perfect_outcomes()
+
+        loaded = bench.load_recorded(
+            self._write(
+                tmp_path, {"hybrid": complete, "full_graph": list(reversed(complete))}
+            )
+        )
+
+        assert set(loaded) == {"hybrid", "full_graph"}
+
+    def test_expected_id_order_may_differ_between_modes(self, tmp_path: Path) -> None:
+        complete = _perfect_outcomes()
+        for row in complete:
+            row["expected_ids"] = [*row["expected_ids"], "second-relevant"]
+        reordered = [dict(row) for row in complete]
+        for row in reordered:
+            row["expected_ids"] = list(reversed(row["expected_ids"]))
+
+        bench.load_recorded(
+            self._write(tmp_path, {"hybrid": complete, "full_graph": reordered})
+        )
+
+    def test_a_row_missing_a_key_names_the_key_and_row(self, tmp_path: Path) -> None:
+        broken = _perfect_outcomes()
+        del broken[4]["ranked_ids"]
+
+        with pytest.raises(ValueError, match=r"hybrid.*row 4.*'ranked_ids'"):
+            bench.load_recorded(self._write(tmp_path, {"hybrid": broken}))
+
+    def test_an_outcomes_file_with_no_modes_is_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="no modes to score"):
+            bench.load_recorded(self._write(tmp_path, {}))
+
+    def test_the_end_to_end_path_refuses_an_incomparable_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "output")
+        complete = _perfect_outcomes()
+        outcomes = self._write(
+            tmp_path, {"hybrid": complete, "full_graph": complete[:-1]}
+        )
+
+        with pytest.raises(ValueError, match="not comparable"):
+            bench.main(["bench", "--outcomes", str(outcomes)])
+        assert not (tmp_path / "output" / "modes-latest.json").exists()
+
+
+class TestMalformedRecords:
+    def test_a_row_that_is_not_an_object_names_the_mode_and_row(self, tmp_path: Path) -> None:
+        target = tmp_path / "outcomes.json"
+        target.write_text(json.dumps({"modes": {"hybrid": ["not-a-row"]}}))
+
+        with pytest.raises(ValueError, match=r"hybrid.*row 0 is not a mapping"):
+            bench.load_recorded(target)
+
+    def test_modes_that_are_not_a_mapping_are_rejected(self, tmp_path: Path) -> None:
+        target = tmp_path / "outcomes.json"
+        target.write_text(json.dumps({"modes": ["hybrid"]}))
+
+        with pytest.raises(ValueError, match="no modes to score"):
+            bench.load_recorded(target)
