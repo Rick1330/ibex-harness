@@ -605,7 +605,7 @@ class TestDocumentShape:
             },
         )
 
-        with pytest.raises(ValueError, match="needs string query_id and subset"):
+        with pytest.raises(ValueError, match=r"field 'query_id' must be a string"):
             bench.load_recorded(target)
 
     def test_an_empty_reranker_is_rejected(self, tmp_path: Path) -> None:
