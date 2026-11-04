@@ -455,6 +455,14 @@ jobs:
             benchmarks/memory/ranking_quality/run_modes.py \
             --reranker stub/lexical-overlap@1
 
+      # Reports as well as gates: the Markdown table goes to the run summary and the verdict to
+      # modes-gate.json, so a failing run can be read without re-running it.
+      - name: Enforce multi-mode ranking gate
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/check_mode_gate.py | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Build published ranking-quality data
         if: always()
         env:
@@ -553,6 +561,7 @@ jobs:
             benchmarks/memory/ranking_quality/output/gate-result.json
             benchmarks/memory/ranking_quality/output/modes-latest.json
             benchmarks/memory/ranking_quality/output/modes-recorded.json
+            benchmarks/memory/ranking_quality/output/modes-gate.json
           retention-days: 14
           if-no-files-found: error
 
