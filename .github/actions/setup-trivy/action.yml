@@ -31,9 +31,9 @@ runs:
         dir="${RUNNER_TEMP}/trivy-${version}"
         mkdir -p "$dir"
 
-        curl -fsSL --retry 3 --retry-delay 2 --max-time 120 -o "${dir}/${asset}" \
+        curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --retry-delay 2 --max-time 120 -o "${dir}/${asset}" \
           "${base}/${asset}"
-        curl -fsSL --retry 3 --retry-delay 2 --max-time 60 -o "${dir}/checksums.txt" \
+        curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --retry-delay 2 --max-time 60 -o "${dir}/checksums.txt" \
           "${base}/trivy_${version}_checksums.txt"
 
         # Verify before extracting: a compromised or truncated download must not become a
