@@ -33,6 +33,7 @@ from gate_modes import (
     render_report,
 )
 from path_guard import (
+    UnsafePathError,
     resolve_bench_input_path,
     resolve_bench_output_path,
     write_json_atomic,
@@ -266,14 +267,18 @@ def _emit(
     return 1 if failures else 0
 
 
-def _reject(args: argparse.Namespace, exc: GateInputError) -> int:
+def _reject(args: argparse.Namespace, detail: str) -> int:
     """A run that cannot be compared exits differently from one that regressed.
 
     ``2`` means the gate refused the input; ``1`` means it read the input and the numbers failed.
     Conflating them would make "we did not measure this" look like "the measurement moved".
+
+    A missing file reaches here too: ``resolve_bench_input_path`` raises ``UnsafePathError`` for
+    it, which is the ordinary case when the benchmark step itself failed, and the gate still owes
+    the job a verdict.
     """
-    write_json_atomic(_report_path(args), _input_failure_report(str(exc)))
-    print(f"gate rejected: {exc}", file=sys.stderr)
+    write_json_atomic(_report_path(args), _input_failure_report(detail))
+    print(f"gate rejected: {detail}", file=sys.stderr)
     return 2
 
 
@@ -286,8 +291,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         baseline = load_baseline(
             resolve_bench_input_path(args.baseline, bench_dir=_RANK_DIR)
         )
-    except GateInputError as exc:
-        return _reject(args, exc)
+    except (GateInputError, UnsafePathError) as exc:
+        return _reject(args, str(exc))
     try:
         require_same_experiment(artifact, baseline)
     except GateInputError as exc:

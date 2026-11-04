@@ -392,3 +392,52 @@ class TestRejectedRunsStillReport:
         )
 
         assert (refused, regressed) == (2, 1)
+
+
+class TestMissingInputs:
+    def test_a_missing_artifact_still_writes_a_verdict(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The ordinary case when the benchmark step failed: the gate runs, finds no artifact, and
+        # owes the job the same verdict it would write for any other unreadable input.
+        monkeypatch.setattr(gate_cli, "_RANK_DIR", tmp_path)
+        report_path = tmp_path / "out" / "modes-gate.json"
+
+        code = gate_cli.main(
+            [
+                "gate",
+                "--artifact",
+                str(tmp_path / "never-written.json"),
+                "--baseline",
+                str(_write(tmp_path, "b.json", _baseline())),
+                "--report-out",
+                str(report_path),
+            ]
+        )
+
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert code == 2
+        assert report["status"] == "fail"
+        assert report["failures"][0]["check"] == "input"
+        assert "never-written.json" in report["failures"][0]["detail"]
+
+    def test_a_missing_baseline_still_writes_a_verdict(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(gate_cli, "_RANK_DIR", tmp_path)
+        report_path = tmp_path / "out" / "modes-gate.json"
+
+        code = gate_cli.main(
+            [
+                "gate",
+                "--artifact",
+                str(_write(tmp_path, "m.json", _artifact())),
+                "--baseline",
+                str(tmp_path / "no-baseline.json"),
+                "--report-out",
+                str(report_path),
+            ]
+        )
+
+        assert code == 2
+        assert json.loads(report_path.read_text(encoding="utf-8"))["status"] == "fail"
