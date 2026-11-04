@@ -197,6 +197,18 @@ class Settings(BaseSettings):
     # Hybrid retrieval (phase 5.A.1 + 5.A.2). Off by default until the gold-set
     # comparison in 5.C.1 reads the change as an improvement; the code path is
     # exercised by unit and integration tests and enabled in the dev stack.
+    # ADR-0094 leaves suppression unconditional. Operators need a way to turn it off without a
+    # deploy: it can hide a memory a user expects to see, and the multi-mode benchmark compares
+    # the two behaviours on the same corpus.
+    conflict_suppression_enabled: bool = Field(
+        default=True,
+        description=(
+            "Drop the lower-ranked side of an unresolved conflict from search results. "
+            "Disabling it returns both sides. Two side effects: a page no longer shortened by "
+            "suppression may not trigger the full-text backfill that the enabled path needs, "
+            "and context assembly (which has its own collapse, ADR-0094) is unaffected."
+        ),
+    )
     search_hybrid_enabled: bool = Field(
         default=False,
         description="Run the full-text channel in parallel with vector search and fuse by RRF",

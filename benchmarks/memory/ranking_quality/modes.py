@@ -76,6 +76,7 @@ DENSE_ONLY = BenchmarkMode(
         {
             "search_hybrid_enabled": False,
             "rerank_enabled": False,
+            "conflict_suppression_enabled": False,
             # Without this the page is refilled with full-text hits when vector search comes
             # up short, so the "vector only" baseline would contain lexical results.
             "search_fallback_enabled": False,
@@ -90,7 +91,11 @@ HYBRID = BenchmarkMode(
     rerank=False,
     conflict_suppression=False,
     settings_delta=MappingProxyType(
-        {"search_hybrid_enabled": True, "rerank_enabled": False}
+        {
+            "search_hybrid_enabled": True,
+            "rerank_enabled": False,
+            "conflict_suppression_enabled": False,
+        }
     ),
 )
 
@@ -101,7 +106,11 @@ HYBRID_RERANK = BenchmarkMode(
     rerank=True,
     conflict_suppression=False,
     settings_delta=MappingProxyType(
-        {"search_hybrid_enabled": True, "rerank_enabled": True}
+        {
+            "search_hybrid_enabled": True,
+            "rerank_enabled": True,
+            "conflict_suppression_enabled": False,
+        }
     ),
 )
 

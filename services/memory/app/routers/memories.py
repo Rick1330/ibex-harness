@@ -276,6 +276,7 @@ async def list_hot_memories(
                 agent_id=resolved_agent_id,
                 limit=limit,
                 min_confidence=min_confidence,
+                suppress_conflicts=ctx.settings.conflict_suppression_enabled,
             )
         )
     except ValueError as exc:

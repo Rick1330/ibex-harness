@@ -109,7 +109,7 @@ class TestModes:
             Settings(), "conflict_suppression_enabled"
         ) else Settings()
 
-        if hasattr(base, "conflict_suppression_enabled"):
+        if _has_suppression_field(base):
             pytest.skip("the service already exposes the suppression switch")
 
         with pytest.raises(UnsupportedModeError, match="conflict_suppression_enabled"):
@@ -120,7 +120,7 @@ class TestModes:
 
         base = Settings()
         expected = {"dense_only", "hybrid", "hybrid_rerank"}
-        if hasattr(base, "conflict_suppression_enabled") and base.conflict_suppression_enabled is None:
+        if _has_suppression_field(base):
             expected.add("full_graph")
 
         assert {mode.name for mode in modes_with_suppression_support(base)} == expected

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from uuid import UUID
 
@@ -284,7 +284,7 @@ class MemoryReadRepository:
             hydrated,
             replace(rank_opts, relevance_overrides=overrides),
         )
-        kept = collapse_conflict_pairs(scored)
+        kept = self._collapse(scored)
         record_suppressed(len(scored), len(kept))
         ranked = kept[: query.limit]
         if ranked:
@@ -377,7 +377,7 @@ class MemoryReadRepository:
         )
         ranked = rank_hydrated_hits(admitted, rows, rank_opts)
         allowed = pii.allow(ranked)
-        kept = collapse_conflict_pairs(allowed)
+        kept = self._collapse(allowed)
         remaining = fused[query.limit :]
         if len(kept) >= query.limit or not remaining:
             record_suppressed(len(allowed), len(kept))
@@ -387,9 +387,19 @@ class MemoryReadRepository:
         # first pass is not counted: its drops are speculative until this one.
         refilled = rank_hydrated_hits(fused, rows, rank_opts)
         allowed = pii.allow(refilled)
-        kept = collapse_conflict_pairs(allowed)
+        kept = self._collapse(allowed)
         record_suppressed(len(allowed), len(kept))
         return kept[: query.limit]
+
+    def _collapse(self, results: Sequence[MemorySearchResult]) -> list[MemorySearchResult]:
+        """Apply unresolved-conflict suppression unless the operator turned it off.
+
+        `record_suppressed` stays at the call sites so the metric keeps reporting the drop it
+        actually made: with the switch off it reports zero, which is the truth.
+        """
+        if not self._settings.conflict_suppression_enabled:
+            return list(results)
+        return collapse_conflict_pairs(results)
 
     async def _conflict_groups_snapshot(
         self,
@@ -465,7 +475,7 @@ class MemoryReadRepository:
             rank_opts,
         )
         allowed = pii.allow(vector_ranked)
-        vector_kept = collapse_conflict_pairs(allowed)
+        vector_kept = self._collapse(allowed)
         vector_page = vector_kept[: query.limit]
         if len(vector_page) >= query.limit:
             record_suppressed(len(allowed), len(vector_kept))
@@ -498,7 +508,7 @@ class MemoryReadRepository:
             all_hydrated = await self._conflict_groups_snapshot(query.org_id, all_hydrated)
         ranked = rank_hydrated_hits(merged, all_hydrated, rank_opts)
         allowed = pii.allow(ranked)
-        kept = collapse_conflict_pairs(allowed)
+        kept = self._collapse(allowed)
         record_suppressed(len(allowed), len(kept))
         return kept[: query.limit]
 

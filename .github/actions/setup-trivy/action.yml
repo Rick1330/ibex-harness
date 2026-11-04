@@ -1,0 +1,48 @@
+name: Setup Trivy
+description: >-
+  Install the Trivy CLI from GitHub Releases. The upstream aquasecurity/setup-trivy
+  action shells out to contrib/install.sh, which downloads from get.trivy.dev; that
+  host stopped resolving on GitHub-hosted runners on 2026-11-04 and took every image
+  scan (and ci-gate-security behind them) down with it. GitHub Releases is already an
+  audited egress endpoint here, and the release checksum is verified, which the
+  install script path did not do.
+inputs:
+  version:
+    description: Trivy release tag, e.g. v0.70.0
+    required: false
+    default: v0.70.0
+outputs:
+  trivy-path:
+    description: Absolute path to the installed binary
+    value: ${{ steps.stage.outputs.dir }}/trivy
+runs:
+  using: composite
+  steps:
+    - name: Download and verify Trivy
+      id: stage
+      shell: bash
+      env:
+        TRIVY_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        version="${TRIVY_VERSION#v}"
+        base="https://github.com/aquasecurity/trivy/releases/download/v${version}"
+        asset="trivy_${version}_Linux-64bit.tar.gz"
+        dir="${RUNNER_TEMP}/trivy-${version}"
+        mkdir -p "$dir"
+
+        curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --retry-delay 2 --max-time 120 -o "${dir}/${asset}" \
+          "${base}/${asset}"
+        curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --retry-delay 2 --max-time 60 -o "${dir}/checksums.txt" \
+          "${base}/trivy_${version}_checksums.txt"
+
+        # Verify before extracting: a compromised or truncated download must not become a
+        # scanner that silently passes.
+        ( cd "$dir" && grep " ${asset}\$" checksums.txt | sha256sum -c - )
+
+        tar -xzf "${dir}/${asset}" -C "$dir" trivy
+        chmod +x "${dir}/trivy"
+        "${dir}/trivy" --version
+
+        echo "${dir}" >> "$GITHUB_PATH"
+        echo "dir=${dir}" >> "$GITHUB_OUTPUT"
