@@ -317,13 +317,15 @@ def _required_label(document: Mapping[str, Any], field: str, source: str) -> str
     return value
 
 
-def load_recorded(path: Path) -> RecordedRun:
-    """Read a recorded run and refuse one that cannot be published honestly.
+def _optional_label(document: Mapping[str, Any], field: str, source: str) -> str | None:
+    value = document.get(field)
+    if value is not None and not isinstance(value, str):
+        raise RecordedRunError(f"{source} {field} must be a string")
+    return value
 
-    The path is resolved by the caller through ``path_guard``; this function only parses and
-    validates. Everything it rejects is a run whose numbers would be wrong or unlabelled rather
-    than merely malformed.
-    """
+
+def _load_document(path: Path) -> Mapping[str, Any]:
+    """Decode the recording, rejecting repeated keys and a non-object root."""
     try:
         document = json.loads(
             path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_keys
@@ -332,9 +334,14 @@ def load_recorded(path: Path) -> RecordedRun:
         raise RecordedRunError(f"{path.name}: {exc}") from exc
     if not isinstance(document, Mapping):
         raise RecordedRunError(f"{path.name} is not a JSON object")
+    return document
+
+
+def _parse_modes(document: Mapping[str, Any], source: str) -> dict[str, list[QueryOutcome]]:
+    """Parse every mode and refuse one that is empty or scored on different queries."""
     modes = document.get("modes")
     if not isinstance(modes, Mapping) or not modes:
-        raise RecordedRunError(f"{path.name} has no modes to score")
+        raise RecordedRunError(f"{source} has no modes to score")
     parsed: dict[str, list[QueryOutcome]] = {}
     for name, rows in modes.items():
         if isinstance(rows, list) and not rows:
@@ -345,13 +352,21 @@ def load_recorded(path: Path) -> RecordedRun:
             )
         parsed[name] = _parse_outcomes(name, rows)
     assert_comparable(parsed)
-    gold_set = document.get("gold_set")
-    if gold_set is not None and not isinstance(gold_set, str):
-        raise RecordedRunError(f"{path.name} gold_set must be a string")
+    return parsed
+
+
+def load_recorded(path: Path) -> RecordedRun:
+    """Read a recorded run and refuse one that cannot be published honestly.
+
+    The path is resolved by the caller through ``path_guard``; this function only parses and
+    validates. Everything it rejects is a run whose numbers would be wrong or unlabelled rather
+    than merely malformed.
+    """
+    document = _load_document(path)
     return RecordedRun(
-        modes=parsed,
+        modes=_parse_modes(document, path.name),
         reranker=_required_label(document, "reranker", path.name),
-        gold_set=gold_set,
+        gold_set=_optional_label(document, "gold_set", path.name),
     )
 
 
