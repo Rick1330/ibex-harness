@@ -33,12 +33,14 @@ for _path in (_MEMORY_DIR, _BENCH_MEMORY, _RANK_DIR):
         sys.path.insert(0, str(_path))
 
 from gate_modes import ModeResult
-from path_guard import resolve_bench_input_path
+from path_guard import resolve_bench_input_path, write_json_atomic
 from validate_gold_set_v2 import GOLD_SET_NAME
 
 try:  # the service package is only needed by the live driver, not by the scoring tests
     from app.eval.ranking import ndcg_at_k
-except ModuleNotFoundError:  # pragma: no cover - exercised only when run without the venv
+except (
+    ModuleNotFoundError
+):  # pragma: no cover - exercised only when run without the venv
     ndcg_at_k = None  # type: ignore[assignment]
 
 OUTPUT_DIR = _RANK_DIR / "output"
@@ -54,6 +56,14 @@ GRAPH_SUBSET = "graph"
 NON_GRAPH_SUBSETS = frozenset({"dense", "lexical"})
 # Fixed order so the published artifact is byte-reproducible across runs.
 SUBSET_ORDER = ("dense", "lexical", "graph")
+
+
+class RecordedRunError(ValueError):
+    """A recorded run whose numbers would be wrong or unlabelled if published.
+
+    A ``ValueError`` so callers that already catch malformed input keep working, but named so a
+    reader (and a test) can tell it apart from a parse failure inside the JSON decoder.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,17 +96,17 @@ def validate_outcomes(outcomes: Iterable[QueryOutcome]) -> list[QueryOutcome]:
     seen: set[str] = set()
     for outcome in outcomes:
         if outcome.subset not in SUBSET_ORDER:
-            raise ValueError(
+            raise RecordedRunError(
                 f"unknown subset {outcome.subset!r} on {outcome.query_id!r}"
             )
         if outcome.query_id in seen:
             # A repeated row would be weighted twice and the gate's counts invariant would
             # still hold, so nothing downstream could notice.
-            raise ValueError(f"duplicate query_id {outcome.query_id!r}")
+            raise RecordedRunError(f"duplicate query_id {outcome.query_id!r}")
         if not outcome.expected_ids:
             # An unresolved gold key looks exactly like a total miss. Scoring it 0.0 would drag
             # the published number down with no diagnostic.
-            raise ValueError(
+            raise RecordedRunError(
                 f"{outcome.query_id!r} has no expected ids; resolve the gold keys"
             )
         seen.add(outcome.query_id)
@@ -177,28 +187,54 @@ def build_payload(
     }
 
 
-def _parse_outcomes(mode: str, rows: Sequence[Mapping[str, Any]]) -> list[QueryOutcome]:
-    """Turn one mode's recorded rows into outcomes, naming the bad row when one is malformed."""
+def _parse_outcomes(mode: str, rows: Any) -> list[QueryOutcome]:
+    """Turn one mode's recorded rows into outcomes, naming the bad row when one is malformed.
+
+    Every type is checked rather than coerced. ``tuple("ab")`` is ``("a", "b")``, so a JSON
+    string where a list of ids belongs would invent two ids and score the row without complaint.
+    """
+    if not isinstance(rows, list):
+        # ValueError, not TypeError: the input is a file, and a file with the wrong shape is
+        # malformed data rather than a caller misusing an API.
+        raise RecordedRunError(
+            f"mode {mode!r} must be a list of rows, got {type(rows).__name__}"
+        )
     outcomes: list[QueryOutcome] = []
     for index, row in enumerate(rows):
-        try:
-            outcomes.append(
-                QueryOutcome(
-                    query_id=row["query_id"],
-                    subset=row["subset"],
-                    ranked_ids=tuple(row["ranked_ids"]),
-                    expected_ids=tuple(row["expected_ids"]),
-                )
-            )
-        except KeyError as exc:
-            raise ValueError(
-                f"mode {mode!r} row {index} is missing {exc.args[0]!r}"
-            ) from exc
-        except TypeError as exc:
-            raise ValueError(
-                f"mode {mode!r} row {index} is not a mapping: {exc}"
-            ) from exc
+        outcomes.append(_parse_row(mode, index, row))
     return outcomes
+
+
+def _parse_row(mode: str, index: int, row: Any) -> QueryOutcome:
+    if not isinstance(row, Mapping):
+        raise RecordedRunError(f"mode {mode!r} row {index} is not an object")
+    try:
+        fields = {
+            name: row[name]
+            for name in ("query_id", "subset", "ranked_ids", "expected_ids")
+        }
+    except KeyError as exc:
+        raise RecordedRunError(
+            f"mode {mode!r} row {index} is missing {exc.args[0]!r}"
+        ) from exc
+    if not isinstance(fields["query_id"], str) or not isinstance(fields["subset"], str):
+        raise RecordedRunError(
+            f"mode {mode!r} row {index} needs string query_id and subset"
+        )
+    return QueryOutcome(
+        query_id=fields["query_id"],
+        subset=fields["subset"],
+        ranked_ids=_id_list(mode, index, "ranked_ids", fields["ranked_ids"]),
+        expected_ids=_id_list(mode, index, "expected_ids", fields["expected_ids"]),
+    )
+
+
+def _id_list(mode: str, index: int, field: str, value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise RecordedRunError(
+            f"mode {mode!r} row {index} field {field!r} must be a list of strings"
+        )
+    return tuple(value)
 
 
 def assert_comparable(modes: Mapping[str, Sequence[QueryOutcome]]) -> None:
@@ -217,7 +253,7 @@ def assert_comparable(modes: Mapping[str, Sequence[QueryOutcome]]) -> None:
             continue
         problems = _comparability_problems(gold, keys)
         if problems:
-            raise ValueError(
+            raise RecordedRunError(
                 f"mode {name!r} is not comparable to {baseline!r}: "
                 + "; ".join(problems)
             )
@@ -249,19 +285,74 @@ def _preview(ids: Sequence[str], limit: int = 3) -> str:
     return f"{shown}{', …' if len(ids) > limit else ''}"
 
 
-def load_recorded(path: Path) -> dict[str, list[QueryOutcome]]:
-    """Read a recorded run and refuse one whose modes are not scored on the same queries.
+@dataclass(frozen=True, slots=True)
+class RecordedRun:
+    """A recorded run plus the provenance the artifact has to publish with it."""
 
-    The path is resolved by the caller through ``path_guard``; this function only parses.
+    modes: Mapping[str, list[QueryOutcome]]
+    reranker: str
+    gold_set: str | None = None
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """``json.loads`` keeps the last of a repeated key and reports nothing.
+
+    Two ``full_graph`` blocks would silently collapse to one, so a whole mode could vanish
+    from a run that still publishes as complete.
     """
-    recorded = json.loads(path.read_text(encoding="utf-8"))
+    seen: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in seen:
+            raise RecordedRunError(f"duplicate key {key!r}")
+        seen[key] = value
+    return seen
 
-    modes = recorded.get("modes") if isinstance(recorded, Mapping) else None
+
+def _required_label(document: Mapping[str, Any], field: str, source: str) -> str:
+    value = document.get(field)
+    if not isinstance(value, str) or not value:
+        raise RecordedRunError(
+            f"{source} does not name its {field}; a published number must carry it"
+        )
+    return value
+
+
+def load_recorded(path: Path) -> RecordedRun:
+    """Read a recorded run and refuse one that cannot be published honestly.
+
+    The path is resolved by the caller through ``path_guard``; this function only parses and
+    validates. Everything it rejects is a run whose numbers would be wrong or unlabelled rather
+    than merely malformed.
+    """
+    try:
+        document = json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_keys
+        )
+    except ValueError as exc:
+        raise RecordedRunError(f"{path.name}: {exc}") from exc
+    if not isinstance(document, Mapping):
+        raise RecordedRunError(f"{path.name} is not a JSON object")
+    modes = document.get("modes")
     if not isinstance(modes, Mapping) or not modes:
-        raise ValueError(f"{path} has no modes to score")
-    parsed = {name: _parse_outcomes(name, rows) for name, rows in modes.items()}
+        raise RecordedRunError(f"{path.name} has no modes to score")
+    parsed: dict[str, list[QueryOutcome]] = {}
+    for name, rows in modes.items():
+        if isinstance(rows, list) and not rows:
+            # With a single mode there is nothing to compare against, so an empty run would
+            # otherwise publish ndcg 0.0 over zero queries as if it were a measurement.
+            raise RecordedRunError(
+                f"mode {name!r} has no rows; a scored mode needs at least one query"
+            )
+        parsed[name] = _parse_outcomes(name, rows)
     assert_comparable(parsed)
-    return parsed
+    gold_set = document.get("gold_set")
+    if gold_set is not None and not isinstance(gold_set, str):
+        raise RecordedRunError(f"{path.name} gold_set must be a string")
+    return RecordedRun(
+        modes=parsed,
+        reranker=_required_label(document, "reranker", path.name),
+        gold_set=gold_set,
+    )
 
 
 def _ground_path(args: argparse.Namespace) -> Path:
@@ -271,6 +362,21 @@ def _ground_path(args: argparse.Namespace) -> Path:
     suggestion: an escape is an error rather than a read of whatever the caller pointed at.
     """
     return resolve_bench_input_path(args.outcomes, bench_dir=INPUT_ROOT)
+
+
+def _reranker_label(run: RecordedRun, override: str | None) -> str:
+    """The recording names the reranker that produced the numbers; an override must agree.
+
+    A default here would let a run recorded with one reranker be published under another's
+    name, which is the one claim a reader cannot check for themselves.
+    """
+    if override is None:
+        return run.reranker
+    if override != run.reranker:
+        raise RecordedRunError(
+            f"--reranker {override!r} contradicts the recording's {run.reranker!r}"
+        )
+    return run.reranker
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -286,21 +392,30 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="recorded per-query outcomes, inside the benchmark directory",
     )
-    parser.add_argument("--gold-set", default=GOLD_SET_NAME)
-    parser.add_argument("--reranker", default="stub/lexical-overlap@1")
+    parser.add_argument(
+        "--gold-set",
+        default=GOLD_SET_NAME,
+        help="used only when the recording does not name one",
+    )
+    parser.add_argument(
+        "--reranker",
+        default=None,
+        help="optional cross-check against the reranker named in the recording",
+    )
     args = parser.parse_args(argv[1:] if argv else None)
 
     ground = _ground_path(args)
-    recorded = load_recorded(ground)
+    run = load_recorded(ground)
+    reranker = _reranker_label(run, args.reranker)
     results = {
         name: with_mode(score_mode(outcomes), name)
-        for name, outcomes in recorded.items()
+        for name, outcomes in run.modes.items()
     }
 
-    payload = build_payload(results, gold_set=args.gold_set, reranker=args.reranker)
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    target = OUTPUT_DIR / "modes-latest.json"
-    target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    payload = build_payload(
+        results, gold_set=run.gold_set or args.gold_set, reranker=reranker
+    )
+    target = write_json_atomic(OUTPUT_DIR / "modes-latest.json", payload)
     print(
         f"wrote {target.name}: {len(payload['modes'])} modes over {payload['gold_set']}"
     )

@@ -42,7 +42,11 @@ def _perfect_outcomes() -> list[dict[str, Any]]:
 
 
 def _perfect_run(modes: list[str]) -> dict[str, Any]:
-    return {"modes": {mode: _perfect_outcomes() for mode in modes}}
+    return {
+        "reranker": "stub/lexical-overlap@1",
+        "gold_set": "ranking_quality_v2",
+        "modes": {mode: _perfect_outcomes() for mode in modes},
+    }
 
 
 class TestScoring:
@@ -226,7 +230,9 @@ class TestRecordedRun:
 
     def _write(self, tmp_path: Path, modes: dict[str, Any]) -> Path:
         target = tmp_path / "outcomes.json"
-        target.write_text(json.dumps({"modes": modes}))
+        target.write_text(
+            json.dumps({"reranker": "stub/lexical-overlap@1", "modes": modes})
+        )
         return target
 
     def test_a_mode_that_dropped_a_hard_query_is_rejected(self, tmp_path: Path) -> None:
@@ -294,7 +300,7 @@ class TestRecordedRun:
 
         loaded = bench.load_recorded(target)
 
-        assert set(loaded) == {"hybrid", "full_graph"}
+        assert set(loaded.modes) == {"hybrid", "full_graph"}
 
     def test_expected_id_order_may_differ_between_modes(self, tmp_path: Path) -> None:
         complete = _perfect_outcomes()
@@ -343,7 +349,7 @@ class TestMalformedRecords:
         target = tmp_path / "outcomes.json"
         target.write_text(json.dumps({"modes": {"hybrid": ["not-a-row"]}}))
 
-        with pytest.raises(ValueError, match=r"hybrid.*row 0 is not a mapping"):
+        with pytest.raises(ValueError, match=r"hybrid.*row 0 is not an object"):
             bench.load_recorded(target)
 
     def test_modes_that_are_not_a_mapping_are_rejected(self, tmp_path: Path) -> None:
@@ -397,3 +403,225 @@ class TestInputConfinement:
 
         with pytest.raises(UnsafePathError, match="file not found"):
             bench.main(["bench", "--outcomes", str(tmp_path / "absent.json")])
+
+
+class TestStrictRecording:
+    """Every rejection here is a run whose numbers would be wrong or unlabelled."""
+
+    def _write(self, tmp_path: Path, document: Any) -> Path:
+        target = tmp_path / "recorded.json"
+        target.write_text(json.dumps(document))
+        return target
+
+    def _run(self, tmp_path: Path, modes: Any, **extra: Any) -> Path:
+        return self._write(
+            tmp_path, {"reranker": "stub/lexical-overlap@1", **extra, "modes": modes}
+        )
+
+    def test_a_string_where_an_id_list_belongs_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        # tuple("ab") is ("a", "b"): a string would invent two ids and score the row without
+        # complaint, which is why this is not coerced.
+        target = self._run(
+            tmp_path,
+            {
+                "hybrid": [
+                    {
+                        "query_id": "q",
+                        "subset": "dense",
+                        "ranked_ids": "ab",
+                        "expected_ids": ["a"],
+                    }
+                ]
+            },
+        )
+
+        with pytest.raises(
+            ValueError, match=r"field 'ranked_ids' must be a list of strings"
+        ):
+            bench.load_recorded(target)
+
+    def test_a_non_string_id_is_rejected(self, tmp_path: Path) -> None:
+        target = self._run(
+            tmp_path,
+            {
+                "hybrid": [
+                    {
+                        "query_id": "q",
+                        "subset": "dense",
+                        "ranked_ids": [1],
+                        "expected_ids": ["a"],
+                    }
+                ]
+            },
+        )
+
+        with pytest.raises(
+            ValueError, match=r"field 'ranked_ids' must be a list of strings"
+        ):
+            bench.load_recorded(target)
+
+    def test_a_mode_that_is_not_a_list_is_named_in_the_error(
+        self, tmp_path: Path
+    ) -> None:
+        target = self._run(tmp_path, {"hybrid": None})
+
+        with pytest.raises(ValueError, match=r"mode 'hybrid' must be a list of rows"):
+            bench.load_recorded(target)
+
+    def test_a_sole_empty_mode_is_rejected(self, tmp_path: Path) -> None:
+        # Nothing to compare against, so without this an empty run publishes ndcg 0.0 over zero
+        # queries as if it were a measurement.
+        target = self._run(tmp_path, {"empty": []})
+
+        with pytest.raises(ValueError, match=r"mode 'empty' has no rows"):
+            bench.load_recorded(target)
+
+    def test_a_repeated_mode_name_is_rejected(self, tmp_path: Path) -> None:
+        # json.loads keeps the last block, so a whole mode could vanish from a run that still
+        # publishes as complete.
+        target = tmp_path / "recorded.json"
+        target.write_text('{"reranker": "r", "modes": {"hybrid": [], "hybrid": []}}')
+
+        with pytest.raises(ValueError, match="duplicate key 'hybrid'"):
+            bench.load_recorded(target)
+
+    def test_a_recording_that_does_not_name_its_reranker_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        target = self._write(tmp_path, {"modes": {"hybrid": _perfect_outcomes()}})
+
+        with pytest.raises(ValueError, match="does not name its reranker"):
+            bench.load_recorded(target)
+
+    def test_the_artifact_publishes_the_recordings_reranker(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
+        monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "out")
+        target = self._run(
+            tmp_path, {"hybrid": _perfect_outcomes()}, reranker="cross-encoder/tei@gpu"
+        )
+
+        assert bench.main(["bench", "--outcomes", str(target)]) == 0
+
+        payload = json.loads((tmp_path / "out" / "modes-latest.json").read_text())
+        assert payload["reranker"] == "cross-encoder/tei@gpu"
+
+    def test_a_contradicting_reranker_flag_is_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
+        monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "out")
+        target = self._run(tmp_path, {"hybrid": _perfect_outcomes()})
+
+        with pytest.raises(ValueError, match="contradicts the recording"):
+            bench.main(
+                ["bench", "--outcomes", str(target), "--reranker", "something-else"]
+            )
+        assert not (tmp_path / "out" / "modes-latest.json").exists()
+
+    def test_an_agreeing_reranker_flag_is_accepted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
+        monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "out")
+        target = self._run(tmp_path, {"hybrid": _perfect_outcomes()})
+
+        assert (
+            bench.main(
+                [
+                    "bench",
+                    "--outcomes",
+                    str(target),
+                    "--reranker",
+                    "stub/lexical-overlap@1",
+                ]
+            )
+            == 0
+        )
+
+    def test_the_recorded_gold_set_wins_over_the_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
+        monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "out")
+        target = self._run(
+            tmp_path, {"hybrid": _perfect_outcomes()}, gold_set="ranking_quality_v2"
+        )
+
+        assert bench.main(["bench", "--outcomes", str(target)]) == 0
+
+        payload = json.loads((tmp_path / "out" / "modes-latest.json").read_text())
+        assert payload["gold_set"] == "ranking_quality_v2"
+
+    def test_a_failed_payload_write_leaves_the_previous_artifact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
+        monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "out")
+        (tmp_path / "out").mkdir()
+        artifact = tmp_path / "out" / "modes-latest.json"
+        artifact.write_text('{"previous": true}\n')
+        target = self._run(tmp_path, {"hybrid": _perfect_outcomes()})
+        # A payload that cannot be serialised fails inside the write, after the temp file is
+        # created: the old artifact must survive and no temp file may be left behind.
+        monkeypatch.setattr(bench, "build_payload", lambda *a, **k: {"bad": {1, 2}})
+
+        with pytest.raises(TypeError):
+            bench.main(["bench", "--outcomes", str(target)])
+
+        assert artifact.read_text() == '{"previous": true}\n'
+        assert sorted(entry.name for entry in (tmp_path / "out").iterdir()) == [
+            "modes-latest.json"
+        ]
+
+
+class TestDocumentShape:
+    """The recording is a file: every wrong shape gets a message naming what is wrong."""
+
+    def _write(self, tmp_path: Path, payload: Any) -> Path:
+        target = tmp_path / "recorded.json"
+        target.write_text(payload if isinstance(payload, str) else json.dumps(payload))
+        return target
+
+    def test_a_document_that_is_not_an_object_is_named(self, tmp_path: Path) -> None:
+        target = self._write(tmp_path, [1, 2, 3])
+
+        with pytest.raises(ValueError, match="is not a JSON object"):
+            bench.load_recorded(target)
+
+    def test_a_query_id_that_is_not_a_string_is_rejected(self, tmp_path: Path) -> None:
+        target = self._write(
+            tmp_path,
+            {
+                "reranker": "r",
+                "modes": {
+                    "hybrid": [
+                        {"query_id": 7, "subset": "dense", "ranked_ids": [], "expected_ids": []}
+                    ]
+                },
+            },
+        )
+
+        with pytest.raises(ValueError, match="needs string query_id and subset"):
+            bench.load_recorded(target)
+
+    def test_an_empty_reranker_is_rejected(self, tmp_path: Path) -> None:
+        # An empty label would publish a number that names no reranker at all, which reads as
+        # "no reranking happened" rather than "nobody recorded it".
+        target = self._write(tmp_path, {"reranker": "", "modes": {"hybrid": _perfect_outcomes()}})
+
+        with pytest.raises(ValueError, match="does not name its reranker"):
+            bench.load_recorded(target)
+
+    def test_a_non_string_gold_set_is_rejected(self, tmp_path: Path) -> None:
+        target = self._write(
+            tmp_path,
+            {"reranker": "r", "gold_set": 2, "modes": {"hybrid": _perfect_outcomes()}},
+        )
+
+        with pytest.raises(ValueError, match="gold_set must be a string"):
+            bench.load_recorded(target)
+

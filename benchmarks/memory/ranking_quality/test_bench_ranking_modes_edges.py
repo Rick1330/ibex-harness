@@ -268,6 +268,10 @@ class TestPayload:
 
 class TestMain:
     def _outcomes_file(self, tmp_path: Path, document: Any) -> Path:
+        # Every recording names the reranker that produced it; a test that omits it on purpose
+        # writes its own file.
+        if isinstance(document, dict):
+            document = {"reranker": "stub/lexical-overlap@1", **document}
         path = tmp_path / "outcomes.json"
         path.write_text(json.dumps(document), encoding="utf-8")
         return path
@@ -297,7 +301,7 @@ class TestMain:
             },
         )
 
-        with pytest.raises(ValueError, match="not comparable"):
+        with pytest.raises(ValueError, match="has no rows"):
             bench.main(["bench", "--outcomes", str(outcomes)])
 
         assert not (output / "modes-latest.json").exists()
