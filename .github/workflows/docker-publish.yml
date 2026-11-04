@@ -413,7 +413,7 @@ jobs:
         with:
           name: oci-auth
           path: /tmp
-      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.0
+      - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
       - name: Scan auth image with Trivy
@@ -449,7 +449,7 @@ jobs:
         with:
           name: oci-proxy
           path: /tmp
-      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.0
+      - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
       - name: Scan proxy image with Trivy
@@ -485,7 +485,7 @@ jobs:
         with:
           name: oci-embedder
           path: /tmp
-      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.0
+      - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
       - name: Scan embedder image with Trivy
@@ -534,7 +534,7 @@ jobs:
         with:
           name: oci-mcp-memory
           path: /tmp
-      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.0
+      - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
       - name: Scan mcp-memory image with Trivy
@@ -583,7 +583,7 @@ jobs:
         with:
           name: oci-memory
           path: /tmp
-      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.0
+      - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
       - name: Scan memory image with Trivy
@@ -631,7 +631,7 @@ jobs:
         with:
           name: oci-api
           path: /tmp
-      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.0
+      - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
       - name: Scan api image with Trivy
@@ -679,7 +679,7 @@ jobs:
         with:
           name: oci-worker
           path: /tmp
-      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.0
+      - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
       - name: Scan worker image with Trivy
@@ -1161,7 +1161,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.0
+      - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
       - name: Scan pushed worker image by digest
