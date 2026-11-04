@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.client import TokenValidator, ValidateResult, parse_authorization_header
 from app.auth.errors import AuthFailedError, AuthUnavailableError
+from app.config import Settings, get_settings
 from app.feedback.service import MemoryFeedbackService
 from app.permissions import MEMORY_READ, MEMORY_WRITE, has_permission
 from app.read.hot_cache import MemoryHotCacheReader
@@ -141,6 +142,7 @@ class HotMemoryContext:
     token: ValidateResult
     hot_cache_reader: MemoryHotCacheReader
     session_factory: async_sessionmaker[AsyncSession]
+    settings: Settings
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,11 +200,13 @@ def get_hot_memory_context(
     token: Annotated[ValidateResult, Depends(require_memory_read)],
     hot_cache_reader: Annotated[MemoryHotCacheReader, Depends(get_hot_cache_reader)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> HotMemoryContext:
     return HotMemoryContext(
         token=token,
         hot_cache_reader=hot_cache_reader,
         session_factory=session_factory,
+        settings=settings,
     )
 
 

@@ -203,8 +203,10 @@ class Settings(BaseSettings):
     conflict_suppression_enabled: bool = Field(
         default=True,
         description=(
-            "Drop the lower-ranked side of an unresolved conflict from search results; "
-            "disabling it returns both and only changes ranking, not retrieval"
+            "Drop the lower-ranked side of an unresolved conflict from search results. "
+            "Disabling it returns both sides. Two side effects: a page no longer shortened by "
+            "suppression may not trigger the full-text backfill that the enabled path needs, "
+            "and context assembly (which has its own collapse, ADR-0094) is unaffected."
         ),
     )
     search_hybrid_enabled: bool = Field(

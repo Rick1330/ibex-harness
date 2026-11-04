@@ -124,9 +124,13 @@ unconditional. `IBEX_MEMORY_CONFLICT_SUPPRESSION_ENABLED` (default `true`) now g
 - **Why:** suppression can hide a memory a user expects to see, and the 5.C.2 multi-mode benchmark
   has to compare suppressed and unsuppressed behaviour on the same corpus. Doing either through a
   code change is not an operational control.
-- **Scope:** the switch only skips `collapse_conflict_pairs`. Retrieval, the `status = 'active'`
-  fence, hydration, ranking, and the PII filter are untouched, so "off" means "show both sides",
-  not "turn something else off".
+- **Scope:** the switch skips `collapse_conflict_pairs` on the memory search paths and on `/hot`.
+  The `status = 'active'` fence, hydration, ranking, and the PII filter are untouched, so "off"
+  means "show both sides". It does **not** reach context assembly, which has its own collapse
+  (decision 13) and keeps dropping the lower-scored side before packing.
+- **Indirect effect worth knowing:** with suppression on, a collapsed page can fall below `limit`
+  and start the full-text backfill; with it off, the page stays full and the backfill may not run.
+  The switch changes the page, so it can change which channel contributed to it.
 - **Metric:** `record_suppressed` still runs at every call site, so with the switch off it reports
   zero drops — the truth, rather than a stale counter.
 - **Tenant isolation is unaffected:** the escalation ids it reads are already org-scoped by the

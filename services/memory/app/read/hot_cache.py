@@ -139,9 +139,16 @@ class MemoryHotCacheReader:
         # PII before collapse, as on the search paths: a blocked winner must not
         # suppress its counterpart and then disappear itself.
         allowed = filter_pii_blocked_results(ordered)
-        kept = collapse_conflict_pairs(allowed)
+        kept = self._collapse(allowed, query.suppress_conflicts)
         record_suppressed(len(allowed), len(kept))
         return kept[: query.limit]
+
+    @staticmethod
+    def _collapse(results: list[MemorySearchResult], enabled: bool) -> list[MemorySearchResult]:
+        """Honour the same suppression switch as the search path (ADR-0094 amendment)."""
+        if not enabled:
+            return list(results)
+        return collapse_conflict_pairs(results)
 
     async def _hydrate_hot(self, request: _HydrateHotRequest) -> dict[UUID, MemorySearchResult]:
         if not request.memory_ids:

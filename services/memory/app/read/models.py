@@ -18,6 +18,7 @@ class HotMemoryQuery:
     agent_id: UUID
     limit: int = 20
     min_confidence: float = 0.0
+    suppress_conflicts: bool = True
 
 
 @dataclass(frozen=True, slots=True)
