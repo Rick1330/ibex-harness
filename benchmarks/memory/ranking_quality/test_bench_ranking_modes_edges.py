@@ -278,6 +278,7 @@ class TestMain:
         # A mode scored on zero queries is not comparable with one scored on thirty. Publishing
         # it as 0.0 would hand the gate a number no run produced.
         output = tmp_path / "out"
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
         monkeypatch.setattr(bench, "OUTPUT_DIR", output)
         outcomes = self._outcomes_file(
             tmp_path,
@@ -308,6 +309,7 @@ class TestMain:
         output.mkdir()
         artifact = output / "modes-latest.json"
         artifact.write_text('{"previous": true}\n', encoding="utf-8")
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
         monkeypatch.setattr(bench, "OUTPUT_DIR", output)
         outcomes = self._outcomes_file(
             tmp_path,
@@ -327,6 +329,7 @@ class TestMain:
         self, tmp_path: Path, monkeypatch: Any
     ) -> None:
         output = tmp_path / "out"
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
         monkeypatch.setattr(bench, "OUTPUT_DIR", output)
         outcomes = self._outcomes_file(
             tmp_path,
@@ -356,6 +359,7 @@ class TestMain:
             raise AssertionError(f"non-finite number published as {token}")
 
         output = tmp_path / "out"
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
         monkeypatch.setattr(bench, "OUTPUT_DIR", output)
         outcomes = self._outcomes_file(
             tmp_path,
@@ -387,6 +391,7 @@ class TestMain:
         assert bench.OUTPUT_DIR.name == "output"
 
         output = tmp_path / "out"
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
         monkeypatch.setattr(bench, "OUTPUT_DIR", output)
         outcomes = self._outcomes_file(
             tmp_path,

@@ -33,16 +33,19 @@ for _path in (_MEMORY_DIR, _BENCH_MEMORY, _RANK_DIR):
         sys.path.insert(0, str(_path))
 
 from gate_modes import ModeResult
+from path_guard import resolve_bench_input_path
 from validate_gold_set_v2 import GOLD_SET_NAME
 
 try:  # the service package is only needed by the live driver, not by the scoring tests
     from app.eval.ranking import ndcg_at_k
-except (
-    ModuleNotFoundError
-):  # pragma: no cover - exercised only when run without the venv
+except ModuleNotFoundError:  # pragma: no cover - exercised only when run without the venv
     ndcg_at_k = None  # type: ignore[assignment]
 
 OUTPUT_DIR = _RANK_DIR / "output"
+# Recorded runs are benchmark inputs, so they live with the corpus. Confining the read to this
+# root is also what makes the CLI path safe by construction rather than by convention; tests
+# point it at a tmp directory.
+INPUT_ROOT = _RANK_DIR
 TOP_K = 10
 GRAPH_SUBSET = "graph"
 # The two groups the gate compares. Dense and lexical answers are the "non-graph" side: they are
@@ -249,14 +252,9 @@ def _preview(ids: Sequence[str], limit: int = 3) -> str:
 def load_recorded(path: Path) -> dict[str, list[QueryOutcome]]:
     """Read a recorded run and refuse one whose modes are not scored on the same queries.
 
-    The path is the operator's own CLI argument: this runs with the invoking user's privileges,
-    on a file that user named, so there is no boundary to traverse, and the CI invocation passes
-    a temp file it just wrote. NOSONAR records that here rather than leaving a gate nobody can
-    explain; the alternative -- confining reads to one directory -- would only break callers.
+    The path is resolved by the caller through ``path_guard``; this function only parses.
     """
-    # On its own line so the suppression marker sits on the statement Sonar reports.
-    raw = path.read_text(encoding="utf-8")  # NOSONAR
-    recorded = json.loads(raw)
+    recorded = json.loads(path.read_text(encoding="utf-8"))
 
     modes = recorded.get("modes") if isinstance(recorded, Mapping) else None
     if not isinstance(modes, Mapping) or not modes:
@@ -264,6 +262,15 @@ def load_recorded(path: Path) -> dict[str, list[QueryOutcome]]:
     parsed = {name: _parse_outcomes(name, rows) for name, rows in modes.items()}
     assert_comparable(parsed)
     return parsed
+
+
+def _ground_path(args: argparse.Namespace) -> Path:
+    """Resolve the recorded run against INPUT_ROOT, rejecting anything outside it.
+
+    A benchmark input names a file that must belong to the benchmark, so the root is not a
+    suggestion: an escape is an error rather than a read of whatever the caller pointed at.
+    """
+    return resolve_bench_input_path(args.outcomes, bench_dir=INPUT_ROOT)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -274,13 +281,17 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--outcomes", type=Path, required=True, help="recorded per-query outcomes"
+        "--outcomes",
+        type=Path,
+        required=True,
+        help="recorded per-query outcomes, inside the benchmark directory",
     )
     parser.add_argument("--gold-set", default=GOLD_SET_NAME)
     parser.add_argument("--reranker", default="stub/lexical-overlap@1")
     args = parser.parse_args(argv[1:] if argv else None)
 
-    recorded = load_recorded(args.outcomes)
+    ground = _ground_path(args)
+    recorded = load_recorded(ground)
     results = {
         name: with_mode(score_mode(outcomes), name)
         for name, outcomes in recorded.items()

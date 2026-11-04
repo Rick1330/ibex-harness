@@ -140,6 +140,7 @@ class TestEndToEnd:
     def test_recorded_outcomes_produce_an_artifact_that_gates(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
         monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "output")
         outcomes = tmp_path / "outcomes.json"
         outcomes.write_text(
@@ -164,6 +165,7 @@ class TestEndToEnd:
     def test_a_mode_that_ranked_worse_fails_the_gate_on_its_saved_score(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
         monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "output")
         recorded = _perfect_run(["dense_only", "hybrid", "hybrid_rerank", "full_graph"])
         # One mode answers at rank 2 instead of rank 1 — a real regression, expressed only as
@@ -186,6 +188,7 @@ class TestEndToEnd:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Proves the gate reads the artifact: the same run passes until the number is wrong."""
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
         monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "output")
         outcomes = tmp_path / "outcomes.json"
         outcomes.write_text(json.dumps(_perfect_run(["hybrid_rerank", "full_graph"])))
@@ -321,6 +324,7 @@ class TestRecordedRun:
     def test_the_end_to_end_path_refuses_an_incomparable_run(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
         monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "output")
         complete = _perfect_outcomes()
         outcomes = self._write(
@@ -348,3 +352,48 @@ class TestMalformedRecords:
 
         with pytest.raises(ValueError, match="no modes to score"):
             bench.load_recorded(target)
+
+
+class TestInputConfinement:
+    """A CLI path is confined to the benchmark directory, not trusted because it is a CLI path."""
+
+    def test_a_recorded_run_outside_the_benchmark_directory_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from path_guard import UnsafePathError
+
+        outside = tmp_path / "outside.json"
+        outside.write_text(json.dumps({"modes": {"m": []}}))
+        root = tmp_path / "bench"
+        root.mkdir()
+        monkeypatch.setattr(bench, "INPUT_ROOT", root)
+        monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "out")
+
+        with pytest.raises(UnsafePathError, match="escapes"):
+            bench.main(["bench", "--outcomes", str(outside)])
+        assert not (tmp_path / "out" / "modes-latest.json").exists()
+
+    def test_a_parent_reference_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from path_guard import UnsafePathError
+
+        root = tmp_path / "bench"
+        root.mkdir()
+        (tmp_path / "sibling.json").write_text(json.dumps({"modes": {"m": []}}))
+        monkeypatch.setattr(bench, "INPUT_ROOT", root)
+        monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "out")
+
+        with pytest.raises(UnsafePathError, match="parent references"):
+            bench.main(["bench", "--outcomes", "../sibling.json"])
+
+    def test_a_missing_recorded_run_is_refused_by_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from path_guard import UnsafePathError
+
+        monkeypatch.setattr(bench, "INPUT_ROOT", tmp_path)
+        monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "out")
+
+        with pytest.raises(UnsafePathError, match="file not found"):
+            bench.main(["bench", "--outcomes", str(tmp_path / "absent.json")])
