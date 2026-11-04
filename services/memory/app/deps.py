@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.client import TokenValidator, ValidateResult, parse_authorization_header
 from app.auth.errors import AuthFailedError, AuthUnavailableError
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.feedback.service import MemoryFeedbackService
 from app.permissions import MEMORY_READ, MEMORY_WRITE, has_permission
 from app.read.hot_cache import MemoryHotCacheReader
@@ -176,6 +176,13 @@ def get_feedback_service(request: Request) -> MemoryFeedbackService:
     )
 
 
+def _require_app_settings(request: Request) -> Settings:
+    settings = getattr(request.app.state, "settings", None)
+    if settings is None:
+        raise RuntimeError("application settings are not configured")
+    return settings
+
+
 def get_hot_cache_reader(request: Request) -> MemoryHotCacheReader:
     return _require_memory_component(
         request, "hot_cache_reader", message="Hot cache read path not configured"
@@ -197,16 +204,18 @@ def get_search_memory_context(
 
 
 def get_hot_memory_context(
+    request: Request,
     token: Annotated[ValidateResult, Depends(require_memory_read)],
     hot_cache_reader: Annotated[MemoryHotCacheReader, Depends(get_hot_cache_reader)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
-    settings: Annotated[Settings, Depends(get_settings)],
 ) -> HotMemoryContext:
     return HotMemoryContext(
         token=token,
         hot_cache_reader=hot_cache_reader,
         session_factory=session_factory,
-        settings=settings,
+        # The app's settings, not a fresh environment read: create_app(settings=...) must be
+        # what both routes honour, or /search and /hot can disagree about the same switch.
+        settings=_require_app_settings(request),
     )
 
 

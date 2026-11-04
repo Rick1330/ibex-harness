@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+
+import pytest
 from uuid import UUID, uuid4
 
 from app.config import Settings
@@ -97,3 +99,29 @@ class TestHotCacheSwitch:
         query = HotMemoryQuery(org_id=uuid4(), agent_id=uuid4())
 
         assert query.suppress_conflicts is True
+
+
+class TestHotContextSettings:
+    def test_hot_context_reads_the_app_settings_not_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both routes must honour `create_app(settings=...)`."""
+        from starlette.requests import Request
+
+        from app.deps import get_hot_memory_context
+
+        app_settings = Settings(conflict_suppression_enabled=False)
+
+        class _State:
+            settings = app_settings
+
+        class _App:
+            state = _State()
+
+        request = Request({"type": "http", "app": _App(), "headers": []})
+        monkeypatch.setenv("IBEX_MEMORY_CONFLICT_SUPPRESSION_ENABLED", "true")
+
+        context = get_hot_memory_context(request, object(), object(), object())  # type: ignore[arg-type]
+
+        assert context.settings is app_settings
+        assert context.settings.conflict_suppression_enabled is False
