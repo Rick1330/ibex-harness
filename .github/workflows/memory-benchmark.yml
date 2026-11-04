@@ -417,11 +417,21 @@ jobs:
       - name: Install memory service deps
         run: bash infra/scripts/memory-uv-sync.sh
 
-      - name: Validate gold set
+      - name: Validate gold sets
         run: |
           set -euo pipefail
           PYTHONPATH=services/memory services/memory/.venv/bin/python \
             benchmarks/memory/ranking_quality/validate_gold_set.py
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/validate_gold_set_v2.py
+
+      # The harness has its own tests (gold-set rules, mode gate, scoring); nothing ran them
+      # until this step existed, so a regression there could not fail any check.
+      - name: Ranking-quality harness tests
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python -m pytest -q \
+            benchmarks/memory/ranking_quality
 
       - name: Run ranking-quality bench
         run: |
