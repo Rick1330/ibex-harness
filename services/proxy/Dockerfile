@@ -1,5 +1,5 @@
 # golang:1.26.10-alpine3.24 — bumped for GO-2026-6809 (crypto/x509)
-FROM golang@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS build
+FROM golang@sha256:2920bb124f1a2e12a1d39f0cab756ae0068441ee1da7655dec7f5e374944095b AS build
 WORKDIR /src
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
