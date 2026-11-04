@@ -77,3 +77,23 @@ class TestSuppressionSwitch:
         # The benchmark's full_graph mode reads this field by name; a rename would silently
         # disable the mode instead of failing.
         assert "conflict_suppression_enabled" in Settings.model_fields
+
+
+class TestHotCacheSwitch:
+    def test_hot_path_honours_the_switch(self) -> None:
+        # /hot had its own unconditional collapse; the switch is only honest if every read
+        # path that suppresses obeys it.
+        from app.read.hot_cache import MemoryHotCacheReader
+
+        group = uuid4()
+        results = [_hit("first", (group,)), _hit("second", (group,))]
+
+        assert len(MemoryHotCacheReader._collapse(results, True)) == 1
+        assert len(MemoryHotCacheReader._collapse(results, False)) == 2
+
+    def test_hot_query_defaults_to_suppressing(self) -> None:
+        from app.read.models import HotMemoryQuery
+
+        query = HotMemoryQuery(org_id=uuid4(), agent_id=uuid4())
+
+        assert query.suppress_conflicts is True
