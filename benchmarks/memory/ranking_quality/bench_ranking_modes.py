@@ -254,9 +254,9 @@ def load_recorded(path: Path) -> dict[str, list[QueryOutcome]]:
     a temp file it just wrote. NOSONAR records that here rather than leaving a gate nobody can
     explain; the alternative -- confining reads to one directory -- would only break callers.
     """
-    recorded = json.loads(
-        path.read_text(encoding="utf-8")
-    )  # NOSONAR(S8707): operator-supplied CLI path, no privilege boundary
+    # On its own line so the suppression marker sits on the statement Sonar reports.
+    raw = path.read_text(encoding="utf-8")  # NOSONAR
+    recorded = json.loads(raw)
 
     modes = recorded.get("modes") if isinstance(recorded, Mapping) else None
     if not isinstance(modes, Mapping) or not modes:
