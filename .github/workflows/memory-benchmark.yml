@@ -417,11 +417,21 @@ jobs:
       - name: Install memory service deps
         run: bash infra/scripts/memory-uv-sync.sh
 
-      - name: Validate gold set
+      - name: Validate gold sets
         run: |
           set -euo pipefail
           PYTHONPATH=services/memory services/memory/.venv/bin/python \
             benchmarks/memory/ranking_quality/validate_gold_set.py
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/validate_gold_set_v2.py
+
+      # The harness has its own tests (gold-set rules, mode gate, scoring); nothing ran them
+      # until this step existed, so a regression there could not fail any check.
+      - name: Ranking-quality harness tests
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python -m pytest -q \
+            benchmarks/memory/ranking_quality
 
       - name: Run ranking-quality bench
         run: |
@@ -434,6 +444,24 @@ jobs:
           set -euo pipefail
           PYTHONPATH=services/memory services/memory/.venv/bin/python \
             benchmarks/memory/ranking_quality/regression_gate.py
+
+      # Track C's evidence comes from here: every mode over the same corpus, recorded, then
+      # scored. Without this step `modes-latest.json` could only be produced by a test fixture,
+      # so the published comparison would have no run behind it.
+      - name: Run multi-mode ranking bench
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/run_modes.py \
+            --reranker stub/lexical-overlap@1
+
+      # Reports as well as gates: the Markdown table goes to the run summary and the verdict to
+      # modes-gate.json, so a failing run can be read without re-running it.
+      - name: Enforce multi-mode ranking gate
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/check_mode_gate.py | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Build published ranking-quality data
         if: always()
@@ -531,6 +559,9 @@ jobs:
           path: |
             benchmarks/memory/ranking_quality/output/latest.json
             benchmarks/memory/ranking_quality/output/gate-result.json
+            benchmarks/memory/ranking_quality/output/modes-latest.json
+            benchmarks/memory/ranking_quality/output/modes-recorded.json
+            benchmarks/memory/ranking_quality/output/modes-gate.json
           retention-days: 14
           if-no-files-found: error
 

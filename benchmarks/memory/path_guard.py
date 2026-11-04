@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -159,3 +161,21 @@ def write_bench_output_json(
         encoding="utf-8",
     )
     return resolved
+
+
+def write_json_atomic(path: Path, payload: dict[str, Any]) -> Path:
+    """Write JSON through a sibling temp file and ``os.replace``.
+
+    A published artifact truncated by a killed process reads as a real measurement, which is
+    worse than a missing one: this way the previous valid file survives.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_name = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2) + "\n")
+        os.replace(tmp_name, path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+    return path
