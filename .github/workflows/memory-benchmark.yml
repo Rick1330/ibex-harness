@@ -445,6 +445,16 @@ jobs:
           PYTHONPATH=services/memory services/memory/.venv/bin/python \
             benchmarks/memory/ranking_quality/regression_gate.py
 
+      # Track C's evidence comes from here: every mode over the same corpus, recorded, then
+      # scored. Without this step `modes-latest.json` could only be produced by a test fixture,
+      # so the published comparison would have no run behind it.
+      - name: Run multi-mode ranking bench
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/run_modes.py \
+            --reranker stub/lexical-overlap@1
+
       - name: Build published ranking-quality data
         if: always()
         env:
@@ -541,6 +551,8 @@ jobs:
           path: |
             benchmarks/memory/ranking_quality/output/latest.json
             benchmarks/memory/ranking_quality/output/gate-result.json
+            benchmarks/memory/ranking_quality/output/modes-latest.json
+            benchmarks/memory/ranking_quality/output/modes-recorded.json
           retention-days: 14
           if-no-files-found: error
 

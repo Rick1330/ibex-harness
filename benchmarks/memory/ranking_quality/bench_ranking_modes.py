@@ -6,9 +6,9 @@ The scoring is deliberately separated from the retrieval driver:
 * `score_mode` is pure — it takes, per query, the ranked ids a mode produced and the relevance
   grades, and returns overall / non-graph / graph nDCG plus the per-subset counts the gate
   validates. That makes the arithmetic testable without a database, a reranker, or a clock.
-* `run_mode` is the thin async shell that asks the repository for a page per query under one
-  mode's settings. Everything mode-specific lives in `modes.py`; this file never branches on a
-  mode name.
+* `run_modes.run_mode` is the thin async shell that asks the repository for a page per query
+  under one mode's settings and records the result. Everything mode-specific lives in `modes.py`;
+  neither file branches on a mode name.
 
 The split matters because a benchmark whose *scoring* is untestable is a benchmark nobody can
 trust — the interesting failures (wrong subset, wrong k, unjudged documents counted as relevant)
