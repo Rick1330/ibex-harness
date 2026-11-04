@@ -416,6 +416,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
@@ -452,6 +455,9 @@ jobs:
         with:
           name: oci-proxy
           path: /tmp
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
@@ -488,6 +494,9 @@ jobs:
         with:
           name: oci-embedder
           path: /tmp
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
@@ -537,6 +546,9 @@ jobs:
         with:
           name: oci-mcp-memory
           path: /tmp
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
@@ -586,6 +598,9 @@ jobs:
         with:
           name: oci-memory
           path: /tmp
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
@@ -634,6 +649,9 @@ jobs:
         with:
           name: oci-api
           path: /tmp
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
@@ -682,6 +700,9 @@ jobs:
         with:
           name: oci-worker
           path: /tmp
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
@@ -1164,6 +1185,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-trivy
         with:
           version: v0.70.0
