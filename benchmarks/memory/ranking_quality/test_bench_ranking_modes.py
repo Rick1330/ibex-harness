@@ -126,7 +126,10 @@ class TestPayload:
 
 
 class TestEndToEnd:
-    def test_recorded_outcomes_produce_an_artifact_that_gates(self, tmp_path: Path) -> None:
+    def test_recorded_outcomes_produce_an_artifact_that_gates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(bench, "OUTPUT_DIR", tmp_path / "output")
         outcomes = tmp_path / "outcomes.json"
         outcomes.write_text(json.dumps(_perfect_run(["dense_only", "hybrid", "hybrid_rerank", "full_graph"])))
 

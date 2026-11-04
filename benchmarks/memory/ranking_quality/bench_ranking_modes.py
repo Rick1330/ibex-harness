@@ -47,6 +47,8 @@ GRAPH_SUBSET = "graph"
 # what reranking is supposed to improve, and the graph queries are what suppression is supposed
 # to improve. Averaging them together would hide both.
 NON_GRAPH_SUBSETS = frozenset({"dense", "lexical"})
+# Fixed order so the published artifact is byte-reproducible across runs.
+SUBSET_ORDER = ("dense", "lexical", "graph")
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,11 +76,21 @@ def score_mode(outcomes: Iterable[QueryOutcome]) -> ModeResult:
     if ndcg_at_k is None:  # pragma: no cover
         raise RuntimeError("the memory service package is required to score a run")
 
-    per_subset: dict[str, list[float]] = {subset: [] for subset in (*NON_GRAPH_SUBSETS, GRAPH_SUBSET)}
+    per_subset: dict[str, list[float]] = {subset: [] for subset in SUBSET_ORDER}
     overall: list[float] = []
+    seen: set[str] = set()
     for outcome in outcomes:
         if outcome.subset not in per_subset:
             raise ValueError(f"unknown subset {outcome.subset!r} on {outcome.query_id!r}")
+        if outcome.query_id in seen:
+            # A repeated row would be weighted twice and the gate's counts invariant would
+            # still hold, so nothing downstream could notice.
+            raise ValueError(f"duplicate query_id {outcome.query_id!r}")
+        seen.add(outcome.query_id)
+        if not outcome.expected_ids:
+            # An unresolved gold key looks exactly like a total miss. Scoring it 0.0 would drag
+            # the published number down with no diagnostic.
+            raise ValueError(f"{outcome.query_id!r} has no expected ids; resolve the gold keys")
         score = ndcg_at_k(list(outcome.ranked_ids), grades_from_expected(outcome.expected_ids), TOP_K)
         per_subset[outcome.subset].append(score)
         overall.append(score)
