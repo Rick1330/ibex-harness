@@ -175,6 +175,17 @@ class _LoadPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class _LiveRun:
+    """Everything the live profile needs: channel, caller token, selectors, load."""
+
+    addr: str
+    token: str
+    org: str
+    agent: str
+    plan: _LoadPlan
+
+
+@dataclass(frozen=True, slots=True)
 class _DriveStats:
     latencies_ms: tuple[float, ...]
     attempted: int
@@ -262,21 +273,14 @@ async def _run_stub(duration_s: float, target_rps: int, token: str) -> _DriveSta
         await server.stop(grace=None)
 
 
-async def _run_live(
-    addr: str,
-    duration_s: float,
-    target_rps: int,
-    token: str,
-    org: str,
-    agent: str,
-) -> _DriveStats:
-    if not token.strip():
+async def _run_live(run: _LiveRun) -> _DriveStats:
+    if not run.token.strip():
         raise SystemExit(
             "live profile requires --token or IBEX_CONTEXT_GRPC_SERVICE_TOKEN (ADR-0096)"
         )
     from ibex.context.v1 import context_pb2 as pb2
 
-    async with grpc_aio.insecure_channel(addr) as channel:
+    async with grpc_aio.insecure_channel(run.addr) as channel:
         stub = channel.unary_unary(
             f"/{_SERVICE_NAME}/AssembleContext",
             request_serializer=pb2.AssembleContextRequest.SerializeToString,
@@ -284,9 +288,9 @@ async def _run_live(
         )
         return await _drive_open_loop(
             stub,
-            _request_factory(pb2, org=org, agent=agent),
-            token,
-            _LoadPlan(duration_s, target_rps),
+            _request_factory(pb2, org=run.org, agent=run.agent),
+            run.token,
+            run.plan,
         )
 
 
@@ -368,23 +372,28 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = _parse_args()
-
+def _profile_stats(args: argparse.Namespace) -> _DriveStats:
+    """Drive the profile selected by ``--profile`` and return its measurements."""
     if args.profile == "stub":
-        token = args.token or STUB_SERVICE_TOKEN
-        stats = asyncio.run(_run_stub(args.duration, args.rps, token))
-    else:
-        stats = asyncio.run(
-            _run_live(
-                args.addr,
-                args.duration,
-                args.rps,
-                args.token,
-                args.org_id,
-                args.agent_id,
+        return asyncio.run(
+            _run_stub(args.duration, args.rps, args.token or STUB_SERVICE_TOKEN)
+        )
+    return asyncio.run(
+        _run_live(
+            _LiveRun(
+                addr=args.addr,
+                token=args.token,
+                org=args.org_id,
+                agent=args.agent_id,
+                plan=_LoadPlan(args.duration, args.rps),
             )
         )
+    )
+
+
+def main() -> int:
+    args = _parse_args()
+    stats = _profile_stats(args)
 
     samples = list(stats.latencies_ms)
     error_rate = (

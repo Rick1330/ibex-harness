@@ -424,8 +424,21 @@ func TestProbeCallerAuth_SendsServiceTokenMetadataAndEmptyRequest(t *testing.T) 
 		t.Fatalf("ProbeCallerAuth() error=%v want ErrCallerAuthUnproven", err)
 	}
 	assertExactlyOneMetadataValue(t, got, ServiceTokenMetadataKey, testServiceToken)
-	if wantReq.GetOrgId() != "" || wantReq.GetAgentId() != "" || wantReq.GetQuery() != "" {
-		t.Fatalf("probe request must be empty, got %v", wantReq)
+	assertEmptyProbeRequest(t, wantReq)
+}
+
+// assertEmptyProbeRequest pins that the caller-auth probe sends no selectors or
+// query, so it can never be mistaken for a real memory search.
+func assertEmptyProbeRequest(t *testing.T, req *contextv1.SearchMemoriesRequest) {
+	t.Helper()
+	if req.GetOrgId() != "" {
+		t.Fatalf("probe request must be empty, got org_id=%q", req.GetOrgId())
+	}
+	if req.GetAgentId() != "" {
+		t.Fatalf("probe request must be empty, got agent_id=%q", req.GetAgentId())
+	}
+	if req.GetQuery() != "" {
+		t.Fatalf("probe request must be empty, got query=%q", req.GetQuery())
 	}
 }
 

@@ -43,6 +43,10 @@ const authCacheRedisPingTO = 2 * time.Second
 // so a wedged context service cannot stall proxy startup.
 const contextCallerAuthProbeTO = 1500 * time.Millisecond
 
+// callerAuthServiceToken is the fixed log label for the ADR-0096 caller-auth
+// scheme. Log labels are conventions, not values: keep them identical everywhere.
+const callerAuthServiceToken = "service-token"
+
 func setupRateLimiter(cfg config.Config, log *logger.Logger) (redis.UniversalClient, ratelimit.Limiter, error) {
 	if cfg.RedisURL == "" {
 		return nil, ratelimit.Noop(), nil
@@ -228,7 +232,7 @@ func dialContextGRPC(cfg config.Config, log *logger.Logger, m *ibexmetrics.Proxy
 	log.InfoCtx(context.Background(), "context grpc client configured",
 		"target", cfg.ContextGRPCTarget,
 		"timeout", cfg.ContextAssembleTimeout.String(),
-		"caller_auth", "service-token",
+		"caller_auth", callerAuthServiceToken,
 		"tls", cfg.Environment != "development",
 	)
 	return contextClients{client: client, conn: conn}, nil
@@ -250,7 +254,7 @@ func probeContextCallerAuth(prober contextCallerAuthProber, log *logger.Logger) 
 	err := prober.ProbeCallerAuth(ctx)
 	if err == nil {
 		log.InfoCtx(context.Background(), "context caller authentication probe passed",
-			"caller_auth", "service-token", "rpc", "SearchMemories")
+			"caller_auth", callerAuthServiceToken, "rpc", "SearchMemories")
 		return nil
 	}
 	if errors.Is(err, contextclient.ErrCallerAuthRejected) {
@@ -262,12 +266,12 @@ func probeContextCallerAuth(prober contextCallerAuthProber, log *logger.Logger) 
 	if errors.Is(err, contextclient.ErrCallerAuthUnproven) {
 		log.WarnCtx(context.Background(),
 			"context caller authentication unproven; the SearchMemories stub returning UNIMPLEMENTED does not prove the caller guard is installed",
-			"caller_auth", "service-token", "rpc", "SearchMemories", "reason", err.Error())
+			"caller_auth", callerAuthServiceToken, "rpc", "SearchMemories", "reason", err.Error())
 		return nil
 	}
 	// Stable class only: the wrapped error carries the gRPC code, never the token.
 	log.WarnCtx(context.Background(), "context caller authentication probe inconclusive; continuing",
-		"caller_auth", "service-token", "reason", err.Error())
+		"caller_auth", callerAuthServiceToken, "reason", err.Error())
 	return nil
 }
 

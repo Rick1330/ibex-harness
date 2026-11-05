@@ -232,15 +232,34 @@ def _split_host_port(addr: str) -> tuple[str, int]:
     string that ``add_insecure_port`` then interprets differently (for example the
     unbracketed IPv6 literal ``::1:0``). IPv6 literals must be bracketed.
     """
-    if not isinstance(addr, str) or not addr:
+    host, port_text = _split_host_and_port_text(addr)
+    port = _parse_bind_port(addr, port_text)
+    return _normalized_host(addr, host), port
+
+
+def _require_bind_shape(addr: str) -> None:
+    """Reject an empty or whitespace-padded listen address."""
+    if not addr:
         raise ValueError("IBEX_CONTEXT_GRPC_ADDR must be host:port")
     if addr != addr.strip():
         raise ValueError(
             "IBEX_CONTEXT_GRPC_ADDR must not have leading or trailing whitespace"
         )
+
+
+def _split_host_and_port_text(addr: str) -> tuple[str, str]:
+    """Validate the address shape and split off the trailing port text."""
+    _require_bind_shape(addr)
     host, sep, port_text = addr.rpartition(":")
-    if not sep or not host:
+    if not sep:
         raise ValueError(f"IBEX_CONTEXT_GRPC_ADDR must be host:port, got {addr!r}")
+    if not host:
+        raise ValueError(f"IBEX_CONTEXT_GRPC_ADDR must be host:port, got {addr!r}")
+    return host, port_text
+
+
+def _parse_bind_port(addr: str, port_text: str) -> int:
+    """Require a decimal port in the inclusive ``0..65535`` bind range."""
     if not port_text.isdigit():
         raise ValueError(
             f"IBEX_CONTEXT_GRPC_ADDR must end in a numeric port, got {addr!r}"
@@ -248,13 +267,18 @@ def _split_host_port(addr: str) -> tuple[str, int]:
     port = int(port_text)
     if not 0 <= port <= 65535:
         raise ValueError(f"IBEX_CONTEXT_GRPC_ADDR port out of range in {addr!r}")
+    return port
+
+
+def _normalized_host(addr: str, host: str) -> str:
+    """Unbracket an IPv6 literal; reject mixed and bare-colon host forms."""
     if host.startswith("[") != host.endswith("]"):
         raise ValueError(f"IBEX_CONTEXT_GRPC_ADDR has a malformed IPv6 bracket: {addr!r}")
     if not host.startswith("[") and ":" in host:
         raise ValueError(
             f"IBEX_CONTEXT_GRPC_ADDR IPv6 literals must be bracketed, got {addr!r}"
         )
-    return host.strip("[]").lower(), port
+    return host.strip("[]").lower()
 
 
 def _host_from_addr(addr: str) -> str:
@@ -351,52 +375,59 @@ def build_server(
     return server, int(port)
 
 
+@dataclass(frozen=True, slots=True)
+class _UnaryRpc:
+    """Registration inputs for one unary RPC (kept together for ``_unary_handler``)."""
+
+    method: str
+    behavior: Any
+    token: str
+    request_deserializer: Any
+    response_serializer: Any
+
+
 def _generic_handler(
     servicer: ContextAssemblyServicer,
     pb2: object,
     token: str,
 ) -> grpc.GenericRpcHandler:
+    assemble = _UnaryRpc(
+        method=_ASSEMBLE,
+        behavior=servicer.assemble_context,
+        token=token,
+        request_deserializer=pb2.AssembleContextRequest.FromString,  # type: ignore[attr-defined]
+        response_serializer=pb2.AssembleContextResponse.SerializeToString,  # type: ignore[attr-defined]
+    )
+    search = _UnaryRpc(
+        method=_SEARCH,
+        behavior=servicer.search_memories,
+        token=token,
+        request_deserializer=pb2.SearchMemoriesRequest.FromString,  # type: ignore[attr-defined]
+        response_serializer=pb2.SearchMemoriesResponse.SerializeToString,  # type: ignore[attr-defined]
+    )
+    feedback = _UnaryRpc(
+        method=_FEEDBACK,
+        behavior=servicer.record_memory_feedback,
+        token=token,
+        request_deserializer=pb2.RecordMemoryFeedbackRequest.FromString,  # type: ignore[attr-defined]
+        response_serializer=pb2.RecordMemoryFeedbackResponse.SerializeToString,  # type: ignore[attr-defined]
+    )
     handlers = {
-        _ASSEMBLE: _unary_handler(
-            method=_ASSEMBLE,
-            behavior=servicer.assemble_context,
-            token=token,
-            request_deserializer=pb2.AssembleContextRequest.FromString,  # type: ignore[attr-defined]
-            response_serializer=pb2.AssembleContextResponse.SerializeToString,  # type: ignore[attr-defined]
-        ),
-        _SEARCH: _unary_handler(
-            method=_SEARCH,
-            behavior=servicer.search_memories,
-            token=token,
-            request_deserializer=pb2.SearchMemoriesRequest.FromString,  # type: ignore[attr-defined]
-            response_serializer=pb2.SearchMemoriesResponse.SerializeToString,  # type: ignore[attr-defined]
-        ),
-        _FEEDBACK: _unary_handler(
-            method=_FEEDBACK,
-            behavior=servicer.record_memory_feedback,
-            token=token,
-            request_deserializer=pb2.RecordMemoryFeedbackRequest.FromString,  # type: ignore[attr-defined]
-            response_serializer=pb2.RecordMemoryFeedbackResponse.SerializeToString,  # type: ignore[attr-defined]
-        ),
+        _ASSEMBLE: _unary_handler(assemble),
+        _SEARCH: _unary_handler(search),
+        _FEEDBACK: _unary_handler(feedback),
     }
     return grpc.method_handlers_generic_handler(_SERVICE_NAME, handlers)
 
 
-def _unary_handler(
-    *,
-    method: str,
-    behavior: Any,
-    token: str,
-    request_deserializer: Any,
-    response_serializer: Any,
-) -> grpc.RpcMethodHandler:
-    guarded = guard_handler(behavior, token, method=method)
+def _unary_handler(rpc: _UnaryRpc) -> grpc.RpcMethodHandler:
+    guarded = guard_handler(rpc.behavior, rpc.token, method=rpc.method)
     handler = grpc.unary_unary_rpc_method_handler(
         guarded,
-        request_deserializer=request_deserializer,
-        response_serializer=response_serializer,
+        request_deserializer=rpc.request_deserializer,
+        response_serializer=rpc.response_serializer,
     )
-    _require_unary(method, handler)
+    _require_unary(rpc.method, handler)
     return handler
 
 

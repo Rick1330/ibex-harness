@@ -123,13 +123,18 @@ func assembleFallbackReasons(t *testing.T, reg *metrics.ProxyRegistry) map[strin
 		if mf.GetName() != "ibex_proxy_context_assemble_fallback_total" {
 			continue
 		}
-		for _, m := range mf.GetMetric() {
-			if label, ok := metricLabelValue(m, "reason"); ok {
-				out[label] = m.GetCounter().GetValue()
-			}
-		}
+		recordAssembleFallbackReasons(out, mf.GetMetric())
 	}
 	return out
+}
+
+// recordAssembleFallbackReasons copies each labelled counter sample into out.
+func recordAssembleFallbackReasons(out map[string]float64, samples []*dto.Metric) {
+	for _, m := range samples {
+		if label, ok := metricLabelValue(m, "reason"); ok {
+			out[label] = m.GetCounter().GetValue()
+		}
+	}
 }
 
 func metricLabelValue(m *dto.Metric, name string) (string, bool) {
