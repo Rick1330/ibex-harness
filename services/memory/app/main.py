@@ -128,6 +128,8 @@ async def _memory_service_lifespan(
         logger.error("memory not ready: %s", state.ready_error)
         yield
         await auth.aclose()
+        # The not-ready path never reaches _shutdown_memory, so flush here.
+        shutdown_tracing()
         return
 
     engine = create_engine(cfg)
@@ -243,6 +245,8 @@ async def _shutdown_memory(
     embedding_holder: dict[str, EmbeddingClient | None],
 ) -> None:
     state.ready = False
+    # ADR-0019 §8: flush the exporter before dependency teardown.
+    shutdown_tracing()
     client = embedding_holder.get("client")
     if client is not None:
         await client.aclose()
@@ -251,7 +255,6 @@ async def _shutdown_memory(
     if state.redis is not None:
         await state.redis.aclose()
     await auth.aclose()
-    shutdown_tracing()
     await engine.dispose()
     logger.info("memory service shutdown complete")
 

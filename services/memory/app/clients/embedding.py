@@ -17,8 +17,13 @@ from uuid import UUID
 
 import httpx
 
-from app.clients._http import RedactedBearerAuth, jittered_backoff, retry_after_seconds
-from app.tracing import get_tracer
+from app.clients._http import (
+    RedactedBearerAuth,
+    inject_trace_context,
+    jittered_backoff,
+    retry_after_seconds,
+)
+from app.tracing import start_span
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +120,7 @@ class EmbeddingClient:
             auth=RedactedBearerAuth(token),
             timeout=httpx.Timeout(cfg.read_timeout, connect=cfg.connect_timeout),
             follow_redirects=False,
+            event_hooks={"request": [inject_trace_context]},
         )
 
     def __repr__(self) -> str:
@@ -126,7 +132,7 @@ class EmbeddingClient:
     async def embed(self, texts: Sequence[str], *, org_id: UUID) -> EmbeddingResult:
         _validate_texts(texts)
         host = self._client.base_url.host or ""
-        with get_tracer().start_as_current_span(
+        with start_span(
             "embedder.embed",
             attributes={
                 "server.address": host,

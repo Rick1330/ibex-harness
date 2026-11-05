@@ -28,24 +28,52 @@ HTTP_DURATION = Histogram(
 
 _UNMATCHED_ROUTE = "<unmatched>"
 
+# HTTP methods are caller-controlled tokens. Only the registered set may become a
+# span attribute or a Prometheus label; anything else collapses to ``_OTHER`` so a
+# crafted method cannot inject a UUID and explode label cardinality.
+_KNOWN_METHODS = frozenset(
+    {"GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"}
+)
 
-def _route_label(scope: Scope) -> str:
+
+def http_method(scope: Scope) -> str:
+    """Bounded method label for spans and metrics."""
+    method = scope.get("method", "GET")
+    if isinstance(method, str) and method in _KNOWN_METHODS:
+        return method
+    return "_OTHER"
+
+
+def route_template(scope: Scope) -> str | None:
+    """Route template for an already-routed request, or None when unknown.
+
+    FastAPI's ``APIRoute.matches`` stores the matched route in ``scope["route"]``;
+    plain Starlette routes (the built-in ``/docs`` and ``/openapi.json``) and
+    mounted sub-apps store nothing, so callers treat ``None`` as "no template" and
+    omit the attribute rather than inventing a raw path.
+
+    Shared with the tracing middleware so the metric label and the ``http.route``
+    span attribute resolve a request the same way.
+    """
     route = scope.get("route")
     template = getattr(route, "path", None)
     if isinstance(template, str) and template:
         return template
-    return _UNMATCHED_ROUTE
+    return None
 
 
-def _instrument(scope: Scope) -> bool:
+def route_label(scope: Scope) -> str:
+    """Metric label: the route template, or a bounded placeholder when unmatched."""
+    return route_template(scope) or _UNMATCHED_ROUTE
+
+
+def instrument_scope(scope: Scope) -> bool:
+    """True for instrumented HTTP traffic; ``/metrics`` stays out of metrics and spans."""
     return scope.get("type") == "http" and scope.get("path") != "/metrics"
 
 
 def _request_method(scope: Scope) -> str:
-    method = scope.get("method", "GET")
-    if isinstance(method, str):
-        return method
-    return "GET"
+    return http_method(scope)
 
 
 class _Recorder:
@@ -72,7 +100,7 @@ class _Recorder:
         if self._done:
             return
         self._done = True
-        route = _route_label(self._scope)
+        route = route_label(self._scope)
         HTTP_REQUESTS.labels(method=self._method, route=route, status=status).inc()
         HTTP_DURATION.labels(method=self._method, route=route).observe(
             time.perf_counter() - self._start
@@ -92,7 +120,7 @@ class HTTPMetricsMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if not _instrument(scope):
+        if not instrument_scope(scope):
             await self.app(scope, receive, send)
             return
 

@@ -23,7 +23,12 @@ from typing import Any, NoReturn
 
 import httpx
 
-from app.clients._http import RedactedBearerAuth, jittered_backoff, retry_after_seconds
+from app.clients._http import (
+    RedactedBearerAuth,
+    inject_trace_context,
+    jittered_backoff,
+    retry_after_seconds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +119,7 @@ class RerankClient:
             auth=RedactedBearerAuth(token) if token else None,
             timeout=httpx.Timeout(cfg.read_timeout, connect=cfg.connect_timeout),
             follow_redirects=False,
+            event_hooks={"request": [inject_trace_context]},
         )
 
     def __repr__(self) -> str:

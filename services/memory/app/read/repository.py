@@ -37,7 +37,7 @@ from app.read.ranking import (
     merge_candidates,
     rank_hydrated_hits,
 )
-from app.tracing import get_tracer
+from app.tracing import start_span
 from app.vectorstore.base import SearchHit, SearchMode, SearchRequest, VectorStore
 
 logger = logging.getLogger(__name__)
@@ -158,6 +158,17 @@ def _hybrid_enabled(settings: Settings, *, query_text: str) -> bool:
     which is exactly when an exact-token match was most likely to be missing.
     """
     return settings.search_hybrid_enabled and is_searchable_query(query_text)
+
+
+def _rerank_host(client: RerankClient) -> str:
+    """Endpoint host for the rerank span.
+
+    Tests inject duck-typed rerankers that implement ``rerank`` without ``host``,
+    so the lookup stays tolerant and anything that is not a string is dropped
+    rather than handed to ``set_attribute``.
+    """
+    host = getattr(client, "host", "")
+    return host if isinstance(host, str) else ""
 
 
 class MemoryReadRepository:
@@ -322,8 +333,8 @@ class MemoryReadRepository:
             return None, allowed
         documents = [spec.hydrated[memory_id].result.content for memory_id in ids]
         started = time.monotonic()
-        host = getattr(client, "host", "")
-        with get_tracer().start_as_current_span(
+        host = _rerank_host(client)
+        with start_span(
             "rerank",
             attributes={
                 "server.address": host,
@@ -524,7 +535,7 @@ class MemoryReadRepository:
         return kept[: query.limit]
 
     async def _vector_candidates(self, query: FindSimilarQuery) -> list[RankedCandidate]:
-        with get_tracer().start_as_current_span(
+        with start_span(
             "vector_search",
             attributes={
                 "db.system": "postgresql",
@@ -592,7 +603,7 @@ class MemoryReadRepository:
     ) -> dict[UUID, HydratedHit]:
         if not candidates:
             return {}
-        with get_tracer().start_as_current_span(
+        with start_span(
             "hydration",
             attributes={
                 "db.system": "postgresql",

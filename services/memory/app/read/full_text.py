@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.org_context import set_service_org
-from app.tracing import get_tracer
+from app.tracing import start_span
 
 # Shared with EXPLAIN plan tests — keep in sync with full_text_search().
 FTS_SQL = """
@@ -63,7 +63,7 @@ async def full_text_search(
     if query.limit < 1 or not is_searchable_query(query.query_text):
         return []
 
-    with get_tracer().start_as_current_span(
+    with start_span(
         "full_text_search",
         attributes={
             "db.system": "postgresql",

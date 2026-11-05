@@ -21,6 +21,21 @@ def test_create_app_without_database_url_not_ready() -> None:
         assert resp.status_code == 503
 
 
+def test_not_ready_lifespan_still_flushes_tracing() -> None:
+    """The not-ready early return never reaches _shutdown_memory."""
+    settings = Settings(database_url="", embedding_api_token="tok")
+    validator = StaticTokenValidator({}, available=True)
+    app = create_app(settings=settings, validator=validator)
+    with (
+        patch("app.main.configure_tracing") as configure,
+        patch("app.main.shutdown_tracing") as shutdown,
+        TestClient(app),
+    ):
+        pass
+    configure.assert_called_once_with("")
+    shutdown.assert_called_once_with()
+
+
 @pytest.mark.asyncio
 async def test_build_embed_no_token_raises() -> None:
     from app.main import _build_embed
@@ -61,12 +76,14 @@ def test_create_app_full_lifespan_mocked() -> None:
         patch("app.main.Redis.from_url", return_value=mock_redis),
         patch("app.main.EmbeddingClient", return_value=mock_client),
         patch("app.main.build_write_orchestrator", return_value=MagicMock()),
+        patch("app.main.shutdown_tracing") as shutdown,
     ):
         app = create_app(settings=settings, validator=validator)
         with TestClient(app) as client:
             assert client.get("/health").status_code == 200
             assert client.get("/ready").status_code == 200
             assert app.state.memory.ready is True
+    shutdown.assert_called_once_with()
 
 
 def test_create_app_postgres_unreachable_not_ready() -> None:

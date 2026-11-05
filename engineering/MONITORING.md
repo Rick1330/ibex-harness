@@ -270,14 +270,28 @@ Every service must publish these metrics:
 
 **OpenTelemetry Tracing:**
 - Inbound HTTP span: `memory.http` (continues inbound W3C `traceparent` context).
+  It records the FastAPI route template in `http.route` after routing; raw request paths
+  are never recorded (they carry memory UUIDs and would be high cardinality). Templates come
+  from `APIRoute`; the built-in `/docs` and `/openapi.json` routes and any mounted sub-app
+  expose no template, so `http.route` is omitted rather than falling back to the raw path.
 - Dependency spans:
-  - `vector_search` (`db.system: "postgresql"`, `db.operation: "vector_search"`)
+  - `vector_search` (`db.system: "postgresql"`, `search.mode: "user_retrieval"`)
   - `full_text_search` (`db.system: "postgresql"`, `db.operation: "full_text_search"`)
-  - `hydration` (`db.system: "postgresql"`, `db.operation: "hydrate_hits"`)
+  - `hydration` (`db.system: "postgresql"`, `db.operation: "hydrate"`, `memory.candidate_count`)
   - `rerank` (`server.address`, `rerank.endpoint_host`, `rerank.outcome: "applied" | "degraded"`)
   - `embedder.embed` (`server.address`, `embedder.batch_size`)
   - `redis.read_hot` (`db.system: "redis"`, `db.operation: "zrevrange"`)
 - Security & Cardinality: Spans never record memory text, queries, or auth tokens.
+  Exception events are never recorded (`record_exception=False`); an error status carries only
+  the exception class name, never `str(exc)` or a stack trace. The SQLAlchemy engine is created
+  with `hide_parameters=True` so a failed statement cannot render bound parameters.
+- Sampling: root spans default to 1% (`OTEL_SAMPLE_RATIO`, ADR-0019 §4). `OTEL_TRACES_SAMPLER`
+  is not consulted because the SDK sampler is configured explicitly.
+- Exporter: OTLP/HTTP (`OTEL_EXPORTER_OTLP_ENDPOINT`); an empty endpoint keeps context
+  propagation but exports no spans. The Go services use the shared `packages/telemetry` package;
+  the Python services mirror ADR-0019 with their own OTLP/HTTP wiring. Consolidating
+  `services/memory`, `services/mcp-operator`, and `services/worker` onto one Python telemetry
+  package is tracked as a follow-up issue.
 
 - `ibex_memory_write_total{status}`
 - `ibex_memory_write_duration_seconds_bucket{status}`
@@ -475,16 +489,29 @@ Use consistent names:
 - `redis.read_hot`
 - `auth.validate_token`
 
+Python services name their server span `<service>.http` (for example `memory.http`); the
+`{method} {route_template}` naming in ADR-0019 §5 applies to the Go services.
+
 ### 9.2 Span attributes (low cardinality)
 
 Allowed attributes:
 
 - `service.name`
-- `http.method`, `http.route`, `http.status_code`
+- `http.request.method`, `http.route`, `http.response.status_code` (current OTel semconv)
 - `rpc.service`, `rpc.method`
 - `provider`, `model`
 - `status` (`success|error|timeout|degraded`)
 - `error_code` (bounded enum)
+- database spans: `db.system`, `db.operation`, `search.mode`
+- rerank spans: `server.address`, `rerank.endpoint_host`, `rerank.outcome`
+- embedder spans: `embedder.batch_size`
+- memory hydration: `memory.candidate_count`
+
+Never record raw request paths (`url.path`) as a span attribute; use `http.route` (the
+route template) instead. Raw paths carry identifiers and are high cardinality.
+
+`http.request.method` is bounded to the registered HTTP method set; any other
+caller-supplied method token becomes `_OTHER` before it reaches a span or a metric label.
 
 Avoid attributes:
 
@@ -497,7 +524,18 @@ Instead:
 
 ### 9.3 Sampling
 
-Default: 1% normal requests.
+Default: 1% normal requests (`OTEL_SAMPLE_RATIO=0.01`, ADR-0019 §4).
+
+Python services mirror ADR-0019 with the OTLP/HTTP exporter; an invalid or out-of-range
+`OTEL_SAMPLE_RATIO` falls back to the 1% default rather than clamping. `OTEL_TRACES_SAMPLER` is
+not consulted because the SDK sampler is configured explicitly.
+
+Exception detail is never exported: spans are created with `record_exception=False` and
+`set_status_on_exception=False`, and an error status carries only the exception class name.
+
+Head-based sampling cannot honour the "always sample errors" rule below on its own: a
+non-sampled parent drops the whole trace before the error is known. Error-priority export
+requires tail sampling at the collector (ADR-0019 §4).
 
 Always sample:
 

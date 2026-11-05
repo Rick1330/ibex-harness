@@ -26,6 +26,9 @@ def create_engine(settings: Settings) -> AsyncEngine:
         target.url,
         pool_pre_ping=True,
         connect_args=dict(target.connect_args),
+        # Defence in depth: a statement error must never render bound parameters
+        # (``query_text`` on the full-text path) into a log line or span event.
+        hide_parameters=True,
     )
 
 
