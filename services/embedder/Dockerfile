@@ -19,7 +19,7 @@ FROM ghcr.io/astral-sh/uv@sha256:2fd1b38e3398a256d6af3f71f0e2ba6a517b249998726a6
 # --------------------------------------------------------------------------- #
 # Stage 2 — dependency install (wheels only; no sdist setup.py execution)     #
 # --------------------------------------------------------------------------- #
-FROM python@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0b7f AS deps
+FROM python@sha256:da54eb86849fe19be7584d8b3f291fcf0c53c196760ab3d70dc6382f681ef9c0 AS deps
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -39,7 +39,7 @@ RUN uv sync --frozen --no-build --no-install-project
 # --------------------------------------------------------------------------- #
 # Stage 3 — runtime image                                                      #
 # --------------------------------------------------------------------------- #
-FROM python@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0b7f AS runtime
+FROM python@sha256:da54eb86849fe19be7584d8b3f291fcf0c53c196760ab3d70dc6382f681ef9c0 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
