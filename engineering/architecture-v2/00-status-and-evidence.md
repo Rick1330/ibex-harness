@@ -23,7 +23,7 @@ A claim becomes `shipped-accepted` only when the ledger contains:
 | Proxy overhead SLO and benchmark gate (GAP-004) | target ratified; PR gate `shipped-local`; no recent passing full-chat p99 run | p99 ≤20 ms is not a measured hosted/production SLO; the Go gate measures warm-path means, not p99. |
 | Provider/tokenizer packages | `shipped-local` / adapter-dependent | A model name is not a capability contract. |
 | Memory substrate | `shipped-local` | Not proof of typed projections, deletion certification, or production isolation. |
-| Context assembly | `provisional` | The caller-authentication limitation and deadline discrepancy remain open. |
+| Context assembly | `provisional` | Not per-user authentication: the shared caller token only closes unauthenticated direct access, and `PrincipalContext` is unsigned. Per-user authentication, principal signing, TLS, hosted evidence, and the deadline discrepancy remain open. |
 | Extraction workers | `provisional` | Queue durability, live model quality, and exactly-once projection effects are not certified. |
 | MCP memory tools | `provisional` | Logging-only audit is not evidence-grade audit. |
 | MCP operator gateway (GAP-009) | `shipped-local` / default-off | Read-only metadata tools only; bitmap authz without PolicySnapshot evaluation; logging-first audit. Not operator readiness or hosted support. |

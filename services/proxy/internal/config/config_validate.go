@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -11,6 +12,15 @@ import (
 )
 
 const errMsgInvalidTCPPort = "IBEX_PORT must be a valid TCP port"
+
+// contextServiceTokenPattern is the ADR-0096 caller-token wire contract, mirrored
+// from the context server (services/context/app/grpc_auth.py). It is enforced
+// here as well because gRPC-Go rejects metadata values outside ASCII key rules:
+// a token carrying a newline, a non-ASCII rune, or more than 512 characters
+// makes every RPC fail as Internal, which the startup probe can only classify as
+// inconclusive. That would leave the proxy running with a token the context
+// server can never accept.
+var contextServiceTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{32,512}$`)
 
 func runValidationSteps(steps ...func() error) error {
 	for _, step := range steps {
@@ -198,17 +208,109 @@ func (c Config) validateAuthConfig() error {
 	return c.validateContextGRPCConfig()
 }
 
+// contextCallerInputs groups the three ADR-0096 caller-auth inputs the
+// context-client validators need: the environment gates TLS, the host bounds
+// where the cleartext token may travel, and the token itself.
+type contextCallerInputs struct {
+	environment string
+	host        string
+	token       string
+}
+
 // validateContextGRPCConfig allows an empty target (skip dial until D.5 feature flag).
 // When set, the value must be host:port; timeout must be positive after ApplyDefaults.
+// When context assembly is enabled it additionally enforces the ADR-0096 caller
+// constraints: the environment must be TLS-free (development/test), the target
+// must be loopback, and the service token must be present.
 func (c Config) validateContextGRPCConfig() error {
-	if strings.TrimSpace(c.ContextGRPCTarget) == "" {
+	target := strings.TrimSpace(c.ContextGRPCTarget)
+	if target == "" {
 		return nil
 	}
-	if _, _, err := net.SplitHostPort(c.ContextGRPCTarget); err != nil {
+	if target != c.ContextGRPCTarget {
+		return fmt.Errorf(
+			"IBEX_CONTEXT_GRPC_TARGET must not have leading or trailing whitespace: validation trims it but the dial would use the raw value",
+		)
+	}
+	host, _, err := net.SplitHostPort(target)
+	if err != nil {
 		return fmt.Errorf("IBEX_CONTEXT_GRPC_TARGET must be host:port: %w", err)
 	}
 	if c.ContextAssembleTimeout <= 0 {
 		return fmt.Errorf("IBEX_CONTEXT_ASSEMBLE_TIMEOUT must be positive")
+	}
+	return c.validateEnabledContextCaller(contextCallerInputs{
+		environment: c.Environment,
+		host:        host,
+		token:       c.ContextGRPCServiceToken,
+	})
+}
+
+// validateEnabledContextCaller enforces the caller-auth preconditions that only
+// matter when Assemble can actually run. A disabled client never carries the
+// token, so its target and token stay unconstrained beyond host:port.
+func (c Config) validateEnabledContextCaller(caller contextCallerInputs) error {
+	if !c.ContextEnabled {
+		return nil
+	}
+	if err := validateContextEnvironment(caller.environment); err != nil {
+		return err
+	}
+	if err := validateContextTargetLoopback(caller.host); err != nil {
+		return err
+	}
+	return validateContextServiceToken(caller.token)
+}
+
+// validateContextServiceToken requires a token the context server will accept.
+// The error names the variable and the allowed shape and never echoes the value,
+// because the value is a secret.
+func validateContextServiceToken(token string) error {
+	if strings.TrimSpace(token) == "" {
+		return fmt.Errorf("IBEX_CONTEXT_GRPC_SERVICE_TOKEN is required when IBEX_CONTEXT_ENABLED=true and IBEX_CONTEXT_GRPC_TARGET is set")
+	}
+	if !contextServiceTokenPattern.MatchString(token) {
+		return fmt.Errorf(
+			"IBEX_CONTEXT_GRPC_SERVICE_TOKEN must be 32-512 characters from [A-Za-z0-9_-] (ADR-0096); the context server enforces the same shape, and gRPC-Go rejects any other value as metadata so the token could never authenticate",
+		)
+	}
+	return nil
+}
+
+// validateContextEnvironment refuses to enable context outside development.
+// The context server serves plaintext only; authTransportCredentials would dial
+// TLS for any other environment and every Assemble would fail silently (fail-open
+// to directive-only), which looks healthy while context is dead. "test" is not a
+// deployable IBEX_ENV profile and is TLS-classified by the transport helper, so it
+// is rejected here too.
+func validateContextEnvironment(environment string) error {
+	if environment == envDevelopment {
+		return nil
+	}
+	return fmt.Errorf(
+		"IBEX_CONTEXT_ENABLED=true is not supported when IBEX_ENV=%s: the context service does not serve TLS, so this proxy would dial it with TLS credentials and every Assemble would fail; enable context only in development",
+		environment,
+	)
+}
+
+// validateContextTargetLoopback requires the context client target to be a
+// loopback IP literal. A hostname would be resolved again by the dialer, so a
+// second DNS answer could be non-loopback and would receive the plaintext
+// caller token; a literal cannot be re-resolved (ADR-0096).
+func validateContextTargetLoopback(host string) error {
+	trimmed := strings.TrimSpace(host)
+	ip := net.ParseIP(trimmed)
+	if ip == nil {
+		return fmt.Errorf(
+			"IBEX_CONTEXT_GRPC_TARGET host %q must be a loopback IP literal (127.0.0.1 or ::1); hostnames are rejected because the dial re-resolves them",
+			host,
+		)
+	}
+	if ip.IsUnspecified() || !ip.IsLoopback() {
+		return fmt.Errorf(
+			"IBEX_CONTEXT_GRPC_TARGET host %q is %s; the context service token must not be sent to a non-loopback endpoint",
+			host, ip,
+		)
 	}
 	return nil
 }

@@ -64,11 +64,29 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 	}
 	assembleCtx, endSpan := ensureAssembleTraceContext(ctx)
 	defer endSpan()
+	if _, ok := PrincipalContextFromContext(assembleCtx); !ok {
+		// The context server rejects a request without a verified principal
+		// (UNAUTHENTICATED). Skip the RPC and stay on the directive-only path with
+		// no fallback metadata rather than send a call that cannot succeed. The
+		// skip is security-relevant, so it is counted with a bounded reason; the
+		// response-header contract is unchanged (Attempted stays false).
+		h.warnMissingPrincipal(ctx)
+		h.recordAssembleFallback(principalMissingFallbackReason)
+		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
+	}
 	params, ok := assembleParamsFromRequest(assembleCtx, model, messages)
 	if !ok {
 		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
 	}
 	return h.injectAssembledOrDirective(ctx, assembleCtx, messages, params)
+}
+
+// warnMissingPrincipal logs the skipped assemble once per request.
+func (h chatCompletionHandler) warnMissingPrincipal(ctx context.Context) {
+	if h.log == nil {
+		return
+	}
+	h.log.WarnCtx(ctx, "context assemble skipped; verified principal context unavailable")
 }
 
 func (h chatCompletionHandler) injectAssembledOrDirective(
@@ -209,6 +227,11 @@ func finalRankForExclusion(exclusion string, rank int) *int {
 // (distinct from gRPC status reasons recorded inside packages/contextclient).
 const emptyAssembleFallbackReason = "empty"
 
+// principalMissingFallbackReason labels the handler-side skip of Assemble when no
+// verified principal is bound to the request. Bounded label: the reason is a
+// constant, so it cannot grow metric cardinality.
+const principalMissingFallbackReason = "principal_missing"
+
 func (h chatCompletionHandler) recordAssembleFallback(reason string) {
 	if h.metrics == nil {
 		return
@@ -245,7 +268,10 @@ func assembleParamsFromRequest(ctx context.Context, model string, messages []pro
 	if traceID == "" || spanID == "" {
 		return contextclient.AssembleParams{}, false
 	}
-	principal, _ := PrincipalContextFromContext(ctx)
+	principal, ok := PrincipalContextFromContext(ctx)
+	if !ok {
+		return contextclient.AssembleParams{}, false
+	}
 	return contextclient.AssembleParams{
 		OrgID:              orgID.String(),
 		AgentID:            agentID.String(),

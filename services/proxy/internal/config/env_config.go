@@ -24,6 +24,7 @@ type envConfig struct {
 	PolicyMinEpoch            int64             `env:"IBEX_PROXY_POLICY_MIN_EPOCH"`
 	ContextGRPCTarget         string            `env:"IBEX_CONTEXT_GRPC_TARGET"`
 	ContextAssembleTimeout    time.Duration     `env:"IBEX_CONTEXT_ASSEMBLE_TIMEOUT"`
+	ContextGRPCServiceToken   ibexconfig.Secret `env:"IBEX_CONTEXT_GRPC_SERVICE_TOKEN" secret:"true"`
 	ContextEnabled            string            `env:"IBEX_CONTEXT_ENABLED" envDefault:"false"`
 	ContextEmbedMetadata      string            `env:"IBEX_CONTEXT_EMBED_METADATA" envDefault:"false"`
 	MaxRequestBodyBytes       int64             `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
@@ -238,18 +239,19 @@ func parseCSVModels(raw string) []string {
 }
 
 func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
-	return Config{
-		Environment:          envCfg.Environment,
-		ServiceName:          envCfg.ServiceName,
-		LogLevel:             level,
-		Port:                 envCfg.Port,
-		RedisURL:             envCfg.RedisURL.String(),
-		AuthGRPCAddr:         envCfg.AuthGRPCAddr,
-		PolicyPublicKeysJSON: strings.TrimSpace(envCfg.PolicyPublicKeysJSON),
-		ContextGRPCTarget:    envCfg.ContextGRPCTarget,
-		RequestIDHeader:      envCfg.RequestIDHeader,
-		TraceIDHeader:        envCfg.TraceIDHeader,
-		ErrorDocsBase:        envCfg.ErrorDocsBase,
+	cfg := Config{
+		Environment:             envCfg.Environment,
+		ServiceName:             envCfg.ServiceName,
+		LogLevel:                level,
+		Port:                    envCfg.Port,
+		RedisURL:                envCfg.RedisURL.String(),
+		AuthGRPCAddr:            envCfg.AuthGRPCAddr,
+		PolicyPublicKeysJSON:    strings.TrimSpace(envCfg.PolicyPublicKeysJSON),
+		ContextGRPCTarget:       envCfg.ContextGRPCTarget,
+		ContextGRPCServiceToken: envCfg.ContextGRPCServiceToken.String(),
+		RequestIDHeader:         envCfg.RequestIDHeader,
+		TraceIDHeader:           envCfg.TraceIDHeader,
+		ErrorDocsBase:           envCfg.ErrorDocsBase,
 		RateLimit: RateLimitConfig{
 			DefaultRPM:   defaultRateLimitRPM,
 			OrgOverrides: map[uuid.UUID]int{},
@@ -261,23 +263,30 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		AuthCache: AuthCacheConfig{
 			Enabled: true,
 		},
-		PostgresDSN:             envCfg.PostgresDSN.String(),
-		DirectiveCacheTTL:       envCfg.DirectiveCacheTTL,
-		SessionCacheTTL:         envCfg.SessionCacheTTL,
-		CheckpointWorkers:       envCfg.CheckpointWorkers,
-		CheckpointQueue:         envCfg.CheckpointQueue,
-		SessionGetOrCreateTO:    envCfg.SessionGetOrCreateTO,
-		SessionIdleTimeout:      envCfg.SessionIdleTimeout,
-		SessionSweepInterval:    envCfg.SessionSweepInterval,
-		ClickHouseDSN:           envCfg.ClickHouseDSN.String(),
-		ClickHouseBatchSize:     envCfg.ClickHouseBatchSize,
-		ClickHouseFlushMS:       envCfg.ClickHouseFlushMS,
-		IdempotencyTTL:          envCfg.IdempotencyTTL,
-		IdempotencyRedisTimeout: envCfg.IdempotencyRedisTO,
-		ExtractionTurnsTTL:      envCfg.ExtractionTurnsTTL,
-		WorkerEnqueueBaseURL:    strings.TrimSpace(envCfg.WorkerEnqueueBaseURL),
-		WorkerEnqueueAPIToken:   envCfg.WorkerEnqueueAPIToken.String(),
 	}
+	applyBaseStoreConfig(&cfg, envCfg)
+	return cfg
+}
+
+// applyBaseStoreConfig maps the persistence, cache, and enqueue settings that are
+// passed through unchanged before per-feature overrides run.
+func applyBaseStoreConfig(cfg *Config, envCfg envConfig) {
+	cfg.PostgresDSN = envCfg.PostgresDSN.String()
+	cfg.DirectiveCacheTTL = envCfg.DirectiveCacheTTL
+	cfg.SessionCacheTTL = envCfg.SessionCacheTTL
+	cfg.CheckpointWorkers = envCfg.CheckpointWorkers
+	cfg.CheckpointQueue = envCfg.CheckpointQueue
+	cfg.SessionGetOrCreateTO = envCfg.SessionGetOrCreateTO
+	cfg.SessionIdleTimeout = envCfg.SessionIdleTimeout
+	cfg.SessionSweepInterval = envCfg.SessionSweepInterval
+	cfg.ClickHouseDSN = envCfg.ClickHouseDSN.String()
+	cfg.ClickHouseBatchSize = envCfg.ClickHouseBatchSize
+	cfg.ClickHouseFlushMS = envCfg.ClickHouseFlushMS
+	cfg.IdempotencyTTL = envCfg.IdempotencyTTL
+	cfg.IdempotencyRedisTimeout = envCfg.IdempotencyRedisTO
+	cfg.ExtractionTurnsTTL = envCfg.ExtractionTurnsTTL
+	cfg.WorkerEnqueueBaseURL = strings.TrimSpace(envCfg.WorkerEnqueueBaseURL)
+	cfg.WorkerEnqueueAPIToken = envCfg.WorkerEnqueueAPIToken.String()
 }
 
 func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {

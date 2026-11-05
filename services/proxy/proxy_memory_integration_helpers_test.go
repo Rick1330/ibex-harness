@@ -5,6 +5,7 @@ package proxy_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +24,10 @@ const (
 	memoryIntegrationAssembleBlob = "assembled memory context blob"
 	memoryIntegrationChatBody     = `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 )
+
+// integrationContextServiceToken satisfies the ADR-0096 non-empty token rule.
+// Built at runtime so the fixture is never mistaken for a committed credential.
+var integrationContextServiceToken = strings.Repeat("0123456789abcdef", 2)
 
 type memoryAssembleBehavior struct {
 	delay         time.Duration
@@ -129,6 +134,7 @@ func startBufconnContextClient(t *testing.T, timeout time.Duration) (*configurab
 		contextv1.NewContextAssemblyServiceClient(conn),
 		timeout,
 		logger.Discard("proxy"),
+		integrationContextServiceToken,
 	)
 	if err != nil {
 		t.Fatalf("contextclient.New: %v", err)

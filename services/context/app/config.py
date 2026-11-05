@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Final
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Hard cap for AssembleContextRequest.options.max_memories (0 = unlimited).
@@ -89,11 +89,19 @@ class ContextSettings(BaseSettings):
             "MEMORY_BASE_URL",
         ),
     )
-    memory_api_token: str = Field(
-        default="",
+    memory_api_token: SecretStr = Field(
+        default_factory=lambda: SecretStr(""),
         validation_alias=AliasChoices(
             "IBEX_CONTEXT_MEMORY_API_TOKEN",
             "MEMORY_API_TOKEN",
+        ),
+    )
+    grpc_service_token: SecretStr = Field(
+        default_factory=lambda: SecretStr(""),
+        validation_alias="IBEX_CONTEXT_GRPC_SERVICE_TOKEN",
+        description=(
+            "Shared caller token for ContextAssemblyService (ADR-0096). "
+            "Required at startup; 32-512 chars of [A-Za-z0-9_-]; never logged."
         ),
     )
     redis_url: str = Field(
@@ -104,8 +112,9 @@ class ContextSettings(BaseSettings):
         default="127.0.0.1:9092",
         validation_alias="IBEX_CONTEXT_GRPC_ADDR",
         description=(
-            "Bind address for ContextAssemblyService (host:port). "
-            "Non-loopback binds log a WARNING until 3.5.D.1 auth (ADR-0071)."
+            "Bind address for ContextAssemblyService (host:port). Must be a "
+            "loopback IP literal (127.0.0.1 or ::1); the server refuses any "
+            "other bind, including hostnames (ADR-0096)."
         ),
     )
     packer_dp_cell_ceiling: int = Field(

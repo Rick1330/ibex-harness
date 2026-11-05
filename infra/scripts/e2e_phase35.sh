@@ -24,6 +24,9 @@ EMBEDDER_ADDR="${IBEX_EMBEDDER_ADDR:-http://127.0.0.1:18004}"
 MEMORY_ADDR="${IBEX_MEMORY_ADDR:-http://127.0.0.1:8005}"
 MCP_ADDR="${IBEX_MCP_ADDR:-http://127.0.0.1:18090}"
 CONTEXT_GRPC_ADDR="${IBEX_CONTEXT_GRPC_ADDR:-127.0.0.1:9092}"
+# ADR-0096: caller token shared by context server, proxy client, and scenarios.
+# Never a checked-in literal: generated once below when the caller did not set it.
+CONTEXT_SERVICE_TOKEN="${IBEX_CONTEXT_GRPC_SERVICE_TOKEN:-}"
 EXTRACTION_STUB_PORT="${IBEX_E2E_P35_EXTRACTION_STUB_PORT:-18091}"
 WORKER_ENQUEUE_PORT="${IBEX_WORKER_ENQUEUE_PORT:-8007}"
 WORKER_METRICS_PORT="${IBEX_WORKER_METRICS_PORT:-8006}"
@@ -76,6 +79,17 @@ if [[ -z "$MCP_MARKER" ]]; then
     fi
   done
 fi
+
+# ADR-0096: one caller token for the context server, the proxy client, and the
+# scenario driver. 43 URL-safe characters, inside the 32..512 [A-Za-z0-9_-] bound.
+if [[ -z "$CONTEXT_SERVICE_TOKEN" ]]; then
+  CONTEXT_SERVICE_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
+    || fail "failed to generate IBEX_CONTEXT_GRPC_SERVICE_TOKEN"
+  if [[ -z "$CONTEXT_SERVICE_TOKEN" ]]; then
+    fail "IBEX_CONTEXT_GRPC_SERVICE_TOKEN generation produced an empty value"
+  fi
+fi
+export IBEX_CONTEXT_GRPC_SERVICE_TOKEN="$CONTEXT_SERVICE_TOKEN"
 
 cleanup() {
   if [[ -n "${CONTEXT_PID:-}" ]] && kill -0 "$CONTEXT_PID" 2>/dev/null; then
@@ -400,6 +414,7 @@ start_stack() {
     exec env \
       PYTHONPATH="$context_pythonpath" \
       IBEX_CONTEXT_GRPC_ADDR="$CONTEXT_GRPC_ADDR" \
+      IBEX_CONTEXT_GRPC_SERVICE_TOKEN="$CONTEXT_SERVICE_TOKEN" \
       IBEX_CONTEXT_MEMORY_BASE_URL="$MEMORY_ADDR" \
       IBEX_CONTEXT_MEMORY_API_TOKEN="$DEV_TOKEN" \
       IBEX_CONTEXT_REDIS_URL="$REDIS_URL" \
@@ -424,6 +439,7 @@ start_stack() {
     IBEX_RATE_LIMIT_DEFAULT_RPM="${IBEX_RATE_LIMIT_DEFAULT_RPM:-6000}" \
     IBEX_CONTEXT_ENABLED=true \
     IBEX_CONTEXT_GRPC_TARGET="$CONTEXT_GRPC_ADDR" \
+    IBEX_CONTEXT_GRPC_SERVICE_TOKEN="$CONTEXT_SERVICE_TOKEN" \
     IBEX_CONTEXT_ASSEMBLE_TIMEOUT=2s \
     IBEX_CONTEXT_EMBED_METADATA=true \
     IBEX_WORKER_ENQUEUE_BASE_URL="http://127.0.0.1:${WORKER_ENQUEUE_PORT}" \
@@ -494,6 +510,7 @@ export IBEX_PROXY_ADDR="$PROXY_ADDR"
 export IBEX_MEMORY_ADDR="$MEMORY_ADDR"
 export IBEX_MCP_ADDR="$MCP_ADDR"
 export IBEX_CONTEXT_GRPC_ADDR="$CONTEXT_GRPC_ADDR"
+export IBEX_CONTEXT_GRPC_SERVICE_TOKEN="$CONTEXT_SERVICE_TOKEN"
 export IBEX_DEV_TOKEN="$DEV_TOKEN"
 export IBEX_DEV_ORG_ID="$DEV_ORG"
 export IBEX_DEV_AGENT_ID="$DEV_AGENT"

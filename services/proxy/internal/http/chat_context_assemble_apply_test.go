@@ -59,6 +59,93 @@ func TestUnit_ApplyContextOrDirective_MissingTenantFallsBackToDirective(t *testi
 	assertDirectiveOnly(t, out.Messages)
 }
 
+func TestUnit_ApplyContextOrDirective_MissingPrincipalSkipsAssemble(t *testing.T) {
+	t.Parallel()
+	fake := &fakeContextAssembler{result: contextclient.AssembleResult{AssembledContext: "assembled"}}
+	h := contextHandler(true, fake)
+	ctx := directiveCtx(contextTestAuthCtxWithoutPrincipal(t))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	out := assertNoAssembleAttempt(t, noAssembleAttemptCheck{
+		h: h, fake: fake, ctx: ctx, req: req, reason: "verified principal missing",
+	})
+	if out.Meta.Fallback {
+		t.Fatalf("skipped RPC must set no fallback metadata, meta=%+v", out.Meta)
+	}
+	assertDirectiveOnly(t, out.Messages)
+	if _, ok := assembleParamsFromRequest(ctx, "gpt-4o", nil); ok {
+		t.Fatal("assembleParamsFromRequest must refuse a context without a verified principal")
+	}
+}
+
+// TestUnit_ApplyContextOrDirective_MissingPrincipalRecordsFallbackReason pins
+// finding N4: skipping the RPC without a verified principal is security-relevant,
+// so it must be counted with a bounded reason, while the response-header contract
+// stays unchanged (Attempted/Fallback remain false).
+func TestUnit_ApplyContextOrDirective_MissingPrincipalRecordsFallbackReason(t *testing.T) {
+	t.Parallel()
+	fake := &fakeContextAssembler{result: contextclient.AssembleResult{AssembledContext: "assembled"}}
+	reg := metrics.NewProxy("missing-principal-fallback-test")
+	h := contextHandler(true, fake)
+	h.metrics = reg
+	ctx := directiveCtx(contextTestAuthCtxWithoutPrincipal(t))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	out := assertNoAssembleAttempt(t, noAssembleAttemptCheck{
+		h: h, fake: fake, ctx: ctx, req: req, reason: "verified principal missing",
+	})
+	if out.Meta.Attempted || out.Meta.Fallback {
+		t.Fatalf("skipped RPC must not change the header contract, meta=%+v", out.Meta)
+	}
+	assertDirectiveOnly(t, out.Messages)
+	assertOnlyAssembleFallbackReason(t, reg, principalMissingFallbackReason)
+}
+
+// assertOnlyAssembleFallbackReason proves the recorder saw exactly one fallback,
+// labelled with reason.
+func assertOnlyAssembleFallbackReason(t *testing.T, reg *metrics.ProxyRegistry, reason string) {
+	t.Helper()
+	reasons := assembleFallbackReasons(t, reg)
+	if len(reasons) != 1 {
+		t.Fatalf("recorded fallback reasons=%v want exactly %q", reasons, reason)
+	}
+	if reasons[reason] != 1 {
+		t.Fatalf("recorded fallback reasons=%v want %q=1", reasons, reason)
+	}
+}
+
+func assembleFallbackReasons(t *testing.T, reg *metrics.ProxyRegistry) map[string]float64 {
+	t.Helper()
+	mfs, err := reg.Gatherer().Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	out := make(map[string]float64)
+	for _, mf := range mfs {
+		if mf.GetName() != "ibex_proxy_context_assemble_fallback_total" {
+			continue
+		}
+		recordAssembleFallbackReasons(out, mf.GetMetric())
+	}
+	return out
+}
+
+// recordAssembleFallbackReasons copies each labelled counter sample into out.
+func recordAssembleFallbackReasons(out map[string]float64, samples []*dto.Metric) {
+	for _, m := range samples {
+		if label, ok := metricLabelValue(m, "reason"); ok {
+			out[label] = m.GetCounter().GetValue()
+		}
+	}
+}
+
+func metricLabelValue(m *dto.Metric, name string) (string, bool) {
+	for _, lp := range m.GetLabel() {
+		if lp.GetName() == name {
+			return lp.GetValue(), true
+		}
+	}
+	return "", false
+}
+
 // noAssembleAttemptCheck groups inputs for Skip-Memory / missing-tenant gates.
 type noAssembleAttemptCheck struct {
 	h      chatCompletionHandler
@@ -129,6 +216,12 @@ func assertAssembleParams(t *testing.T, got contextclient.AssembleParams) {
 	}
 	if got.OrgID != testChatOrgID {
 		t.Fatalf("org=%q", got.OrgID)
+	}
+	if got.PrincipalContext == nil {
+		t.Fatal("PrincipalContext must be forwarded; the context server rejects a request without one")
+	}
+	if got.PrincipalContext.GetOrgId() != testChatOrgID {
+		t.Fatalf("principal org=%q want %q", got.PrincipalContext.GetOrgId(), testChatOrgID)
 	}
 }
 

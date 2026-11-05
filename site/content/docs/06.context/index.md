@@ -4,13 +4,13 @@ description: Budgeting, parallel retrieval, ranking, packing, formatting, and sa
 audience: architect
 status: PROVISIONAL
 scope: provisional
-verifiedDate: "2026-10-21"
+verifiedDate: "2026-11-05"
 sourceOfTruth: services/context/README.md
 ---
 
-Context assembly converts directives and retrieved memories into a bounded prompt package. The pipeline exists locally. Caller authentication and the accepted deadline boundary are not complete, so the service is restricted to loopback or a trusted network boundary.
+Context assembly converts directives and retrieved memories into a bounded prompt package. The pipeline exists locally. Every RPC requires a shared caller token, so unauthenticated access is closed; per-user authentication and the accepted deadline boundary are not complete, so the service stays on loopback.
 
-::page-status{status="PROVISIONAL" verified="2026-10-21" note="Caller authentication and deadline acceptance remain open"}
+::page-status{status="PROVISIONAL" verified="2026-11-05" note="Unauthenticated access is closed by a shared caller token; per-user authentication and deadline acceptance remain open"}
 ::
 
 ## Pages
@@ -42,18 +42,18 @@ flowchart LR
 
 `retrieval_wall_ms = min(timeout_ms, deadline_ms)`. The defaults are 45 ms for retrieval and 40 ms for the gRPC deadline.
 
-## Security limitation
+## Security boundary
 
 ::callout
 ---
-{"type":"danger","title":"No caller authentication"}
+{"type":"warning","title":"Caller authentication, not per-user authentication"}
 ---
 
-  The gRPC server has no auth interceptor. On a non-loopback bind it trusts request `org_id` and `agent_id`. Do not expose it to an untrusted network. A network address is not an authentication control.
+  Every RPC requires exactly one `x-ibex-context-service-token` metadata entry matching the server's `IBEX_CONTEXT_GRPC_SERVICE_TOKEN`, and `principal_context` must be present with an `org_id` and `agent_id` equal to the request selectors. The server refuses to start without a token and refuses any non-loopback bind. **Unauthenticated access is closed.** The token is a shared secret and the principal is unsigned, so **a token holder can still assert any principal**. Tenant isolation remains a proxy-side property, not a property of this service.
 
 ::
 
-Keep `IBEX_CONTEXT_GRPC_ADDR=127.0.0.1:<port>` unless a documented trusted-sidecar boundary exists. Do not claim caller authentication until the deferred interceptor lands.
+Keep `IBEX_CONTEXT_GRPC_ADDR=127.0.0.1:<port>`. There is no TLS, no principal signing, and no per-user validation at this boundary, and rotating the token is a coordinated restart of the proxy and the context server. Do not claim per-user authentication or tenant isolation at the context service.
 
 ## Failure behavior
 
@@ -63,13 +63,15 @@ Keep `IBEX_CONTEXT_GRPC_ADDR=127.0.0.1:<port>` unless a documented trusted-sidec
 | Hot or cold memory fails | Continue with available branches |
 | Retrieval exceeds wall budget | Return partial or fallback context |
 | Packing cannot fit | Greedy fallback, still bounded |
+| Missing, duplicate, or wrong service token | `UNAUTHENTICATED`; the proxy falls back to directive-only with `X-IBEX-Context-Fallback: true` |
+| Selectors disagree with the principal | `PERMISSION_DENIED`; the proxy falls back; zero downstream calls |
 | Context service unavailable | Proxy proceeds with directive-only behavior |
 
-Context degradation is safe only if the caller cannot force cross-tenant retrieval. That is exactly why the auth limitation is called out above.
+Context degradation is a quality change, not an authorization change: the caller-token and selector checks run before any directive or memory read, so a failed assembly cannot widen visibility.
 
 ## Explicitly not implemented
 
-- `SearchMemories` and `RecordMemoryFeedback` return `UNIMPLEMENTED`.
-- Caller identity propagation from the proxy is not authenticated at the context boundary.
+- `SearchMemories` and `RecordMemoryFeedback` return `UNIMPLEMENTED` after authentication.
+- The service token authenticates the caller, not the user; `PrincipalContext` is unsigned and per-user validation at this boundary is not implemented.
 - The character estimate is not a provider-exact tokenizer.
 - There is no accepted hosted latency or quality benchmark for this service.

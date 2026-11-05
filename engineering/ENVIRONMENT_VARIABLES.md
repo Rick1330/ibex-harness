@@ -276,8 +276,9 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_MIN_SAMPLES` | No | `10` | Minimum samples before rolling trip | |
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURE_RATE` | No | `0.5` | Rolling failure-rate threshold | Float in (0, 1] |
 | `IBEX_PROVIDER_FALLBACK_MAX_DEPTH` | No (**4.C.4**) | `1` | Max hops from org `fallback_chain` after primary Complete failure | Values `<1` clamp to `1`; empty chain = opt-out |
-| `IBEX_CONTEXT_ENABLED` | No (**3.5.D.2**) | `false` | Master switch for context-assembly injection on chat completions; `false` = Phase 2 directive-only (no Assemble gRPC). Independent of empty `IBEX_CONTEXT_GRPC_TARGET` (nil client) | Additive; fail-open |
-| `IBEX_CONTEXT_GRPC_TARGET` | No (**3.5.D.1**) | `127.0.0.1:9092` | Proxy dial target for ContextAssemblyService (distinct from server bind `IBEX_CONTEXT_GRPC_ADDR`) | Empty skips dial (nil client); host:port when set |
+| `IBEX_CONTEXT_ENABLED` | No (**3.5.D.2**) | `false` | Master switch for context-assembly injection on chat completions; `false` = Phase 2 directive-only (no Assemble gRPC). Independent of empty `IBEX_CONTEXT_GRPC_TARGET` (nil client) | Additive; fail-open. With a non-empty target, validate rejects `IBEX_CONTEXT_ENABLED=true` outside `IBEX_ENV=development`: the context server has no TLS ([ADR-0096](adr/0096-context-grpc-caller-authentication.md)) |
+| `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` | Conditional (**ADR-0096**) | (empty) | Shared caller token sent as exactly one `x-ibex-context-service-token` gRPC metadata entry on every context RPC; required when `IBEX_CONTEXT_ENABLED=true` and `IBEX_CONTEXT_GRPC_TARGET` is set | Secret; never logged. Must be distinct from the auth-service token (`IBEX_AUTH_SERVICE_TOKEN`, `x-ibex-service-token`). Proxy startup also fails when the context server rejects this token, and the target must be a loopback IP literal |
+| `IBEX_CONTEXT_GRPC_TARGET` | No (**3.5.D.1**) | `127.0.0.1:9092` | Proxy dial target for ContextAssemblyService (distinct from server bind `IBEX_CONTEXT_GRPC_ADDR`) | Empty skips dial (nil client); host:port when set. When context is enabled the host must be a loopback IP literal (`127.0.0.1` or `::1`); hostnames are rejected because the dial re-resolves them and the token is cleartext |
 | `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | No (**3.5.D.1**) | `45ms` | Per-call AssembleContext budget on the proxy client | Independent of server `IBEX_CONTEXT_TIMEOUT` / `IBEX_CONTEXT_DEADLINE_MS` |
 | `IBEX_CONTEXT_TIMEOUT` | No (**3.5.C.2**) | `45ms` | Outer parallel-retrieval deadline for context library (`ContextSettings.timeout_ms`); accepts `45` or `45ms` | Fail-open on timeout — return partial sources |
 | `IBEX_CONTEXT_PACKER_DP_CELL_CEILING` | No (**3.5.C.4**) | `437570` (`70×6251`) | If `n × (buckets+1)` exceeds this, `ContextPacker` falls back to greedy ([ADR-0069](../engineering/adr/0069-context-packer-dp-knapsack.md)) | Safety valve for pathological DP table sizes |
@@ -289,6 +290,15 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_TOKENIZER_ASSET_DIR` | No | (bundled) | Optional BPE override dir (`o200k_base.tiktoken`, etc.) | Air-gapped friendly; defaults to embedded assets |
 | `IBEX_TOKENIZER_SERVICE_URL` | Planned **2.5+** | (none) | Python tokenizer-service base URL | Deferred until service mode lands |
 | `IBEX_DEFAULT_PROVIDER` | Planned **4** | `openai` | Org-level default when multi-provider routing is live | Phase 2/2.5 use registry registration |
+
+**Context caller authentication (ADR-0096).** The context hop is authenticated with a shared service token, and its preconditions are enforced at proxy startup:
+
+- `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` is required when `IBEX_CONTEXT_ENABLED=true` and `IBEX_CONTEXT_GRPC_TARGET` is set. The value is secret, is never logged, and must be at least 32 characters of `[A-Za-z0-9_-]`. **Operator obligation:** use a distinct value from `IBEX_AUTH_SERVICE_TOKEN` (and from `IBEX_CONTEXT_MEMORY_API_TOKEN`, which the context server does enforce at startup). The proxy does not hold the auth-service token, so it cannot compare against it; reusing one value would let a holder of either credential stand in for the other.
+- `IBEX_CONTEXT_GRPC_TARGET` must resolve exclusively to loopback when context is enabled, because the token travels in cleartext metadata.
+- `IBEX_CONTEXT_ENABLED=true` with a non-empty target is rejected outside `IBEX_ENV=development`; the context server serves plaintext only, so TLS is a prerequisite for any other profile.
+- The proxy probes the server's caller authentication at startup and fails closed when the token is rejected. A rejected or unreachable context server still fails open per request: chat proceeds with directive-only context and `X-IBEX-Context-Fallback: true`.
+
+This closes unauthenticated reachability, not per-user identity: the token is a shared secret and the asserted principal is unsigned, so a token holder can still assert any principal. Tenant isolation remains a proxy-side property.
 
 **BYOK (Bring your own key) — Phase 4:**
 
@@ -555,13 +565,16 @@ Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or one of
 | `IBEX_CONTEXT_MEMORY_API_TOKEN` | Conditional | (none) | Bearer token with `memory:read` |
 | `IBEX_CONTEXT_REDIS_URL` / `REDIS_URL` | Conditional | (none) | Redis for directive cache envelope |
 | `IBEX_CONTEXT_DEADLINE_MS` | No | `40` | Server-side retrieval wall for AssembleContext; effective wait `min(IBEX_CONTEXT_TIMEOUT, deadline)` ([ADR-0071](../engineering/adr/0071-context-grpc-degradation-deadline.md)) |
-| `IBEX_CONTEXT_GRPC_ADDR` | No | `127.0.0.1:9092` | ContextAssemblyService bind address (`python -m app`) |
+| `IBEX_CONTEXT_GRPC_ADDR` | No | `127.0.0.1:9092` | ContextAssemblyService bind address (`python -m app`); must be a loopback IP literal (`127.0.0.1` or `::1`) — hostnames are rejected rather than resolved — or the server refuses to start ([ADR-0096](adr/0096-context-grpc-caller-authentication.md)) |
+| `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` | Yes | (none) | Shared caller token compared against the `x-ibex-context-service-token` metadata entry on every RPC; 32–512 characters of `[A-Za-z0-9_-]`. Secret; never logged. The server refuses to start without it and refuses a value equal to `IBEX_CONTEXT_MEMORY_API_TOKEN` |
 | `IBEX_CONTEXT_P95_TARGET_MS` | No | `50` | Target p95 | Alerting/benchmarks |
 | `IBEX_CONTEXT_MAX_MEMORIES` | No | `20` | Max memories injected |
 | `IBEX_CONTEXT_RESPONSE_RESERVE_RATIO` | No | `0.15` | Reserve for model output |
 | `IBEX_CONTEXT_SAFETY_BUFFER_RATIO` | No | `0.10` | Buffer to avoid overflow |
 
-Proxy client switches for assembly live in §9 (`IBEX_CONTEXT_ENABLED`, `IBEX_CONTEXT_GRPC_TARGET`, `IBEX_CONTEXT_ASSEMBLE_TIMEOUT`, …).
+Proxy client switches for assembly live in §9 (`IBEX_CONTEXT_ENABLED`, `IBEX_CONTEXT_GRPC_TARGET`, `IBEX_CONTEXT_GRPC_SERVICE_TOKEN`, `IBEX_CONTEXT_ASSEMBLE_TIMEOUT`, …).
+
+Caller authentication here is a shared-secret check, not per-user identity: `principal_context` must be present and its `org_id`/`agent_id` must equal the request selectors, the directive key and memory hits are derived from that principal, and the bind is loopback-only. Unauthenticated access is closed; a token holder can still assert any principal, and tenant isolation remains a proxy-side property. There is no TLS and no principal signing at this boundary ([ADR-0096](adr/0096-context-grpc-caller-authentication.md)).
 
 ### Ranking weights (defaults)
 

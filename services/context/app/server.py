@@ -1,22 +1,29 @@
-"""asyncio gRPC ContextAssemblyService (milestone 3.5.C.6 / ADR-0071).
+"""asyncio gRPC ContextAssemblyService (milestone 3.5.C.6 / ADR-0071 / ADR-0096).
 
 Registers generic handlers against ``ibex.context.v1`` message types from
 ``packages/proto/gen/python`` (local ``buf generate``; not committed).
 ``SearchMemories`` / ``RecordMemoryFeedback`` return UNIMPLEMENTED (ADR-0038).
+
+ADR-0096 adds the missing caller boundary: a shared service token in
+``x-ibex-context-service-token`` metadata, a mandatory verified
+``principal_context``, selector binding, and a loopback-only bind. The token
+authenticates the *caller*; it does not authorize the asserted tenant.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import signal
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 import grpc
 from grpc import aio as grpc_aio
+from pydantic import SecretStr
 
 from app.assemble import (
     AssembleRequest,
@@ -28,6 +35,21 @@ from app.budget import Message
 from app.clients.directive import EmptyDirectiveLookup, RedisDirectiveLookup
 from app.clients.memory import MemoryHttpClient, MemoryHttpConfig
 from app.config import MAX_ASSEMBLY_OPTION_MEMORIES, ContextSettings
+from app.grpc_auth import (
+    guard_handler,
+    require_service_token,
+    secret_value,
+    validate_service_token,
+)
+from app.principal import (
+    PrincipalError,
+    PrincipalInvalid,
+    PrincipalMismatch,
+    PrincipalMissing,
+    VerifiedPrincipal,
+    bind_selectors,
+    verify_principal,
+)
 from app.retrieval import ParallelRetriever
 
 logger = logging.getLogger(__name__)
@@ -37,6 +59,16 @@ _ASSEMBLE = "AssembleContext"
 _SEARCH = "SearchMemories"
 _FEEDBACK = "RecordMemoryFeedback"
 _SHUTDOWN_GRACE_S = 5.0
+# H3: without so_reuseport a same-UID process can share the port and capture
+# the caller token (ADR-0096).
+_SERVER_OPTIONS: tuple[tuple[str, int], ...] = (("grpc.so_reuseport", 0),)
+# Bind allow-list: IP literals only. A hostname would be resolved twice (once by
+# the guard, once by gRPC), and the second lookup could answer differently.
+_LOOPBACK_HOSTS: Final[frozenset[str]] = frozenset({"127.0.0.1", "::1"})
+
+PRINCIPAL_REQUIRED_DETAILS = "verified principal context required"
+PRINCIPAL_INVALID_DETAILS = "principal context is invalid or expired"
+SELECTOR_MISMATCH_DETAILS = "request tenant does not match verified principal"
 
 # Request-field bounds (AGENTS.md §5.2); transport limits remain defense in depth.
 _MAX_QUERY_CHARS = 8_192
@@ -61,10 +93,21 @@ def _load_pb2():
 
 
 class ContextAssemblyServicer:
-    """RPC handlers backed by ``ContextAssembler``."""
+    """RPC handlers backed by ``ContextAssembler``.
 
-    def __init__(self, assembler: ContextAssembler) -> None:
+    The caller token is enforced here as well as in the registered handler
+    wrapper (ADR-0096 H12): constructing the servicer directly must not create
+    an unauthenticated path.
+    """
+
+    def __init__(
+        self,
+        assembler: ContextAssembler,
+        *,
+        service_token: SecretStr | str,
+    ) -> None:
         self._assembler = assembler
+        self._service_token = validate_service_token(service_token)
         self._pb2 = _load_pb2()
 
     async def assemble_context(
@@ -73,7 +116,13 @@ class ContextAssemblyServicer:
         context: grpc_aio.ServicerContext,
     ) -> object:
         await _abort_if_cancelled(context)
-        domain = await _parse_assemble_request(request, context)
+        await require_service_token(
+            context,
+            self._service_token,
+            method=_ASSEMBLE,
+        )
+        verified = await _require_principal(request, context)
+        domain = await _parse_assemble_request(request, context, verified)
         result = await self._assemble_or_deadline(domain, context)
         await _abort_if_cancelled(context)
         return _response_to_proto(self._pb2, result)
@@ -94,6 +143,7 @@ class ContextAssemblyServicer:
         _request: object,
         context: grpc_aio.ServicerContext,
     ) -> object:
+        await require_service_token(context, self._service_token, method=_SEARCH)
         return await _abort_unimplemented(context, _SEARCH)
 
     async def record_memory_feedback(
@@ -101,6 +151,7 @@ class ContextAssemblyServicer:
         _request: object,
         context: grpc_aio.ServicerContext,
     ) -> object:
+        await require_service_token(context, self._service_token, method=_FEEDBACK)
         return await _abort_unimplemented(context, _FEEDBACK)
 
 
@@ -115,12 +166,50 @@ async def _abort_if_cancelled(
     raise AssertionError("unreachable")  # pragma: no cover
 
 
+async def _require_principal(
+    request: object,
+    context: grpc_aio.ServicerContext,
+) -> VerifiedPrincipal:
+    """Verify the principal and bind the selectors before any downstream call."""
+    try:
+        verified = verify_principal(request)
+        bind_selectors(request, verified)
+    except PrincipalError as exc:
+        await _abort_principal(context, exc)
+        raise AssertionError("unreachable")  # pragma: no cover
+    return verified
+
+
+async def _abort_principal(
+    context: grpc_aio.ServicerContext,
+    exc: PrincipalError,
+) -> None:
+    code, details = _principal_abort(exc)
+    logger.warning(
+        "context_assembly_principal_rejected reason=%s detail=%s",
+        exc.reason,
+        str(exc),
+    )
+    await context.abort(code, details)
+
+
+def _principal_abort(exc: PrincipalError) -> tuple[grpc.StatusCode, str]:
+    if isinstance(exc, PrincipalMismatch):
+        return grpc.StatusCode.PERMISSION_DENIED, SELECTOR_MISMATCH_DETAILS
+    if isinstance(exc, PrincipalMissing):
+        return grpc.StatusCode.UNAUTHENTICATED, PRINCIPAL_REQUIRED_DETAILS
+    if isinstance(exc, PrincipalInvalid):
+        return grpc.StatusCode.UNAUTHENTICATED, PRINCIPAL_INVALID_DETAILS
+    return grpc.StatusCode.UNAUTHENTICATED, PRINCIPAL_INVALID_DETAILS  # pragma: no cover
+
+
 async def _parse_assemble_request(
     request: object,
     context: grpc_aio.ServicerContext,
+    verified: VerifiedPrincipal,
 ) -> AssembleRequest:
     try:
-        return _request_from_proto(request)
+        return _request_from_proto(request, verified)
     except ValueError as exc:
         await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         raise AssertionError("unreachable")  # pragma: no cover
@@ -137,23 +226,113 @@ async def _abort_unimplemented(
     raise AssertionError("unreachable")  # pragma: no cover
 
 
+def _split_host_port(addr: str) -> tuple[str, int]:
+    """Parse ``host:port`` strictly; raise ``ValueError`` when malformed.
+
+    The bind guard and gRPC's C-core parser must agree, or the guard can accept a
+    string that ``add_insecure_port`` then interprets differently (for example the
+    unbracketed IPv6 literal ``::1:0``). IPv6 literals must be bracketed.
+    """
+    host, port_text = _split_host_and_port_text(addr)
+    port = _parse_bind_port(addr, port_text)
+    return _normalized_host(addr, host), port
+
+
+def _require_bind_shape(addr: str) -> None:
+    """Reject an empty or whitespace-padded listen address."""
+    if not addr:
+        raise ValueError("IBEX_CONTEXT_GRPC_ADDR must be host:port")
+    if addr != addr.strip():
+        raise ValueError(
+            "IBEX_CONTEXT_GRPC_ADDR must not have leading or trailing whitespace"
+        )
+
+
+def _split_host_and_port_text(addr: str) -> tuple[str, str]:
+    """Validate the address shape and split off the trailing port text."""
+    _require_bind_shape(addr)
+    host, sep, port_text = addr.rpartition(":")
+    if not sep:
+        raise ValueError(f"IBEX_CONTEXT_GRPC_ADDR must be host:port, got {addr!r}")
+    if not host:
+        raise ValueError(f"IBEX_CONTEXT_GRPC_ADDR must be host:port, got {addr!r}")
+    return host, port_text
+
+
+def _parse_bind_port(addr: str, port_text: str) -> int:
+    """Require an ASCII decimal port in the inclusive ``0..65535`` bind range."""
+    if not port_text.isascii() or not port_text.isdigit():
+        raise ValueError(
+            f"IBEX_CONTEXT_GRPC_ADDR must end in a numeric port, got {addr!r}"
+        )
+    port = int(port_text)
+    if not 0 <= port <= 65535:
+        raise ValueError(f"IBEX_CONTEXT_GRPC_ADDR port out of range in {addr!r}")
+    return port
+
+
+def _normalized_host(addr: str, host: str) -> str:
+    """Unbracket an IPv6 literal; reject mixed and bare-colon host forms."""
+    if host.startswith("[") != host.endswith("]"):
+        raise ValueError(f"IBEX_CONTEXT_GRPC_ADDR has a malformed IPv6 bracket: {addr!r}")
+    if not host.startswith("[") and ":" in host:
+        raise ValueError(
+            f"IBEX_CONTEXT_GRPC_ADDR IPv6 literals must be bracketed, got {addr!r}"
+        )
+    return host.strip("[]").lower()
+
+
+def _host_from_addr(addr: str) -> str:
+    try:
+        host, _port = _split_host_port(addr)
+    except ValueError:
+        return ""
+    return host
+
+
 def _is_loopback_addr(addr: str) -> bool:
-    host = (addr or "").rsplit(":", 1)[0].strip().lower()
-    if host.startswith("["):
-        host = host.strip("[]")
-    return host in {"127.0.0.1", "localhost", "::1"}
+    """True only for a well-formed loopback IP literal.
+
+    ``localhost`` is deliberately excluded: it is a name, and a resolver or hosts
+    file can point it at a non-loopback address. ``_require_loopback_bind``
+    rejects every name outright so the bound socket cannot slip off loopback.
+    """
+    return _host_from_addr(addr) in _LOOPBACK_HOSTS
 
 
-def _warn_non_loopback_bind(addr: str) -> None:
-    if _is_loopback_addr(addr):
+def _require_loopback_bind(addr: str) -> None:
+    """Refuse to bind anything that is not a loopback IP literal (ADR-0096).
+
+    The address must parse strictly and the host must be the literal
+    ``127.0.0.1`` or ``::1``. Hostnames are rejected rather than resolved: a
+    guard that resolved the name would still hand the original string to
+    ``add_insecure_port``, which resolves it again — and a second lookup could
+    return a non-loopback address and serve the plaintext caller token there.
+    """
+    host, _port = _split_host_port(addr)
+    if host in _LOOPBACK_HOSTS:
         return
-    logger.warning(
-        "context_assembly_grpc_non_loopback_bind addr=%s "
-        "auth_interceptor=absent "
-        "risk=request_org_agent_ids_trusted_without_caller_auth "
-        "deferred_to=milestone_3.5.D.1 adr=ADR-0071",
-        addr,
+    msg = (
+        "IBEX_CONTEXT_GRPC_ADDR must be a loopback IP literal "
+        f"(127.0.0.1 or ::1); refusing bind {addr!r} (ADR-0096)"
     )
+    raise ValueError(msg)
+
+
+def _startup_service_token(settings: ContextSettings) -> str:
+    """Validate the configured caller token (fail closed at startup)."""
+    token = validate_service_token(settings.grpc_service_token)
+    memory_token = secret_value(settings.memory_api_token)
+    if memory_token and hmac.compare_digest(
+        token.encode("utf-8"),
+        memory_token.encode("utf-8"),
+    ):
+        msg = (
+            "IBEX_CONTEXT_GRPC_SERVICE_TOKEN must differ from "
+            "IBEX_CONTEXT_MEMORY_API_TOKEN (ADR-0096)"
+        )
+        raise ValueError(msg)
+    return token
 
 
 def build_server(
@@ -164,37 +343,85 @@ def build_server(
 ) -> tuple[grpc_aio.Server, int]:
     """Create an aio server with ContextAssemblyService registered.
 
-    Returns ``(server, bound_port)``.
+    Returns ``(server, bound_port)``. Raises ``ValueError`` when the caller
+    token is missing/invalid or the bind address is not a loopback IP literal.
     """
     pb2 = _load_pb2()
-    servicer = ContextAssemblyServicer(assembler)
-    server = grpc_aio.server()
-    handlers = {
-        _ASSEMBLE: grpc.unary_unary_rpc_method_handler(
-            servicer.assemble_context,
-            request_deserializer=pb2.AssembleContextRequest.FromString,
-            response_serializer=pb2.AssembleContextResponse.SerializeToString,
-        ),
-        _SEARCH: grpc.unary_unary_rpc_method_handler(
-            servicer.search_memories,
-            request_deserializer=pb2.SearchMemoriesRequest.FromString,
-            response_serializer=pb2.SearchMemoriesResponse.SerializeToString,
-        ),
-        _FEEDBACK: grpc.unary_unary_rpc_method_handler(
-            servicer.record_memory_feedback,
-            request_deserializer=pb2.RecordMemoryFeedbackRequest.FromString,
-            response_serializer=pb2.RecordMemoryFeedbackResponse.SerializeToString,
-        ),
-    }
-    generic = grpc.method_handlers_generic_handler(_SERVICE_NAME, handlers)
-    server.add_generic_rpc_handlers((generic,))
-    addr = listen_addr
-    if addr is None:
-        cfg = settings or ContextSettings()
-        addr = cfg.grpc_addr
-    _warn_non_loopback_bind(addr)
+    cfg = settings or ContextSettings()
+    token = _startup_service_token(cfg)
+    addr = listen_addr if listen_addr is not None else cfg.grpc_addr
+    _require_loopback_bind(addr)
+    servicer = ContextAssemblyServicer(assembler, service_token=token)
+    server = grpc_aio.server(options=_SERVER_OPTIONS)
+    server.add_generic_rpc_handlers((_generic_handler(servicer, pb2, token),))
     port = server.add_insecure_port(addr)
+    if not port:
+        msg = f"failed to bind IBEX_CONTEXT_GRPC_ADDR={addr!r}"
+        raise ValueError(msg)
     return server, int(port)
+
+
+@dataclass(frozen=True, slots=True)
+class _UnaryRpc:
+    """Registration inputs for one unary RPC (kept together for ``_unary_handler``)."""
+
+    method: str
+    behavior: Any
+    token: str
+    request_deserializer: Any
+    response_serializer: Any
+
+
+def _generic_handler(
+    servicer: ContextAssemblyServicer,
+    pb2: object,
+    token: str,
+) -> grpc.GenericRpcHandler:
+    assemble = _UnaryRpc(
+        method=_ASSEMBLE,
+        behavior=servicer.assemble_context,
+        token=token,
+        request_deserializer=pb2.AssembleContextRequest.FromString,  # type: ignore[attr-defined]
+        response_serializer=pb2.AssembleContextResponse.SerializeToString,  # type: ignore[attr-defined]
+    )
+    search = _UnaryRpc(
+        method=_SEARCH,
+        behavior=servicer.search_memories,
+        token=token,
+        request_deserializer=pb2.SearchMemoriesRequest.FromString,  # type: ignore[attr-defined]
+        response_serializer=pb2.SearchMemoriesResponse.SerializeToString,  # type: ignore[attr-defined]
+    )
+    feedback = _UnaryRpc(
+        method=_FEEDBACK,
+        behavior=servicer.record_memory_feedback,
+        token=token,
+        request_deserializer=pb2.RecordMemoryFeedbackRequest.FromString,  # type: ignore[attr-defined]
+        response_serializer=pb2.RecordMemoryFeedbackResponse.SerializeToString,  # type: ignore[attr-defined]
+    )
+    handlers = {
+        _ASSEMBLE: _unary_handler(assemble),
+        _SEARCH: _unary_handler(search),
+        _FEEDBACK: _unary_handler(feedback),
+    }
+    return grpc.method_handlers_generic_handler(_SERVICE_NAME, handlers)
+
+
+def _unary_handler(rpc: _UnaryRpc) -> grpc.RpcMethodHandler:
+    guarded = guard_handler(rpc.behavior, rpc.token, method=rpc.method)
+    handler = grpc.unary_unary_rpc_method_handler(
+        guarded,
+        request_deserializer=rpc.request_deserializer,
+        response_serializer=rpc.response_serializer,
+    )
+    _require_unary(rpc.method, handler)
+    return handler
+
+
+def _require_unary(method: str, handler: grpc.RpcMethodHandler) -> None:
+    """Every registered RPC must stay unary so the token guard covers it."""
+    if handler.request_streaming or handler.response_streaming:
+        msg = f"{method} must be registered as a unary RPC (ADR-0096)"
+        raise ValueError(msg)
 
 
 @dataclass(slots=True)
@@ -221,7 +448,7 @@ def build_runtime_from_settings(settings: ContextSettings) -> AssemblyRuntime:
     memory = MemoryHttpClient(
         MemoryHttpConfig(
             base_url=settings.memory_base_url,
-            token=settings.memory_api_token,
+            token=secret_value(settings.memory_api_token),
         )
     )
     redis_client: Any | None = None
@@ -346,9 +573,11 @@ async def _cancel_tasks(tasks: set[asyncio.Task[Any]]) -> None:
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
-def _request_from_proto(request: object) -> AssembleRequest:
-    org_id = _parse_uuid(getattr(request, "org_id", ""), "org_id")
-    agent_id = _parse_uuid(getattr(request, "agent_id", ""), "agent_id")
+def _request_from_proto(
+    request: object,
+    verified: VerifiedPrincipal,
+) -> AssembleRequest:
+    """Build the domain request from the verified principal, never the selectors."""
     model = _bounded_text(
         getattr(request, "model", ""),
         label="model",
@@ -365,8 +594,8 @@ def _request_from_proto(request: object) -> AssembleRequest:
     if len(raw_messages) > _MAX_RECENT_MESSAGES:
         raise ValueError(f"recent_messages exceeds {_MAX_RECENT_MESSAGES} items")
     return AssembleRequest(
-        org_id=org_id,
-        agent_id=agent_id,
+        org_id=verified.org_id,
+        agent_id=verified.agent_id,
         query=query,
         model=model,
         recent_messages=_messages_from_proto(raw_messages),
@@ -491,16 +720,6 @@ def _response_to_proto(pb2: object, result: AssemblyResult) -> object:
         span_id=result.span_id,
         score_schema=result.score_schema,
     )
-
-
-def _parse_uuid(raw: str, label: str) -> UUID:
-    text = (raw or "").strip()
-    if not text:
-        raise ValueError(f"{label} is required")
-    try:
-        return UUID(text)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be a UUID") from exc
 
 
 def _optional_uuid(raw: object, *, label: str) -> str:

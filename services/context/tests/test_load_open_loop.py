@@ -36,8 +36,12 @@ async def test_open_loop_keeps_requests_in_flight() -> None:
     peak = 0
     lock = asyncio.Lock()
 
-    async def slow_stub(_req: object, timeout: float = 1.0) -> object:
-        del timeout
+    async def slow_stub(
+        _req: object,
+        timeout: float = 1.0,
+        metadata: object = None,
+    ) -> object:
+        del timeout, metadata
         nonlocal in_flight, peak
         async with lock:
             in_flight += 1
@@ -50,7 +54,8 @@ async def test_open_loop_keeps_requests_in_flight() -> None:
     started = time.perf_counter()
     stats = await _drive_open_loop(
         slow_stub,
-        object(),
+        object,
+        "test-token",
         _LoadPlan(duration_s=0.12, target_rps=100),
     )
     elapsed = time.perf_counter() - started

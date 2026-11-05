@@ -60,9 +60,10 @@ See [.env.example](.env.example).
 | `IBEX_AUTH_VALIDATE_TIMEOUT` | `50ms` | Per-request validate budget (also bounds `IssuePolicySnapshot`) |
 | `IBEX_PROXY_POLICY_PUBLIC_KEYS` | (empty; stage disabled) | JSON `key_id` → PEM RSA public keys for `policy-snapshot.v1` verification (GAP-002); required outside development when protected routes are mounted |
 | `IBEX_PROXY_POLICY_MIN_EPOCH` | `0` | Minimum accepted policy-signing epoch |
-| `IBEX_CONTEXT_ENABLED` | `false` | Master switch for Assemble on chat path; `false` = Phase 2 directive-only |
+| `IBEX_CONTEXT_ENABLED` | `false` | Master switch for Assemble on chat path; `false` = Phase 2 directive-only. With a target set, rejected outside `IBEX_ENV=development` (the context server has no TLS) |
 | `IBEX_CONTEXT_EMBED_METADATA` | `false` | Embed top-level `ibex` JSON in non-streaming responses (3.5.D.3) |
-| `IBEX_CONTEXT_GRPC_TARGET` | `127.0.0.1:9092` | Context assembly gRPC dial target (empty skips dial) |
+| `IBEX_CONTEXT_GRPC_TARGET` | `127.0.0.1:9092` | Context assembly gRPC dial target (empty skips dial); must resolve to loopback when context is enabled |
+| `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` | (empty) | Shared caller token sent as exactly one `x-ibex-context-service-token` metadata entry ([ADR-0096](../../engineering/adr/0096-context-grpc-caller-authentication.md)); required when enabled and the target is set. Secret; never logged |
 | `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | `45ms` | Per-call AssembleContext budget (fail-open) |
 | `IBEX_AUTH_CACHE_ENABLED` | `true` | Bloom + LRU in front of ValidateToken |
 | `IBEX_MAX_REQUEST_BODY_BYTES` | `1048576` | Chat body cap (1 MiB) |
@@ -117,6 +118,27 @@ Response headers `X-IBEX-Memories-Injected` / `X-IBEX-Context-Tokens` / `X-IBEX-
 are set when Assemble was attempted (stream and non-stream, including provider failure responses).
 Embedded `ibex` JSON metadata is shipped in **3.5.D.3** behind `IBEX_CONTEXT_EMBED_METADATA`
 (`IBEXMetadataStage` on the non-streaming response pipeline; streaming remains headers-only).
+
+### Caller authentication (ADR-0096)
+
+Every `AssembleContext` call carries exactly one `x-ibex-context-service-token` metadata
+entry built once from `IBEX_CONTEXT_GRPC_SERVICE_TOKEN`. The client attaches that entry and
+forwards no caller metadata, so a duplicate token or the auth-service `x-ibex-service-token`
+cannot reach the wire. On startup the proxy probes the server with `SearchMemories`:
+`UNAUTHENTICATED` fails startup naming `IBEX_CONTEXT_GRPC_SERVICE_TOKEN`; `UNIMPLEMENTED` is
+recorded as **unproven**, because the stub method returns the same code on a server with no
+caller guard at all, so the proxy logs a warning and continues; a transport failure is also
+non-fatal because per-request assembly is fail-open.
+
+Config validation requires the token when `IBEX_CONTEXT_ENABLED=true` and
+`IBEX_CONTEXT_GRPC_TARGET` is non-empty, requires that target to resolve exclusively to
+loopback (the token is cleartext metadata), and rejects context enabled outside
+`IBEX_ENV=development` while the context server serves plaintext only. There is no bypass
+flag.
+
+This authenticates the caller, not the user: the token is a shared secret and the asserted
+`PrincipalContext` is unsigned, so a token holder can still assert any principal, and tenant
+isolation remains a proxy-side property of the verified auth claims.
 
 ## Next (Phase 2.5+) — remaining planning baseline
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from uuid import uuid4
 
 import pytest
@@ -11,7 +12,7 @@ from app.budget import Message
 from app.clients.directive import DirectiveLookupError, DirectivePayload
 from app.clients.memory import MemoryHitPayload, MemoryHttpError, MemoryHttpTimeout
 from app.config import ContextSettings
-from app.retrieval import ParallelRetriever, RetrievalRequest
+from app.retrieval import MEMORY_TENANT_MISMATCH, ParallelRetriever, RetrievalRequest
 
 ORG = uuid4()
 AGENT = uuid4()
@@ -224,3 +225,69 @@ async def test_retrieve_outer_deadline_keeps_finished_branches() -> None:
     assert "hot" in result.sources_available
     assert result.cold_outcome.status == "timeout"
     assert result.cold_outcome.detail == "outer_deadline"
+
+
+def _foreign_hit(*, source: str = "hot_cache", field: str = "org") -> MemoryHitPayload:
+    payload = {
+        "memory_id": str(uuid4()),
+        "org_id": str(ORG if field != "org" else uuid4()),
+        "agent_id": str(AGENT if field != "agent" else uuid4()),
+        "content": "foreign tenant secret",
+        "category": "factual",
+        "confidence": 0.9,
+        "similarity": 0.9,
+        "rank": 1,
+        "source": source,
+    }
+    return MemoryHitPayload(**payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["org", "agent"])
+async def test_foreign_hot_hit_fails_the_branch(field: str) -> None:
+    memory = _StubMemory(
+        hot=[_foreign_hit(source="hot_cache", field=field)],
+        cold=[_hit(source="vector")],
+    )
+    result = await _retriever(memory=memory).retrieve(_request())
+    assert result.hot_outcome.status == "error"
+    assert result.hot_outcome.detail == MEMORY_TENANT_MISMATCH
+    assert result.hot_memories == []
+    assert "hot" not in result.sources_available
+    # The healthy cold branch is unaffected.
+    assert len(result.cold_memories) == 1
+    assert "cold" in result.sources_available
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["org", "agent"])
+async def test_foreign_cold_hit_fails_the_branch(field: str) -> None:
+    memory = _StubMemory(
+        hot=[_hit()],
+        cold=[_foreign_hit(source="vector", field=field)],
+    )
+    result = await _retriever(memory=memory).retrieve(_request())
+    assert result.cold_outcome.status == "error"
+    assert result.cold_outcome.detail == MEMORY_TENANT_MISMATCH
+    assert result.cold_memories == []
+    assert "cold" not in result.sources_available
+    assert len(result.hot_memories) == 1
+
+
+@pytest.mark.asyncio
+async def test_one_foreign_hit_rejects_the_whole_branch() -> None:
+    memory = _StubMemory(hot=[_hit(), _foreign_hit(source="hot_cache")])
+    result = await _retriever(memory=memory).retrieve(_request())
+    assert result.hot_outcome.status == "error"
+    assert result.hot_memories == []
+
+
+@pytest.mark.asyncio
+async def test_tenant_mismatch_log_omits_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    memory = _StubMemory(hot=[_foreign_hit(source="hot_cache")])
+    with caplog.at_level(logging.WARNING, logger="app.retrieval"):
+        await _retriever(memory=memory).retrieve(_request())
+    assert "context_memory_tenant_mismatch" in caplog.text
+    assert "foreign tenant secret" not in caplog.text

@@ -32,6 +32,7 @@ Do not modify context.proto in this milestone.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -55,8 +56,13 @@ from app.clients.memory import (
 )
 from app.config import ContextSettings
 
+logger = logging.getLogger(__name__)
+
 BranchStatus = Literal["success", "timeout", "error"]
 SourceName = Literal["directive", "hot", "cold"]
+
+# Branch detail for a hit whose tenant disagrees with the verified principal.
+MEMORY_TENANT_MISMATCH: str = "memory_tenant_mismatch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +234,7 @@ class ParallelRetriever:
         )
         return await self._memory_branch(
             name=name,
+            request=request,
             timeout_ms=timeout_ms,
             fetch=lambda timeout_s: self._fetch_memories(name, request, timeout_s),
         )
@@ -261,6 +268,7 @@ class ParallelRetriever:
         self,
         *,
         name: SourceName,
+        request: RetrievalRequest,
         timeout_ms: float,
         fetch,
     ) -> _BranchResult:
@@ -276,7 +284,7 @@ class ParallelRetriever:
             return _error_memories(name, started, str(exc))
         except Exception as exc:  # noqa: BLE001 — fail-open
             return _error_memories(name, started, type(exc).__name__)
-        return _success_memories(name, started, hits)
+        return _success_memories(name, started, hits, request)
 
 
 def _directive_from_payload(payload: DirectivePayload) -> ResolvedDirective:
@@ -306,12 +314,40 @@ def _success_memories(
     name: SourceName,
     started: float,
     hits: list[MemoryHitPayload],
+    request: RetrievalRequest,
 ) -> _BranchResult:
+    """Accept a branch only when every hit belongs to the requesting principal.
+
+    ADR-0096 H2: memory content is injected into a model prompt, so a hit from
+    another tenant is a cross-tenant injection path even when the memory
+    service answered the call. One foreign hit fails the whole branch; nothing
+    from it is packed. Content is never logged.
+    """
+    foreign = _foreign_hit(hits, request)
+    if foreign is not None:
+        logger.warning(
+            "context_memory_tenant_mismatch source=%s memory_id=%s",
+            name,
+            foreign.memory_id,
+        )
+        return _error_memories(name, started, MEMORY_TENANT_MISMATCH)
     return _BranchResult(
         name=name,
         outcome=BranchOutcome("success", (time.perf_counter() - started) * 1000.0),
         memories=tuple(_hit_from_payload(h) for h in hits),
     )
+
+
+def _foreign_hit(
+    hits: Sequence[MemoryHitPayload],
+    request: RetrievalRequest,
+) -> MemoryHitPayload | None:
+    expected_org = str(request.org_id)
+    expected_agent = str(request.agent_id)
+    for hit in hits:
+        if hit.org_id != expected_org or hit.agent_id != expected_agent:
+            return hit
+    return None
 
 
 def _timeout_memories(name: SourceName, started: float, detail: str) -> _BranchResult:

@@ -75,13 +75,48 @@ func contextFlagLoadCases() []loadCase {
 		{
 			name: "context enabled true",
 			env: map[string]string{
-				"IBEX_ENV":             "development",
-				"IBEX_CONTEXT_ENABLED": "true",
+				"IBEX_ENV":                        "development",
+				"IBEX_CONTEXT_ENABLED":            "true",
+				"IBEX_CONTEXT_GRPC_SERVICE_TOKEN": testContextServiceToken,
 			},
 			check: func(t *testing.T, cfg Config) {
 				t.Helper()
 				if !cfg.ContextEnabled {
 					t.Fatal("ContextEnabled = false, want true")
+				}
+				if cfg.ContextGRPCServiceToken != testContextServiceToken {
+					t.Fatal("ContextGRPCServiceToken was not loaded from IBEX_CONTEXT_GRPC_SERVICE_TOKEN")
+				}
+			},
+		},
+		{
+			name:    "context enabled without service token",
+			env:     map[string]string{"IBEX_ENV": "development", "IBEX_CONTEXT_ENABLED": "true"},
+			wantErr: true,
+		},
+		{
+			name: "context enabled outside development and test",
+			env: map[string]string{
+				"IBEX_ENV":                        "staging",
+				"REDIS_URL":                       "redis://127.0.0.1:6379/0",
+				"IBEX_CONTEXT_ENABLED":            "true",
+				"IBEX_CONTEXT_GRPC_SERVICE_TOKEN": testContextServiceToken,
+			},
+			wantErr: true,
+		},
+		{
+			name: "context disabled needs no service token",
+			env: map[string]string{
+				"IBEX_ENV":             "development",
+				"IBEX_CONTEXT_ENABLED": "false",
+			},
+			check: func(t *testing.T, cfg Config) {
+				t.Helper()
+				if cfg.ContextEnabled {
+					t.Fatal("ContextEnabled = true, want false")
+				}
+				if cfg.ContextGRPCServiceToken != "" {
+					t.Fatal("ContextGRPCServiceToken must stay empty when unset")
 				}
 			},
 		},

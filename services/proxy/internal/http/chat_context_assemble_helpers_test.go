@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/directive"
@@ -37,7 +38,28 @@ type wantContextHeaders struct {
 	fallback string
 }
 
+// contextTestAuthCtx builds the verified auth + agent + principal context a chat
+// request carries after the auth and agent middlewares. Assemble requires the
+// principal (ADR-0096), so every handler test that expects an RPC uses this.
 func contextTestAuthCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx := contextTestAuthCtxWithoutPrincipal(t)
+	org := uuid.MustParse(testChatOrgID)
+	agent := uuid.MustParse(testChatAgentID)
+	principal, err := principalContextFromVerifiedAuth(
+		&auth.ValidateResult{OrgID: org},
+		&auth.AgentRecord{ID: agent, OrgID: org},
+		principalContextMetadata{requestID: "req-test", traceID: "trace-test", now: time.Now().UTC()},
+	)
+	if err != nil {
+		t.Fatalf("build principal context: %v", err)
+	}
+	return WithPrincipalContext(ctx, principal)
+}
+
+// contextTestAuthCtxWithoutPrincipal is the same context minus the verified
+// principal binding, for the skip-the-RPC path.
+func contextTestAuthCtxWithoutPrincipal(t *testing.T) context.Context {
 	t.Helper()
 	org := uuid.MustParse(testChatOrgID)
 	agent := uuid.MustParse(testChatAgentID)
