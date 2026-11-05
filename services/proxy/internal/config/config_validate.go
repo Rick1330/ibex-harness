@@ -210,6 +210,11 @@ func (c Config) validateContextGRPCConfig() error {
 	if target == "" {
 		return nil
 	}
+	if target != c.ContextGRPCTarget {
+		return fmt.Errorf(
+			"IBEX_CONTEXT_GRPC_TARGET must not have leading or trailing whitespace: validation trims it but the dial would use the raw value",
+		)
+	}
 	host, _, err := net.SplitHostPort(target)
 	if err != nil {
 		return fmt.Errorf("IBEX_CONTEXT_GRPC_TARGET must be host:port: %w", err)

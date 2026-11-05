@@ -18,6 +18,7 @@ from app.assemble import ContextAssembler
 from app.server import (
     AssemblyRuntime,
     _is_loopback_addr,
+    _require_loopback_bind,
     _require_unary,
     build_assembler_from_settings,
     build_server,
@@ -34,11 +35,16 @@ async def test_build_server_uses_settings_grpc_addr() -> None:
 
 
 def test_is_loopback_addr() -> None:
+    """Literal IPs only; ``localhost`` is a name and must be resolved."""
     assert _is_loopback_addr("127.0.0.1:9092")
-    assert _is_loopback_addr("localhost:9092")
     assert _is_loopback_addr("[::1]:9092")
+    assert not _is_loopback_addr("localhost:9092")
     assert not _is_loopback_addr("0.0.0.0:9092")
     assert not _is_loopback_addr("10.0.0.5:9092")
+
+
+def test_require_loopback_bind_accepts_localhost_that_resolves_to_loopback() -> None:
+    _require_loopback_bind("localhost:9092")
 
 
 @pytest.mark.parametrize(

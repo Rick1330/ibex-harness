@@ -70,8 +70,8 @@ staging/production deployment is not possible today.
    and sets `X-IBEX-Context-Fallback: true`. Auth errors are logged at ERROR and counted; they are never retried.
 8. **No proto wire change.** `context.proto` fields 1, 2, and 13 keep their tags and types; only comments describe
    the selector/authority split. `SearchMemories` and `RecordMemoryFeedback` still return `UNIMPLEMENTED` after
-   authentication (ADR-0038); unauthenticated callers now receive `UNAUTHENTICATED` instead of learning which
-   methods exist.
+   authentication (ADR-0038). An unauthenticated caller receives `UNAUTHENTICATED` for a registered method and
+   `UNIMPLEMENTED` for an unknown one; the method list is public in the proto, so that distinction leaks nothing.
 
 ## Claim boundary
 
@@ -96,16 +96,19 @@ signed principals, policy-snapshot freshness, and TLS are separate decisions.
 
 ## Consequences
 
-**Positive.** The cross-tenant directive read is closed. No hot-path cost: one metadata scan and a constant-time
-compare. No new dependency. AuthService availability is not coupled to this hop. The end-user bearer never reaches
-the context service. Memory content is now tenant-checked at the second boundary as well.
+**Positive.** The cross-tenant directive read is closed. There is no network hop on the hot path: one metadata scan
+and a constant-time compare, plus UUID/timestamp validation per call. No new dependency. AuthService availability is
+not coupled to this hop. The end-user bearer never reaches the context service. Memory content is now tenant-checked
+at the second boundary as well.
 
 **Negative.** A shared secret must be distributed, protected, and rotated; rotation is a coordinated restart with no
 overlap window. A stolen token can assert any tenant. A compromised proxy can forge any principal, as it already
 could. The boundary is plaintext and therefore loopback-only, which blocks container or networked deployment until
-TLS exists. A wrong token degrades to directive-only and is visible only through logs, metrics, and alerts. Memory
-retrieval remains scoped by the context service's memory credential, not by the principal; multi-tenant memory at
-this boundary needs a separate decision.
+TLS exists. A wrong token degrades to directive-only and is visible only through logs, metrics, and alerts. The
+startup probe treats `UNIMPLEMENTED` from `SearchMemories` as proof the token was accepted; if that stub is ever
+implemented, the probe must move to a method that stays a stub or to a dedicated auth RPC. Memory retrieval remains
+scoped by the context service's memory credential, not by the principal; multi-tenant memory at this boundary needs a
+separate decision.
 
 ## Alternatives considered
 

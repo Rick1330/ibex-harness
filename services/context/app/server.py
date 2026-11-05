@@ -233,8 +233,13 @@ def _host_from_addr(addr: str) -> str:
 
 
 def _is_loopback_addr(addr: str) -> bool:
-    """Literal check only; names are resolved by ``_require_loopback_bind``."""
-    return _host_from_addr(addr) in {"127.0.0.1", "localhost", "::1"}
+    """True only for loopback IP literals.
+
+    ``localhost`` is deliberately excluded: it is a name, and a resolver or hosts
+    file can point it at a non-loopback address. ``_require_loopback_bind``
+    resolves every name so the bind cannot slip off loopback.
+    """
+    return _host_from_addr(addr) in {"127.0.0.1", "::1"}
 
 
 def _require_loopback_bind(addr: str) -> None:

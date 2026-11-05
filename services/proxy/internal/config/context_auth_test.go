@@ -83,6 +83,10 @@ func contextAuthCases() []contextAuthCase {
 			name: "enabled rejects malformed target", environment: envDevelopment, enabled: true,
 			target: "not-host-port", token: testContextServiceToken, wantErr: "must be host:port",
 		},
+		{
+			name: "enabled rejects a padded target", environment: envDevelopment, enabled: true,
+			target: " 127.0.0.1:9092 ", token: testContextServiceToken, wantErr: "leading or trailing whitespace",
+		},
 	}
 }
 
