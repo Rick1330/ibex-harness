@@ -21,7 +21,11 @@ service ContextAssemblyService {
 }
 
 message AssembleContextRequest {
+  // Selector, not authority (ADR-0096): the server binds this to the verified
+  // principal_context and rejects a mismatch with PERMISSION_DENIED.
   string agent_id = 1;
+  // Selector, not authority (ADR-0096): the tenant of record is the verified
+  // principal_context, never this field.
   string org_id = 2;
   string session_id = 3;
   string query = 4;
@@ -34,7 +38,10 @@ message AssembleContextRequest {
   string request_id = 10;
   string trace_id = 11;
   string span_id = 12;
-  // Additive verified identity binding; authorization remains at the proxy.
+  // Mandatory verified identity binding (ADR-0096). `authority` must equal
+  // AuthService, but that is a consistency check only, never authentication:
+  // the binding is unsigned and the caller is authenticated by the gRPC service
+  // token. Authorization and tenant isolation remain at the proxy.
   ibex.auth.v1.PrincipalContext principal_context = 13;
 }
 

@@ -8,6 +8,11 @@ Live profile: point ``--addr`` at a running ContextAssemblyService backed by a
 100K-memory corpus (seed via ``benchmarks/memory`` HNSW tooling). Live runs do
 not fail the process on p99; they print percentiles for PR documentation.
 
+ADR-0096: every call carries ``x-ibex-context-service-token`` and a fresh
+``PrincipalContext`` (``issued_at`` per call, so runs longer than the 30s skew
+window stay valid). The live profile needs a token: ``--token`` or
+``IBEX_CONTEXT_GRPC_SERVICE_TOKEN``.
+
 Scheduling launches RPCs on a monotonic interval (open-loop) so measured RPS
 tracks ``--rps`` even when individual calls exceed the inter-arrival gap.
 
@@ -17,6 +22,7 @@ Examples::
     python benchmarks/context/assemble_load.py --profile stub --rps 500 --duration 10
 
   PYTHONPATH=packages/proto/gen/python:services/context \\
+    IBEX_CONTEXT_GRPC_SERVICE_TOKEN=... \\
     python benchmarks/context/assemble_load.py --profile live --addr 127.0.0.1:9092
 """
 
@@ -26,6 +32,7 @@ import argparse
 import asyncio
 import json
 import math
+import os
 import statistics
 import sys
 import time
@@ -45,17 +52,23 @@ for path in (_CONTEXT, _PROTO_PY):
 
 import grpc
 from grpc import aio as grpc_aio
+from pydantic import SecretStr
 
 from app.assemble import ContextAssembler
 from app.clients.directive import DirectivePayload
 from app.clients.memory import MemoryHitPayload
 from app.config import ContextSettings
+from app.grpc_auth import SERVICE_TOKEN_METADATA_KEY
 from app.retrieval import ParallelRetriever
 from app.server import _SERVICE_NAME, build_server
 
 ORG = uuid4()
 AGENT = uuid4()
 MODEL = "gpt-4o-mini"
+AUTHORITY = "AuthService"
+PRINCIPAL_ID = "benchmark-caller"
+# Stub-profile token: 32+ chars of [A-Za-z0-9_-] (never a real credential).
+STUB_SERVICE_TOKEN = "benchmark-stub-context-token-0123456789"
 _P99_BUDGET_MS = 50.0
 
 
@@ -110,24 +123,46 @@ def _percentile(samples: list[float], pct: float) -> float:
     return ordered[index]
 
 
-def _assemble_request(pb2: object) -> object:
-    return pb2.AssembleContextRequest(  # type: ignore[attr-defined]
-        org_id=str(ORG),
-        agent_id=str(AGENT),
+def _assemble_request(pb2: object, *, org: str, agent: str) -> object:
+    """Fresh request with a fresh principal: ``issued_at`` must be per call."""
+    request = pb2.AssembleContextRequest(  # type: ignore[attr-defined]
+        org_id=org,
+        agent_id=agent,
         query="theme",
         model=MODEL,
         recent_messages=[pb2.Message(role="user", content="hello")],  # type: ignore[attr-defined]
     )
+    principal = request.principal_context
+    principal.org_id = org
+    principal.agent_id = agent
+    principal.principal_id = PRINCIPAL_ID
+    principal.authority = AUTHORITY
+    principal.issued_at.GetCurrentTime()
+    return request
+
+
+def _request_factory(
+    pb2: object,
+    *,
+    org: str,
+    agent: str,
+) -> Callable[[], object]:
+    return lambda: _assemble_request(pb2, org=org, agent=agent)
+
+
+def _token_metadata(token: str) -> tuple[tuple[str, str], ...]:
+    return ((SERVICE_TOKEN_METADATA_KEY, token),)
 
 
 async def _one_call(
     stub: Callable[..., Awaitable[object]],
-    req: object,
+    request_factory: Callable[[], object],
+    token: str,
 ) -> float | None:
     """Return latency_ms on success, None on RPC error."""
     t0 = time.perf_counter()
     try:
-        await stub(req, timeout=1.0)
+        await stub(request_factory(), timeout=1.0, metadata=_token_metadata(token))
     except grpc.aio.AioRpcError:
         return None
     return (time.perf_counter() - t0) * 1000.0
@@ -149,7 +184,8 @@ class _DriveStats:
 
 async def _drive_open_loop(
     stub: Callable[..., Awaitable[object]],
-    req: object,
+    request_factory: Callable[[], object],
+    token: str,
     plan: _LoadPlan,
 ) -> _DriveStats:
     """Launch RPCs on a fixed interval; await outstanding work after the window."""
@@ -165,7 +201,7 @@ async def _drive_open_loop(
             # Do not schedule past the measurement window after waking.
             if time.perf_counter() >= deadline:
                 break
-        tasks.append(asyncio.create_task(_one_call(stub, req)))
+        tasks.append(asyncio.create_task(_one_call(stub, request_factory, token)))
         next_launch += interval
     results = await asyncio.gather(*tasks)
     latencies = tuple(ms for ms in results if ms is not None)
@@ -179,10 +215,8 @@ async def _drive_open_loop(
     )
 
 
-async def _run_stub(duration_s: float, target_rps: int) -> _DriveStats:
-    from ibex.context.v1 import context_pb2 as pb2
-
-    settings = ContextSettings.model_construct(
+def _stub_settings(token: str) -> ContextSettings:
+    return ContextSettings.model_construct(
         timeout_ms=45.0,
         deadline_ms=40.0,
         directive_timeout_ms=5.0,
@@ -192,14 +226,24 @@ async def _run_stub(duration_s: float, target_rps: int) -> _DriveStats:
         packer_dp_cell_ceiling=70 * 6251,
         packer_max_consecutive_skips=5,
         grpc_addr="127.0.0.1:0",
+        memory_base_url="",
+        memory_api_token=SecretStr(""),
+        grpc_service_token=SecretStr(token),
+        redis_url="",
     )
+
+
+async def _run_stub(duration_s: float, target_rps: int, token: str) -> _DriveStats:
+    from ibex.context.v1 import context_pb2 as pb2
+
+    settings = _stub_settings(token)
     retriever = ParallelRetriever(
         settings=settings,
         memory=_StubMemory(),  # type: ignore[arg-type]
         directive=_StubDirective(),
     )
     assembler = ContextAssembler(settings=settings, retriever=retriever)
-    server, port = build_server(assembler, listen_addr="127.0.0.1:0")
+    server, port = build_server(assembler, listen_addr="127.0.0.1:0", settings=settings)
     await server.start()
     try:
         async with grpc_aio.insecure_channel(f"127.0.0.1:{port}") as channel:
@@ -210,14 +254,26 @@ async def _run_stub(duration_s: float, target_rps: int) -> _DriveStats:
             )
             return await _drive_open_loop(
                 stub,
-                _assemble_request(pb2),
+                _request_factory(pb2, org=str(ORG), agent=str(AGENT)),
+                token,
                 _LoadPlan(duration_s, target_rps),
             )
     finally:
         await server.stop(grace=None)
 
 
-async def _run_live(addr: str, duration_s: float, target_rps: int) -> _DriveStats:
+async def _run_live(
+    addr: str,
+    duration_s: float,
+    target_rps: int,
+    token: str,
+    org: str,
+    agent: str,
+) -> _DriveStats:
+    if not token.strip():
+        raise SystemExit(
+            "live profile requires --token or IBEX_CONTEXT_GRPC_SERVICE_TOKEN (ADR-0096)"
+        )
     from ibex.context.v1 import context_pb2 as pb2
 
     async with grpc_aio.insecure_channel(addr) as channel:
@@ -228,7 +284,8 @@ async def _run_live(addr: str, duration_s: float, target_rps: int) -> _DriveStat
         )
         return await _drive_open_loop(
             stub,
-            _assemble_request(pb2),
+            _request_factory(pb2, org=org, agent=agent),
+            token,
             _LoadPlan(duration_s, target_rps),
         )
 
@@ -282,6 +339,25 @@ def _parse_args() -> argparse.Namespace:
         help="Requests per second (default 500; minimum 1).",
     )
     parser.add_argument("--duration", type=float, default=10.0)
+    parser.add_argument(
+        "--token",
+        default=os.environ.get("IBEX_CONTEXT_GRPC_SERVICE_TOKEN", ""),
+        help=(
+            "Caller service token (ADR-0096). Defaults to "
+            "IBEX_CONTEXT_GRPC_SERVICE_TOKEN; the stub profile uses a "
+            "throwaway token when this is empty."
+        ),
+    )
+    parser.add_argument(
+        "--org-id",
+        default=str(ORG),
+        help="Tenant asserted by the benchmark principal (must be canonical).",
+    )
+    parser.add_argument(
+        "--agent-id",
+        default=str(AGENT),
+        help="Agent asserted by the benchmark principal (must be canonical).",
+    )
     parser.add_argument("--json", type=Path, help="Write the profile-tagged result to this path.")
     parser.add_argument(
         "--max-error-rate",
@@ -296,9 +372,19 @@ def main() -> int:
     args = _parse_args()
 
     if args.profile == "stub":
-        stats = asyncio.run(_run_stub(args.duration, args.rps))
+        token = args.token or STUB_SERVICE_TOKEN
+        stats = asyncio.run(_run_stub(args.duration, args.rps, token))
     else:
-        stats = asyncio.run(_run_live(args.addr, args.duration, args.rps))
+        stats = asyncio.run(
+            _run_live(
+                args.addr,
+                args.duration,
+                args.rps,
+                args.token,
+                args.org_id,
+                args.agent_id,
+            )
+        )
 
     samples = list(stats.latencies_ms)
     error_rate = (

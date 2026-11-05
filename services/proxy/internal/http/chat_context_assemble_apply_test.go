@@ -59,6 +59,24 @@ func TestUnit_ApplyContextOrDirective_MissingTenantFallsBackToDirective(t *testi
 	assertDirectiveOnly(t, out.Messages)
 }
 
+func TestUnit_ApplyContextOrDirective_MissingPrincipalSkipsAssemble(t *testing.T) {
+	t.Parallel()
+	fake := &fakeContextAssembler{result: contextclient.AssembleResult{AssembledContext: "assembled"}}
+	h := contextHandler(true, fake)
+	ctx := directiveCtx(contextTestAuthCtxWithoutPrincipal(t))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	out := assertNoAssembleAttempt(t, noAssembleAttemptCheck{
+		h: h, fake: fake, ctx: ctx, req: req, reason: "verified principal missing",
+	})
+	if out.Meta.Fallback {
+		t.Fatalf("skipped RPC must set no fallback metadata, meta=%+v", out.Meta)
+	}
+	assertDirectiveOnly(t, out.Messages)
+	if _, ok := assembleParamsFromRequest(ctx, "gpt-4o", nil); ok {
+		t.Fatal("assembleParamsFromRequest must refuse a context without a verified principal")
+	}
+}
+
 // noAssembleAttemptCheck groups inputs for Skip-Memory / missing-tenant gates.
 type noAssembleAttemptCheck struct {
 	h      chatCompletionHandler
@@ -129,6 +147,12 @@ func assertAssembleParams(t *testing.T, got contextclient.AssembleParams) {
 	}
 	if got.OrgID != testChatOrgID {
 		t.Fatalf("org=%q", got.OrgID)
+	}
+	if got.PrincipalContext == nil {
+		t.Fatal("PrincipalContext must be forwarded; the context server rejects a request without one")
+	}
+	if got.PrincipalContext.GetOrgId() != testChatOrgID {
+		t.Fatalf("principal org=%q want %q", got.PrincipalContext.GetOrgId(), testChatOrgID)
 	}
 }
 

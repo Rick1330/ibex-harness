@@ -1,14 +1,16 @@
-"""gRPC server lifecycle / wiring tests (milestone 3.5.C.6)."""
+"""gRPC server lifecycle / wiring tests (milestone 3.5.C.6 / ADR-0096)."""
 
 from __future__ import annotations
 
 import asyncio
-import logging
 import runpy
 import sys
 import types
 
+import grpc
 import pytest
+from pydantic import SecretStr
+from server_test_support import SERVICE_TOKEN
 from server_test_support import assembler as _assembler
 from server_test_support import settings as _settings
 
@@ -16,6 +18,7 @@ from app.assemble import ContextAssembler
 from app.server import (
     AssemblyRuntime,
     _is_loopback_addr,
+    _require_unary,
     build_assembler_from_settings,
     build_server,
 )
@@ -38,19 +41,140 @@ def test_is_loopback_addr() -> None:
     assert not _is_loopback_addr("10.0.0.5:9092")
 
 
-@pytest.mark.asyncio
-async def test_build_server_warns_non_loopback_without_auth(
-    caplog: pytest.LogCaptureFixture,
+@pytest.mark.parametrize(
+    "addr",
+    ["0.0.0.0:0", "10.0.0.5:0", "[::]:0"],
+)
+def test_build_server_refuses_non_loopback_bind(addr: str) -> None:
+    """ADR-0096: the service is loopback-only, so an exposed bind is fatal."""
+    with pytest.raises(ValueError, match="loopback"):
+        build_server(_assembler(), listen_addr=addr, settings=_settings())
+
+
+def test_build_server_refuses_name_resolving_off_loopback(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with caplog.at_level(logging.WARNING, logger="app.server"):
-        server, _port = build_server(_assembler(), listen_addr="0.0.0.0:0")
-    assert any(
-        "context_assembly_grpc_non_loopback_bind" in r.message
-        and "3.5.D.1" in r.message
-        and "ADR-0071" in r.message
-        for r in caplog.records
-    )
-    await server.stop(grace=None)
+    from app import server as server_mod
+
+    def _fake_getaddrinfo(*_args, **_kwargs):
+        return [(2, 1, 6, "", ("10.0.0.5", 0))]
+
+    monkeypatch.setattr(server_mod.socket, "getaddrinfo", _fake_getaddrinfo)
+    with pytest.raises(ValueError, match="loopback"):
+        build_server(_assembler(), listen_addr="context.internal:0", settings=_settings())
+
+
+def test_build_server_refuses_unresolvable_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import server as server_mod
+
+    def _fail(*_args, **_kwargs):
+        raise server_mod.socket.gaierror("no such host")
+
+    monkeypatch.setattr(server_mod.socket, "getaddrinfo", _fail)
+    with pytest.raises(ValueError, match="loopback"):
+        build_server(_assembler(), listen_addr="missing.invalid:0", settings=_settings())
+
+
+def test_require_loopback_bind_accepts_name_resolving_to_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import server as server_mod
+
+    def _fake_getaddrinfo(*_args, **_kwargs):
+        return [
+            (2, 1, 6, "", ("127.0.0.1", 0)),
+            (10, 1, 6, "", ("::1", 0, 0, 0)),
+        ]
+
+    monkeypatch.setattr(server_mod.socket, "getaddrinfo", _fake_getaddrinfo)
+    server_mod._require_loopback_bind("context.internal:9092")
+
+
+def test_require_loopback_bind_refuses_when_any_address_is_public(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import server as server_mod
+
+    def _mixed_getaddrinfo(*_args, **_kwargs):
+        return [
+            (2, 1, 6, "", ("127.0.0.1", 0)),
+            (2, 1, 6, "", ("203.0.113.7", 0)),
+        ]
+
+    monkeypatch.setattr(server_mod.socket, "getaddrinfo", _mixed_getaddrinfo)
+    with pytest.raises(ValueError, match="loopback"):
+        server_mod._require_loopback_bind("context.internal:9092")
+
+
+def test_require_loopback_bind_requires_a_host() -> None:
+    from app import server as server_mod
+
+    with pytest.raises(ValueError, match="host:port"):
+        server_mod._require_loopback_bind(":9092")
+
+
+@pytest.mark.parametrize("value", ["not-an-ip", "127.0.0.1.example", ""])
+def test_is_loopback_ip_rejects_non_addresses(value: str) -> None:
+    from app import server as server_mod
+
+    assert server_mod._is_loopback_ip(value) is False
+
+
+def test_is_loopback_ip_accepts_ipv6_scope_suffix() -> None:
+    from app import server as server_mod
+
+    assert server_mod._is_loopback_ip("::1%lo") is True
+
+
+def test_build_server_requires_a_service_token() -> None:
+    with pytest.raises(ValueError, match="IBEX_CONTEXT_GRPC_SERVICE_TOKEN"):
+        build_server(
+            _assembler(),
+            listen_addr="127.0.0.1:0",
+            settings=_settings(grpc_service_token=SecretStr("")),
+        )
+
+
+def test_build_server_rejects_short_service_token() -> None:
+    with pytest.raises(ValueError, match="IBEX_CONTEXT_GRPC_SERVICE_TOKEN"):
+        build_server(
+            _assembler(),
+            listen_addr="127.0.0.1:0",
+            settings=_settings(grpc_service_token=SecretStr("too-short")),
+        )
+
+
+def test_build_server_rejects_memory_token_reuse() -> None:
+    """Reusing the memory credential would let one leak compromise both hops."""
+    with pytest.raises(ValueError, match="must differ"):
+        build_server(
+            _assembler(),
+            listen_addr="127.0.0.1:0",
+            settings=_settings(
+                grpc_service_token=SecretStr(SERVICE_TOKEN),
+                memory_api_token=SecretStr(SERVICE_TOKEN),
+            ),
+        )
+
+
+def test_require_unary_rejects_streaming_handler() -> None:
+    handler = grpc.stream_stream_rpc_method_handler(lambda request, context: None)
+    with pytest.raises(ValueError, match="unary"):
+        _require_unary("AssembleContext", handler)
+
+
+def test_server_disables_port_reuse() -> None:
+    """H3: a same-UID process must not be able to share (and sniff) the port."""
+    from app import server as server_mod
+
+    assert ("grpc.so_reuseport", 0) in server_mod._SERVER_OPTIONS
+
+
+def test_require_unary_accepts_unary_handler() -> None:
+    handler = grpc.unary_unary_rpc_method_handler(lambda request, context: None)
+    _require_unary("AssembleContext", handler)
 
 
 def test_build_assembler_requires_memory_base_url() -> None:
@@ -61,7 +185,10 @@ def test_build_assembler_requires_memory_base_url() -> None:
 
 def test_build_assembler_from_settings_ok() -> None:
     result = build_assembler_from_settings(
-        _settings(memory_base_url="http://memory.test", memory_api_token="tok")
+        _settings(
+            memory_base_url="http://memory.test",
+            memory_api_token=SecretStr("tok"),
+        )
     )
     assert isinstance(result, ContextAssembler)
 
@@ -74,7 +201,7 @@ def test_build_assembler_with_redis(monkeypatch: pytest.MonkeyPatch) -> None:
     result = build_assembler_from_settings(
         _settings(
             memory_base_url="http://memory.test",
-            memory_api_token="tok",
+            memory_api_token=SecretStr("tok"),
             redis_url="redis://localhost:6379/0",
         )
     )
@@ -121,12 +248,40 @@ async def test_serve_forever_starts_and_stops(
         "build_runtime_from_settings",
         lambda cfg: runtime,
     )
-    await server_mod.serve_forever(
-        _settings(memory_base_url="http://memory.test", memory_api_token="tok")
-    )
+    await server_mod.serve_forever(_settings())
     assert fake.started is True
     assert fake.stopped is True
     assert memory.closed is True
+
+
+@pytest.mark.asyncio
+async def test_serve_forever_refuses_without_service_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup refusal is real: the runtime is closed and no port is bound."""
+    from app import server as server_mod
+
+    closed: list[bool] = []
+
+    class _FakeMemory:
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    runtime = AssemblyRuntime(
+        assembler=_assembler(),
+        memory=_FakeMemory(),  # type: ignore[arg-type]
+        redis_client=None,
+    )
+    monkeypatch.setattr(
+        server_mod,
+        "build_runtime_from_settings",
+        lambda cfg: runtime,
+    )
+    with pytest.raises(ValueError, match="IBEX_CONTEXT_GRPC_SERVICE_TOKEN"):
+        await server_mod.serve_forever(
+            _settings(grpc_service_token=SecretStr(""), grpc_addr="127.0.0.1:0")
+        )
+    assert closed == [True]
 
 
 @pytest.mark.asyncio
@@ -188,11 +343,7 @@ async def test_serve_forever_signal_stops_and_closes(
         return ev
 
     monkeypatch.setattr(server_mod.asyncio, "Event", _tracking_event)
-    serve_task = asyncio.create_task(
-        server_mod.serve_forever(
-            _settings(memory_base_url="http://memory.test", memory_api_token="tok")
-        )
-    )
+    serve_task = asyncio.create_task(server_mod.serve_forever(_settings()))
     await asyncio.sleep(0.05)
     assert shutdown_box, "serve_forever should create a shutdown Event"
     shutdown_box[0].set()
@@ -244,11 +395,7 @@ async def test_serve_forever_cancel_stops_before_aclose(
         lambda cfg: runtime,
     )
 
-    serve_task = asyncio.create_task(
-        server_mod.serve_forever(
-            _settings(memory_base_url="http://memory.test", memory_api_token="tok")
-        )
-    )
+    serve_task = asyncio.create_task(server_mod.serve_forever(_settings()))
     for _ in range(50):
         if "start" in order:
             break

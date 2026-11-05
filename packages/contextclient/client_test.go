@@ -10,11 +10,16 @@ import (
 	contextv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/context/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
+// testServiceToken is a stand-in for IBEX_CONTEXT_GRPC_SERVICE_TOKEN.
+const testServiceToken = "0123456789abcdef0123456789abcdef"
+
 type mockContextAssemblyServiceClient struct {
 	assembleFn func(context.Context, *contextv1.AssembleContextRequest, ...grpc.CallOption) (*contextv1.AssembleContextResponse, error)
+	searchFn   func(context.Context, *contextv1.SearchMemoriesRequest, ...grpc.CallOption) (*contextv1.SearchMemoriesResponse, error)
 }
 
 func (m *mockContextAssemblyServiceClient) AssembleContext(ctx context.Context, req *contextv1.AssembleContextRequest, opts ...grpc.CallOption) (*contextv1.AssembleContextResponse, error) {
@@ -24,7 +29,10 @@ func (m *mockContextAssemblyServiceClient) AssembleContext(ctx context.Context, 
 	return nil, status.Error(codes.Unimplemented, "not configured")
 }
 
-func (m *mockContextAssemblyServiceClient) SearchMemories(context.Context, *contextv1.SearchMemoriesRequest, ...grpc.CallOption) (*contextv1.SearchMemoriesResponse, error) {
+func (m *mockContextAssemblyServiceClient) SearchMemories(ctx context.Context, req *contextv1.SearchMemoriesRequest, opts ...grpc.CallOption) (*contextv1.SearchMemoriesResponse, error) {
+	if m.searchFn != nil {
+		return m.searchFn(ctx, req, opts...)
+	}
 	return nil, status.Error(codes.Unimplemented, "not used")
 }
 
@@ -34,17 +42,26 @@ func (m *mockContextAssemblyServiceClient) RecordMemoryFeedback(context.Context,
 
 func TestNew_rejectsNil(t *testing.T) {
 	t.Parallel()
-	if _, err := New(nil, time.Millisecond, logger.Discard("test")); err == nil {
+	if _, err := New(nil, time.Millisecond, logger.Discard("test"), testServiceToken); err == nil {
 		t.Fatal("expected error for nil client")
 	}
-	if _, err := New(&mockContextAssemblyServiceClient{}, time.Millisecond, nil); err == nil {
+	if _, err := New(&mockContextAssemblyServiceClient{}, time.Millisecond, nil, testServiceToken); err == nil {
 		t.Fatal("expected error for nil logger")
+	}
+}
+
+func TestNew_rejectsEmptyServiceToken(t *testing.T) {
+	t.Parallel()
+	for _, token := range []string{"", "   ", "\t\n"} {
+		if _, err := New(&mockContextAssemblyServiceClient{}, time.Millisecond, logger.Discard("test"), token); err == nil {
+			t.Fatalf("expected error for token %q", token)
+		}
 	}
 }
 
 func TestNew_defaultTimeout(t *testing.T) {
 	t.Parallel()
-	c, err := New(&mockContextAssemblyServiceClient{}, 0, logger.Discard("test"))
+	c, err := New(&mockContextAssemblyServiceClient{}, 0, logger.Discard("test"), testServiceToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +78,7 @@ func TestAssemble_success(t *testing.T) {
 			return successAssembleResponse(), nil
 		},
 	}
-	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"))
+	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"), testServiceToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +196,7 @@ func assertFailOpen(t *testing.T, rpcErr error, wantReason string) {
 			return nil, rpcErr
 		},
 	}
-	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"))
+	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"), testServiceToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +215,7 @@ func TestAssemble_nilResponseFallback(t *testing.T) {
 			return nil, nil
 		},
 	}
-	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"))
+	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"), testServiceToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +241,7 @@ func TestAssemble_recordsFallbackMetric(t *testing.T) {
 			return nil, status.Error(codes.Unavailable, "down")
 		},
 	}
-	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"))
+	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"), testServiceToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +267,7 @@ func TestAssemble_timeout(t *testing.T) {
 			}
 		},
 	}
-	c, err := New(mock, 20*time.Millisecond, logger.Discard("test"))
+	c, err := New(mock, 20*time.Millisecond, logger.Discard("test"), testServiceToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,5 +284,141 @@ func TestAssemble_timeout(t *testing.T) {
 	}
 	if elapsed > 200*time.Millisecond {
 		t.Fatalf("elapsed %v exceeds timeout + slack", elapsed)
+	}
+}
+
+// TestAssemble_SendsExactlyOneContextServiceTokenMetadata pins the ADR-0096 wire
+// contract: every Assemble carries exactly one x-ibex-context-service-token entry
+// with the configured token, never the AuthService key, and a caller-supplied
+// duplicate is replaced rather than appended.
+func TestAssemble_SendsExactlyOneContextServiceTokenMetadata(t *testing.T) {
+	t.Parallel()
+	var got metadata.MD
+	mock := &mockContextAssemblyServiceClient{
+		assembleFn: func(ctx context.Context, _ *contextv1.AssembleContextRequest, _ ...grpc.CallOption) (*contextv1.AssembleContextResponse, error) {
+			got, _ = metadata.FromOutgoingContext(ctx)
+			return successAssembleResponse(), nil
+		},
+	}
+	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"), testServiceToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := metadata.NewOutgoingContext(
+		context.Background(),
+		metadata.Pairs(ServiceTokenMetadataKey, "stale-caller-value", "x-ibex-service-token", "auth-token"),
+	)
+	if result := c.Assemble(stale, successAssembleParams()); result.Fallback {
+		t.Fatalf("unexpected fallback: %+v", result)
+	}
+	assertExactlyOneMetadataValue(t, got, ServiceTokenMetadataKey, testServiceToken)
+	if values := got.Get("x-ibex-service-token"); len(values) != 0 {
+		t.Fatalf("x-ibex-service-token=%v must not be sent on the context client", values)
+	}
+}
+
+func assertExactlyOneMetadataValue(t *testing.T, md metadata.MD, key, want string) {
+	t.Helper()
+	values := md.Get(key)
+	if len(values) != 1 {
+		t.Fatalf("%s entries=%v want exactly one", key, values)
+	}
+	if values[0] != want {
+		t.Fatalf("%s=%q want the configured service token", key, values[0])
+	}
+}
+
+func TestProbeCallerAuth_Outcomes(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		rpcErr    error
+		wantClass error
+	}{
+		{name: "success", rpcErr: nil},
+		{name: "unimplemented means the token works", rpcErr: status.Error(codes.Unimplemented, "stub")},
+		{name: "unauthenticated is fatal", rpcErr: status.Error(codes.Unauthenticated, "caller authentication required"), wantClass: ErrCallerAuthRejected},
+		{name: "unavailable continues", rpcErr: status.Error(codes.Unavailable, "down"), wantClass: ErrCallerAuthInconclusive},
+		{name: "deadline continues", rpcErr: status.Error(codes.DeadlineExceeded, "slow"), wantClass: ErrCallerAuthInconclusive},
+		{name: "non-status error is inconclusive", rpcErr: errors.New("boom"), wantClass: ErrCallerAuthInconclusive},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mock := &mockContextAssemblyServiceClient{
+				searchFn: func(context.Context, *contextv1.SearchMemoriesRequest, ...grpc.CallOption) (*contextv1.SearchMemoriesResponse, error) {
+					return nil, tc.rpcErr
+				},
+			}
+			c, err := New(mock, 50*time.Millisecond, logger.Discard("test"), testServiceToken)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertProbeClass(t, c.ProbeCallerAuth(context.Background()), tc.wantClass)
+		})
+	}
+}
+
+func assertProbeClass(t *testing.T, err, wantClass error) {
+	t.Helper()
+	if wantClass == nil {
+		if err != nil {
+			t.Fatalf("ProbeCallerAuth() error=%v want nil", err)
+		}
+		return
+	}
+	if !errors.Is(err, wantClass) {
+		t.Fatalf("ProbeCallerAuth() error=%v want class %v", err, wantClass)
+	}
+}
+
+func TestProbeCallerAuth_SendsServiceTokenMetadataAndEmptyRequest(t *testing.T) {
+	t.Parallel()
+	var (
+		got     metadata.MD
+		wantReq *contextv1.SearchMemoriesRequest
+	)
+	mock := &mockContextAssemblyServiceClient{
+		searchFn: func(ctx context.Context, req *contextv1.SearchMemoriesRequest, _ ...grpc.CallOption) (*contextv1.SearchMemoriesResponse, error) {
+			got, _ = metadata.FromOutgoingContext(ctx)
+			wantReq = req
+			return nil, status.Error(codes.Unimplemented, "stub")
+		},
+	}
+	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"), testServiceToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ProbeCallerAuth(context.Background()); err != nil {
+		t.Fatalf("ProbeCallerAuth() error=%v", err)
+	}
+	assertExactlyOneMetadataValue(t, got, ServiceTokenMetadataKey, testServiceToken)
+	if wantReq.GetOrgId() != "" || wantReq.GetAgentId() != "" || wantReq.GetQuery() != "" {
+		t.Fatalf("probe request must be empty, got %v", wantReq)
+	}
+}
+
+// BenchmarkClient_Assemble_CallerAuthMetadata measures the per-call cost of the
+// ADR-0096 metadata injection on the Assemble path (one metadata map copy + one
+// entry, plus request mapping). The fake client returns immediately, so the
+// number is the proxy-side overhead floor without a network round trip.
+func BenchmarkClient_Assemble_CallerAuthMetadata(b *testing.B) {
+	mock := &mockContextAssemblyServiceClient{
+		assembleFn: func(context.Context, *contextv1.AssembleContextRequest, ...grpc.CallOption) (*contextv1.AssembleContextResponse, error) {
+			return successAssembleResponse(), nil
+		},
+	}
+	c, err := New(mock, 45*time.Millisecond, logger.Discard("bench"), testServiceToken)
+	if err != nil {
+		b.Fatal(err)
+	}
+	params := successAssembleParams()
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if result := c.Assemble(ctx, params); result.Fallback {
+			b.Fatalf("unexpected fallback: %+v", result)
+		}
 	}
 }

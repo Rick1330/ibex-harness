@@ -29,6 +29,7 @@ from e2e_phase35_lib import (  # noqa: E402
     ChatResult,
     Env,
     assert_injected,
+    assemble_expect_error,
     assemble_once,
     chat,
     env_from_os,
@@ -226,6 +227,12 @@ def scenario_4(client: httpx.Client, env: Env) -> None:
         interval=max(env.interval_s, 0.5),
         label="scenario4 chat samples",
     )
+    fallbacks = [sample.get("fallback") for sample in samples]
+    if "false" not in fallbacks:
+        fail(
+            "scenario4 want a healthy X-IBEX-Context-Fallback=false sample "
+            f"(ADR-0096), got {fallbacks!r}"
+        )
     overheads = _numeric_field(samples, "proxy_overhead_ms")
     assemblies = _numeric_field(samples, "context_assembly_ms")
     report: dict[str, Any] = {
@@ -407,9 +414,36 @@ def scenario_6(client: httpx.Client, env: Env) -> None:
     pass_("scenario6 MCP write → proxy chat inject")
 
 
+def scenario_7(env: Env) -> None:
+    """ADR-0096 caller authentication and selector binding on AssembleContext."""
+    require_grpc()
+    import grpc  # local import: HTTP-only scenarios must not need grpcio
+
+    assemble_expect_error(
+        env,
+        "phase35 auth probe",
+        grpc.StatusCode.UNAUTHENTICATED,
+        AssembleOpts(send_token=False),
+    )
+    pass_("scenario7 no service token → UNAUTHENTICATED")
+
+    assemble_expect_error(
+        env,
+        "phase35 auth probe",
+        grpc.StatusCode.PERMISSION_DENIED,
+        AssembleOpts(selector_org=env.org_b, selector_agent=env.agent_b),
+    )
+    pass_("scenario7 org-A principal + org-B selectors → PERMISSION_DENIED")
+
+    resp = assemble_once(env, "phase35 auth probe")
+    if resp.metrics is None:
+        fail("scenario7 healthy assemble missing AssemblyMetrics")
+    pass_("scenario7 valid token + matching selectors → OK")
+
+
 def _parse_want(only: str) -> set[int]:
     parsed = {int(x) for x in only.split(",") if x.strip().isdigit()}
-    return parsed or {1, 2, 3, 4, 5, 6}
+    return parsed or {1, 2, 3, 4, 5, 6, 7}
 
 
 def main() -> None:
@@ -429,6 +463,7 @@ def main() -> None:
         4: lambda c: scenario_4(c, env),
         5: lambda c: scenario_5(c, env),
         6: lambda c: scenario_6(c, env),
+        7: lambda _c: scenario_7(env),
     }
     with httpx.Client(timeout=60.0) as client:
         for num in sorted(want):

@@ -112,6 +112,10 @@ type Config struct {
 	PolicyMinEpoch         int64
 	ContextGRPCTarget      string
 	ContextAssembleTimeout time.Duration
+	// ContextGRPCServiceToken is the shared secret sent as the
+	// x-ibex-context-service-token metadata entry for every context RPC
+	// (ADR-0096). Secret material: never log it.
+	ContextGRPCServiceToken string
 	// ContextEnabled gates Assemble on the chat hot path (3.5.D.2). Default false:
 	// Phase 2 directive-only injection. Independent of ContextGRPCTarget (nil client).
 	ContextEnabled bool

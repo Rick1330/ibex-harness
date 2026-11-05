@@ -64,11 +64,26 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 	}
 	assembleCtx, endSpan := ensureAssembleTraceContext(ctx)
 	defer endSpan()
+	if _, ok := PrincipalContextFromContext(assembleCtx); !ok {
+		// The context server rejects a request without a verified principal
+		// (UNAUTHENTICATED). Skip the RPC and stay on the directive-only path with
+		// no fallback metadata rather than send a call that cannot succeed.
+		h.warnMissingPrincipal(ctx)
+		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
+	}
 	params, ok := assembleParamsFromRequest(assembleCtx, model, messages)
 	if !ok {
 		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
 	}
 	return h.injectAssembledOrDirective(ctx, assembleCtx, messages, params)
+}
+
+// warnMissingPrincipal logs the skipped assemble once per request.
+func (h chatCompletionHandler) warnMissingPrincipal(ctx context.Context) {
+	if h.log == nil {
+		return
+	}
+	h.log.WarnCtx(ctx, "context assemble skipped; verified principal context unavailable")
 }
 
 func (h chatCompletionHandler) injectAssembledOrDirective(
@@ -245,7 +260,10 @@ func assembleParamsFromRequest(ctx context.Context, model string, messages []pro
 	if traceID == "" || spanID == "" {
 		return contextclient.AssembleParams{}, false
 	}
-	principal, _ := PrincipalContextFromContext(ctx)
+	principal, ok := PrincipalContextFromContext(ctx)
+	if !ok {
+		return contextclient.AssembleParams{}, false
+	}
 	return contextclient.AssembleParams{
 		OrgID:              orgID.String(),
 		AgentID:            agentID.String(),

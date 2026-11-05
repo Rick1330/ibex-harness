@@ -22,6 +22,8 @@ import (
 const (
 	memoryIntegrationAssembleBlob = "assembled memory context blob"
 	memoryIntegrationChatBody     = `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
+	// integrationContextServiceToken satisfies the ADR-0096 non-empty token rule.
+	integrationContextServiceToken = "0123456789abcdef0123456789abcdef"
 )
 
 type memoryAssembleBehavior struct {
@@ -129,6 +131,7 @@ func startBufconnContextClient(t *testing.T, timeout time.Duration) (*configurab
 		contextv1.NewContextAssemblyServiceClient(conn),
 		timeout,
 		logger.Discard("proxy"),
+		integrationContextServiceToken,
 	)
 	if err != nil {
 		t.Fatalf("contextclient.New: %v", err)

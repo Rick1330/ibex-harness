@@ -75,7 +75,7 @@ export const capabilities: Capability[] = [
   {
     name: 'Context assembly',
     status: 'PROVISIONAL',
-    detail: 'Budget, retrieval, ranking, packing, formatting, and degradation exist. Caller authentication and the deadline boundary remain open.',
+    detail: 'Budget, retrieval, ranking, packing, formatting, and degradation exist. Unauthenticated direct access is closed by a shared caller token; per-user authentication and the deadline boundary remain open.',
     href: '/docs/context/overview',
   },
   {

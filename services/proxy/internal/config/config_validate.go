@@ -1,10 +1,12 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
 	"github.com/google/uuid"
@@ -200,17 +202,112 @@ func (c Config) validateAuthConfig() error {
 
 // validateContextGRPCConfig allows an empty target (skip dial until D.5 feature flag).
 // When set, the value must be host:port; timeout must be positive after ApplyDefaults.
+// When context assembly is enabled it additionally enforces the ADR-0096 caller
+// constraints: the environment must be TLS-free (development/test), the target
+// must be loopback, and the service token must be present.
 func (c Config) validateContextGRPCConfig() error {
-	if strings.TrimSpace(c.ContextGRPCTarget) == "" {
+	target := strings.TrimSpace(c.ContextGRPCTarget)
+	if target == "" {
 		return nil
 	}
-	if _, _, err := net.SplitHostPort(c.ContextGRPCTarget); err != nil {
+	host, _, err := net.SplitHostPort(target)
+	if err != nil {
 		return fmt.Errorf("IBEX_CONTEXT_GRPC_TARGET must be host:port: %w", err)
 	}
 	if c.ContextAssembleTimeout <= 0 {
 		return fmt.Errorf("IBEX_CONTEXT_ASSEMBLE_TIMEOUT must be positive")
 	}
+	return c.validateEnabledContextCaller(host)
+}
+
+// validateEnabledContextCaller enforces the caller-auth preconditions that only
+// matter when Assemble can actually run. A disabled client never carries the
+// token, so its target and token stay unconstrained beyond host:port.
+func (c Config) validateEnabledContextCaller(host string) error {
+	if !c.ContextEnabled {
+		return nil
+	}
+	if err := validateContextEnvironment(c.Environment); err != nil {
+		return err
+	}
+	if err := validateContextTargetLoopback(host); err != nil {
+		return err
+	}
+	if strings.TrimSpace(c.ContextGRPCServiceToken) == "" {
+		return fmt.Errorf("IBEX_CONTEXT_GRPC_SERVICE_TOKEN is required when IBEX_CONTEXT_ENABLED=true and IBEX_CONTEXT_GRPC_TARGET is set")
+	}
 	return nil
+}
+
+// validateContextEnvironment refuses to enable context outside development.
+// The context server serves plaintext only; authTransportCredentials would dial
+// TLS for any other environment and every Assemble would fail silently (fail-open
+// to directive-only), which looks healthy while context is dead. "test" is not a
+// deployable IBEX_ENV profile and is TLS-classified by the transport helper, so it
+// is rejected here too.
+func validateContextEnvironment(environment string) error {
+	if environment == envDevelopment {
+		return nil
+	}
+	return fmt.Errorf(
+		"IBEX_CONTEXT_ENABLED=true is not supported when IBEX_ENV=%s: the context service does not serve TLS, so this proxy would dial it with TLS credentials and every Assemble would fail; enable context only in development",
+		environment,
+	)
+}
+
+// contextTargetResolveTimeout bounds DNS resolution during config validation so
+// startup cannot hang on a slow resolver.
+const contextTargetResolveTimeout = 2 * time.Second
+
+// validateContextTargetLoopback requires the context client target to resolve
+// exclusively to loopback addresses. The service token travels in cleartext
+// gRPC metadata, so a non-loopback endpoint would expose it (ADR-0096).
+func validateContextTargetLoopback(host string) error {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return fmt.Errorf("IBEX_CONTEXT_GRPC_TARGET must include a host")
+	}
+	ips, err := resolveTargetIPs(host)
+	if err != nil {
+		return fmt.Errorf("IBEX_CONTEXT_GRPC_TARGET host %q must resolve to a loopback address: %w", host, err)
+	}
+	for _, ip := range ips {
+		if ip.IsUnspecified() || !ip.IsLoopback() {
+			return fmt.Errorf(
+				"IBEX_CONTEXT_GRPC_TARGET host %q resolves to %s; the context service token must not be sent to a non-loopback endpoint",
+				host, ip,
+			)
+		}
+	}
+	return nil
+}
+
+func resolveTargetIPs(host string) ([]net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		return []net.IP{ip}, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), contextTargetResolveTimeout)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve: %w", err)
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("no addresses resolved")
+	}
+	return parseResolvedIPs(addrs)
+}
+
+func parseResolvedIPs(addrs []string) ([]net.IP, error) {
+	ips := make([]net.IP, 0, len(addrs))
+	for _, addr := range addrs {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			return nil, fmt.Errorf("unparseable resolved address %q", addr)
+		}
+		ips = append(ips, ip)
+	}
+	return ips, nil
 }
 
 func (c Config) validateAuthCache() error {

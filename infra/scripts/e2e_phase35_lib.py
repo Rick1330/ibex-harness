@@ -23,6 +23,10 @@ except ImportError:  # pragma: no cover
     context_pb2 = None  # type: ignore[assignment]
 
 
+# ADR-0096 default shared with infra/scripts/e2e_phase35.sh (dev-only literal).
+DEFAULT_CONTEXT_SERVICE_TOKEN = "dev-context-service-token-0000000000000001"
+
+
 @dataclass(frozen=True)
 class Env:
     proxy: str
@@ -41,6 +45,7 @@ class Env:
     worker_log: str | None
     timeout_s: float
     interval_s: float
+    context_service_token: str = DEFAULT_CONTEXT_SERVICE_TOKEN
 
 
 @dataclass(frozen=True)
@@ -84,6 +89,10 @@ def env_from_os() -> Env:
         worker_log=os.environ.get("IBEX_E2E_P35_WORKER_LOG") or None,
         timeout_s=float(os.environ.get("IBEX_E2E_P35_EVENTUALLY_TIMEOUT", "60")),
         interval_s=float(os.environ.get("IBEX_E2E_P35_EVENTUALLY_INTERVAL", "0.25")),
+        context_service_token=os.environ.get(
+            "IBEX_CONTEXT_GRPC_SERVICE_TOKEN",
+            DEFAULT_CONTEXT_SERVICE_TOKEN,
+        ),
     )
 
 
@@ -298,8 +307,46 @@ def require_grpc() -> None:
 
 @dataclass(frozen=True)
 class AssembleOpts:
+    """AssembleContext options plus ADR-0096 caller-auth knobs."""
+
     skip_hot: bool = False
     skip_cold: bool = False
+    send_token: bool = True
+    selector_org: str | None = None
+    selector_agent: str | None = None
+
+
+CONTEXT_SERVICE_TOKEN_METADATA_KEY = "x-ibex-context-service-token"
+
+
+def _context_metadata(env: Env, flags: AssembleOpts) -> tuple[tuple[str, str], ...]:
+    if not flags.send_token:
+        return ()
+    return ((CONTEXT_SERVICE_TOKEN_METADATA_KEY, env.context_service_token),)
+
+
+def _assemble_request(env: Env, query: str, flags: AssembleOpts) -> Any:
+    """Selectors may be overridden; the principal is always the org-A caller."""
+    org_selector = env.org_a if flags.selector_org is None else flags.selector_org
+    agent_selector = env.agent_a if flags.selector_agent is None else flags.selector_agent
+    req = context_pb2.AssembleContextRequest(
+        org_id=org_selector,
+        agent_id=agent_selector,
+        model="gpt-4o-mini",
+        query=query,
+        options=context_pb2.AssemblyOptions(
+            skip_hot_memories=flags.skip_hot,
+            skip_cold_memories=flags.skip_cold,
+        ),
+    )
+    principal = req.principal_context
+    principal.org_id = env.org_a
+    principal.agent_id = env.agent_a
+    principal.principal_id = "phase35-e2e"
+    principal.authority = "AuthService"
+    # Fresh per call so long e2e runs stay inside the +/-30s skew window.
+    principal.issued_at.GetCurrentTime()
+    return req
 
 
 def assemble_once(env: Env, query: str, opts: AssembleOpts | None = None) -> Any:
@@ -312,19 +359,32 @@ def assemble_once(env: Env, query: str, opts: AssembleOpts | None = None) -> Any
             request_serializer=context_pb2.AssembleContextRequest.SerializeToString,
             response_deserializer=context_pb2.AssembleContextResponse.FromString,
         )
-        req = context_pb2.AssembleContextRequest(
-            org_id=env.org_a,
-            agent_id=env.agent_a,
-            model="gpt-4o-mini",
-            query=query,
-            options=context_pb2.AssemblyOptions(
-                skip_hot_memories=flags.skip_hot,
-                skip_cold_memories=flags.skip_cold,
-            ),
+        return method(
+            _assemble_request(env, query, flags),
+            timeout=5.0,
+            metadata=_context_metadata(env, flags),
         )
-        return method(req, timeout=5.0)
     finally:
         channel.close()
+
+
+def assemble_expect_error(
+    env: Env,
+    query: str,
+    expected: Any,
+    opts: AssembleOpts | None = None,
+) -> None:
+    """Assert AssembleContext fails with *expected* (ADR-0096 negative legs)."""
+    require_grpc()
+    try:
+        assemble_once(env, query, opts)
+    except grpc.RpcError as exc:
+        code = exc.code()
+        if code != expected:
+            details = (exc.details() or "")[:160]
+            raise AssertionError(f"want {expected}, got {code}: {details}") from exc
+        return
+    raise AssertionError(f"want {expected}, but AssembleContext succeeded")
 
 
 def mcp_jsonrpc(

@@ -39,6 +39,10 @@ import (
 // authCacheRedisPingTO bounds the startup Ping that gates auth-cache wrap.
 const authCacheRedisPingTO = 2 * time.Second
 
+// contextCallerAuthProbeTO bounds the startup caller-auth probe. It stays short
+// so a wedged context service cannot stall proxy startup.
+const contextCallerAuthProbeTO = 1500 * time.Millisecond
+
 func setupRateLimiter(cfg config.Config, log *logger.Logger) (redis.UniversalClient, ratelimit.Limiter, error) {
 	if cfg.RedisURL == "" {
 		return nil, ratelimit.Noop(), nil
@@ -184,12 +188,19 @@ type contextClients struct {
 	conn   *grpc.ClientConn
 }
 
+// setupContextClient builds the context client only when context assembly is
+// enabled. A disabled or target-less config dials nothing, probes nothing, and
+// never holds the service token.
 func setupContextClient(cfg config.Config, log *logger.Logger, m *ibexmetrics.ProxyRegistry) (contextClients, error) {
-	if strings.TrimSpace(cfg.ContextGRPCTarget) == "" {
+	if !cfg.ContextEnabled || strings.TrimSpace(cfg.ContextGRPCTarget) == "" {
 		return contextClients{}, nil
 	}
 	dialed, err := dialContextGRPC(cfg, log, m)
 	if err != nil {
+		return contextClients{}, err
+	}
+	if err := probeContextCallerAuth(dialed.client, log); err != nil {
+		_ = dialed.conn.Close() //nolint:errcheck // best-effort cleanup; preserve probe error
 		return contextClients{}, err
 	}
 	return dialed, nil
@@ -208,7 +219,7 @@ func dialContextGRPC(cfg config.Config, log *logger.Logger, m *ibexmetrics.Proxy
 		return contextClients{}, fmt.Errorf("context grpc dial target=%s: %w", cfg.ContextGRPCTarget, err)
 	}
 	stub := contextv1.NewContextAssemblyServiceClient(conn)
-	client, err := contextclient.New(stub, cfg.ContextAssembleTimeout, log)
+	client, err := contextclient.New(stub, cfg.ContextAssembleTimeout, log, cfg.ContextGRPCServiceToken)
 	if err != nil {
 		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
 		return contextClients{}, fmt.Errorf("context client: %w", err)
@@ -217,9 +228,39 @@ func dialContextGRPC(cfg config.Config, log *logger.Logger, m *ibexmetrics.Proxy
 	log.InfoCtx(context.Background(), "context grpc client configured",
 		"target", cfg.ContextGRPCTarget,
 		"timeout", cfg.ContextAssembleTimeout.String(),
+		"caller_auth", "service-token",
 		"tls", cfg.Environment != "development",
 	)
 	return contextClients{client: client, conn: conn}, nil
+}
+
+// contextCallerAuthProber is satisfied by *contextclient.Client.
+type contextCallerAuthProber interface {
+	ProbeCallerAuth(ctx context.Context) error
+}
+
+// probeContextCallerAuth fails startup only when the context server rejects the
+// service token. A transport failure keeps today's availability behaviour: warn
+// and continue, because the chat path is already fail-open.
+func probeContextCallerAuth(prober contextCallerAuthProber, log *logger.Logger) error {
+	ctx, cancel := context.WithTimeout(context.Background(), contextCallerAuthProbeTO)
+	defer cancel()
+	err := prober.ProbeCallerAuth(ctx)
+	if err == nil {
+		log.InfoCtx(context.Background(), "context caller authentication probe passed",
+			"caller_auth", "service-token", "rpc", "SearchMemories")
+		return nil
+	}
+	if errors.Is(err, contextclient.ErrCallerAuthRejected) {
+		return fmt.Errorf(
+			"context caller authentication rejected: IBEX_CONTEXT_GRPC_SERVICE_TOKEN is missing or does not match the context server: %w",
+			err,
+		)
+	}
+	// Stable class only: the wrapped error carries the gRPC code, never the token.
+	log.WarnCtx(context.Background(), "context caller authentication probe inconclusive; continuing",
+		"caller_auth", "service-token", "reason", err.Error())
+	return nil
 }
 
 func authTransportCredentials(environment string) credentials.TransportCredentials {
