@@ -33,4 +33,8 @@ regexes = [
   # values so a real key that merely contains them is still reported.
   '''\b0123456789abcdef0123456789abcdef\b''',
   '''\bABCDEFGHIJ_KLMNOPQRST-UVWXYZ012345\b''',
+  # The G0 review packet describes the policy-snapshot signature as
+  # "RS256-signed". gitleaks' generic-api-key heuristic matches that hyphenated
+  # phrase; it is a documentation adjective, not a credential.
+  '''\bRS256-signed\b''',
 ]
