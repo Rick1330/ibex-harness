@@ -190,7 +190,7 @@ class Settings(BaseSettings):
     redis_timeout_seconds: float = Field(default=0.5, gt=0)
 
     auth_grpc_addr: str = Field(
-        default="127.0.0.1:8081",
+        default="127.0.0.1:9091",
         validation_alias=AliasChoices("IBEX_AUTH_GRPC_ADDR", "IBEX_MEMORY_AUTH_GRPC_ADDR"),
         description="Auth service gRPC target for ValidateToken",
     )

@@ -58,3 +58,12 @@ def test_rank_weights_must_sum_to_one(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("IBEX_RANK_WEIGHT_FREQUENCY", "0.0")
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_auth_grpc_default_targets_auth_grpc_not_its_http_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """9091 is AuthService gRPC; 8081 is its HTTP port and cannot serve ValidateToken."""
+    monkeypatch.delenv("IBEX_AUTH_GRPC_ADDR", raising=False)
+    monkeypatch.delenv("IBEX_MEMORY_AUTH_GRPC_ADDR", raising=False)
+    assert Settings().auth_grpc_addr == "127.0.0.1:9091"
