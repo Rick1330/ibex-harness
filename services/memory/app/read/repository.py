@@ -37,6 +37,7 @@ from app.read.ranking import (
     merge_candidates,
     rank_hydrated_hits,
 )
+from app.tracing import start_span
 from app.vectorstore.base import SearchHit, SearchMode, SearchRequest, VectorStore
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,17 @@ def _hybrid_enabled(settings: Settings, *, query_text: str) -> bool:
     which is exactly when an exact-token match was most likely to be missing.
     """
     return settings.search_hybrid_enabled and is_searchable_query(query_text)
+
+
+def _rerank_host(client: RerankClient) -> str:
+    """Endpoint host for the rerank span.
+
+    Tests inject duck-typed rerankers that implement ``rerank`` without ``host``,
+    so the lookup stays tolerant and anything that is not a string is dropped
+    rather than handed to ``set_attribute``.
+    """
+    host = getattr(client, "host", "")
+    return host if isinstance(host, str) else ""
 
 
 class MemoryReadRepository:
@@ -321,24 +333,34 @@ class MemoryReadRepository:
             return None, allowed
         documents = [spec.hydrated[memory_id].result.content for memory_id in ids]
         started = time.monotonic()
-        try:
-            scores = await asyncio.wait_for(
-                client.rerank(spec.query.query_text, documents),
-                timeout=self._settings.rerank_timeout_ms / 1000,
-            )
-        except (TimeoutError, RerankClientError) as exc:
-            RERANK.labels(result="degraded").inc()
-            logger.warning(
-                "rerank degraded (%s) candidates=%d timeout_ms=%d",
-                type(exc).__name__,
-                len(ids),
-                self._settings.rerank_timeout_ms,
-            )
-            return None, allowed
-        finally:
-            # A timed-out call is the slow call the latency panel must show.
-            RERANK_LATENCY.observe(time.monotonic() - started)
-        return dict(zip(ids, scores, strict=True)), allowed
+        host = _rerank_host(client)
+        with start_span(
+            "rerank",
+            attributes={
+                "server.address": host,
+                "rerank.endpoint_host": host,
+            },
+        ) as span:
+            try:
+                scores = await asyncio.wait_for(
+                    client.rerank(spec.query.query_text, documents),
+                    timeout=self._settings.rerank_timeout_ms / 1000,
+                )
+                span.set_attribute("rerank.outcome", "applied")
+            except (TimeoutError, RerankClientError) as exc:
+                span.set_attribute("rerank.outcome", "degraded")
+                RERANK.labels(result="degraded").inc()
+                logger.warning(
+                    "rerank degraded (%s) candidates=%d timeout_ms=%d",
+                    type(exc).__name__,
+                    len(ids),
+                    self._settings.rerank_timeout_ms,
+                )
+                return None, allowed
+            finally:
+                # A timed-out call is the slow call the latency panel must show.
+                RERANK_LATENCY.observe(time.monotonic() - started)
+            return dict(zip(ids, scores, strict=True)), allowed
 
     async def _rank_fused_window(
         self,
@@ -513,17 +535,24 @@ class MemoryReadRepository:
         return kept[: query.limit]
 
     async def _vector_candidates(self, query: FindSimilarQuery) -> list[RankedCandidate]:
-        vector_hits = await self._vector_store.search(
-            SearchRequest(
-                org_id=query.org_id,
-                agent_id=query.agent_id,
-                query_embedding=query.query_embedding,
-                limit=query.limit,
-                min_similarity=query.min_similarity,
-                mode=SearchMode.USER_RETRIEVAL,
+        with start_span(
+            "vector_search",
+            attributes={
+                "db.system": "postgresql",
+                "search.mode": "user_retrieval",
+            },
+        ):
+            vector_hits = await self._vector_store.search(
+                SearchRequest(
+                    org_id=query.org_id,
+                    agent_id=query.agent_id,
+                    query_embedding=query.query_embedding,
+                    limit=query.limit,
+                    min_similarity=query.min_similarity,
+                    mode=SearchMode.USER_RETRIEVAL,
+                )
             )
-        )
-        return _vector_candidates(vector_hits)
+            return _vector_candidates(vector_hits)
 
     async def _fts_candidates(
         self,
@@ -574,50 +603,58 @@ class MemoryReadRepository:
     ) -> dict[UUID, HydratedHit]:
         if not candidates:
             return {}
-        ids = [str(item.memory_id) for item in candidates]
-        async with self._session_factory() as session, session.begin():
-            await set_service_org(session, org_id)
-            result = await session.execute(
-                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text  # nosec B608
-                    _HYDRATE_SQL
-                ),
-                {
-                    "org_id": str(org_id),
-                    "memory_ids": ids,
-                    "min_confidence": min_confidence,
-                },
-            )
-            rows = result.mappings().all()
+        with start_span(
+            "hydration",
+            attributes={
+                "db.system": "postgresql",
+                "db.operation": "hydrate",
+                "memory.candidate_count": len(candidates),
+            },
+        ):
+            ids = [str(item.memory_id) for item in candidates]
+            async with self._session_factory() as session, session.begin():
+                await set_service_org(session, org_id)
+                result = await session.execute(
+                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text  # nosec B608
+                        _HYDRATE_SQL
+                    ),
+                    {
+                        "org_id": str(org_id),
+                        "memory_ids": ids,
+                        "min_confidence": min_confidence,
+                    },
+                )
+                rows = result.mappings().all()
 
-        score_by_id = {item.memory_id: item for item in candidates}
-        out: dict[UUID, HydratedHit] = {}
-        for row in rows:
-            memory_id = UUID(str(row["id"]))
-            ranked = score_by_id.get(memory_id)
-            if ranked is None:
-                continue
-            out[memory_id] = HydratedHit(
-                result=MemorySearchResult(
-                    id=memory_id,
-                    org_id=UUID(str(row["org_id"])),
-                    agent_id=UUID(str(row["agent_id"])),
-                    content=str(row["content"]),
-                    category=str(row["category"]),
-                    confidence=float(row["confidence"]),
-                    status=str(row["status"]),
-                    similarity=ranked.score,
-                    source=ranked.source,
-                    created_at=row["created_at"],
-                    updated_at=row["updated_at"],
-                    categories=_categories_from_row(row),
-                    lifecycle_revision=int(row.get("lifecycle_revision", 1)),
-                    conflict_groups=conflict_groups_from_row(row),
-                ),
-                valid_from=row["valid_from"],
-                usefulness_score=float(row["usefulness_score"]),
-                retrieval_count=int(row["retrieval_count"]),
-            )
-        return out
+            score_by_id = {item.memory_id: item for item in candidates}
+            out: dict[UUID, HydratedHit] = {}
+            for row in rows:
+                memory_id = UUID(str(row["id"]))
+                ranked = score_by_id.get(memory_id)
+                if ranked is None:
+                    continue
+                out[memory_id] = HydratedHit(
+                    result=MemorySearchResult(
+                        id=memory_id,
+                        org_id=UUID(str(row["org_id"])),
+                        agent_id=UUID(str(row["agent_id"])),
+                        content=str(row["content"]),
+                        category=str(row["category"]),
+                        confidence=float(row["confidence"]),
+                        status=str(row["status"]),
+                        similarity=ranked.score,
+                        source=ranked.source,
+                        created_at=row["created_at"],
+                        updated_at=row["updated_at"],
+                        categories=_categories_from_row(row),
+                        lifecycle_revision=int(row.get("lifecycle_revision", 1)),
+                        conflict_groups=conflict_groups_from_row(row),
+                    ),
+                    valid_from=row["valid_from"],
+                    usefulness_score=float(row["usefulness_score"]),
+                    retrieval_count=int(row["retrieval_count"]),
+                )
+            return out
 
 
 def _categories_from_row(row: Mapping[str, object]) -> tuple[str, ...]:

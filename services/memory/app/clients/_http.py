@@ -11,9 +11,19 @@ import secrets
 from collections.abc import Generator
 
 import httpx
+from opentelemetry.propagate import inject
 
 BACKOFF_BASE_SECONDS = 0.25
 BACKOFF_MAX_SECONDS = 8.0
+
+
+async def inject_trace_context(request: httpx.Request) -> None:  # NOSONAR - httpx awaits hooks
+    """Attach W3C ``traceparent``/``tracestate`` to an outbound request.
+
+    ``httpx.AsyncClient`` awaits every request event hook unconditionally, so this
+    must be a coroutine function (a sync hook raises ``TypeError``).
+    """
+    inject(request.headers)
 
 
 class RedactedBearerAuth(httpx.Auth):

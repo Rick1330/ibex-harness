@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     )
     port: int = Field(default=8005, description="Bind port")
 
+    otel_endpoint: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "IBEX_OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT"
+        ),
+        description="OTLP collector endpoint (e.g. http://127.0.0.1:4318); empty disables export",
+    )
+
     database_url: str | None = Field(
         default=None,
         description="Async Postgres DSN (postgresql+asyncpg://...); required for VectorStore",

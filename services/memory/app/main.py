@@ -30,6 +30,7 @@ from app.read.hot_cache import MemoryHotCacheReader
 from app.read.lineage import MemoryLineageRepository
 from app.read.repository import MemoryReadRepository
 from app.routers.memories import router as memories_router
+from app.tracing import TracingMiddleware, configure_tracing, shutdown_tracing
 from app.vectorstore.pgvector_store import PgVectorStore
 from app.write.after_commit import AfterCommitHandler
 from app.write.cache import MemoryCacheWriter
@@ -103,6 +104,7 @@ def create_app(
     application.include_router(probe_router)
     application.include_router(memories_router)
     application.add_middleware(HTTPMetricsMiddleware)
+    application.add_middleware(TracingMiddleware)
     return application
 
 
@@ -113,6 +115,7 @@ async def _memory_service_lifespan(
     validator: TokenValidator | None,
 ) -> AsyncGenerator[None, None]:
     logger.info("memory service starting port=%s", cfg.port)
+    configure_tracing(cfg.otel_endpoint)
     auth = validator or GRPCTokenValidator(
         cfg.auth_grpc_addr,
         timeout_seconds=cfg.auth_timeout_ms / 1000.0,
@@ -125,6 +128,8 @@ async def _memory_service_lifespan(
         logger.error("memory not ready: %s", state.ready_error)
         yield
         await auth.aclose()
+        # The not-ready path never reaches _shutdown_memory, so flush here.
+        shutdown_tracing()
         return
 
     engine = create_engine(cfg)
@@ -240,6 +245,8 @@ async def _shutdown_memory(
     embedding_holder: dict[str, EmbeddingClient | None],
 ) -> None:
     state.ready = False
+    # ADR-0019 §8: flush the exporter before dependency teardown.
+    shutdown_tracing()
     client = embedding_holder.get("client")
     if client is not None:
         await client.aclose()
