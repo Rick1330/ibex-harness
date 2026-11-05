@@ -125,9 +125,10 @@ Every `AssembleContext` call carries exactly one `x-ibex-context-service-token` 
 entry built once from `IBEX_CONTEXT_GRPC_SERVICE_TOKEN`. The client attaches that entry and
 forwards no caller metadata, so a duplicate token or the auth-service `x-ibex-service-token`
 cannot reach the wire. On startup the proxy probes the server with `SearchMemories`:
-`UNIMPLEMENTED` means the token was accepted, `UNAUTHENTICATED` fails startup naming
-`IBEX_CONTEXT_GRPC_SERVICE_TOKEN`, and a transport failure stays non-fatal because per-request
-assembly is fail-open.
+`UNAUTHENTICATED` fails startup naming `IBEX_CONTEXT_GRPC_SERVICE_TOKEN`; `UNIMPLEMENTED` is
+recorded as **unproven**, because the stub method returns the same code on a server with no
+caller guard at all, so the proxy logs a warning and continues; a transport failure is also
+non-fatal because per-request assembly is fail-open.
 
 Config validation requires the token when `IBEX_CONTEXT_ENABLED=true` and
 `IBEX_CONTEXT_GRPC_TARGET` is non-empty, requires that target to resolve exclusively to

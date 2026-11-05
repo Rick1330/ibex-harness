@@ -259,8 +259,8 @@ def _split_host_and_port_text(addr: str) -> tuple[str, str]:
 
 
 def _parse_bind_port(addr: str, port_text: str) -> int:
-    """Require a decimal port in the inclusive ``0..65535`` bind range."""
-    if not port_text.isdigit():
+    """Require an ASCII decimal port in the inclusive ``0..65535`` bind range."""
+    if not port_text.isascii() or not port_text.isdigit():
         raise ValueError(
             f"IBEX_CONTEXT_GRPC_ADDR must end in a numeric port, got {addr!r}"
         )

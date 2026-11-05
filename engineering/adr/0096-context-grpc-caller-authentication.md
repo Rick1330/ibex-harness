@@ -84,7 +84,7 @@ signed principals, policy-snapshot freshness, and TLS are separate decisions.
 
 | Condition | gRPC | Proxy | User |
 |---|---|---|---|
-| Missing, duplicate, or wrong token | `UNAUTHENTICATED` | fail open | chat succeeds with directive-only context; fallback header `true` |
+| Missing, duplicate, or wrong token | `UNAUTHENTICATED` | startup fatal when the probe runs; fail open at runtime | startup error naming the variable; if the probe was skipped, directive-only with fallback header `true` |
 | Server has no token | startup error; no listener | `UNAVAILABLE`; fail open | degraded; startup log names the variable |
 | Non-loopback bind | startup error; no listener | `UNAVAILABLE`; fail open | degraded; prevents a plaintext credential on a network |
 | Missing or malformed principal | `UNAUTHENTICATED` | fail open | degraded; alert |
@@ -105,8 +105,11 @@ at the second boundary as well.
 overlap window. A stolen token can assert any tenant. A compromised proxy can forge any principal, as it already
 could. The boundary is plaintext and therefore loopback-only, which blocks container or networked deployment until
 TLS exists. A wrong token degrades to directive-only and is visible only through logs, metrics, and alerts. The
-startup probe treats `UNIMPLEMENTED` from `SearchMemories` as proof the token was accepted; if that stub is ever
-implemented, the probe must move to a method that stays a stub or to a dedicated auth RPC. Memory retrieval remains
+startup probe cannot prove a caller guard from `SearchMemories`: the stub returns `UNIMPLEMENTED` on a server with no
+guard at all, so `UNIMPLEMENTED` is recorded as **unproven** and only `UNAUTHENTICATED` is fatal. A wrong configured
+token therefore fails startup when the probe runs, but a probe that is skipped because the server is not yet listening
+leaves the proxy running and failing open. If the stub is ever implemented, the probe must move to a method that stays
+a stub or to a dedicated auth RPC. Memory retrieval remains
 scoped by the context service's memory credential, not by the principal; multi-tenant memory at this boundary needs a
 separate decision.
 

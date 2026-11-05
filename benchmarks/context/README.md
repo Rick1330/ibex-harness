@@ -22,6 +22,10 @@ because the page route is not implemented.
 
 In-process server + memory stubs. Asserts **p99 < 50ms** at the configured RPS.
 
+The p99 assertion is load-sensitive: a busy host (parallel Go builds, coverage runs) can push the
+p99 over 50 ms on an unchanged tree while the error rate stays at zero. Treat a p99-only failure
+as inconclusive, re-run on an idle host, and never widen the gate to make it pass.
+
 Launches are **open-loop**: RPCs are scheduled on a monotonic interval so in-flight
 concurrency rises when individual calls exceed the inter-arrival gap (true 500 RPS
 issuance, not serial await-per-call).
