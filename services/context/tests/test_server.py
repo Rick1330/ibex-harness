@@ -18,6 +18,7 @@ from server_test_support import (
     ORG,
     SERVICE_TOKEN,
     StubDirective,
+    StubHits,
     StubMemory,
     foreign_hit,
     principal_class,
@@ -344,7 +345,7 @@ async def test_assemble_denies_cross_tenant_selector_without_retrieval(pb2) -> N
 @pytest.mark.asyncio
 async def test_foreign_memory_hits_are_never_packed(pb2) -> None:
     """Proof (ADR-0096 H2): a hit from another tenant fails its branch."""
-    memory = StubMemory(hot_hits=[foreign_hit()], cold_hits=[foreign_hit()])
+    memory = StubMemory(hits=StubHits(hot=[foreign_hit()], cold=[foreign_hit()]))
     async with _rpc_channel(_assembler(memory=memory)) as channel:
         stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
         resp = await stub(_assemble_req(pb2, query="theme"), timeout=2.0, metadata=_metadata())
@@ -358,7 +359,7 @@ async def test_foreign_memory_hits_are_never_packed(pb2) -> None:
 
 @pytest.mark.asyncio
 async def test_foreign_hot_hit_does_not_block_healthy_cold_branch(pb2) -> None:
-    memory = StubMemory(hot_hits=[foreign_hit()])
+    memory = StubMemory(hits=StubHits(hot=[foreign_hit()]))
     async with _rpc_channel(_assembler(memory=memory)) as channel:
         stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
         resp = await stub(_assemble_req(pb2, query="theme"), timeout=2.0, metadata=_metadata())

@@ -32,7 +32,17 @@ func contextAuthConfig(tc contextAuthCase) Config {
 	}
 }
 
+// contextAuthCases is the full ADR-0096 caller-auth config matrix.
 func contextAuthCases() []contextAuthCase {
+	cases := contextActivationCases()
+	cases = append(cases, contextTokenShapeCases()...)
+	cases = append(cases, contextTargetCases()...)
+	return append(cases, contextEnvironmentCases()...)
+}
+
+// contextActivationCases covers the flag/target combinations: which of them
+// dial at all, and which of those require a token.
+func contextActivationCases() []contextAuthCase {
 	return []contextAuthCase{
 		{name: "disabled empty target", environment: envDevelopment},
 		{name: "disabled loopback without token", environment: envDevelopment, target: "127.0.0.1:9092"},
@@ -46,6 +56,13 @@ func contextAuthCases() []contextAuthCase {
 			name: "enabled loopback with token", environment: envDevelopment, enabled: true,
 			target: "127.0.0.1:9092", token: testContextServiceToken,
 		},
+	}
+}
+
+// contextTokenShapeCases pins the wire shape shared with the context server:
+// 32-512 characters from [A-Za-z0-9_-].
+func contextTokenShapeCases() []contextAuthCase {
+	return []contextAuthCase{
 		{
 			// The server pattern is ^[A-Za-z0-9_-]{32,512}$; a token outside it
 			// makes gRPC-Go reject the metadata as Internal, so startup must fail
@@ -81,6 +98,13 @@ func contextAuthCases() []contextAuthCase {
 			name: "enabled accepts hyphen and underscore", environment: envDevelopment, enabled: true,
 			target: "127.0.0.1:9092", token: "ABCDEFGHIJ_KLMNOPQRST-UVWXYZ012345",
 		},
+	}
+}
+
+// contextTargetCases covers host:port parsing and the loopback-only rule that
+// keeps the cleartext token off the network.
+func contextTargetCases() []contextAuthCase {
+	return []contextAuthCase{
 		{
 			name: "enabled localhost hostname with token", environment: envDevelopment, enabled: true,
 			target: "localhost:9092", token: testContextServiceToken,
@@ -107,6 +131,20 @@ func contextAuthCases() []contextAuthCase {
 			wantErr: "must resolve to a loopback address",
 		},
 		{
+			name: "enabled rejects malformed target", environment: envDevelopment, enabled: true,
+			target: "not-host-port", token: testContextServiceToken, wantErr: "must be host:port",
+		},
+		{
+			name: "enabled rejects a padded target", environment: envDevelopment, enabled: true,
+			target: " 127.0.0.1:9092 ", token: testContextServiceToken, wantErr: "leading or trailing whitespace",
+		},
+	}
+}
+
+// contextEnvironmentCases covers the deployable profiles that refuse context.
+func contextEnvironmentCases() []contextAuthCase {
+	return []contextAuthCase{
+		{
 			name: "enabled rejects a non-deployable test environment", environment: "test", enabled: true,
 			target: "127.0.0.1:9092", token: testContextServiceToken, wantErr: "IBEX_ENV=test",
 		},
@@ -117,14 +155,6 @@ func contextAuthCases() []contextAuthCase {
 		{
 			name: "enabled rejects production", environment: envProduction, enabled: true,
 			target: "127.0.0.1:9092", token: testContextServiceToken, wantErr: "IBEX_ENV=production",
-		},
-		{
-			name: "enabled rejects malformed target", environment: envDevelopment, enabled: true,
-			target: "not-host-port", token: testContextServiceToken, wantErr: "must be host:port",
-		},
-		{
-			name: "enabled rejects a padded target", environment: envDevelopment, enabled: true,
-			target: " 127.0.0.1:9092 ", token: testContextServiceToken, wantErr: "leading or trailing whitespace",
 		},
 	}
 }

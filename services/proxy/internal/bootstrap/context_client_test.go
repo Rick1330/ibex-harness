@@ -23,107 +23,97 @@ import (
 // bootstrapContextToken satisfies the ADR-0096 non-empty token rule.
 const bootstrapContextToken = "0123456789abcdef0123456789abcdef"
 
+// contextTestConfig is an enabled development context client aimed at target.
+func contextTestConfig(target, token string) config.Config {
+	return config.Config{
+		Environment:             "development",
+		ContextEnabled:          true,
+		ContextGRPCTarget:       target,
+		ContextAssembleTimeout:  45 * time.Millisecond,
+		ContextGRPCServiceToken: token,
+	}
+}
+
+// contextProbeConfig is contextTestConfig with the longer wall a live probe needs.
+func contextProbeConfig(target string) config.Config {
+	cfg := contextTestConfig(target, bootstrapContextToken)
+	cfg.ContextAssembleTimeout = 500 * time.Millisecond
+	return cfg
+}
+
+// requireContextClient asserts a live client/conn pair and closes the conn at cleanup.
+func requireContextClient(t *testing.T, got contextClients) {
+	t.Helper()
+	if got.client == nil || got.conn == nil {
+		t.Fatal("expected non-nil client and conn")
+	}
+	t.Cleanup(func() {
+		if err := got.conn.Close(); err != nil {
+			t.Errorf("close conn: %v", err)
+		}
+	})
+}
+
+// requireNoContextClient asserts the setup left nothing dialled.
+func requireNoContextClient(t *testing.T, got contextClients, what string) {
+	t.Helper()
+	if got.client != nil || got.conn != nil {
+		t.Fatalf("%s must build no client/conn, got %+v", what, got)
+	}
+}
+
 func TestUnit_SetupContextClient_DisabledBuildsNothing(t *testing.T) {
 	t.Parallel()
 
-	got, err := setupContextClient(config.Config{
-		Environment:             "development",
-		ContextEnabled:          false,
-		ContextGRPCTarget:       "127.0.0.1:9092",
-		ContextAssembleTimeout:  45 * time.Millisecond,
-		ContextGRPCServiceToken: bootstrapContextToken,
-	}, logger.Discard("proxy"), nil)
+	cfg := contextTestConfig("127.0.0.1:9092", bootstrapContextToken)
+	cfg.ContextEnabled = false
+	got, err := setupContextClient(cfg, logger.Discard("proxy"), nil)
 	if err != nil {
 		t.Fatalf("setupContextClient: %v", err)
 	}
-	if got.client != nil || got.conn != nil {
-		t.Fatalf("disabled context must build no client/conn, got %+v", got)
-	}
+	requireNoContextClient(t, got, "disabled context")
 }
 
 func TestUnit_SetupContextClient_EmptyTarget(t *testing.T) {
 	t.Parallel()
 
-	got, err := setupContextClient(config.Config{
-		Environment:            "development",
-		ContextEnabled:         true,
-		ContextGRPCTarget:      "",
-		ContextAssembleTimeout: 45 * time.Millisecond,
-	}, logger.Discard("proxy"), nil)
+	got, err := setupContextClient(contextTestConfig("", ""), logger.Discard("proxy"), nil)
 	if err != nil {
 		t.Fatalf("setupContextClient: %v", err)
 	}
-	if got.client != nil || got.conn != nil {
-		t.Fatalf("expected nil client/conn for empty target, got %+v", got)
-	}
+	requireNoContextClient(t, got, "empty target")
 }
 
 func TestUnit_SetupContextClient_RejectsEmptyToken(t *testing.T) {
 	t.Parallel()
 
-	got, err := setupContextClient(config.Config{
-		Environment:            "development",
-		ContextEnabled:         true,
-		ContextGRPCTarget:      "127.0.0.1:9092",
-		ContextAssembleTimeout: 45 * time.Millisecond,
-	}, logger.Discard("proxy"), nil)
+	got, err := setupContextClient(contextTestConfig("127.0.0.1:9092", ""), logger.Discard("proxy"), nil)
 	if err == nil || !strings.Contains(err.Error(), "empty context service token") {
 		t.Fatalf("setupContextClient() error=%v, want empty-token rejection", err)
 	}
-	if got.client != nil || got.conn != nil {
-		t.Fatalf("rejected config must not leave a client/conn, got %+v", got)
-	}
+	requireNoContextClient(t, got, "rejected config")
 }
 
 func TestUnit_SetupContextClient_DialsAndProbesUnavailableContinues(t *testing.T) {
 	t.Parallel()
 
-	got, err := setupContextClient(config.Config{
-		Environment:             "development",
-		ContextEnabled:          true,
-		ContextGRPCTarget:       closedLoopbackAddr(t),
-		ContextAssembleTimeout:  45 * time.Millisecond,
-		ContextGRPCServiceToken: bootstrapContextToken,
-	}, logger.Discard("proxy"), nil)
+	cfg := contextTestConfig(closedLoopbackAddr(t), bootstrapContextToken)
+	got, err := setupContextClient(cfg, logger.Discard("proxy"), nil)
 	if err != nil {
 		t.Fatalf("UNAVAILABLE probe must continue startup, got %v", err)
 	}
-	if got.client == nil || got.conn == nil {
-		t.Fatal("expected non-nil client and conn")
-	}
-	t.Cleanup(func() {
-		if err := got.conn.Close(); err != nil {
-			t.Errorf("close conn: %v", err)
-		}
-	})
+	requireContextClient(t, got)
 }
 
 func TestUnit_SetupContextClient_ProbeUnimplementedContinuesButUnproven(t *testing.T) {
 	t.Parallel()
 
-	observed := make(chan []string, 1)
-	addr := startStubContextServer(t, &stubContextServer{
-		searchErr:     status.Error(codes.Unimplemented, "stub"),
-		observedToken: observed,
-	})
-	got, err := setupContextClient(config.Config{
-		Environment:             "development",
-		ContextEnabled:          true,
-		ContextGRPCTarget:       addr,
-		ContextAssembleTimeout:  500 * time.Millisecond,
-		ContextGRPCServiceToken: bootstrapContextToken,
-	}, logger.Discard("proxy"), nil)
+	addr, observed := stubContextProbe(t, status.Error(codes.Unimplemented, "stub"))
+	got, err := setupContextClient(contextProbeConfig(addr), logger.Discard("proxy"), nil)
 	if err != nil {
 		t.Fatalf("UNIMPLEMENTED probe must pass startup, got %v", err)
 	}
-	if got.client == nil || got.conn == nil {
-		t.Fatal("expected non-nil client and conn")
-	}
-	t.Cleanup(func() {
-		if err := got.conn.Close(); err != nil {
-			t.Errorf("close conn: %v", err)
-		}
-	})
+	requireContextClient(t, got)
 	assertObservedToken(t, observed)
 }
 
@@ -143,24 +133,11 @@ func TestUnit_SetupContextClient_NoGuardAnywhereDoesNotClaimVerifiedBoundary(t *
 	// UnimplementedContextAssemblyServiceServer installs no guard: every RPC,
 	// SearchMemories included, answers UNIMPLEMENTED.
 	addr := startStubContextServer(t, &contextv1.UnimplementedContextAssemblyServiceServer{})
-	got, err := setupContextClient(config.Config{
-		Environment:             "development",
-		ContextEnabled:          true,
-		ContextGRPCTarget:       addr,
-		ContextAssembleTimeout:  500 * time.Millisecond,
-		ContextGRPCServiceToken: bootstrapContextToken,
-	}, log, nil)
+	got, err := setupContextClient(contextProbeConfig(addr), log, nil)
 	if err != nil {
 		t.Fatalf("unguarded UNIMPLEMENTED probe must not fail startup, got %v", err)
 	}
-	if got.client == nil || got.conn == nil {
-		t.Fatal("expected non-nil client and conn")
-	}
-	t.Cleanup(func() {
-		if err := got.conn.Close(); err != nil {
-			t.Errorf("close conn: %v", err)
-		}
-	})
+	requireContextClient(t, got)
 	output := logs.String()
 	if strings.Contains(output, "probe passed") {
 		t.Fatalf("log claims the caller-auth boundary is verified:\n%s", output)
@@ -178,18 +155,8 @@ func TestUnit_SetupContextClient_NoGuardAnywhereDoesNotClaimVerifiedBoundary(t *
 func TestUnit_SetupContextClient_ProbeUnauthenticatedFailsStartup(t *testing.T) {
 	t.Parallel()
 
-	observed := make(chan []string, 1)
-	addr := startStubContextServer(t, &stubContextServer{
-		searchErr:     status.Error(codes.Unauthenticated, "caller authentication required"),
-		observedToken: observed,
-	})
-	got, err := setupContextClient(config.Config{
-		Environment:             "development",
-		ContextEnabled:          true,
-		ContextGRPCTarget:       addr,
-		ContextAssembleTimeout:  500 * time.Millisecond,
-		ContextGRPCServiceToken: bootstrapContextToken,
-	}, logger.Discard("proxy"), nil)
+	addr, observed := stubContextProbe(t, status.Error(codes.Unauthenticated, "caller authentication required"))
+	got, err := setupContextClient(contextProbeConfig(addr), logger.Discard("proxy"), nil)
 	if err == nil || !errors.Is(err, contextclient.ErrCallerAuthRejected) {
 		t.Fatalf("setupContextClient() error=%v, want rejected caller auth", err)
 	}
@@ -199,9 +166,7 @@ func TestUnit_SetupContextClient_ProbeUnauthenticatedFailsStartup(t *testing.T) 
 	if strings.Contains(err.Error(), bootstrapContextToken) {
 		t.Fatal("error must never contain the token value")
 	}
-	if got.client != nil || got.conn != nil {
-		t.Fatalf("rejected startup must not leave a client/conn, got %+v", got)
-	}
+	requireNoContextClient(t, got, "rejected startup")
 	assertObservedToken(t, observed)
 }
 
@@ -257,12 +222,21 @@ func (s *stubContextServer) SearchMemories(ctx context.Context, _ *contextv1.Sea
 	return &contextv1.SearchMemoriesResponse{}, nil
 }
 
+// stubContextProbe serves searchErr from a stub context server and reports the
+// token metadata it observed on the probe call.
+func stubContextProbe(t *testing.T, searchErr error) (string, <-chan []string) {
+	t.Helper()
+	observed := make(chan []string, 1)
+	addr := startStubContextServer(t, &stubContextServer{
+		searchErr:     searchErr,
+		observedToken: observed,
+	})
+	return addr, observed
+}
+
 func startStubContextServer(t *testing.T, impl contextv1.ContextAssemblyServiceServer) string {
 	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	lis := listenLoopback(t)
 	srv := grpc.NewServer() // nosemgrep: go.grpc.security.grpc-server-insecure-connection -- loopback-only test stub; the caller-auth boundary is what this test exercises
 	contextv1.RegisterContextAssemblyServiceServer(srv, impl)
 	go func() {
@@ -274,15 +248,21 @@ func startStubContextServer(t *testing.T, impl contextv1.ContextAssemblyServiceS
 
 func closedLoopbackAddr(t *testing.T) string {
 	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	lis := listenLoopback(t)
 	addr := lis.Addr().String()
 	if err := lis.Close(); err != nil {
 		t.Fatalf("close listener: %v", err)
 	}
 	return addr
+}
+
+func listenLoopback(t *testing.T) net.Listener {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	return lis
 }
 
 func assertObservedToken(t *testing.T, observed <-chan []string) {

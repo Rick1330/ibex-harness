@@ -210,6 +210,15 @@ func (c Config) validateAuthConfig() error {
 	return c.validateContextGRPCConfig()
 }
 
+// contextCallerInputs groups the three ADR-0096 caller-auth inputs the
+// context-client validators need: the environment gates TLS, the host bounds
+// where the cleartext token may travel, and the token itself.
+type contextCallerInputs struct {
+	environment string
+	host        string
+	token       string
+}
+
 // validateContextGRPCConfig allows an empty target (skip dial until D.5 feature flag).
 // When set, the value must be host:port; timeout must be positive after ApplyDefaults.
 // When context assembly is enabled it additionally enforces the ADR-0096 caller
@@ -232,23 +241,27 @@ func (c Config) validateContextGRPCConfig() error {
 	if c.ContextAssembleTimeout <= 0 {
 		return fmt.Errorf("IBEX_CONTEXT_ASSEMBLE_TIMEOUT must be positive")
 	}
-	return c.validateEnabledContextCaller(host)
+	return c.validateEnabledContextCaller(contextCallerInputs{
+		environment: c.Environment,
+		host:        host,
+		token:       c.ContextGRPCServiceToken,
+	})
 }
 
 // validateEnabledContextCaller enforces the caller-auth preconditions that only
 // matter when Assemble can actually run. A disabled client never carries the
 // token, so its target and token stay unconstrained beyond host:port.
-func (c Config) validateEnabledContextCaller(host string) error {
+func (c Config) validateEnabledContextCaller(caller contextCallerInputs) error {
 	if !c.ContextEnabled {
 		return nil
 	}
-	if err := validateContextEnvironment(c.Environment); err != nil {
+	if err := validateContextEnvironment(caller.environment); err != nil {
 		return err
 	}
-	if err := validateContextTargetLoopback(host); err != nil {
+	if err := validateContextTargetLoopback(caller.host); err != nil {
 		return err
 	}
-	return validateContextServiceToken(c.ContextGRPCServiceToken)
+	return validateContextServiceToken(caller.token)
 }
 
 // validateContextServiceToken requires a token the context server will accept.

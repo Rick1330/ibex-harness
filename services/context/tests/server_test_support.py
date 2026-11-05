@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass
 from uuid import uuid4
 
 from pydantic import SecretStr
@@ -64,6 +65,14 @@ class StubDirective:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class StubHits:
+    """Per-path hit overrides; ``None`` keeps the default hit for that path."""
+
+    hot: list[MemoryHitPayload] | None = None
+    cold: list[MemoryHitPayload] | None = None
+
+
 class StubMemory:
     """Optional per-path delays so cold can outlive deadline_ms but not timeout_ms."""
 
@@ -73,15 +82,15 @@ class StubMemory:
         delay_s: float = 0.0,
         hot_delay_s: float | None = None,
         cold_delay_s: float | None = None,
-        hot_hits: list[MemoryHitPayload] | None = None,
-        cold_hits: list[MemoryHitPayload] | None = None,
+        hits: StubHits | None = None,
     ) -> None:
         self._hot_delay_s = delay_s if hot_delay_s is None else hot_delay_s
         self._cold_delay_s = delay_s if cold_delay_s is None else cold_delay_s
         self.hot_calls = 0
         self.cold_calls = 0
-        self._hot_hits = hot_hits
-        self._cold_hits = cold_hits
+        overrides = hits or StubHits()
+        self._hot_hits = overrides.hot
+        self._cold_hits = overrides.cold
         self._hit = MemoryHitPayload(
             memory_id=str(uuid4()),
             org_id=str(ORG),

@@ -68,15 +68,9 @@ def verify_principal(request: object, *, now: float | None = None) -> VerifiedPr
     org_id = _canonical_uuid(_text_field(principal, "org_id"), label="org_id")
     agent_id = _canonical_uuid(_text_field(principal, "agent_id"), label="agent_id")
     _require_principal_id(_text_field(principal, "principal_id"))
-    issued_at = _timestamp_seconds(principal, "issued_at")
-    if issued_at is None:
-        raise PrincipalInvalid("issued_at is required")
     current = time.time() if now is None else now
-    if abs(current - issued_at) > MAX_PRINCIPAL_SKEW_SECONDS:
-        raise PrincipalInvalid("issued_at is outside the +/-30s window")
-    expires_at = _timestamp_seconds(principal, "expires_at")
-    if expires_at is not None and current - expires_at > MAX_PRINCIPAL_SKEW_SECONDS:
-        raise PrincipalInvalid("principal context is expired")
+    _require_issued_at(principal, current)
+    _require_not_expired(principal, current)
     return VerifiedPrincipal(
         org_id=org_id,
         agent_id=agent_id,
@@ -119,6 +113,20 @@ def _require_authority(principal: object) -> None:
         raise PrincipalInvalid("principal authority must be AuthService")
 
 
+def _require_issued_at(principal: object, current: float) -> None:
+    issued_at = _timestamp_seconds(principal, "issued_at")
+    if issued_at is None:
+        raise PrincipalInvalid("issued_at is required")
+    if abs(current - issued_at) > MAX_PRINCIPAL_SKEW_SECONDS:
+        raise PrincipalInvalid("issued_at is outside the +/-30s window")
+
+
+def _require_not_expired(principal: object, current: float) -> None:
+    expires_at = _timestamp_seconds(principal, "expires_at")
+    if expires_at is not None and current - expires_at > MAX_PRINCIPAL_SKEW_SECONDS:
+        raise PrincipalInvalid("principal context is expired")
+
+
 def _require_principal_id(principal_id: str) -> None:
     if not principal_id or principal_id != principal_id.strip():
         raise PrincipalInvalid("principal_id must be a bounded non-empty string")
@@ -142,13 +150,22 @@ def _timestamp_seconds(message: object, name: str) -> float | None:
     holder = getattr(message, name, None)
     if holder is None:
         return None
+    return _holder_seconds(holder, name=name)
+
+
+def _holder_seconds(holder: object, *, name: str) -> float:
+    """Coerce a proto ``Timestamp`` (or a bare number in tests) to seconds."""
     seconds = getattr(holder, "seconds", None)
     if seconds is None:
-        if isinstance(holder, (int, float)) and not isinstance(holder, bool):
+        if _is_number(holder):
             return float(holder)
         raise PrincipalInvalid(f"{name} must be a proto timestamp")
     nanos = getattr(holder, "nanos", 0) or 0
     return float(seconds) + float(nanos) / 1e9
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _correlation(raw: str) -> str:

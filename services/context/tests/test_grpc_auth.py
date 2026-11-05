@@ -44,10 +44,53 @@ class _Ctx:
         raise grpc.aio.AioRpcError(code, details=details)
 
 
-async def _rejection(ctx: _Ctx) -> grpc.aio.AioRpcError:
+async def _rejection(ctx: object) -> grpc.aio.AioRpcError:
     with pytest.raises(grpc.aio.AioRpcError) as exc_info:
         await require_service_token(ctx, TOKEN, method="AssembleContext")  # type: ignore[arg-type]
     return exc_info.value
+
+
+async def _accepted(metadata: object) -> None:
+    """Assert the guard accepts invocation metadata and records no abort."""
+    ctx = _Ctx(metadata)
+    await require_service_token(ctx, TOKEN, method="AssembleContext")  # type: ignore[arg-type]
+    assert ctx.aborts == []
+
+
+async def _rejected_context(
+    ctx: object,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    reason: str | None = None,
+) -> grpc.aio.AioRpcError:
+    """Assert an UNAUTHENTICATED rejection, optionally pinning the log reason."""
+    with caplog.at_level(logging.WARNING, logger="app.grpc_auth"):
+        err = await _rejection(ctx)
+    assert err.code() == grpc.StatusCode.UNAUTHENTICATED
+    if reason is not None:
+        assert f"reason={reason}" in caplog.text
+    return err
+
+
+async def _rejected(
+    metadata: object,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    reason: str | None = None,
+) -> grpc.aio.AioRpcError:
+    """Assert an UNAUTHENTICATED rejection for raw invocation metadata."""
+    return await _rejected_context(_Ctx(metadata), caplog, reason=reason)
+
+
+def _recorder() -> tuple[grpc_auth.Handler, list[object]]:
+    """A handler stand-in that records the requests it is called with."""
+    calls: list[object] = []
+
+    async def _handler(request: object, _context: object) -> object:
+        calls.append(request)
+        return "ok"
+
+    return _handler, calls
 
 
 def test_validate_service_token_accepts_a_configured_token() -> None:
@@ -98,62 +141,46 @@ def test_tokens_match_returns_false_on_type_error(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.asyncio
 async def test_require_service_token_accepts_single_matching_entry() -> None:
-    ctx = _Ctx(((SERVICE_TOKEN_METADATA_KEY, TOKEN),))
-    await require_service_token(ctx, TOKEN, method="AssembleContext")  # type: ignore[arg-type]
-    assert ctx.aborts == []
+    await _accepted(((SERVICE_TOKEN_METADATA_KEY, TOKEN),))
 
 
 @pytest.mark.asyncio
 async def test_require_service_token_accepts_metadatum_objects() -> None:
-    ctx = _Ctx([Metadatum(SERVICE_TOKEN_METADATA_KEY, TOKEN)])
-    await require_service_token(ctx, TOKEN, method="AssembleContext")  # type: ignore[arg-type]
-    assert ctx.aborts == []
+    await _accepted([Metadatum(SERVICE_TOKEN_METADATA_KEY, TOKEN)])
 
 
 @pytest.mark.asyncio
 async def test_require_service_token_normalizes_keys_and_bytes_values() -> None:
-    ctx = _Ctx([(SERVICE_TOKEN_METADATA_KEY.upper().encode(), TOKEN.encode())])
-    await require_service_token(ctx, TOKEN, method="AssembleContext")  # type: ignore[arg-type]
-    assert ctx.aborts == []
+    await _accepted([(SERVICE_TOKEN_METADATA_KEY.upper().encode(), TOKEN.encode())])
 
 
 @pytest.mark.asyncio
 async def test_require_service_token_rejects_missing(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    ctx = _Ctx(())
-    with caplog.at_level(logging.WARNING, logger="app.grpc_auth"):
-        err = await _rejection(ctx)
-    assert err.code() == grpc.StatusCode.UNAUTHENTICATED
+    err = await _rejected((), caplog, reason=REASON_MISSING)
     assert err.details() == UNAUTHENTICATED_DETAILS
-    assert f"reason={REASON_MISSING}" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_require_service_token_rejects_duplicate(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    ctx = _Ctx(
+    await _rejected(
         (
             (SERVICE_TOKEN_METADATA_KEY, TOKEN),
             (SERVICE_TOKEN_METADATA_KEY, TOKEN),
-        )
+        ),
+        caplog,
+        reason=REASON_DUPLICATE,
     )
-    with caplog.at_level(logging.WARNING, logger="app.grpc_auth"):
-        err = await _rejection(ctx)
-    assert err.code() == grpc.StatusCode.UNAUTHENTICATED
-    assert f"reason={REASON_DUPLICATE}" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_require_service_token_rejects_mismatch(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    ctx = _Ctx(((SERVICE_TOKEN_METADATA_KEY, OTHER),))
-    with caplog.at_level(logging.WARNING, logger="app.grpc_auth"):
-        err = await _rejection(ctx)
-    assert err.code() == grpc.StatusCode.UNAUTHENTICATED
-    assert f"reason={REASON_MISMATCH}" in caplog.text
+    await _rejected(((SERVICE_TOKEN_METADATA_KEY, OTHER),), caplog, reason=REASON_MISMATCH)
     assert TOKEN not in caplog.text
     assert OTHER not in caplog.text
 
@@ -167,47 +194,35 @@ async def test_require_service_token_rejects_invalid_value(
     value: object,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    ctx = _Ctx(((SERVICE_TOKEN_METADATA_KEY, value),))
-    with caplog.at_level(logging.WARNING, logger="app.grpc_auth"):
-        err = await _rejection(ctx)
-    assert err.code() == grpc.StatusCode.UNAUTHENTICATED
-    assert f"reason={REASON_INVALID}" in caplog.text
+    await _rejected(((SERVICE_TOKEN_METADATA_KEY, value),), caplog, reason=REASON_INVALID)
 
 
 @pytest.mark.asyncio
-async def test_require_service_token_rejects_unreadable_metadata() -> None:
-    ctx = _Ctx(RuntimeError("metadata unavailable"))
-    err = await _rejection(ctx)
-    assert err.code() == grpc.StatusCode.UNAUTHENTICATED
+async def test_require_service_token_rejects_unreadable_metadata(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await _rejected(RuntimeError("metadata unavailable"), caplog)
 
 
 @pytest.mark.asyncio
-async def test_require_service_token_rejects_malformed_entry() -> None:
-    ctx = _Ctx([object()])
-    err = await _rejection(ctx)
-    assert err.code() == grpc.StatusCode.UNAUTHENTICATED
+async def test_require_service_token_rejects_malformed_entry(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await _rejected([object()], caplog)
 
 
 @pytest.mark.asyncio
 async def test_require_service_token_rejects_lone_surrogates(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    ctx = _Ctx(((SERVICE_TOKEN_METADATA_KEY, "\ud800" * 20),))
-    with caplog.at_level(logging.WARNING, logger="app.grpc_auth"):
-        err = await _rejection(ctx)
-    assert err.code() == grpc.StatusCode.UNAUTHENTICATED
-    assert f"reason={REASON_INVALID}" in caplog.text
+    await _rejected(((SERVICE_TOKEN_METADATA_KEY, "\ud800" * 20),), caplog, reason=REASON_INVALID)
 
 
 @pytest.mark.asyncio
 async def test_require_service_token_rejects_undecodable_bytes(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    ctx = _Ctx(((SERVICE_TOKEN_METADATA_KEY, b"\xff" * 40),))
-    with caplog.at_level(logging.WARNING, logger="app.grpc_auth"):
-        err = await _rejection(ctx)
-    assert err.code() == grpc.StatusCode.UNAUTHENTICATED
-    assert f"reason={REASON_INVALID}" in caplog.text
+    await _rejected(((SERVICE_TOKEN_METADATA_KEY, b"\xff" * 40),), caplog, reason=REASON_INVALID)
 
 
 @pytest.mark.asyncio
@@ -216,33 +231,24 @@ async def test_require_service_token_ignores_unusable_keys(
     key: object,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    ctx = _Ctx(((key, TOKEN),))
-    with caplog.at_level(logging.WARNING, logger="app.grpc_auth"):
-        err = await _rejection(ctx)
-    assert err.code() == grpc.StatusCode.UNAUTHENTICATED
-    assert f"reason={REASON_MISSING}" in caplog.text
+    await _rejected(((key, TOKEN),), caplog, reason=REASON_MISSING)
 
 
 @pytest.mark.asyncio
-async def test_require_service_token_rejects_context_without_metadata() -> None:
+async def test_require_service_token_rejects_context_without_metadata(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     class _Bare:
         async def abort(self, code, details):  # type: ignore[no-untyped-def]
             raise grpc.aio.AioRpcError(code, details=details)
 
-    with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-        await require_service_token(_Bare(), TOKEN, method="AssembleContext")  # type: ignore[arg-type]
-    assert exc_info.value.code() == grpc.StatusCode.UNAUTHENTICATED
+    await _rejected_context(_Bare(), caplog)
 
 
 @pytest.mark.asyncio
 async def test_guard_handler_runs_the_handler_when_authenticated() -> None:
-    calls: list[object] = []
-
-    async def _handler(request, context):  # type: ignore[no-untyped-def]
-        calls.append(request)
-        return "ok"
-
-    guarded = guard_handler(_handler, TOKEN, method="AssembleContext")
+    handler, calls = _recorder()
+    guarded = guard_handler(handler, TOKEN, method="AssembleContext")
     ctx = _Ctx(((SERVICE_TOKEN_METADATA_KEY, TOKEN),))
     assert await guarded("req", ctx) == "ok"  # type: ignore[arg-type]
     assert calls == ["req"]
@@ -250,21 +256,15 @@ async def test_guard_handler_runs_the_handler_when_authenticated() -> None:
 
 @pytest.mark.asyncio
 async def test_guard_handler_blocks_the_handler_when_unauthenticated() -> None:
-    calls: list[object] = []
-
-    async def _handler(request, context):  # type: ignore[no-untyped-def]
-        calls.append(request)
-        return "ok"
-
-    guarded = guard_handler(_handler, SecretStr(TOKEN))
+    handler, calls = _recorder()
+    guarded = guard_handler(handler, SecretStr(TOKEN))
     with pytest.raises(grpc.aio.AioRpcError):
         await guarded("req", _Ctx(()))  # type: ignore[arg-type]
     assert calls == []
 
 
 def test_guard_handler_rejects_an_invalid_configured_token() -> None:
-    async def _handler(request, context):  # type: ignore[no-untyped-def]
-        return "ok"
+    handler, _calls = _recorder()
 
     with pytest.raises(ValueError, match="IBEX_CONTEXT_GRPC_SERVICE_TOKEN"):
-        guard_handler(_handler, "")
+        guard_handler(handler, "")

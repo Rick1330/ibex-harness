@@ -137,34 +137,48 @@ def _presented_token(context: object) -> tuple[str, str | None]:
     entries = _metadata_entries(context)
     if entries is None:
         return REASON_INVALID, None
-    values = [
-        value
-        for key, value in entries
-        if _normalized_key(key) == SERVICE_TOKEN_METADATA_KEY
-    ]
+    values = _token_values(entries)
     if not values:
         return REASON_MISSING, None
     if len(values) > 1:
         return REASON_DUPLICATE, None
-    text = _as_text(values[0])
+    return _validated_token(values[0])
+
+
+def _token_values(entries: list[tuple[object, object]]) -> list[object]:
+    """Return the values filed under the service-token key, in wire order."""
+    return [
+        value
+        for key, value in entries
+        if _normalized_key(key) == SERVICE_TOKEN_METADATA_KEY
+    ]
+
+
+def _validated_token(value: object) -> tuple[str, str | None]:
+    """Return ``("", text)`` for one in-bounds entry, else an ``invalid`` reason."""
+    text = _as_text(value)
     if text is None:
         return REASON_INVALID, None
-    try:
-        size = len(text.encode("utf-8"))
-    except UnicodeEncodeError:  # lone surrogates cannot match any configured token
-        return REASON_INVALID, None
-    if not SERVICE_TOKEN_MIN_CHARS <= size <= SERVICE_TOKEN_MAX_CHARS:
+    size = _token_size(text)
+    if size is None or not SERVICE_TOKEN_MIN_CHARS <= size <= SERVICE_TOKEN_MAX_CHARS:
         return REASON_INVALID, None
     return "", text
+
+
+def _token_size(text: str) -> int | None:
+    """Return the UTF-8 byte length, or ``None`` when the text is not encodable."""
+    try:
+        return len(text.encode("utf-8"))
+    except UnicodeEncodeError:  # lone surrogates cannot match any configured token
+        return None
 
 
 def _metadata_entries(context: object) -> list[tuple[object, object]] | None:
     getter = getattr(context, "invocation_metadata", None)
     if getter is None:
         return None
-    try:
-        raw = getter() or ()
-    except Exception:  # noqa: BLE001 - a context without metadata cannot authenticate
+    raw = _raw_metadata(getter)
+    if raw is None:
         return None
     entries: list[tuple[object, object]] = []
     for entry in raw:
@@ -173,6 +187,14 @@ def _metadata_entries(context: object) -> list[tuple[object, object]] | None:
             return None
         entries.append(parsed)
     return entries
+
+
+def _raw_metadata(getter: Callable[[], object]) -> object | None:
+    """Return the raw metadata sequence, or ``None`` when it cannot be read."""
+    try:
+        return getter() or ()
+    except Exception:  # noqa: BLE001 - a context without metadata cannot authenticate
+        return None
 
 
 def _entry_pair(entry: object) -> tuple[object, object] | None:
