@@ -107,7 +107,7 @@ func assertOnlyAssembleFallbackReason(t *testing.T, reg *metrics.ProxyRegistry, 
 	if len(reasons) != 1 {
 		t.Fatalf("recorded fallback reasons=%v want exactly %q", reasons, reason)
 	}
-	if got := reasons[reason]; got != 1 {
+	if reasons[reason] != 1 {
 		t.Fatalf("recorded fallback reasons=%v want %q=1", reasons, reason)
 	}
 }

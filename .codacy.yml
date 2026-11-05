@@ -33,6 +33,10 @@ exclude_paths:
   - "services/proxy/proxy_auth_integration_helpers_test.go"
   - "services/proxy/internal/http/agent_middleware_test.go"
   - "packages/config/config_test.go"
+  # ADR-0096: an in-process, loopback-only gRPC stub that exists to exercise the
+  # caller-auth boundary. Opengrep does not honour the inline nosemgrep, and the
+  # same pattern is already excluded for the other Go test servers above.
+  - "services/proxy/internal/bootstrap/context_client_test.go"
   - "packages/session/abandon_idle_integration_test.go"
   # `//go:build integration` fixtures only; seeded rows and SQL-file runners.
   - "infra/testing/**"

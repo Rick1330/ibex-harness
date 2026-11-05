@@ -7,8 +7,8 @@ authenticates the caller, and per-user authorization stays at the proxy.
 What this module guarantees once a request reaches the assembler:
 
 * the principal is present and internally consistent (authority, canonical
-  UUIDs, bounded ``principal_id``, a fresh ``issued_at``, a non-stale
-  ``expires_at``);
+  UUIDs, bounded ``principal_id``, a fresh ``issued_at``, an optional but
+  non-stale ``expires_at``, and in-range timestamp fractions);
 * the request's ``org_id`` / ``agent_id`` selectors are byte-identical to the
   verified principal, so a caller cannot steer retrieval into another tenant;
 * the domain request is built from the principal, never from the selectors.
@@ -25,6 +25,8 @@ AUTHORITY_AUTH_SERVICE: Final[str] = "AuthService"
 MAX_PRINCIPAL_SKEW_SECONDS: Final[float] = 30.0
 MAX_PRINCIPAL_ID_CHARS: Final[int] = 256
 MAX_CORRELATION_CHARS: Final[int] = 128
+# proto ``Timestamp.nanos`` is a non-negative fraction of a second.
+_MAX_TIMESTAMP_NANOS: Final[int] = 999_999_999
 
 
 class PrincipalError(Exception):
@@ -160,8 +162,22 @@ def _holder_seconds(holder: object, *, name: str) -> float:
         if _is_number(holder):
             return float(holder)
         raise PrincipalInvalid(f"{name} must be a proto timestamp")
-    nanos = getattr(holder, "nanos", 0) or 0
-    return float(seconds) + float(nanos) / 1e9
+    nanos = getattr(holder, "nanos", 0)
+    return float(seconds) + _nanos_seconds(nanos, name=name)
+
+
+def _nanos_seconds(nanos: object, *, name: str) -> float:
+    """Validate proto ``nanos`` (``0..999999999``) before using it as a fraction.
+
+    A caller controls both timestamp fields, so an out-of-range fraction would
+    otherwise shift ``issued_at`` / ``expires_at`` past the ±30 s window these
+    checks rely on. Reject it before the arithmetic instead of normalising it.
+    """
+    if isinstance(nanos, bool) or not isinstance(nanos, int):
+        raise PrincipalInvalid(f"{name} nanos must be an integer")
+    if not 0 <= nanos <= _MAX_TIMESTAMP_NANOS:
+        raise PrincipalInvalid(f"{name} nanos must be in 0..{_MAX_TIMESTAMP_NANOS}")
+    return nanos / 1e9
 
 
 def _is_number(value: object) -> bool:

@@ -23,8 +23,8 @@ except ImportError:  # pragma: no cover
     context_pb2 = None  # type: ignore[assignment]
 
 
-# ADR-0096 default shared with infra/scripts/e2e_phase35.sh (dev-only literal).
-DEFAULT_CONTEXT_SERVICE_TOKEN = "dev-context-service-token-0000000000000001"
+# ADR-0096: the caller token is a deployment secret, never a checked-in literal.
+CONTEXT_SERVICE_TOKEN_ENV = "IBEX_CONTEXT_GRPC_SERVICE_TOKEN"
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ class Env:
     worker_log: str | None
     timeout_s: float
     interval_s: float
-    context_service_token: str = DEFAULT_CONTEXT_SERVICE_TOKEN
+    context_service_token: str
 
 
 @dataclass(frozen=True)
@@ -89,16 +89,25 @@ def env_from_os() -> Env:
         worker_log=os.environ.get("IBEX_E2E_P35_WORKER_LOG") or None,
         timeout_s=float(os.environ.get("IBEX_E2E_P35_EVENTUALLY_TIMEOUT", "60")),
         interval_s=float(os.environ.get("IBEX_E2E_P35_EVENTUALLY_INTERVAL", "0.25")),
-        context_service_token=os.environ.get(
-            "IBEX_CONTEXT_GRPC_SERVICE_TOKEN",
-            DEFAULT_CONTEXT_SERVICE_TOKEN,
-        ),
+        context_service_token=_required_context_service_token(),
     )
 
 
 def fail(msg: str) -> None:
     print(f"FAIL: {msg}", file=sys.stderr)
     raise SystemExit(1)
+
+
+def _required_context_service_token() -> str:
+    """Return the ADR-0096 caller token, refusing an unset or blank value."""
+    token = os.environ.get(CONTEXT_SERVICE_TOKEN_ENV, "").strip()
+    if not token:
+        fail(
+            f"{CONTEXT_SERVICE_TOKEN_ENV} is required: the Phase 3.5 driver "
+            "authenticates to ContextAssemblyService (ADR-0096); "
+            "infra/scripts/e2e_phase35.sh generates and exports it"
+        )
+    return token
 
 
 def pass_(msg: str) -> None:
@@ -316,13 +325,15 @@ class AssembleOpts:
     selector_agent: str | None = None
 
 
-CONTEXT_SERVICE_TOKEN_METADATA_KEY = "x-ibex-context-service-token"
+CALLER_AUTH_HEADER = "x-ibex-context-service-token"
 
 
 def _context_metadata(env: Env, flags: AssembleOpts) -> tuple[tuple[str, str], ...]:
-    if not flags.send_token:
-        return ()
-    return ((CONTEXT_SERVICE_TOKEN_METADATA_KEY, env.context_service_token),)
+    """Caller-auth metadata for one assemble; ``send_token=False`` sends none."""
+    entries: list[tuple[str, str]] = []
+    if flags.send_token:
+        entries.append((CALLER_AUTH_HEADER, env.context_service_token))
+    return tuple(entries)
 
 
 def _assemble_request(env: Env, query: str, flags: AssembleOpts) -> Any:

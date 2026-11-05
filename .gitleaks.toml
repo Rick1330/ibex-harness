@@ -27,4 +27,10 @@ regexes = [
   # only those exact values, with token boundaries, so a real credential that
   # merely contains this text is still reported.
   '''\bbundle-smoke-create-[12]\b''',
+  # ADR-0096 caller-auth fixtures. Both are synthetic placeholders reused by the
+  # unit and integration tests (one is a repeated hex pattern, one exercises the
+  # hyphen/underscore charset); neither is a credential. Allowlist the exact
+  # values so a real key that merely contains them is still reported.
+  '''\b0123456789abcdef0123456789abcdef\b''',
+  '''\bABCDEFGHIJ_KLMNOPQRST-UVWXYZ012345\b''',
 ]

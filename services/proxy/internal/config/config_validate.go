@@ -1,13 +1,11 @@
 package config
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
 	"github.com/google/uuid"
@@ -295,59 +293,26 @@ func validateContextEnvironment(environment string) error {
 	)
 }
 
-// contextTargetResolveTimeout bounds DNS resolution during config validation so
-// startup cannot hang on a slow resolver.
-const contextTargetResolveTimeout = 2 * time.Second
-
-// validateContextTargetLoopback requires the context client target to resolve
-// exclusively to loopback addresses. The service token travels in cleartext
-// gRPC metadata, so a non-loopback endpoint would expose it (ADR-0096).
+// validateContextTargetLoopback requires the context client target to be a
+// loopback IP literal. A hostname would be resolved again by the dialer, so a
+// second DNS answer could be non-loopback and would receive the plaintext
+// caller token; a literal cannot be re-resolved (ADR-0096).
 func validateContextTargetLoopback(host string) error {
-	host = strings.TrimSpace(host)
-	if host == "" {
-		return fmt.Errorf("IBEX_CONTEXT_GRPC_TARGET must include a host")
+	trimmed := strings.TrimSpace(host)
+	ip := net.ParseIP(trimmed)
+	if ip == nil {
+		return fmt.Errorf(
+			"IBEX_CONTEXT_GRPC_TARGET host %q must be a loopback IP literal (127.0.0.1 or ::1); hostnames are rejected because the dial re-resolves them",
+			host,
+		)
 	}
-	ips, err := resolveTargetIPs(host)
-	if err != nil {
-		return fmt.Errorf("IBEX_CONTEXT_GRPC_TARGET host %q must resolve to a loopback address: %w", host, err)
-	}
-	for _, ip := range ips {
-		if ip.IsUnspecified() || !ip.IsLoopback() {
-			return fmt.Errorf(
-				"IBEX_CONTEXT_GRPC_TARGET host %q resolves to %s; the context service token must not be sent to a non-loopback endpoint",
-				host, ip,
-			)
-		}
+	if ip.IsUnspecified() || !ip.IsLoopback() {
+		return fmt.Errorf(
+			"IBEX_CONTEXT_GRPC_TARGET host %q is %s; the context service token must not be sent to a non-loopback endpoint",
+			host, ip,
+		)
 	}
 	return nil
-}
-
-func resolveTargetIPs(host string) ([]net.IP, error) {
-	if ip := net.ParseIP(host); ip != nil {
-		return []net.IP{ip}, nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), contextTargetResolveTimeout)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
-	if err != nil {
-		return nil, fmt.Errorf("resolve: %w", err)
-	}
-	if len(addrs) == 0 {
-		return nil, fmt.Errorf("no addresses resolved")
-	}
-	return parseResolvedIPs(addrs)
-}
-
-func parseResolvedIPs(addrs []string) ([]net.IP, error) {
-	ips := make([]net.IP, 0, len(addrs))
-	for _, addr := range addrs {
-		ip := net.ParseIP(addr)
-		if ip == nil {
-			return nil, fmt.Errorf("unparseable resolved address %q", addr)
-		}
-		ips = append(ips, ip)
-	}
-	return ips, nil
 }
 
 func (c Config) validateAuthCache() error {

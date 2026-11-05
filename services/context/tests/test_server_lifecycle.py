@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import runpy
+import socket
 import sys
 import types
 
@@ -35,7 +36,7 @@ async def test_build_server_uses_settings_grpc_addr() -> None:
 
 
 def test_is_loopback_addr() -> None:
-    """Literal IPs only; ``localhost`` is a name and must be resolved."""
+    """Literal IPs only; a hostname is never resolved, so it is never accepted."""
     assert _is_loopback_addr("127.0.0.1:9092")
     assert _is_loopback_addr("[::1]:9092")
     assert not _is_loopback_addr("localhost:9092")
@@ -43,8 +44,9 @@ def test_is_loopback_addr() -> None:
     assert not _is_loopback_addr("10.0.0.5:9092")
 
 
-def test_require_loopback_bind_accepts_localhost_that_resolves_to_loopback() -> None:
-    _require_loopback_bind("localhost:9092")
+@pytest.mark.parametrize("addr", ["127.0.0.1:9092", "[::1]:9092"])
+def test_require_loopback_bind_accepts_loopback_ip_literals(addr: str) -> None:
+    _require_loopback_bind(addr)
 
 
 @pytest.mark.parametrize(
@@ -53,34 +55,41 @@ def test_require_loopback_bind_accepts_localhost_that_resolves_to_loopback() -> 
 )
 def test_build_server_refuses_non_loopback_bind(addr: str) -> None:
     """ADR-0096: the service is loopback-only, so an exposed bind is fatal."""
+    asm = _assembler()
+    cfg = _settings()
     with pytest.raises(ValueError, match="loopback"):
-        build_server(_assembler(), listen_addr=addr, settings=_settings())
+        build_server(asm, listen_addr=addr, settings=cfg)
 
 
-def test_build_server_refuses_name_resolving_off_loopback(
+@pytest.mark.parametrize("addr", ["localhost:0", "context.internal:0", "missing.invalid:0"])
+def test_build_server_refuses_a_hostname_bind(addr: str) -> None:
+    """A name would be resolved twice; the second lookup could leave loopback."""
+    asm = _assembler()
+    cfg = _settings()
+    with pytest.raises(ValueError, match="loopback IP literal"):
+        build_server(asm, listen_addr=addr, settings=cfg)
+
+
+def test_build_server_refuses_a_hostname_bind_without_resolving(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app import server as server_mod
+    """Catch: trusting a name because it resolves to loopback at guard time.
 
-    def _fake_getaddrinfo(*_args, **_kwargs):
-        return [(2, 1, 6, "", ("10.0.0.5", 0))]
+    The guard must reject the name before any lookup, so ``add_insecure_port``
+    can never receive a string gRPC would resolve a second time.
+    """
+    calls: list[tuple[object, ...]] = []
 
-    monkeypatch.setattr(server_mod.socket, "getaddrinfo", _fake_getaddrinfo)
-    with pytest.raises(ValueError, match="loopback"):
-        build_server(_assembler(), listen_addr="context.internal:0", settings=_settings())
+    def _record_getaddrinfo(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(args)
+        return [(2, 1, 6, "", ("127.0.0.1", 0))]
 
-
-def test_build_server_refuses_unresolvable_name(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from app import server as server_mod
-
-    def _fail(*_args, **_kwargs):
-        raise server_mod.socket.gaierror("no such host")
-
-    monkeypatch.setattr(server_mod.socket, "getaddrinfo", _fail)
-    with pytest.raises(ValueError, match="loopback"):
-        build_server(_assembler(), listen_addr="missing.invalid:0", settings=_settings())
+    monkeypatch.setattr(socket, "getaddrinfo", _record_getaddrinfo)
+    asm = _assembler()
+    cfg = _settings()
+    with pytest.raises(ValueError, match="loopback IP literal"):
+        build_server(asm, listen_addr="context.internal:0", settings=cfg)
+    assert calls == [], "the bind guard must not resolve hostnames"
 
 
 @pytest.mark.parametrize(
@@ -104,34 +113,17 @@ def test_require_loopback_bind_rejects_malformed_addresses(addr: str) -> None:
         server_mod._require_loopback_bind(addr)
 
 
-def test_require_loopback_bind_accepts_name_resolving_to_loopback(
+def test_require_loopback_bind_rejects_a_hostname(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A name that resolves to loopback is still refused: gRPC would re-resolve."""
     from app import server as server_mod
 
-    def _fake_getaddrinfo(*_args, **_kwargs):
-        return [
-            (2, 1, 6, "", ("127.0.0.1", 0)),
-            (10, 1, 6, "", ("::1", 0, 0, 0)),
-        ]
+    def _loopback_lookup(*_args, **_kwargs):
+        return [(2, 1, 6, "", ("127.0.0.1", 0))]
 
-    monkeypatch.setattr(server_mod.socket, "getaddrinfo", _fake_getaddrinfo)
-    server_mod._require_loopback_bind("context.internal:9092")
-
-
-def test_require_loopback_bind_refuses_when_any_address_is_public(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from app import server as server_mod
-
-    def _mixed_getaddrinfo(*_args, **_kwargs):
-        return [
-            (2, 1, 6, "", ("127.0.0.1", 0)),
-            (2, 1, 6, "", ("203.0.113.7", 0)),
-        ]
-
-    monkeypatch.setattr(server_mod.socket, "getaddrinfo", _mixed_getaddrinfo)
-    with pytest.raises(ValueError, match="loopback"):
+    monkeypatch.setattr(socket, "getaddrinfo", _loopback_lookup)
+    with pytest.raises(ValueError, match="loopback IP literal"):
         server_mod._require_loopback_bind("context.internal:9092")
 
 
@@ -143,47 +135,33 @@ def test_require_loopback_bind_requires_a_host() -> None:
 
 
 @pytest.mark.parametrize("value", ["not-an-ip", "127.0.0.1.example", ""])
-def test_is_loopback_ip_rejects_non_addresses(value: str) -> None:
-    from app import server as server_mod
-
-    assert server_mod._is_loopback_ip(value) is False
-
-
-def test_is_loopback_ip_accepts_ipv6_scope_suffix() -> None:
-    from app import server as server_mod
-
-    assert server_mod._is_loopback_ip("::1%lo") is True
+def test_is_loopback_addr_rejects_non_addresses(value: str) -> None:
+    assert not _is_loopback_addr(f"{value}:9092")
 
 
 def test_build_server_requires_a_service_token() -> None:
+    asm = _assembler()
+    cfg = _settings(grpc_service_token=SecretStr(""))
     with pytest.raises(ValueError, match="IBEX_CONTEXT_GRPC_SERVICE_TOKEN"):
-        build_server(
-            _assembler(),
-            listen_addr="127.0.0.1:0",
-            settings=_settings(grpc_service_token=SecretStr("")),
-        )
+        build_server(asm, listen_addr="127.0.0.1:0", settings=cfg)
 
 
 def test_build_server_rejects_short_service_token() -> None:
+    asm = _assembler()
+    cfg = _settings(grpc_service_token=SecretStr("too-short"))
     with pytest.raises(ValueError, match="IBEX_CONTEXT_GRPC_SERVICE_TOKEN"):
-        build_server(
-            _assembler(),
-            listen_addr="127.0.0.1:0",
-            settings=_settings(grpc_service_token=SecretStr("too-short")),
-        )
+        build_server(asm, listen_addr="127.0.0.1:0", settings=cfg)
 
 
 def test_build_server_rejects_memory_token_reuse() -> None:
     """Reusing the memory credential would let one leak compromise both hops."""
+    asm = _assembler()
+    cfg = _settings(
+        grpc_service_token=SecretStr(SERVICE_TOKEN),
+        memory_api_token=SecretStr(SERVICE_TOKEN),
+    )
     with pytest.raises(ValueError, match="must differ"):
-        build_server(
-            _assembler(),
-            listen_addr="127.0.0.1:0",
-            settings=_settings(
-                grpc_service_token=SecretStr(SERVICE_TOKEN),
-                memory_api_token=SecretStr(SERVICE_TOKEN),
-            ),
-        )
+        build_server(asm, listen_addr="127.0.0.1:0", settings=cfg)
 
 
 def test_require_unary_rejects_streaming_handler() -> None:
@@ -304,10 +282,9 @@ async def test_serve_forever_refuses_without_service_token(
         "build_runtime_from_settings",
         lambda cfg: runtime,
     )
+    service_settings = _settings(grpc_service_token=SecretStr(""), grpc_addr="127.0.0.1:0")
     with pytest.raises(ValueError, match="IBEX_CONTEXT_GRPC_SERVICE_TOKEN"):
-        await server_mod.serve_forever(
-            _settings(grpc_service_token=SecretStr(""), grpc_addr="127.0.0.1:0")
-        )
+        await server_mod.serve_forever(service_settings)
     assert closed == [True]
 
 

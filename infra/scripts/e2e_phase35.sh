@@ -25,7 +25,8 @@ MEMORY_ADDR="${IBEX_MEMORY_ADDR:-http://127.0.0.1:8005}"
 MCP_ADDR="${IBEX_MCP_ADDR:-http://127.0.0.1:18090}"
 CONTEXT_GRPC_ADDR="${IBEX_CONTEXT_GRPC_ADDR:-127.0.0.1:9092}"
 # ADR-0096: caller token shared by context server, proxy client, and scenarios.
-CONTEXT_SERVICE_TOKEN="${IBEX_CONTEXT_GRPC_SERVICE_TOKEN:-dev-context-service-token-0000000000000001}"
+# Never a checked-in literal: generated once below when the caller did not set it.
+CONTEXT_SERVICE_TOKEN="${IBEX_CONTEXT_GRPC_SERVICE_TOKEN:-}"
 EXTRACTION_STUB_PORT="${IBEX_E2E_P35_EXTRACTION_STUB_PORT:-18091}"
 WORKER_ENQUEUE_PORT="${IBEX_WORKER_ENQUEUE_PORT:-8007}"
 WORKER_METRICS_PORT="${IBEX_WORKER_METRICS_PORT:-8006}"
@@ -78,6 +79,17 @@ if [[ -z "$MCP_MARKER" ]]; then
     fi
   done
 fi
+
+# ADR-0096: one caller token for the context server, the proxy client, and the
+# scenario driver. 43 URL-safe characters, inside the 32..512 [A-Za-z0-9_-] bound.
+if [[ -z "$CONTEXT_SERVICE_TOKEN" ]]; then
+  CONTEXT_SERVICE_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
+    || fail "failed to generate IBEX_CONTEXT_GRPC_SERVICE_TOKEN"
+  if [[ -z "$CONTEXT_SERVICE_TOKEN" ]]; then
+    fail "IBEX_CONTEXT_GRPC_SERVICE_TOKEN generation produced an empty value"
+  fi
+fi
+export IBEX_CONTEXT_GRPC_SERVICE_TOKEN="$CONTEXT_SERVICE_TOKEN"
 
 cleanup() {
   if [[ -n "${CONTEXT_PID:-}" ]] && kill -0 "$CONTEXT_PID" 2>/dev/null; then

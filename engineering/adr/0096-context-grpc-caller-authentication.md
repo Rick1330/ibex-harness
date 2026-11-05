@@ -49,7 +49,9 @@ staging/production deployment is not possible today.
    returns `UNAUTHENTICATED` with a constant message. The key is deliberately distinct from the auth service's
    `x-ibex-service-token`. No AuthService call is made on this path.
 2. **Fail closed at startup.** The context server requires a 32–512 character `[A-Za-z0-9_-]` token, refuses a token
-   equal to `IBEX_CONTEXT_MEMORY_API_TOKEN`, and refuses any bind that does not resolve exclusively to loopback. The
+   equal to `IBEX_CONTEXT_MEMORY_API_TOKEN`, and refuses any bind that is not a loopback IP literal
+   (`127.0.0.1` or `::1`; hostnames are rejected rather than resolved, because gRPC would resolve the name again and
+   the second answer could be non-loopback). The
    proxy requires the same token when `IBEX_CONTEXT_ENABLED=true` and the target is non-empty, requires a loopback
    target, and refuses to enable context outside `development` while the server has no TLS. Neither side has a
    bypass flag.

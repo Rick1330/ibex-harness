@@ -30,7 +30,7 @@ from server_test_support import (
 )
 
 from app import server as server_mod
-from app.grpc_auth import SERVICE_TOKEN_METADATA_KEY, UNAUTHENTICATED_DETAILS
+from app.grpc_auth import CALLER_AUTH_HEADER, UNAUTHENTICATED_DETAILS
 from app.principal import VerifiedPrincipal
 from app.retrieval import MEMORY_TENANT_MISMATCH, ParallelRetriever, RetrievalRequest
 from app.server import _SERVICE_NAME, ContextAssemblyServicer, _request_from_proto, build_server
@@ -116,18 +116,18 @@ async def _assemble_error(pb2, request, metadata) -> grpc.aio.AioRpcError:  # ty
     [
         # Duplicate: valid first, garbage second.
         (
-            (SERVICE_TOKEN_METADATA_KEY, SERVICE_TOKEN),
-            (SERVICE_TOKEN_METADATA_KEY, "z" * 32),
+            (CALLER_AUTH_HEADER, SERVICE_TOKEN),
+            (CALLER_AUTH_HEADER, "z" * 32),
         ),
         # Duplicate: garbage first, valid second. Order must not matter.
         (
-            (SERVICE_TOKEN_METADATA_KEY, "z" * 32),
-            (SERVICE_TOKEN_METADATA_KEY, SERVICE_TOKEN),
+            (CALLER_AUTH_HEADER, "z" * 32),
+            (CALLER_AUTH_HEADER, SERVICE_TOKEN),
         ),
         # Same token twice is still a duplicate, not "one valid entry".
         (
-            (SERVICE_TOKEN_METADATA_KEY, SERVICE_TOKEN),
-            (SERVICE_TOKEN_METADATA_KEY, SERVICE_TOKEN),
+            (CALLER_AUTH_HEADER, SERVICE_TOKEN),
+            (CALLER_AUTH_HEADER, SERVICE_TOKEN),
         ),
     ],
 )
@@ -145,11 +145,12 @@ async def test_duplicate_wire_token_entries_are_unauthenticated(
     """
     directive = StubDirective()
     memory = StubMemory()
+    request = _assemble_request(pb2)
     with caplog.at_level(logging.WARNING, logger="app.grpc_auth"):
         async with _channel(memory=memory, directive=directive) as channel:
             stub = _assemble_stub(channel, pb2)
             with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-                await stub(_assemble_request(pb2), timeout=2.0, metadata=metadata)
+                await stub(request, timeout=2.0, metadata=metadata)
 
     err = exc_info.value
     assert err.code() == grpc.StatusCode.UNAUTHENTICATED
@@ -177,7 +178,7 @@ async def test_oversized_wire_token_is_unauthenticated_without_echo(
         err = await _assemble_error(
             pb2,
             _assemble_request(pb2),
-            ((SERVICE_TOKEN_METADATA_KEY, presented),),
+            ((CALLER_AUTH_HEADER, presented),),
         )
     assert err.code() == grpc.StatusCode.UNAUTHENTICATED
     assert err.details() == UNAUTHENTICATED_DETAILS
@@ -192,10 +193,11 @@ async def test_missing_wire_token_never_reaches_the_assembler(pb2) -> None:
     """Catch: a handler that authenticates after doing retrieval work."""
     directive = StubDirective()
     memory = StubMemory()
+    request = _assemble_request(pb2)
     async with _channel(memory=memory, directive=directive) as channel:
         stub = _assemble_stub(channel, pb2)
         with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-            await stub(_assemble_request(pb2), timeout=2.0, metadata=())
+            await stub(request, timeout=2.0, metadata=())
     assert exc_info.value.code() == grpc.StatusCode.UNAUTHENTICATED
     assert directive.calls == []
     assert memory.hot_calls == 0
@@ -217,8 +219,9 @@ async def test_every_registered_method_runs_the_guard_before_its_body(pb2) -> No
 
     for name, handler in handlers.items():
         ctx = _RejectCtx(metadata=())
+        payload = handler.request_deserializer(b"")
         with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-            await handler.unary_unary(handler.request_deserializer(b""), ctx)
+            await handler.unary_unary(payload, ctx)
         assert exc_info.value.code() == grpc.StatusCode.UNAUTHENTICATED, name
         assert ctx.aborts == [(grpc.StatusCode.UNAUTHENTICATED, UNAUTHENTICATED_DETAILS)]
 
@@ -227,7 +230,7 @@ async def test_every_registered_method_runs_the_guard_before_its_body(pb2) -> No
 
 
 def _metadata(token: str = SERVICE_TOKEN) -> tuple[tuple[str, str], ...]:
-    return ((SERVICE_TOKEN_METADATA_KEY, token),)
+    return ((CALLER_AUTH_HEADER, token),)
 
 
 @pytest.mark.asyncio
@@ -241,6 +244,41 @@ async def test_non_exact_authority_is_unauthenticated(pb2, authority: str) -> No
     err = await _assemble_error(pb2, _assemble_request(pb2, principal=principal), _metadata())
     assert err.code() == grpc.StatusCode.UNAUTHENTICATED
     assert err.details() == server_mod.PRINCIPAL_INVALID_DETAILS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("nanos", [-1, 1_000_000_000])
+async def test_out_of_range_timestamp_nanos_never_reaches_retrieval(
+    pb2,
+    nanos: int,
+) -> None:
+    """Catch: a caller-set fraction that moves the freshness window.
+
+    ``Timestamp.nanos`` is an int32 the caller controls. An out-of-range value
+    must be rejected on the wire path, before the assembler does any I/O.
+    """
+    directive = StubDirective()
+    memory = StubMemory()
+    principal = principal_message()
+    principal.issued_at.nanos = nanos
+    async with _channel(memory=memory, directive=directive) as channel:
+        stub = _assemble_stub(channel, pb2)
+
+        async def _call() -> object:
+            return await stub(
+                _assemble_request(pb2, principal=principal),
+                timeout=2.0,
+                metadata=_metadata(),
+            )
+
+        with pytest.raises(grpc.aio.AioRpcError) as exc_info:
+            await _call()
+
+    err = exc_info.value
+    assert err.code() == grpc.StatusCode.UNAUTHENTICATED
+    assert err.details() == server_mod.PRINCIPAL_INVALID_DETAILS
+    assert directive.calls == []
+    assert memory.hot_calls == 0
 
 
 # ------------------------------------------------------------ selector binding
@@ -265,14 +303,12 @@ async def test_padded_or_non_canonical_selectors_are_permission_denied(
     """Catch: an equality check that trims/casefolds or parses the selector UUID."""
     directive = StubDirective()
     memory = StubMemory()
+    request = _assemble_request(pb2, selectors=selectors)
+    metadata = _metadata()
     async with _channel(memory=memory, directive=directive) as channel:
         stub = _assemble_stub(channel, pb2)
         with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-            await stub(
-                _assemble_request(pb2, selectors=selectors),
-                timeout=2.0,
-                metadata=_metadata(),
-            )
+            await stub(request, timeout=2.0, metadata=metadata)
     err = exc_info.value
     assert err.code() == grpc.StatusCode.PERMISSION_DENIED
     assert err.details() == server_mod.SELECTOR_MISMATCH_DETAILS
@@ -556,12 +592,10 @@ async def test_startup_token_length_boundary(
     monkeypatch.setattr(server_mod.grpc_aio, "server", _spy)
     token = "a" * length
     if not accepted:
+        asm = assembler()
+        cfg = settings(grpc_service_token=SecretStr(token))
         with pytest.raises(ValueError, match="IBEX_CONTEXT_GRPC_SERVICE_TOKEN"):
-            build_server(
-                assembler(),
-                listen_addr="127.0.0.1:0",
-                settings=settings(grpc_service_token=SecretStr(token)),
-            )
+            build_server(asm, listen_addr="127.0.0.1:0", settings=cfg)
         assert created == [], "a rejected token must not construct a gRPC server"
         return
 
@@ -592,24 +626,41 @@ async def test_serve_forever_never_constructs_a_listener_on_token_refusal(
         "server",
         lambda *args, **kwargs: created.append(1),  # type: ignore[no-untyped-def]
     )
+    cfg = settings(
+        memory_base_url="http://127.0.0.1:1",
+        memory_api_token=SecretStr("memory-token"),
+        grpc_service_token=SecretStr("too-short"),
+        grpc_addr="127.0.0.1:0",
+    )
     with pytest.raises(ValueError, match="IBEX_CONTEXT_GRPC_SERVICE_TOKEN"):
-        await server_mod.serve_forever(
-            settings(
-                memory_base_url="http://127.0.0.1:1",
-                memory_api_token=SecretStr("memory-token"),
-                grpc_service_token=SecretStr("too-short"),
-                grpc_addr="127.0.0.1:0",
-            )
-        )
+        await server_mod.serve_forever(cfg)
     assert created == []
 
 
-def test_loopback_guard_resolves_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Catch: trusting the literal string ``localhost`` instead of resolution."""
+def test_loopback_guard_rejects_localhost_without_resolving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch: accepting ``localhost`` because it happens to resolve to loopback.
 
-    def _public_localhost(*_args, **_kwargs):
-        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("203.0.113.7", 0))]
+    The guard must reject the name itself: gRPC re-resolves whatever string it
+    is handed, so a name that resolves to loopback here can resolve elsewhere by
+    the time ``add_insecure_port`` runs.
+    """
+    calls: list[tuple[object, ...]] = []
 
-    monkeypatch.setattr(server_mod.socket, "getaddrinfo", _public_localhost)
-    with pytest.raises(ValueError, match="loopback"):
+    def _loopback_localhost(*args, **_kwargs):
+        calls.append(args)
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("127.0.0.1", 0),
+            )
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", _loopback_localhost)
+    with pytest.raises(ValueError, match="loopback IP literal"):
         server_mod._require_loopback_bind("localhost:9092")
+    assert calls == [], "the bind guard must not resolve hostnames"

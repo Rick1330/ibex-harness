@@ -33,7 +33,7 @@ from server_test_support import (
 
 from app.assemble import AssemblyOptions, ContextAssembler
 from app.config import MAX_ASSEMBLY_OPTION_MEMORIES
-from app.grpc_auth import SERVICE_TOKEN_METADATA_KEY, UNAUTHENTICATED_DETAILS
+from app.grpc_auth import CALLER_AUTH_HEADER, UNAUTHENTICATED_DETAILS
 from app.retrieval import ParallelRetriever
 from app.server import (
     _SERVICE_NAME,
@@ -67,7 +67,7 @@ def pb2():
 def _metadata(token: str | None = SERVICE_TOKEN) -> tuple[tuple[str, str], ...]:
     if token is None:
         return ()
-    return ((SERVICE_TOKEN_METADATA_KEY, token),)
+    return ((CALLER_AUTH_HEADER, token),)
 
 
 @asynccontextmanager
@@ -504,8 +504,9 @@ def test_options_from_proto_defaults_when_absent() -> None:
 
 
 def test_servicer_requires_a_service_token() -> None:
+    asm = _assembler()
     with pytest.raises(ValueError, match="IBEX_CONTEXT_GRPC_SERVICE_TOKEN"):
-        ContextAssemblyServicer(_assembler(), service_token="")
+        ContextAssemblyServicer(asm, service_token="")
 
 
 @pytest.mark.asyncio

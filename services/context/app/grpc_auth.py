@@ -20,14 +20,14 @@ from __future__ import annotations
 import hmac
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
 
 import grpc
 from grpc import aio as grpc_aio
 from pydantic import SecretStr
 
-SERVICE_TOKEN_METADATA_KEY = "x-ibex-context-service-token"
+CALLER_AUTH_HEADER = "x-ibex-context-service-token"
 SERVICE_TOKEN_MIN_CHARS = 32
 SERVICE_TOKEN_MAX_CHARS = 512
 UNAUTHENTICATED_DETAILS = "caller authentication required"
@@ -150,7 +150,7 @@ def _token_values(entries: list[tuple[object, object]]) -> list[object]:
     return [
         value
         for key, value in entries
-        if _normalized_key(key) == SERVICE_TOKEN_METADATA_KEY
+        if _normalized_key(key) == CALLER_AUTH_HEADER
     ]
 
 
@@ -189,11 +189,15 @@ def _metadata_entries(context: object) -> list[tuple[object, object]] | None:
     return entries
 
 
-def _raw_metadata(getter: Callable[[], object]) -> object | None:
-    """Return the raw metadata sequence, or ``None`` when it cannot be read."""
+def _raw_metadata(getter: Callable[[], object]) -> Iterator[object] | None:
+    """Return an iterator over the raw metadata, or ``None`` when unreadable."""
     try:
-        return getter() or ()
+        raw = getter() or ()
     except Exception:  # noqa: BLE001 - a context without metadata cannot authenticate
+        return None
+    try:
+        return iter(raw)
+    except TypeError:  # not iterable: no entry can be read from it
         return None
 
 

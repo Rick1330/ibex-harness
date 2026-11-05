@@ -7,6 +7,12 @@ latency signal; asserts p99 < 50ms at the configured target RPS.
 Live profile: point ``--addr`` at a running ContextAssemblyService backed by a
 100K-memory corpus (seed via ``benchmarks/memory`` HNSW tooling). Live runs do
 not fail the process on p99; they print percentiles for PR documentation.
+``--addr`` must be a loopback IP literal (``127.0.0.1`` or ``[::1]``): the
+caller token is a reusable credential, and plaintext gRPC to any other host
+would send it off this machine.
+
+``--org-id`` and ``--agent-id`` (canonical UUIDs) select the tenant both
+profiles exercise; absent flags fall back to the module defaults.
 
 ADR-0096: every call carries ``x-ibex-context-service-token`` and a fresh
 ``PrincipalContext`` (``issued_at`` per call, so runs longer than the 30s skew
@@ -33,13 +39,14 @@ import asyncio
 import json
 import math
 import os
+import secrets
 import statistics
 import sys
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 # Allow running from repo root without installing the package.
 _ROOT = Path(__file__).resolve().parents[2]
@@ -58,7 +65,7 @@ from app.assemble import ContextAssembler
 from app.clients.directive import DirectivePayload
 from app.clients.memory import MemoryHitPayload
 from app.config import ContextSettings
-from app.grpc_auth import SERVICE_TOKEN_METADATA_KEY
+from app.grpc_auth import CALLER_AUTH_HEADER
 from app.retrieval import ParallelRetriever
 from app.server import _SERVICE_NAME, build_server
 
@@ -67,9 +74,43 @@ AGENT = uuid4()
 MODEL = "gpt-4o-mini"
 AUTHORITY = "AuthService"
 PRINCIPAL_ID = "benchmark-caller"
-# Stub-profile token: 32+ chars of [A-Za-z0-9_-] (never a real credential).
-STUB_SERVICE_TOKEN = "benchmark-stub-context-token-0123456789"
 _P99_BUDGET_MS = 50.0
+
+
+def _stub_service_token() -> str:
+    """Throwaway caller token for the in-process stub; never a real credential."""
+    return secrets.token_urlsafe(32)
+
+
+# The live profile carries a reusable credential over plaintext gRPC, so the
+# destination must be this host. IP literals only: a DNS name could resolve
+# anywhere (including off-host) after the check.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
+
+
+def _addr_host(addr: str) -> str | None:
+    """Host literal of a ``host:port`` / ``[v6]:port`` target; None if unparseable."""
+    target = addr.strip()
+    if target.startswith("["):
+        host, bracket, rest = target.partition("]")
+        if not bracket or not rest.startswith(":"):
+            return None
+        return host[1:] or None
+    host, separator, _port = target.rpartition(":")
+    if not separator or not host:
+        return None
+    return host
+
+
+def _require_loopback_addr(addr: str) -> None:
+    """Refuse a non-loopback ``--addr`` before any channel or credential use."""
+    if _addr_host(addr) in _LOOPBACK_HOSTS:
+        return
+    raise SystemExit(
+        f"live profile refuses --addr {addr!r}: it would send "
+        "IBEX_CONTEXT_GRPC_SERVICE_TOKEN over plaintext gRPC to a non-loopback "
+        "destination; use 127.0.0.1:<port> or [::1]:<port>"
+    )
 
 
 class _StubDirective:
@@ -92,20 +133,39 @@ class _HitSpec:
 
 
 class _StubMemory:
+    """In-process memory stub whose hits carry the run's tenant selectors."""
+
+    def __init__(self, *, org: str, agent: str) -> None:
+        self._org = org
+        self._agent = agent
+
+    def _one(self, spec: _HitSpec) -> MemoryHitPayload:
+        return _hit(spec, org=self._org, agent=self._agent)
+
     async def get_hot_memories(self, *_args, **_kwargs):
         await asyncio.sleep(0)
-        return [_hit(_HitSpec("hot preference " + ("x" * 64), "preference", "hot_cache", 0.9, 0.85))]
+        return [
+            self._one(
+                _HitSpec(
+                    "hot preference " + ("x" * 64), "preference", "hot_cache", 0.9, 0.85
+                )
+            )
+        ]
 
     async def search_memories(self, *_args, **_kwargs):
         await asyncio.sleep(0)
-        return [_hit(_HitSpec("cold fact " + ("y" * 64), "factual", "vector", 0.8, 0.75))]
+        return [
+            self._one(
+                _HitSpec("cold fact " + ("y" * 64), "factual", "vector", 0.8, 0.75)
+            )
+        ]
 
 
-def _hit(spec: _HitSpec) -> MemoryHitPayload:
+def _hit(spec: _HitSpec, *, org: str, agent: str) -> MemoryHitPayload:
     return MemoryHitPayload(
         memory_id=str(uuid4()),
-        org_id=str(ORG),
-        agent_id=str(AGENT),
+        org_id=org,
+        agent_id=agent,
         content=spec.content,
         category=spec.category,
         confidence=spec.confidence,
@@ -151,7 +211,7 @@ def _request_factory(
 
 
 def _token_metadata(token: str) -> tuple[tuple[str, str], ...]:
-    return ((SERVICE_TOKEN_METADATA_KEY, token),)
+    return ((CALLER_AUTH_HEADER, token),)
 
 
 async def _one_call(
@@ -172,6 +232,16 @@ async def _one_call(
 class _LoadPlan:
     duration_s: float
     target_rps: int
+
+
+@dataclass(frozen=True, slots=True)
+class _StubRun:
+    """Everything the stub profile needs: caller token, selectors, load."""
+
+    token: str
+    org: str
+    agent: str
+    plan: _LoadPlan
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,13 +314,13 @@ def _stub_settings(token: str) -> ContextSettings:
     )
 
 
-async def _run_stub(duration_s: float, target_rps: int, token: str) -> _DriveStats:
+async def _run_stub(run: _StubRun) -> _DriveStats:
     from ibex.context.v1 import context_pb2 as pb2
 
-    settings = _stub_settings(token)
+    settings = _stub_settings(run.token)
     retriever = ParallelRetriever(
         settings=settings,
-        memory=_StubMemory(),  # type: ignore[arg-type]
+        memory=_StubMemory(org=run.org, agent=run.agent),  # type: ignore[arg-type]
         directive=_StubDirective(),
     )
     assembler = ContextAssembler(settings=settings, retriever=retriever)
@@ -265,15 +335,16 @@ async def _run_stub(duration_s: float, target_rps: int, token: str) -> _DriveSta
             )
             return await _drive_open_loop(
                 stub,
-                _request_factory(pb2, org=str(ORG), agent=str(AGENT)),
-                token,
-                _LoadPlan(duration_s, target_rps),
+                _request_factory(pb2, org=run.org, agent=run.agent),
+                run.token,
+                run.plan,
             )
     finally:
         await server.stop(grace=None)
 
 
 async def _run_live(run: _LiveRun) -> _DriveStats:
+    _require_loopback_addr(run.addr)
     if not run.token.strip():
         raise SystemExit(
             "live profile requires --token or IBEX_CONTEXT_GRPC_SERVICE_TOKEN (ADR-0096)"
@@ -317,6 +388,23 @@ def _raise_error_rate_range(raw: str) -> None:
     )
 
 
+def _parse_uuid(raw: str) -> str:
+    """Argparse type for ``--org-id``/``--agent-id``: a canonical lowercase UUID.
+
+    Matches the ContextAssemblyService principal check, so a malformed selector
+    fails here with a named flag instead of turning every RPC into an error.
+    """
+    try:
+        parsed = UUID(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"must be a canonical UUID, got {raw!r}"
+        ) from exc
+    if str(parsed) != raw:
+        raise argparse.ArgumentTypeError(f"must be a canonical UUID, got {raw!r}")
+    return str(parsed)
+
+
 def _parse_rps(raw: str) -> int:
     """Argparse type for ``--rps``: an integer >= 1."""
     try:
@@ -335,7 +423,14 @@ def _parse_rps(raw: str) -> int:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("stub", "live"), default="stub")
-    parser.add_argument("--addr", default="127.0.0.1:9092")
+    parser.add_argument(
+        "--addr",
+        default="127.0.0.1:9092",
+        help=(
+            "gRPC target for --profile live; loopback only "
+            "(127.0.0.1:<port> or [::1]:<port>)."
+        ),
+    )
     parser.add_argument(
         "--rps",
         type=_parse_rps,
@@ -347,20 +442,22 @@ def _parse_args() -> argparse.Namespace:
         "--token",
         default=os.environ.get("IBEX_CONTEXT_GRPC_SERVICE_TOKEN", ""),
         help=(
-            "Caller service token (ADR-0096). Defaults to "
-            "IBEX_CONTEXT_GRPC_SERVICE_TOKEN; the stub profile uses a "
+            "Caller service token (ADR-0096), used by both profiles. Defaults "
+            "to IBEX_CONTEXT_GRPC_SERVICE_TOKEN; the stub profile uses a "
             "throwaway token when this is empty."
         ),
     )
     parser.add_argument(
         "--org-id",
+        type=_parse_uuid,
         default=str(ORG),
-        help="Tenant asserted by the benchmark principal (must be canonical).",
+        help="Tenant asserted by the benchmark principal, in both profiles (canonical UUID).",
     )
     parser.add_argument(
         "--agent-id",
+        type=_parse_uuid,
         default=str(AGENT),
-        help="Agent asserted by the benchmark principal (must be canonical).",
+        help="Agent asserted by the benchmark principal, in both profiles (canonical UUID).",
     )
     parser.add_argument("--json", type=Path, help="Write the profile-tagged result to this path.")
     parser.add_argument(
@@ -376,7 +473,14 @@ def _profile_stats(args: argparse.Namespace) -> _DriveStats:
     """Drive the profile selected by ``--profile`` and return its measurements."""
     if args.profile == "stub":
         return asyncio.run(
-            _run_stub(args.duration, args.rps, args.token or STUB_SERVICE_TOKEN)
+            _run_stub(
+                _StubRun(
+                    token=args.token or _stub_service_token(),
+                    org=args.org_id,
+                    agent=args.agent_id,
+                    plan=_LoadPlan(args.duration, args.rps),
+                )
+            )
         )
     return asyncio.run(
         _run_live(

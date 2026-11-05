@@ -6,7 +6,8 @@ import (
 )
 
 // testContextServiceToken is a stand-in for IBEX_CONTEXT_GRPC_SERVICE_TOKEN.
-const testContextServiceToken = "0123456789abcdef0123456789abcdef"
+// Built at runtime so the fixture is never mistaken for a committed credential.
+var testContextServiceToken = strings.Repeat("0123456789abcdef", 2)
 
 // contextTokenShapeErr is the operator-facing rejection for a token the context
 // server would refuse (ADR-0096: 32-512 characters from [A-Za-z0-9_-]).
@@ -106,8 +107,8 @@ func contextTokenShapeCases() []contextAuthCase {
 func contextTargetCases() []contextAuthCase {
 	return []contextAuthCase{
 		{
-			name: "enabled localhost hostname with token", environment: envDevelopment, enabled: true,
-			target: "localhost:9092", token: testContextServiceToken,
+			name: "enabled rejects a localhost hostname", environment: envDevelopment, enabled: true,
+			target: "localhost:9092", token: testContextServiceToken, wantErr: "loopback IP literal",
 		},
 		{
 			name: "enabled ipv6 loopback with token", environment: envDevelopment, enabled: true,
@@ -115,20 +116,20 @@ func contextTargetCases() []contextAuthCase {
 		},
 		{
 			name: "enabled rejects unspecified ipv4", environment: envDevelopment, enabled: true,
-			target: "0.0.0.0:9092", token: testContextServiceToken, wantErr: "resolves to 0.0.0.0",
+			target: "0.0.0.0:9092", token: testContextServiceToken, wantErr: "is 0.0.0.0",
 		},
 		{
 			name: "enabled rejects unspecified ipv6", environment: envDevelopment, enabled: true,
-			target: "[::]:9092", token: testContextServiceToken, wantErr: "resolves to ::",
+			target: "[::]:9092", token: testContextServiceToken, wantErr: "is ::",
 		},
 		{
 			name: "enabled rejects private remote ip", environment: envDevelopment, enabled: true,
-			target: "10.1.2.3:9092", token: testContextServiceToken, wantErr: "resolves to 10.1.2.3",
+			target: "10.1.2.3:9092", token: testContextServiceToken, wantErr: "is 10.1.2.3",
 		},
 		{
-			name: "enabled rejects unresolvable host", environment: envDevelopment, enabled: true,
+			name: "enabled rejects a hostname", environment: envDevelopment, enabled: true,
 			target: "context.invalid:9092", token: testContextServiceToken,
-			wantErr: "must resolve to a loopback address",
+			wantErr: "loopback IP literal",
 		},
 		{
 			name: "enabled rejects malformed target", environment: envDevelopment, enabled: true,

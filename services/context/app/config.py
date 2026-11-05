@@ -112,8 +112,9 @@ class ContextSettings(BaseSettings):
         default="127.0.0.1:9092",
         validation_alias="IBEX_CONTEXT_GRPC_ADDR",
         description=(
-            "Bind address for ContextAssemblyService (host:port). Must resolve "
-            "to loopback only; the server refuses any other bind (ADR-0096)."
+            "Bind address for ContextAssemblyService (host:port). Must be a "
+            "loopback IP literal (127.0.0.1 or ::1); the server refuses any "
+            "other bind, including hostnames (ADR-0096)."
         ),
     )
     packer_dp_cell_ceiling: int = Field(

@@ -51,6 +51,9 @@ from e2e_phase35_lib import (  # noqa: E402
     terminate,
 )
 
+# Scenario 7 query shared by the two rejection legs and the healthy leg.
+_AUTH_PROBE_QUERY = "phase35 auth probe"
+
 
 def _require_http_ok(code: int, label: str) -> None:
     if code != 200:
@@ -220,6 +223,14 @@ def scenario_4(client: httpx.Client, env: Env) -> None:
         samples.clear()
         for i in range(10):
             samples.append(_scenario4_sample(client, env, i))
+        fallbacks = [sample.get("fallback") for sample in samples]
+        if "false" not in fallbacks:
+            # Raised (not fail()) so eventually() keeps retrying: assembly can
+            # fall back early in the run and recover inside env.timeout_s.
+            raise AssertionError(
+                "want a healthy X-IBEX-Context-Fallback=false sample "
+                f"(ADR-0096), got {fallbacks!r}"
+            )
 
     eventually(
         _collect,
@@ -227,12 +238,6 @@ def scenario_4(client: httpx.Client, env: Env) -> None:
         interval=max(env.interval_s, 0.5),
         label="scenario4 chat samples",
     )
-    fallbacks = [sample.get("fallback") for sample in samples]
-    if "false" not in fallbacks:
-        fail(
-            "scenario4 want a healthy X-IBEX-Context-Fallback=false sample "
-            f"(ADR-0096), got {fallbacks!r}"
-        )
     overheads = _numeric_field(samples, "proxy_overhead_ms")
     assemblies = _numeric_field(samples, "context_assembly_ms")
     report: dict[str, Any] = {
@@ -421,7 +426,7 @@ def scenario_7(env: Env) -> None:
 
     assemble_expect_error(
         env,
-        "phase35 auth probe",
+        _AUTH_PROBE_QUERY,
         grpc.StatusCode.UNAUTHENTICATED,
         AssembleOpts(send_token=False),
     )
@@ -429,13 +434,13 @@ def scenario_7(env: Env) -> None:
 
     assemble_expect_error(
         env,
-        "phase35 auth probe",
+        _AUTH_PROBE_QUERY,
         grpc.StatusCode.PERMISSION_DENIED,
         AssembleOpts(selector_org=env.org_b, selector_agent=env.agent_b),
     )
     pass_("scenario7 org-A principal + org-B selectors → PERMISSION_DENIED")
 
-    resp = assemble_once(env, "phase35 auth probe")
+    resp = assemble_once(env, _AUTH_PROBE_QUERY)
     if not resp.HasField("metrics"):
         fail("scenario7 healthy assemble missing AssemblyMetrics")
     pass_("scenario7 valid token + matching selectors → OK")

@@ -14,13 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-import ipaddress
 import logging
 import signal
-import socket
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 import grpc
@@ -64,6 +62,9 @@ _SHUTDOWN_GRACE_S = 5.0
 # H3: without so_reuseport a same-UID process can share the port and capture
 # the caller token (ADR-0096).
 _SERVER_OPTIONS: tuple[tuple[str, int], ...] = (("grpc.so_reuseport", 0),)
+# Bind allow-list: IP literals only. A hostname would be resolved twice (once by
+# the guard, once by gRPC), and the second lookup could answer differently.
+_LOOPBACK_HOSTS: Final[frozenset[str]] = frozenset({"127.0.0.1", "::1"})
 
 PRINCIPAL_REQUIRED_DETAILS = "verified principal context required"
 PRINCIPAL_INVALID_DETAILS = "principal context is invalid or expired"
@@ -294,43 +295,28 @@ def _is_loopback_addr(addr: str) -> bool:
 
     ``localhost`` is deliberately excluded: it is a name, and a resolver or hosts
     file can point it at a non-loopback address. ``_require_loopback_bind``
-    resolves every name so the bind cannot slip off loopback.
+    rejects every name outright so the bound socket cannot slip off loopback.
     """
-    return _host_from_addr(addr) in {"127.0.0.1", "::1"}
+    return _host_from_addr(addr) in _LOOPBACK_HOSTS
 
 
 def _require_loopback_bind(addr: str) -> None:
-    """Refuse to bind anything that is not loopback (ADR-0096).
+    """Refuse to bind anything that is not a loopback IP literal (ADR-0096).
 
-    The address must parse strictly, and ``getaddrinfo`` is consulted for names
-    so a name that resolves to a public address is rejected; every resolved
-    address must be loopback. Unresolvable names fail closed.
+    The address must parse strictly and the host must be the literal
+    ``127.0.0.1`` or ``::1``. Hostnames are rejected rather than resolved: a
+    guard that resolved the name would still hand the original string to
+    ``add_insecure_port``, which resolves it again — and a second lookup could
+    return a non-loopback address and serve the plaintext caller token there.
     """
     host, _port = _split_host_port(addr)
-    if host in {"127.0.0.1", "::1"}:
+    if host in _LOOPBACK_HOSTS:
         return
-    addresses = _resolved_addresses(host)
-    if not addresses or not all(_is_loopback_ip(item) for item in addresses):
-        msg = (
-            "IBEX_CONTEXT_GRPC_ADDR must resolve to loopback only; refusing "
-            f"bind {addr!r} (ADR-0096)"
-        )
-        raise ValueError(msg)
-
-
-def _resolved_addresses(host: str) -> list[str]:
-    try:
-        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
-    except OSError:
-        return []
-    return [str(info[4][0]) for info in infos]
-
-
-def _is_loopback_ip(text: str) -> bool:
-    try:
-        return ipaddress.ip_address(text.split("%", 1)[0]).is_loopback
-    except ValueError:
-        return False
+    msg = (
+        "IBEX_CONTEXT_GRPC_ADDR must be a loopback IP literal "
+        f"(127.0.0.1 or ::1); refusing bind {addr!r} (ADR-0096)"
+    )
+    raise ValueError(msg)
 
 
 def _startup_service_token(settings: ContextSettings) -> str:
@@ -358,7 +344,7 @@ def build_server(
     """Create an aio server with ContextAssemblyService registered.
 
     Returns ``(server, bound_port)``. Raises ``ValueError`` when the caller
-    token is missing/invalid or the bind address is not loopback.
+    token is missing/invalid or the bind address is not a loopback IP literal.
     """
     pb2 = _load_pb2()
     cfg = settings or ContextSettings()

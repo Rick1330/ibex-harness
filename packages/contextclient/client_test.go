@@ -3,6 +3,7 @@ package contextclient
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,8 @@ import (
 )
 
 // testServiceToken is a stand-in for IBEX_CONTEXT_GRPC_SERVICE_TOKEN.
-const testServiceToken = "0123456789abcdef0123456789abcdef"
+// Built at runtime so the fixture is never mistaken for a committed credential.
+var testServiceToken = strings.Repeat("0123456789abcdef", 2)
 
 type mockContextAssemblyServiceClient struct {
 	assembleFn func(context.Context, *contextv1.AssembleContextRequest, ...grpc.CallOption) (*contextv1.AssembleContextResponse, error)

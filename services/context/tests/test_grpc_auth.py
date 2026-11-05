@@ -11,11 +11,11 @@ from pydantic import SecretStr
 
 from app import grpc_auth
 from app.grpc_auth import (
+    CALLER_AUTH_HEADER,
     REASON_DUPLICATE,
     REASON_INVALID,
     REASON_MISMATCH,
     REASON_MISSING,
-    SERVICE_TOKEN_METADATA_KEY,
     UNAUTHENTICATED_DETAILS,
     guard_handler,
     require_service_token,
@@ -141,17 +141,17 @@ def test_tokens_match_returns_false_on_type_error(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.asyncio
 async def test_require_service_token_accepts_single_matching_entry() -> None:
-    await _accepted(((SERVICE_TOKEN_METADATA_KEY, TOKEN),))
+    await _accepted(((CALLER_AUTH_HEADER, TOKEN),))
 
 
 @pytest.mark.asyncio
 async def test_require_service_token_accepts_metadatum_objects() -> None:
-    await _accepted([Metadatum(SERVICE_TOKEN_METADATA_KEY, TOKEN)])
+    await _accepted([Metadatum(CALLER_AUTH_HEADER, TOKEN)])
 
 
 @pytest.mark.asyncio
 async def test_require_service_token_normalizes_keys_and_bytes_values() -> None:
-    await _accepted([(SERVICE_TOKEN_METADATA_KEY.upper().encode(), TOKEN.encode())])
+    await _accepted([(CALLER_AUTH_HEADER.upper().encode(), TOKEN.encode())])
 
 
 @pytest.mark.asyncio
@@ -168,8 +168,8 @@ async def test_require_service_token_rejects_duplicate(
 ) -> None:
     await _rejected(
         (
-            (SERVICE_TOKEN_METADATA_KEY, TOKEN),
-            (SERVICE_TOKEN_METADATA_KEY, TOKEN),
+            (CALLER_AUTH_HEADER, TOKEN),
+            (CALLER_AUTH_HEADER, TOKEN),
         ),
         caplog,
         reason=REASON_DUPLICATE,
@@ -180,7 +180,7 @@ async def test_require_service_token_rejects_duplicate(
 async def test_require_service_token_rejects_mismatch(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    await _rejected(((SERVICE_TOKEN_METADATA_KEY, OTHER),), caplog, reason=REASON_MISMATCH)
+    await _rejected(((CALLER_AUTH_HEADER, OTHER),), caplog, reason=REASON_MISMATCH)
     assert TOKEN not in caplog.text
     assert OTHER not in caplog.text
 
@@ -194,7 +194,7 @@ async def test_require_service_token_rejects_invalid_value(
     value: object,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    await _rejected(((SERVICE_TOKEN_METADATA_KEY, value),), caplog, reason=REASON_INVALID)
+    await _rejected(((CALLER_AUTH_HEADER, value),), caplog, reason=REASON_INVALID)
 
 
 @pytest.mark.asyncio
@@ -202,6 +202,14 @@ async def test_require_service_token_rejects_unreadable_metadata(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     await _rejected(RuntimeError("metadata unavailable"), caplog)
+
+
+@pytest.mark.asyncio
+async def test_require_service_token_rejects_non_iterable_metadata(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A context whose metadata is not a sequence must deny, not raise."""
+    await _rejected(42, caplog, reason=REASON_INVALID)
 
 
 @pytest.mark.asyncio
@@ -215,14 +223,14 @@ async def test_require_service_token_rejects_malformed_entry(
 async def test_require_service_token_rejects_lone_surrogates(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    await _rejected(((SERVICE_TOKEN_METADATA_KEY, "\ud800" * 20),), caplog, reason=REASON_INVALID)
+    await _rejected(((CALLER_AUTH_HEADER, "\ud800" * 20),), caplog, reason=REASON_INVALID)
 
 
 @pytest.mark.asyncio
 async def test_require_service_token_rejects_undecodable_bytes(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    await _rejected(((SERVICE_TOKEN_METADATA_KEY, b"\xff" * 40),), caplog, reason=REASON_INVALID)
+    await _rejected(((CALLER_AUTH_HEADER, b"\xff" * 40),), caplog, reason=REASON_INVALID)
 
 
 @pytest.mark.asyncio
@@ -249,7 +257,7 @@ async def test_require_service_token_rejects_context_without_metadata(
 async def test_guard_handler_runs_the_handler_when_authenticated() -> None:
     handler, calls = _recorder()
     guarded = guard_handler(handler, TOKEN, method="AssembleContext")
-    ctx = _Ctx(((SERVICE_TOKEN_METADATA_KEY, TOKEN),))
+    ctx = _Ctx(((CALLER_AUTH_HEADER, TOKEN),))
     assert await guarded("req", ctx) == "ok"  # type: ignore[arg-type]
     assert calls == ["req"]
 
@@ -258,8 +266,9 @@ async def test_guard_handler_runs_the_handler_when_authenticated() -> None:
 async def test_guard_handler_blocks_the_handler_when_unauthenticated() -> None:
     handler, calls = _recorder()
     guarded = guard_handler(handler, SecretStr(TOKEN))
+    ctx = _Ctx(())
     with pytest.raises(grpc.aio.AioRpcError):
-        await guarded("req", _Ctx(()))  # type: ignore[arg-type]
+        await guarded("req", ctx)  # type: ignore[arg-type]
     assert calls == []
 
 
