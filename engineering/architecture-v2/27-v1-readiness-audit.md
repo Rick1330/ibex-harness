@@ -37,7 +37,7 @@ A 1.0 claim would be false, unsafe, or undeliverable without these.
 ### 3.1 Deliverability
 
 | ID | Owner role | Finding | Evidence | Acceptance evidence |
-|---|---|---|---|
+|---|---|---|---|---|
 | P0-01 | ibex-sre + ibex-architect | **No profile serves the critical path.** The only supported bundle is memory substrate; context has no image; app services are host-run in dev compose. | `infra/compose/bundles/memory-context.yml`; `services/*/Dockerfile` (8 of 11); `infra/compose/dev/docker-compose.yml:2-111` | One named profile with proxy + auth + api + memory + context + embedder (+ worker/console), containerised, started by one command, healthy |
 | P0-02 | ibex-platform-engineer + ibex-security | **Context assembly is not deployable.** No Dockerfile, compose service, Helm template, or publish job; the server refuses non-loopback binds, so it cannot run as a networked service. | `services/context/app/server.py:5,147,155`; `.github/workflows/docker-publish.yml` (7 images, no context) | Context image + profile entry + a decided transport (TLS or documented mesh boundary) |
 | P0-03 | ibex-sre | **Kubernetes profile cannot install or upgrade.** Sentinel digests, missing datastore templates, migrate image unpublished and disabled. | `infra/helm/ibex-harness/values-prod.yaml:4-6,17-24`; `check-helm-digest-placeholders.sh` fails today | Guard exit 0; one clean install and one upgrade on a disposable cluster, or Kubernetes declared out of 1.0 scope |
@@ -47,7 +47,7 @@ A 1.0 claim would be false, unsafe, or undeliverable without these.
 ### 3.2 Tenancy and data safety
 
 | ID | Owner role | Finding | Evidence | Acceptance evidence |
-|---|---|---|---|
+|---|---|---|---|---|
 | P0-06 | ibex-platform-engineer + ibex-data-engineer | **RLS is inert, and the service-account GUC bypasses it even when the role is pinned.** Memory, worker, proxy and the Go packages set the org GUC but connect as superuser `ibex`; and `set_service_org` sets `app.is_service_account='true'` on every memory read and write, which `rls_org_visible` treats as "allow every row". Pinning `ibex_app` alone does not close cross-tenant access. | `services/memory/app/db.py:50`; `services/memory/app/org_context.py:13-22`; `000004_rls.up.sql:10,22`; `000009_create_directives.up.sql:104-118`; catalog `rolsuper=t` | Every service session pins a non-superuser role; the bypass is removed or restricted to a role the tenant-facing connection cannot assume; a cross-tenant test runs through each real session factory **with the bypass unavailable** |
 | P0-07 | ibex-data-engineer | **Org deletion aborts on the idempotency ledger.** `idempotency_ledger.agent_id` is `NO ACTION` and the saga deletes agents first. | `000043_idempotency_ledger.up.sql:4-5`; `services/worker/app/tasks/org_deletion.py:104-134` | Seeded org with ledger/budget/evidence rows reaches `succeeded`, zero rows remain |
 | P0-08 | ibex-memory-intelligence | **Forget is a visibility tombstone, not erasure.** It nulls embedding fields but keeps `content`; the lifecycle outbox has no consumer. | `services/memory/app/lifecycle.py:107-122` | Forget (or a receipted purge) removes content; test asserts the text is gone and a per-memory receipt exists |
@@ -58,7 +58,7 @@ A 1.0 claim would be false, unsafe, or undeliverable without these.
 ### 3.3 Contracts and release integrity
 
 | ID | Owner role | Finding | Evidence | Acceptance evidence |
-|---|---|---|---|
+|---|---|---|---|---|
 | P0-12 | ibex-go-systems | **`buf-breaking` is advisory.** Protobuf is the only shared wire contract; a tag reuse merges green. | `.github/workflows/ci.yml:315-320` | Required check; a deliberately breaking PR proves red |
 | P0-13 | ibex-platform-engineer | **The OpenAPI snapshot is freshness-checked, not breaking-checked.** Regenerating it in the same PR legalises any `/v1` change across 75 routes. | `.github/scripts/check-openapi-snapshot.sh:9-16` | `oasdiff`-style breaking gate against a pinned release baseline |
 | P0-14 | ibex-architect | **GAP-003: the contract registry covers 5 shapes while 75 REST routes, 3 gRPC services and 8 MCP tools ship.** A compatibility policy cannot bind unregistered surfaces. | `18-gap-register.md:9`; `03-contract-registry.md:120-186`; `route_inventory.json` | Registry complete with owner/version/compat class; CI fails on an unregistered route or tool |
@@ -69,7 +69,7 @@ A 1.0 claim would be false, unsafe, or undeliverable without these.
 ### 3.4 Security and observability
 
 | ID | Owner role | Finding | Evidence | Acceptance evidence |
-|---|---|---|---|
+|---|---|---|---|---|
 | P0-18 | ibex-builder + ibex-security | **Exception text reaches spans and logs.** Worker spans call `record_exception` despite `record_exception=False` at creation; the API logs `exc_info` with no redaction, and a `DBAPIError` traceback carries SQL plus bound parameters. | `services/worker/app/observability.py:93-113`; `services/api/app/errors.py:173-179`; `services/api/app/logutil.py:20-32` | Sentinel-exception tests: sentinel absent from exported spans and captured logs |
 | P0-19 | ibex-sre | **Nothing pages.** Alertmanager routes every alert to `local-null`; rules cover 11 of the documented failure modes. | `infra/monitoring/alertmanager/alertmanager.yml:1-11`; `infra/monitoring/prometheus/rules/*.yml` | Real receiver + one delivered test alert + rule map to `14-failure-modes-and-readiness.md` |
 | P0-20 | ibex-sre + ibex-memory-intelligence | **Published latency is not reproducible.** HNSW p50/p95/p99 carry no runner CPU/RAM in the artifact; the ranking baseline records a run URL but no commit/digest/seed, and the gate compares corpus *names*. | `site/public/benchmarks/hnsw-benchmark-data.json`; `baseline-modes.json:18-26`; `check_mode_gate.py:147-166` | Runner profile in the HNSW schema; baseline records `sha`, `gold_set_sha256`, seed; gate rejects mismatch |
@@ -78,7 +78,7 @@ A 1.0 claim would be false, unsafe, or undeliverable without these.
 ## 4. P1 — should ship with 1.0
 
 | ID | Owner role | Domain | Finding | Evidence |
-|---|---|---|---|
+|---|---|---|---|---|
 | P1-01 | ibex-architect | Contracts | No deprecation/upgrade policy in code: no `Deprecation`/`Sunset` headers, no support window. | `16-compatibility-and-versioning.md:3-17` |
 | P1-02 | ibex-platform-engineer | Contracts | MCP descriptor hash is runtime-computed and self-consistent-only, so schema changes are invisible in review. | `packages/mcp_gateway/src/mcp_gateway/registry.py:142-146` |
 | P1-03 | ibex-architect | Contracts | ADR-0084 status contradicts the ledger; ADR-0092–0095 remain `Proposed` while their code paths are live. | `adr/0084…:11`; `adr/0092…0095:15` |
@@ -134,7 +134,7 @@ A 1.0 claim would be false, unsafe, or undeliverable without these.
 ## 5. P2 — may ship as a documented limitation
 
 | ID | Owner role | Domain | Finding |
-|---|---|---|
+|---|---|---|---|
 | P2-01 | ibex-platform-engineer | Services | Worker registers no-op task skeletons (`extraction_noop`, `embedding_noop`, …) visible on a 1.0 install. |
 | P2-02 | ibex-architect | Services | Four shared packages have zero importers; the worker carries a second object-store client. |
 | P2-03 | ibex-data-engineer | Contracts | ClickHouse schema evolution has no gate; acceptable only while declared projection-only. |
