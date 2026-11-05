@@ -77,6 +77,70 @@ func TestUnit_ApplyContextOrDirective_MissingPrincipalSkipsAssemble(t *testing.T
 	}
 }
 
+// TestUnit_ApplyContextOrDirective_MissingPrincipalRecordsFallbackReason pins
+// finding N4: skipping the RPC without a verified principal is security-relevant,
+// so it must be counted with a bounded reason, while the response-header contract
+// stays unchanged (Attempted/Fallback remain false).
+func TestUnit_ApplyContextOrDirective_MissingPrincipalRecordsFallbackReason(t *testing.T) {
+	t.Parallel()
+	fake := &fakeContextAssembler{result: contextclient.AssembleResult{AssembledContext: "assembled"}}
+	reg := metrics.NewProxy("missing-principal-fallback-test")
+	h := contextHandler(true, fake)
+	h.metrics = reg
+	ctx := directiveCtx(contextTestAuthCtxWithoutPrincipal(t))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	out := assertNoAssembleAttempt(t, noAssembleAttemptCheck{
+		h: h, fake: fake, ctx: ctx, req: req, reason: "verified principal missing",
+	})
+	if out.Meta.Attempted || out.Meta.Fallback {
+		t.Fatalf("skipped RPC must not change the header contract, meta=%+v", out.Meta)
+	}
+	assertDirectiveOnly(t, out.Messages)
+	assertOnlyAssembleFallbackReason(t, reg, principalMissingFallbackReason)
+}
+
+// assertOnlyAssembleFallbackReason proves the recorder saw exactly one fallback,
+// labelled with reason.
+func assertOnlyAssembleFallbackReason(t *testing.T, reg *metrics.ProxyRegistry, reason string) {
+	t.Helper()
+	reasons := assembleFallbackReasons(t, reg)
+	if len(reasons) != 1 {
+		t.Fatalf("recorded fallback reasons=%v want exactly %q", reasons, reason)
+	}
+	if got := reasons[reason]; got != 1 {
+		t.Fatalf("recorded fallback reasons=%v want %q=1", reasons, reason)
+	}
+}
+
+func assembleFallbackReasons(t *testing.T, reg *metrics.ProxyRegistry) map[string]float64 {
+	t.Helper()
+	mfs, err := reg.Gatherer().Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	out := make(map[string]float64)
+	for _, mf := range mfs {
+		if mf.GetName() != "ibex_proxy_context_assemble_fallback_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			if label, ok := metricLabelValue(m, "reason"); ok {
+				out[label] = m.GetCounter().GetValue()
+			}
+		}
+	}
+	return out
+}
+
+func metricLabelValue(m *dto.Metric, name string) (string, bool) {
+	for _, lp := range m.GetLabel() {
+		if lp.GetName() == name {
+			return lp.GetValue(), true
+		}
+	}
+	return "", false
+}
+
 // noAssembleAttemptCheck groups inputs for Skip-Memory / missing-tenant gates.
 type noAssembleAttemptCheck struct {
 	h      chatCompletionHandler

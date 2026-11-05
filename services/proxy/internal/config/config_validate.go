@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,15 @@ import (
 )
 
 const errMsgInvalidTCPPort = "IBEX_PORT must be a valid TCP port"
+
+// contextServiceTokenPattern is the ADR-0096 caller-token wire contract, mirrored
+// from the context server (services/context/app/grpc_auth.py). It is enforced
+// here as well because gRPC-Go rejects metadata values outside ASCII key rules:
+// a token carrying a newline, a non-ASCII rune, or more than 512 characters
+// makes every RPC fail as Internal, which the startup probe can only classify as
+// inconclusive. That would leave the proxy running with a token the context
+// server can never accept.
+var contextServiceTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{32,512}$`)
 
 func runValidationSteps(steps ...func() error) error {
 	for _, step := range steps {
@@ -238,8 +248,20 @@ func (c Config) validateEnabledContextCaller(host string) error {
 	if err := validateContextTargetLoopback(host); err != nil {
 		return err
 	}
-	if strings.TrimSpace(c.ContextGRPCServiceToken) == "" {
+	return validateContextServiceToken(c.ContextGRPCServiceToken)
+}
+
+// validateContextServiceToken requires a token the context server will accept.
+// The error names the variable and the allowed shape and never echoes the value,
+// because the value is a secret.
+func validateContextServiceToken(token string) error {
+	if strings.TrimSpace(token) == "" {
 		return fmt.Errorf("IBEX_CONTEXT_GRPC_SERVICE_TOKEN is required when IBEX_CONTEXT_ENABLED=true and IBEX_CONTEXT_GRPC_TARGET is set")
+	}
+	if !contextServiceTokenPattern.MatchString(token) {
+		return fmt.Errorf(
+			"IBEX_CONTEXT_GRPC_SERVICE_TOKEN must be 32-512 characters from [A-Za-z0-9_-] (ADR-0096); the context server enforces the same shape, and gRPC-Go rejects any other value as metadata so the token could never authenticate",
+		)
 	}
 	return nil
 }

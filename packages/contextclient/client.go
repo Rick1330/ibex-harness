@@ -31,6 +31,12 @@ var (
 	// ErrCallerAuthRejected reports UNAUTHENTICATED from the context server: the
 	// service token was missing, duplicated on the wire, or did not match.
 	ErrCallerAuthRejected = errors.New("context caller authentication rejected")
+	// ErrCallerAuthUnproven reports UNIMPLEMENTED from the probe RPC. It is not
+	// proof of anything: a guarded stub returns UNIMPLEMENTED after the caller
+	// guard runs (ADR-0038), but so does a server with no guard installed at all
+	// — including the documented proxy-first rollout where the proxy starts
+	// before the guarded context image. Startup treats it as non-fatal.
+	ErrCallerAuthUnproven = errors.New("context caller authentication unproven")
 	// ErrCallerAuthInconclusive reports any other probe failure (UNAVAILABLE,
 	// DEADLINE_EXCEEDED, unknown). Startup treats it as non-fatal.
 	ErrCallerAuthInconclusive = errors.New("context caller authentication inconclusive")
@@ -115,11 +121,12 @@ func (c *Client) Assemble(ctx context.Context, req AssembleParams) AssembleResul
 
 // ProbeCallerAuth confirms the context server accepts this client's service
 // token by calling SearchMemories with an empty request. SearchMemories is a
-// stub that returns UNIMPLEMENTED after the caller guard runs (ADR-0038), so
-// UNIMPLEMENTED means the token was accepted. UNAUTHENTICATED maps to
-// ErrCallerAuthRejected; every other outcome maps to ErrCallerAuthInconclusive.
-// Startup decides which of those is fatal. The caller owns the deadline;
-// bootstrap applies a short startup budget.
+// stub that returns UNIMPLEMENTED after the caller guard runs (ADR-0038), but a
+// server with no guard at all answers the same way, so UNIMPLEMENTED only proves
+// the call was not rejected — it maps to ErrCallerAuthUnproven, never to success.
+// UNAUTHENTICATED maps to ErrCallerAuthRejected; every other outcome maps to
+// ErrCallerAuthInconclusive. Startup decides which of those is fatal. The caller
+// owns the deadline; bootstrap applies a short startup budget.
 func (c *Client) ProbeCallerAuth(ctx context.Context) error {
 	_, err := c.client.SearchMemories(c.callerAuthContext(ctx), &contextv1.SearchMemoriesRequest{})
 	if err == nil {
@@ -128,7 +135,7 @@ func (c *Client) ProbeCallerAuth(ctx context.Context) error {
 	code := status.Code(err)
 	switch code {
 	case codes.Unimplemented:
-		return nil
+		return fmt.Errorf("%w: %s", ErrCallerAuthUnproven, code)
 	case codes.Unauthenticated:
 		return fmt.Errorf("%w: %s", ErrCallerAuthRejected, code)
 	default:

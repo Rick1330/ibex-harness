@@ -1,8 +1,10 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"strings"
 	"testing"
@@ -96,7 +98,7 @@ func TestUnit_SetupContextClient_DialsAndProbesUnavailableContinues(t *testing.T
 	})
 }
 
-func TestUnit_SetupContextClient_ProbeUnimplementedAcceptsAndPassesToken(t *testing.T) {
+func TestUnit_SetupContextClient_ProbeUnimplementedContinuesButUnproven(t *testing.T) {
 	t.Parallel()
 
 	observed := make(chan []string, 1)
@@ -123,6 +125,54 @@ func TestUnit_SetupContextClient_ProbeUnimplementedAcceptsAndPassesToken(t *test
 		}
 	})
 	assertObservedToken(t, observed)
+}
+
+// TestUnit_SetupContextClient_NoGuardAnywhereDoesNotClaimVerifiedBoundary pins
+// finding N2: a server with no caller guard at all answers UNIMPLEMENTED exactly
+// like the guarded stub, so the startup log must warn that the boundary is
+// unproven instead of reporting it verified. The documented proxy-first rollout
+// reaches this state on purpose.
+func TestUnit_SetupContextClient_NoGuardAnywhereDoesNotClaimVerifiedBoundary(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+	log, err := logger.New(logger.Config{Service: "proxy", Level: slog.LevelDebug, Writer: &logs})
+	if err != nil {
+		t.Fatalf("logger: %v", err)
+	}
+	// UnimplementedContextAssemblyServiceServer installs no guard: every RPC,
+	// SearchMemories included, answers UNIMPLEMENTED.
+	addr := startStubContextServer(t, &contextv1.UnimplementedContextAssemblyServiceServer{})
+	got, err := setupContextClient(config.Config{
+		Environment:             "development",
+		ContextEnabled:          true,
+		ContextGRPCTarget:       addr,
+		ContextAssembleTimeout:  500 * time.Millisecond,
+		ContextGRPCServiceToken: bootstrapContextToken,
+	}, log, nil)
+	if err != nil {
+		t.Fatalf("unguarded UNIMPLEMENTED probe must not fail startup, got %v", err)
+	}
+	if got.client == nil || got.conn == nil {
+		t.Fatal("expected non-nil client and conn")
+	}
+	t.Cleanup(func() {
+		if err := got.conn.Close(); err != nil {
+			t.Errorf("close conn: %v", err)
+		}
+	})
+	output := logs.String()
+	if strings.Contains(output, "probe passed") {
+		t.Fatalf("log claims the caller-auth boundary is verified:\n%s", output)
+	}
+	for _, want := range []string{"unproven", "does not prove"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("log must contain %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, bootstrapContextToken) {
+		t.Fatal("log must never contain the token value")
+	}
 }
 
 func TestUnit_SetupContextClient_ProbeUnauthenticatedFailsStartup(t *testing.T) {
@@ -165,6 +215,7 @@ func TestUnit_ProbeContextCallerAuth_Classifies(t *testing.T) {
 	}{
 		{name: "passed", probe: nil},
 		{name: "rejected is fatal", probe: contextclient.ErrCallerAuthRejected, wantErr: true},
+		{name: "unproven continues", probe: contextclient.ErrCallerAuthUnproven, wantErr: false},
 		{name: "inconclusive continues", probe: contextclient.ErrCallerAuthInconclusive, wantErr: false},
 	}
 	for _, tc := range cases {
@@ -206,14 +257,14 @@ func (s *stubContextServer) SearchMemories(ctx context.Context, _ *contextv1.Sea
 	return &contextv1.SearchMemoriesResponse{}, nil
 }
 
-func startStubContextServer(t *testing.T, stub *stubContextServer) string {
+func startStubContextServer(t *testing.T, impl contextv1.ContextAssemblyServiceServer) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	srv := grpc.NewServer()
-	contextv1.RegisterContextAssemblyServiceServer(srv, stub)
+	contextv1.RegisterContextAssemblyServiceServer(srv, impl)
 	go func() {
 		_ = srv.Serve(lis) //nolint:errcheck // Stop closes the listener; Serve then returns
 	}()

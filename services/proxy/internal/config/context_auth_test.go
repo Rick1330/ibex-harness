@@ -8,6 +8,10 @@ import (
 // testContextServiceToken is a stand-in for IBEX_CONTEXT_GRPC_SERVICE_TOKEN.
 const testContextServiceToken = "0123456789abcdef0123456789abcdef"
 
+// contextTokenShapeErr is the operator-facing rejection for a token the context
+// server would refuse (ADR-0096: 32-512 characters from [A-Za-z0-9_-]).
+const contextTokenShapeErr = "must be 32-512 characters from [A-Za-z0-9_-]"
+
 // contextAuthCase is one row of the ADR-0096 caller-auth config matrix.
 type contextAuthCase struct {
 	name        string
@@ -41,6 +45,41 @@ func contextAuthCases() []contextAuthCase {
 		{
 			name: "enabled loopback with token", environment: envDevelopment, enabled: true,
 			target: "127.0.0.1:9092", token: testContextServiceToken,
+		},
+		{
+			// The server pattern is ^[A-Za-z0-9_-]{32,512}$; a token outside it
+			// makes gRPC-Go reject the metadata as Internal, so startup must fail
+			// here rather than proceed with a token that can never authenticate.
+			name: "enabled rejects a 31-character token", environment: envDevelopment, enabled: true,
+			target: "127.0.0.1:9092", token: strings.Repeat("a", 31), wantErr: contextTokenShapeErr,
+		},
+		{
+			name: "enabled accepts a 32-character token", environment: envDevelopment, enabled: true,
+			target: "127.0.0.1:9092", token: strings.Repeat("a", 32),
+		},
+		{
+			name: "enabled accepts a 512-character token", environment: envDevelopment, enabled: true,
+			target: "127.0.0.1:9092", token: strings.Repeat("a", 512),
+		},
+		{
+			name: "enabled rejects a 513-character token", environment: envDevelopment, enabled: true,
+			target: "127.0.0.1:9092", token: strings.Repeat("a", 513), wantErr: contextTokenShapeErr,
+		},
+		{
+			name: "enabled rejects a trailing newline", environment: envDevelopment, enabled: true,
+			target: "127.0.0.1:9092", token: testContextServiceToken + "\n", wantErr: contextTokenShapeErr,
+		},
+		{
+			name: "enabled rejects a non-ASCII token", environment: envDevelopment, enabled: true,
+			target: "127.0.0.1:9092", token: strings.Repeat("a", 31) + "é", wantErr: contextTokenShapeErr,
+		},
+		{
+			name: "enabled rejects a token with a space", environment: envDevelopment, enabled: true,
+			target: "127.0.0.1:9092", token: strings.Repeat("a", 31) + " ", wantErr: contextTokenShapeErr,
+		},
+		{
+			name: "enabled accepts hyphen and underscore", environment: envDevelopment, enabled: true,
+			target: "127.0.0.1:9092", token: "ABCDEFGHIJ_KLMNOPQRST-UVWXYZ012345",
 		},
 		{
 			name: "enabled localhost hostname with token", environment: envDevelopment, enabled: true,
@@ -111,6 +150,31 @@ func TestUnit_ContextCallerAuthConfigMatrix(t *testing.T) {
 				t.Fatalf("error=%v, want rejection containing %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestUnit_ValidateContextServiceToken_NamesVarShapeAndHidesValue pins the
+// operator-facing message for a malformed token: it must name the variable and
+// the allowed shape, and must never print the secret.
+func TestUnit_ValidateContextServiceToken_NamesVarShapeAndHidesValue(t *testing.T) {
+	t.Parallel()
+
+	const secret = "super-secret-token-value-that-must-not-leak"
+	err := validateContextServiceToken(secret + "\n")
+	if err == nil {
+		t.Fatal("want rejection for a token with a trailing newline")
+	}
+	msg := err.Error()
+	for _, want := range []string{"IBEX_CONTEXT_GRPC_SERVICE_TOKEN", "[A-Za-z0-9_-]", "32-512"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error=%q must contain %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, secret) {
+		t.Fatalf("error=%q must never echo the token value", msg)
+	}
+	if err := validateContextServiceToken(testContextServiceToken); err != nil {
+		t.Fatalf("validateContextServiceToken(valid) error=%v, want accept", err)
 	}
 }
 

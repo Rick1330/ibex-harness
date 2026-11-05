@@ -293,7 +293,7 @@ Used by: **proxy** (`services/proxy`)
 
 **Context caller authentication (ADR-0096).** The context hop is authenticated with a shared service token, and its preconditions are enforced at proxy startup:
 
-- `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` is required when `IBEX_CONTEXT_ENABLED=true` and `IBEX_CONTEXT_GRPC_TARGET` is set. The value is secret, is never logged, and must differ from the auth-service token so one credential cannot stand in for another.
+- `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` is required when `IBEX_CONTEXT_ENABLED=true` and `IBEX_CONTEXT_GRPC_TARGET` is set. The value is secret, is never logged, and must be at least 32 characters of `[A-Za-z0-9_-]`. **Operator obligation:** use a distinct value from `IBEX_AUTH_SERVICE_TOKEN` (and from `IBEX_CONTEXT_MEMORY_API_TOKEN`, which the context server does enforce at startup). The proxy does not hold the auth-service token, so it cannot compare against it; reusing one value would let a holder of either credential stand in for the other.
 - `IBEX_CONTEXT_GRPC_TARGET` must resolve exclusively to loopback when context is enabled, because the token travels in cleartext metadata.
 - `IBEX_CONTEXT_ENABLED=true` with a non-empty target is rejected outside `IBEX_ENV=development`; the context server serves plaintext only, so TLS is a prerequisite for any other profile.
 - The proxy probes the server's caller authentication at startup and fails closed when the token is rejected. A rejected or unreachable context server still fails open per request: chat proceeds with directive-only context and `X-IBEX-Context-Fallback: true`.

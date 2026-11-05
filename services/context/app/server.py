@@ -225,15 +225,48 @@ async def _abort_unimplemented(
     raise AssertionError("unreachable")  # pragma: no cover
 
 
+def _split_host_port(addr: str) -> tuple[str, int]:
+    """Parse ``host:port`` strictly; raise ``ValueError`` when malformed.
+
+    The bind guard and gRPC's C-core parser must agree, or the guard can accept a
+    string that ``add_insecure_port`` then interprets differently (for example the
+    unbracketed IPv6 literal ``::1:0``). IPv6 literals must be bracketed.
+    """
+    if not isinstance(addr, str) or not addr:
+        raise ValueError("IBEX_CONTEXT_GRPC_ADDR must be host:port")
+    if addr != addr.strip():
+        raise ValueError(
+            "IBEX_CONTEXT_GRPC_ADDR must not have leading or trailing whitespace"
+        )
+    host, sep, port_text = addr.rpartition(":")
+    if not sep or not host:
+        raise ValueError(f"IBEX_CONTEXT_GRPC_ADDR must be host:port, got {addr!r}")
+    if not port_text.isdigit():
+        raise ValueError(
+            f"IBEX_CONTEXT_GRPC_ADDR must end in a numeric port, got {addr!r}"
+        )
+    port = int(port_text)
+    if not 0 <= port <= 65535:
+        raise ValueError(f"IBEX_CONTEXT_GRPC_ADDR port out of range in {addr!r}")
+    if host.startswith("[") != host.endswith("]"):
+        raise ValueError(f"IBEX_CONTEXT_GRPC_ADDR has a malformed IPv6 bracket: {addr!r}")
+    if not host.startswith("[") and ":" in host:
+        raise ValueError(
+            f"IBEX_CONTEXT_GRPC_ADDR IPv6 literals must be bracketed, got {addr!r}"
+        )
+    return host.strip("[]").lower(), port
+
+
 def _host_from_addr(addr: str) -> str:
-    host = (addr or "").rsplit(":", 1)[0].strip().lower()
-    if host.startswith("["):
-        host = host.strip("[]")
+    try:
+        host, _port = _split_host_port(addr)
+    except ValueError:
+        return ""
     return host
 
 
 def _is_loopback_addr(addr: str) -> bool:
-    """True only for loopback IP literals.
+    """True only for a well-formed loopback IP literal.
 
     ``localhost`` is deliberately excluded: it is a name, and a resolver or hosts
     file can point it at a non-loopback address. ``_require_loopback_bind``
@@ -245,15 +278,12 @@ def _is_loopback_addr(addr: str) -> bool:
 def _require_loopback_bind(addr: str) -> None:
     """Refuse to bind anything that is not loopback (ADR-0096).
 
-    ``getaddrinfo`` is consulted for non-literal hosts so a name that resolves
-    to a public address is rejected; every resolved address must be loopback.
-    Unresolvable names fail closed.
+    The address must parse strictly, and ``getaddrinfo`` is consulted for names
+    so a name that resolves to a public address is rejected; every resolved
+    address must be loopback. Unresolvable names fail closed.
     """
-    host = _host_from_addr(addr)
-    if not host:
-        msg = f"IBEX_CONTEXT_GRPC_ADDR must be host:port, got {addr!r}"
-        raise ValueError(msg)
-    if _is_loopback_addr(addr):
+    host, _port = _split_host_port(addr)
+    if host in {"127.0.0.1", "::1"}:
         return
     addresses = _resolved_addresses(host)
     if not addresses or not all(_is_loopback_ip(item) for item in addresses):
@@ -315,6 +345,9 @@ def build_server(
     server = grpc_aio.server(options=_SERVER_OPTIONS)
     server.add_generic_rpc_handlers((_generic_handler(servicer, pb2, token),))
     port = server.add_insecure_port(addr)
+    if not port:
+        msg = f"failed to bind IBEX_CONTEXT_GRPC_ADDR={addr!r}"
+        raise ValueError(msg)
     return server, int(port)
 
 

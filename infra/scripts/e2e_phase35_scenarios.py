@@ -436,7 +436,7 @@ def scenario_7(env: Env) -> None:
     pass_("scenario7 org-A principal + org-B selectors → PERMISSION_DENIED")
 
     resp = assemble_once(env, "phase35 auth probe")
-    if resp.metrics is None:
+    if not resp.HasField("metrics"):
         fail("scenario7 healthy assemble missing AssemblyMetrics")
     pass_("scenario7 valid token + matching selectors → OK")
 

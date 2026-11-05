@@ -83,6 +83,26 @@ def test_build_server_refuses_unresolvable_name(
         build_server(_assembler(), listen_addr="missing.invalid:0", settings=_settings())
 
 
+@pytest.mark.parametrize(
+    "addr",
+    [
+        "",
+        "::1:0",
+        "127.0.0.1",
+        "127.0.0.1:abc",
+        "127.0.0.1:70000",
+        " 127.0.0.1:9092",
+        "127.0.0.1:9092 ",
+        "[::1:9092",
+    ],
+)
+def test_require_loopback_bind_rejects_malformed_addresses(addr: str) -> None:
+    from app import server as server_mod
+
+    with pytest.raises(ValueError):
+        server_mod._require_loopback_bind(addr)
+
+
 def test_require_loopback_bind_accepts_name_resolving_to_loopback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

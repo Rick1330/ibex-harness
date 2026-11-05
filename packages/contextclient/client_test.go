@@ -336,7 +336,7 @@ func TestProbeCallerAuth_Outcomes(t *testing.T) {
 		wantClass error
 	}{
 		{name: "success", rpcErr: nil},
-		{name: "unimplemented means the token works", rpcErr: status.Error(codes.Unimplemented, "stub")},
+		{name: "unimplemented proves nothing", rpcErr: status.Error(codes.Unimplemented, "stub"), wantClass: ErrCallerAuthUnproven},
 		{name: "unauthenticated is fatal", rpcErr: status.Error(codes.Unauthenticated, "caller authentication required"), wantClass: ErrCallerAuthRejected},
 		{name: "unavailable continues", rpcErr: status.Error(codes.Unavailable, "down"), wantClass: ErrCallerAuthInconclusive},
 		{name: "deadline continues", rpcErr: status.Error(codes.DeadlineExceeded, "slow"), wantClass: ErrCallerAuthInconclusive},
@@ -370,6 +370,37 @@ func assertProbeClass(t *testing.T, err, wantClass error) {
 	if !errors.Is(err, wantClass) {
 		t.Fatalf("ProbeCallerAuth() error=%v want class %v", err, wantClass)
 	}
+	if wantClass == ErrCallerAuthUnproven && errors.Is(err, ErrCallerAuthInconclusive) {
+		t.Fatalf("ProbeCallerAuth() error=%v must not also be classified inconclusive", err)
+	}
+}
+
+// TestProbeCallerAuth_UnimplementedIsNeverSuccess pins finding N2: a server with
+// no caller guard at all answers UNIMPLEMENTED, exactly like the guarded stub, so
+// the probe must never report success for it.
+func TestProbeCallerAuth_UnimplementedIsNeverSuccess(t *testing.T) {
+	t.Parallel()
+	mock := &mockContextAssemblyServiceClient{
+		searchFn: func(context.Context, *contextv1.SearchMemoriesRequest, ...grpc.CallOption) (*contextv1.SearchMemoriesResponse, error) {
+			return nil, status.Error(codes.Unimplemented, "method SearchMemories not implemented")
+		},
+	}
+	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"), testServiceToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probeErr := c.ProbeCallerAuth(context.Background())
+	if probeErr == nil {
+		t.Fatal("UNIMPLEMENTED must not be reported as a verified caller-auth boundary")
+	}
+	if !errors.Is(probeErr, ErrCallerAuthUnproven) {
+		t.Fatalf("ProbeCallerAuth() error=%v want ErrCallerAuthUnproven", probeErr)
+	}
+	for _, other := range []error{ErrCallerAuthRejected, ErrCallerAuthInconclusive} {
+		if errors.Is(probeErr, other) {
+			t.Fatalf("ProbeCallerAuth() error=%v must not match %v", probeErr, other)
+		}
+	}
 }
 
 func TestProbeCallerAuth_SendsServiceTokenMetadataAndEmptyRequest(t *testing.T) {
@@ -389,8 +420,8 @@ func TestProbeCallerAuth_SendsServiceTokenMetadataAndEmptyRequest(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ProbeCallerAuth(context.Background()); err != nil {
-		t.Fatalf("ProbeCallerAuth() error=%v", err)
+	if err := c.ProbeCallerAuth(context.Background()); !errors.Is(err, ErrCallerAuthUnproven) {
+		t.Fatalf("ProbeCallerAuth() error=%v want ErrCallerAuthUnproven", err)
 	}
 	assertExactlyOneMetadataValue(t, got, ServiceTokenMetadataKey, testServiceToken)
 	if wantReq.GetOrgId() != "" || wantReq.GetAgentId() != "" || wantReq.GetQuery() != "" {

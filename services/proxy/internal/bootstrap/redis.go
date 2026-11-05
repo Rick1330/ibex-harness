@@ -240,8 +240,10 @@ type contextCallerAuthProber interface {
 }
 
 // probeContextCallerAuth fails startup only when the context server rejects the
-// service token. A transport failure keeps today's availability behaviour: warn
-// and continue, because the chat path is already fail-open.
+// service token. An unproven probe (UNIMPLEMENTED from the stub RPC) and a
+// transport failure keep today's availability behaviour: warn and continue,
+// because the chat path is already fail-open and the documented rollout starts
+// the proxy before the guarded context image.
 func probeContextCallerAuth(prober contextCallerAuthProber, log *logger.Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), contextCallerAuthProbeTO)
 	defer cancel()
@@ -256,6 +258,12 @@ func probeContextCallerAuth(prober contextCallerAuthProber, log *logger.Logger) 
 			"context caller authentication rejected: IBEX_CONTEXT_GRPC_SERVICE_TOKEN is missing or does not match the context server: %w",
 			err,
 		)
+	}
+	if errors.Is(err, contextclient.ErrCallerAuthUnproven) {
+		log.WarnCtx(context.Background(),
+			"context caller authentication unproven; the SearchMemories stub returning UNIMPLEMENTED does not prove the caller guard is installed",
+			"caller_auth", "service-token", "rpc", "SearchMemories", "reason", err.Error())
+		return nil
 	}
 	// Stable class only: the wrapped error carries the gRPC code, never the token.
 	log.WarnCtx(context.Background(), "context caller authentication probe inconclusive; continuing",
