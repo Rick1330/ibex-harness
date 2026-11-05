@@ -130,7 +130,7 @@ packet can take.
 | D1 | Named independent reviewer | `18-gap-register.md:67`; `00-status-and-evidence.md:43`; `21-g0-owner-decision-record.md:24` | The acceptance names Rick1330 acting across all roles and explicitly states no separate reviewer is named | Record a reviewer, or explicitly reaffirm that none is assigned | Every "independent review" precondition (GAP-001/002/004/006/007/011) stays unsatisfiable; the ledger cannot move past `provisional` on its own rule (`00-status-and-evidence.md:7-13`). |
 | D2 | Round 5 contract-set mismatch | `18-gap-register.md:68,81` | The Round 4 packet specifies six contracts; the task brief names a different six; no aliasing was inferred | Confirm additive vs rename/combine, then update packet and registry together | The registry stays incomplete for GAP-003 while two contract vocabularies circulate; reviewers cannot tell which six are authoritative. |
 | D3 | Missing packet section and fields | `18-gap-register.md:69,82` | No §4 exists in the cited packet; `memory_revision.v1` / `memory_ledger` are named but undefined | Name the authoritative source and exact contract/field names | GAP-007 stays blocked on an unnamed contract; an agent may otherwise invent a schema, which `AGENTS.md` §0 forbids. |
-| D4 | `required_evidence=false` relay gate | `18-gap-register.md:71,84`; `00-status-and-evidence.md:57` | No PostgreSQL column, setting or production `NewRelay` caller exists (E17) | Identify the intended gate and pilot authentication boundary, or record that no such gate is implemented | The relay cannot be described as gated by evidence requirement; any such wording in a PR or status claim is unsupported. |
+| D4 | `required_evidence=false` relay gate | `18-gap-register.md:71,84`; `00-status-and-evidence.md:57` | No PostgreSQL `required_evidence` column or setting exists; the relay is default-off and has no deployment approval. The daemon does construct the relay (`services/relay/internal/bootstrap/wire.go:82`), so the missing piece is the gate and the pilot auth boundary, not the caller (E17) | Identify the intended gate and pilot authentication boundary, or record that no such gate is implemented | The relay cannot be described as gated by evidence requirement; any such wording in a PR or status claim is unsupported. |
 | D5 | Supported profile | `21-g0-owner-decision-record.md:7,44`; `15-runtime-operations-and-recovery.md:3`; every registry row "Profile not selected" (`03-contract-registry.md:129,139,149,169,179`) | The acceptance fixes contract defaults for a "local/protected profile" but no deployment profile is selected or certified | Select the v1 supported profile (development / single-node self-hosted / HA) and therefore the evidence gates that apply | "Profile acceptance is pending evidence" persists; no runtime row can be promoted, and G8 has no target to measure against. |
 | D6 | Policy/principal trust | `21-g0-owner-decision-record.md:17-18,30-32`; `03-contract-registry.md:34,112`; `adr/0096-...md:36-52` | Caller authentication is a shared service token over an **unsigned** `PrincipalContext` on loopback; `PrincipalContextProof` is reserved but unimplemented | Accept or reject the unsigned principal for the supported profile; decide whether proof signing is required before any non-loopback deployment | The context hop cannot be described as per-user authenticated; any hosted claim would exceed evidence. |
 | D7 | Budget scope | `21-g0-owner-decision-record.md:82`; `03-contract-registry.md:62`; `00-status-and-evidence.md:71` | Accepted packet excludes atomic reservation; the slice enforces only `hard_cap` and excludes finalized rows from the cap sum (bounded overshoot) | Accept the bounded-overshoot semantics and the scope (proxy admission vs extraction export) as a runtime contract | GAP-006 stays open on an unratified economic assumption; hard-cap enforcement cannot be claimed as exact. |
@@ -162,8 +162,9 @@ sign the evidence, and no reviewer may be the author.
 | W8 | Resolve D13: RPO/RTO per data class and the drill charter | `ibex-sre` | `ibex-platform-engineer`, `ibex-verifier` | W0, W5 | Signed objective table + drill charter (drill execution is a later gate) | G8 |
 | W9 | Repair the recorded claim drift, without changing any status value | `doc-updater` | `ibex-reviewer` | W7 | Ledger row for GAP-006 carrying the merged report's numbers, or an explicit note that the older numbers stand | Documentation only; no status promotion |
 
-Sequencing: W0 → (W1, W2 in parallel) → (W3, W4, W5, W6, W8) → W7 may start after W0 → W9 last. **No runtime work is
-authorised by this document**, and W9 must not be read as permission to re-label anything.
+Sequencing follows the table's prerequisites: W0; then W1; then W2, W4, W5 and W6, each of which depends only on W0/W1
+and may run in parallel; W3 starts after W2, and W8 after W5; W7 may start once W0 is done; W9 last, after W7.
+**No runtime work is authorised by this document**, and W9 must not be read as permission to re-label anything.
 
 ## 7. Claim boundary
 
@@ -189,9 +190,12 @@ ledger carries source commit, artifact, profile, owner/date and limitations (`00
 
 Concretely, on 2026-11-11 and without a recorded review:
 
-1. The five `accepted` contract-shape rows pass their review date and must be downgraded to `unknown` or `provisional`
-   unless the review records re-verification; they may not remain silently `accepted`
-   (`00-status-and-evidence.md:64,67-69`).
+1. The **four** `accepted` rows in the ledger — `principal-context.v1`, `evidence-envelope.v1`,
+   `evidence-relay-sink.v1`, `run-envelope.v1` (`00-status-and-evidence.md:64,67-69`) — pass their review date and must
+   be downgraded to `unknown` or `provisional` unless the review records re-verification; they may not remain silently
+   `accepted`. The fifth accepted shape, `idempotency-operation.v1`, is recorded in the contract registry
+   (`03-contract-registry.md:32-38`), but its ledger entries describe runtime slices that are already
+   `provisional`/`provisional-with-evidence`, so no `accepted` ledger row expires for it.
 2. Every `provisional*` row whose Review column is 2026-11-10 loses its expiry cover and must be re-recorded as
    `unknown` or `provisional` with a new date and a named reverification.
 3. D1 stays open, so no gap can satisfy its independent-review precondition — the `provisional` floor remains in force
