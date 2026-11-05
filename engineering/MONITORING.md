@@ -272,8 +272,9 @@ Every service must publish these metrics:
 - Inbound HTTP span: `memory.http` (continues inbound W3C `traceparent` context).
   It records the FastAPI route template in `http.route` after routing; raw request paths
   are never recorded (they carry memory UUIDs and would be high cardinality). Templates come
-  from `APIRoute`; the built-in `/docs` and `/openapi.json` routes and any mounted sub-app
-  expose no template, so `http.route` is omitted rather than falling back to the raw path.
+  from `APIRoute`; the built-in `/docs` and `/openapi.json` routes expose none, and a mounted
+  FastAPI sub-app records its inner template without the mount prefix. When no template is
+  available `http.route` is omitted rather than falling back to the raw path.
 - Dependency spans:
   - `vector_search` (`db.system: "postgresql"`, `search.mode: "user_retrieval"`)
   - `full_text_search` (`db.system: "postgresql"`, `db.operation: "full_text_search"`)

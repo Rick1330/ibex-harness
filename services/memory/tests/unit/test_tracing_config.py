@@ -181,6 +181,32 @@ def test_traces_sampler_environment_logs_one_warning(
     assert "always_on" in warnings[0].getMessage()
 
 
+def test_unusable_endpoint_logs_one_warning_without_its_value(
+    isolated_provider: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A Go-style host:port in a shared env file must not disable tracing silently."""
+    exporter_cls = MagicMock()
+    monkeypatch.setattr(tracing, "OTLPSpanExporter", exporter_cls)
+    with caplog.at_level(logging.WARNING, logger="app.tracing"):
+        configure_tracing("127.0.0.1:4317")
+
+    exporter_cls.assert_not_called()
+    warnings = [r for r in caplog.records if "not a usable http(s) URL" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "127.0.0.1:4317" not in warnings[0].getMessage()
+
+
+def test_unusable_endpoint_warning_hides_credentials(
+    isolated_provider: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="app.tracing"):
+        configure_tracing("http://operator:SENTINEL-PASSWORD@")
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("not a usable http(s) URL" in m for m in messages)
+    assert all("SENTINEL-PASSWORD" not in m for m in messages)
+
+
 def test_configure_tracing_is_idempotent(isolated_provider: None) -> None:
     first = configure_tracing("")
     assert configure_tracing("") is first

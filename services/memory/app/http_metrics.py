@@ -47,10 +47,11 @@ def http_method(scope: Scope) -> str:
 def route_template(scope: Scope) -> str | None:
     """Route template for an already-routed request, or None when unknown.
 
-    FastAPI's ``APIRoute.matches`` stores the matched route in ``scope["route"]``;
-    plain Starlette routes (the built-in ``/docs`` and ``/openapi.json``) and
-    mounted sub-apps store nothing, so callers treat ``None`` as "no template" and
-    omit the attribute rather than inventing a raw path.
+    FastAPI's ``APIRoute.matches`` stores the matched route in ``scope["route"]``.
+    The built-in plain-Starlette routes (``/docs``, ``/openapi.json``) store
+    nothing, and a mounted sub-app stores only its inner template without the
+    mount prefix. Callers treat ``None`` as "no template" and omit the attribute
+    rather than inventing a raw path.
 
     Shared with the tracing middleware so the metric label and the ``http.route``
     span attribute resolve a request the same way.

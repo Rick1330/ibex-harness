@@ -180,6 +180,12 @@ def configure_tracing(
         provider.add_span_processor(
             BatchSpanProcessor(OTLPSpanExporter(endpoint=target, timeout=2))
         )
+    elif effective_endpoint.strip():
+        # Do not log the value: it can carry userinfo or a query credential.
+        logger.warning(
+            "OTEL_EXPORTER_OTLP_ENDPOINT is set but is not a usable http(s) URL; "
+            "span export is disabled (value redacted)"
+        )
 
     trace.set_tracer_provider(provider)
     set_global_textmap(TraceContextTextMapPropagator())
