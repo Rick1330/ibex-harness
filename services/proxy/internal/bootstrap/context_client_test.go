@@ -237,7 +237,7 @@ func stubContextProbe(t *testing.T, searchErr error) (string, <-chan []string) {
 func startStubContextServer(t *testing.T, impl contextv1.ContextAssemblyServiceServer) string {
 	t.Helper()
 	lis := listenLoopback(t)
-	srv := grpc.NewServer() // nosemgrep: go.grpc.security.grpc-server-insecure-connection -- loopback-only test stub; the caller-auth boundary is what this test exercises
+	srv := grpc.NewServer() // nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection -- loopback-only test stub; the caller-auth boundary is what this test exercises
 	contextv1.RegisterContextAssemblyServiceServer(srv, impl)
 	go func() {
 		_ = srv.Serve(lis) //nolint:errcheck // Stop closes the listener; Serve then returns

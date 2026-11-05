@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover
 
 
 # ADR-0096: the caller token is a deployment secret, never a checked-in literal.
-CONTEXT_SERVICE_TOKEN_ENV = "IBEX_CONTEXT_GRPC_SERVICE_TOKEN"
+CALLER_AUTH_ENV_VAR = "IBEX_CONTEXT_GRPC_SERVICE_TOKEN"
 
 
 @dataclass(frozen=True)
@@ -100,10 +100,10 @@ def fail(msg: str) -> None:
 
 def _required_context_service_token() -> str:
     """Return the ADR-0096 caller token, refusing an unset or blank value."""
-    token = os.environ.get(CONTEXT_SERVICE_TOKEN_ENV, "").strip()
+    token = os.environ.get(CALLER_AUTH_ENV_VAR, "").strip()
     if not token:
         fail(
-            f"{CONTEXT_SERVICE_TOKEN_ENV} is required: the Phase 3.5 driver "
+            f"{CALLER_AUTH_ENV_VAR} is required: the Phase 3.5 driver "
             "authenticates to ContextAssemblyService (ADR-0096); "
             "infra/scripts/e2e_phase35.sh generates and exports it"
         )
