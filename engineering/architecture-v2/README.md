@@ -60,7 +60,7 @@ If documents disagree, implementation must stop at the boundary, the conflict mu
 20. [19-references.md](19-references.md)
 21. [20-product-strategy-gap-audit-and-recommended-redesign.md](20-product-strategy-gap-audit-and-recommended-redesign.md) (product strategy / gap audit research; does not supersede numbered contracts)
 22. [26-g0-review-packet.md](26-g0-review-packet.md) (input to the 2026-11-10 G0 owner review; accepts nothing and closes nothing)
-23. [27-v1-readiness-audit.md](27-v1-readiness-audit.md) (what must change before `v1.0.0`: 22 P0 blockers, the recommended supported profile, and a nine-wave gate sequence)
+23. [27-v1-readiness-audit.md](27-v1-readiness-audit.md) (what must change before `v1.0.0`: 21 P0 blockers, the recommended supported profile, and a nine-wave gate sequence)
 
 ## Non-goals
 
