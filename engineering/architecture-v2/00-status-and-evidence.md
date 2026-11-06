@@ -1,6 +1,6 @@
 # Status and Evidence Ledger
 
-**Status:** Five G0 contract shapes are `accepted` as of 2026-10-10 by Rick1330 (acting owner across all roles); the accepted scope is contract text and safety semantics only. Runtime seams remain `provisional`. No independent reviewer is named in the decision record. Review/expiry is **2027-02-06**, or earlier on a material profile or authority change. The 2026-11-06 G0 review re-verified the four `accepted` contract shapes with new evidence and re-dated only those rows; `provisional` runtime rows keep the 2026-11-10 expiry and are re-verified by the wave that owns them. See [`28-g0-review-record-2026-11-06.md`](28-g0-review-record-2026-11-06.md).
+**Status:** Five G0 contract shapes are `accepted` as of 2026-10-10 by Rick1330 (acting owner across all roles); the accepted scope is contract text and safety semantics only. Runtime seams remain `provisional`. No independent reviewer is named in the decision record. Review/expiry is **2027-02-06 for the four contract shapes re-verified on 2026-11-06** and **2026-11-10 for `idempotency-operation.v1`**, whose contract-shape acceptance was not renewed and lapses on that date; review happens earlier on a material profile or authority change. The 2026-11-06 G0 review re-verified the four `accepted` ledger rows with new evidence and re-dated only those rows; `provisional` runtime rows keep the 2026-11-10 expiry and are re-verified by the wave that owns them. See [`28-g0-review-record-2026-11-06.md`](28-g0-review-record-2026-11-06.md).
 
 ## Claim rule
 
