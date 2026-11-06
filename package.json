@@ -46,7 +46,9 @@
       "katex": "0.18.2",
       "postcss-selector-parser": "7.1.6",
       "source-map-js": "1.2.2",
-      "glob": ">=14.0.2"
+      "glob": ">=14.0.2",
+      "minimatch@>=7.0.0 <11.0.1": ">=11.0.1",
+      "eslint-plugin-import-x": ">=4.18.0"
     },
     "onlyBuiltDependencies": [
       "better-sqlite3",
