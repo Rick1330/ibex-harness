@@ -19,14 +19,16 @@ from app.config import Settings
 from app.db import create_session_factory
 from app.read.full_text import FullTextSearchQuery, full_text_search
 from app.vectorstore.base import SearchRequest
-from app.vectorstore.pgvector_store import SEARCH_SQL, PgVectorStore
+from app.vectorstore.pgvector_store import PgVectorStore
 from tests.integration.find_similar_support import PlanSeed, bulk_seed_for_plans
 from tests.integration.plan_assert import (
     GinExplainParams,
+    HnswExplainParams,
     assert_gin_index_used,
     assert_hnsw_index_scanned,
     assert_hnsw_index_used,
     explain_gin_probe_plan,
+    explain_hnsw_search_plan,
     hnsw_idx_scan_count,
 )
 
@@ -57,9 +59,9 @@ async def _assert_hnsw_plan(
     """Assert the executed search plan uses the HNSW index.
 
     This is the direct signal that the production query shape can use HNSW;
-    the pg_stat check below additionally proves the counter path.
+    the pg_stat check below additionally proves the counter path. The shared
+    explain helper keeps the SQL in one reviewed place.
     """
-    vector_literal = "[" + ",".join(str(float(value)) for value in plan_seed.query_vec) + "]"
     session_factory = create_session_factory(plan_engine)
     async with session_factory() as session, session.begin():
         await session.execute(
@@ -68,26 +70,15 @@ async def _assert_hnsw_plan(
             ),
             {"org_id": str(plan_seed.seeded.org_id)},
         )
-        await session.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('hnsw.ef_search', :ef, true)"
+        plan = await explain_hnsw_search_plan(
+            session,
+            HnswExplainParams(
+                org_id=plan_seed.seeded.org_id,
+                agent_id=plan_seed.seeded.agent_id,
+                query_vec=[float(value) for value in plan_seed.query_vec],
+                ef_search=settings.hnsw_ef_search,
             ),
-            {"ef": str(settings.hnsw_ef_search)},
         )
-        result = await session.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + SEARCH_SQL
-            ),
-            {
-                "query": vector_literal,
-                "org_id": str(plan_seed.seeded.org_id),
-                "agent_id": str(plan_seed.seeded.agent_id),
-                "min_similarity": 0.0,
-                "limit": 10,
-                "include_historical_candidates": False,
-            },
-        )
-        plan = result.scalar_one()
     assert_hnsw_index_used(plan)
 
 
