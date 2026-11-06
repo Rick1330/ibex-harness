@@ -94,7 +94,7 @@ async def test_hnsw_index_scan_at_runtime(
 
     before = await hnsw_idx_scan_count(engine)
     target = parse_async_database_url(memory_database_url)
-    plan_engine = create_async_engine(
+    search_engine = create_async_engine(
         target.url,
         connect_args={
             **target.connect_args,
@@ -104,7 +104,7 @@ async def test_hnsw_index_scan_at_runtime(
         },
     )
     try:
-        plan_store = PgVectorStore(create_session_factory(plan_engine), settings)
+        plan_store = PgVectorStore(create_session_factory(search_engine), settings)
         hits = await plan_store.search(
             SearchRequest(
                 org_id=plan_seed.seeded.org_id,
@@ -114,10 +114,27 @@ async def test_hnsw_index_scan_at_runtime(
                 min_similarity=0.0,
             )
         )
-        await _assert_hnsw_plan(plan_engine, plan_seed, settings)
     finally:
-        await plan_engine.dispose()
+        await search_engine.dispose()
+
+    # Read the counter after the search connection exits and before any probe:
+    # the probe itself would scan the index and hide a missed search scan.
     after = await _wait_for_hnsw_scan(engine, before=before)
+
+    # Diagnostic for a failing counter: show whether the query shape can use
+    # HNSW at all under the same planner constraints. The counter was captured
+    # above, so this probe cannot satisfy the search assertion.
+    probe_engine = create_async_engine(
+        target.url,
+        connect_args={
+            **target.connect_args,
+            "server_settings": {"enable_seqscan": "off"},
+        },
+    )
+    try:
+        await _assert_hnsw_plan(probe_engine, plan_seed, settings)
+    finally:
+        await probe_engine.dispose()
 
     assert_hnsw_index_scanned(before=before, after=after)
     assert len(hits) >= 1
