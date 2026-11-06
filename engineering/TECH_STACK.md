@@ -716,7 +716,7 @@ Linear scalability
 
 ---
 
-### Analytics Store: **ClickHouse 23.x**
+### Analytics Store: **ClickHouse 24.8.x**
 
 **Why ClickHouse over alternatives:**
 
@@ -1263,7 +1263,7 @@ resource "aws_eks_cluster" "ibex" {
 | **SDKs** | Python, TypeScript, Go | Cover 90%+ of agent use cases |
 | **Primary DB** | PostgreSQL 16, pgvector | ACID, RLS, vector search, mature |
 | **Cache** | Redis 7.x Stack | Speed, data structures, Lua scripting |
-| **Analytics** | ClickHouse 23.x | Columnar, compression, billions of rows |
+| **Analytics** | ClickHouse 24.8.x | Columnar, compression, billions of rows |
 | **Object Store** | MinIO (S3-compatible) | Cheap, self-hostable, S3 API |
 | **Container** | Docker | Industry standard, efficient |
 | **Orchestration** | Kubernetes, Helm | Scalability, reliability, ecosystem |
