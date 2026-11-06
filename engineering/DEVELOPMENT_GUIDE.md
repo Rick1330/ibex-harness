@@ -278,7 +278,8 @@ curl -s http://localhost:8080/health | jq
 - The Go and Python services do not auto-load a `.env` file, so copying an example file alone has no effect. The Console
   is the exception: `nuxt dev` in `services/console` loads that directory's `.env`.
 - The root Make targets automatically pass the appropriate Compose `.env.example` with `--env-file`. Compose also reads a
-  project `.env` for interpolation by default, so pass `--env-file` explicitly when the source must be unambiguous.
+  project `.env` for interpolation by default. `--env-file` selects the file, but an exported shell variable still wins
+  over the file, so the shell can decide which credentials reach a container.
 - Never commit `.env` files.
 - Secrets must be injected via environment variables in dev, and via Vault/Secrets Manager in production.
 
