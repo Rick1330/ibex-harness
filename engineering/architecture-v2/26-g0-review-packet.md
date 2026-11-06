@@ -5,7 +5,7 @@
 **Audience:** The G0 owner (Elshaday Mengesha / @Rick1330), the acting reviewers for each G0 role, and any agent beginning work under the architecture-v2 packet.
 **Status:** Review input only. Not an acceptance, not a status promotion, not a gap closure.
 **Base:** `main` at `5a032466` (2026-11-05). **Packet date:** 2026-11-05.
-**Review/expiry:** 2026-11-10 (`21-g0-owner-decision-record.md:7,84`).
+**Review/expiry:** 2026-11-10 (`21-g0-owner-decision-record.md:7,84`, as those lines read when this packet was written; both now point forward to 2027-02-06). **Performed 2026-11-06**, four days early, because ADR-0097 selected a supported profile (a material profile change); the outcome is [`28-g0-review-record-2026-11-06.md`](28-g0-review-record-2026-11-06.md). This packet is left as the input it was.
 
 > **Citation legend.** Bare `NN-*.md:LINE` references are files in `engineering/architecture-v2/`. `adr/NNNN` is
 > `engineering/adr/NNNN-*.md`. Paths beginning `new findings/` are the gitignored, untracked audit scratch at the

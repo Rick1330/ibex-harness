@@ -12,6 +12,7 @@ Decision records are not implementation evidence. A record can be **Proposed**, 
 
 Notable records:
 
+- [ADR-0097](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0097-v1-supported-profile.md) — the v1.0 supported profile: single-node self-hosted Compose, its component and transport contract, the dependency matrix, and the exclusions.
 - [ADR-0096](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0096-context-grpc-caller-authentication.md) — caller authentication for context assembly: shared service token, principal-bound selectors, memory-hit tenant validation, loopback-only plaintext.
 - [ADR-0095](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0095-retrieval-and-agreement-metrics.md) — nDCG@k, tail-extrapolated RBO, and Cohen's kappa defined once in `services/memory/app/eval`. The benchmark (5.C.2)
   and the shadow path (5.C.3) will adopt them; the v1 benchmark metrics remain until then.

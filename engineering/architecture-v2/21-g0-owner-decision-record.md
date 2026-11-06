@@ -4,7 +4,7 @@
 
 **Decision date:** 2026-10-10
 
-**Next review:** 2026-11-10, or earlier if the supported profile, authority, key set, retention policy, or evidence semantics change.
+**Next review:** 2027-02-06, or earlier if the supported profile, authority, key set, retention policy, or evidence semantics change. The scheduled 2026-11-10 review was performed early on 2026-11-06 when ADR-0097 selected a supported profile; its outcome is [`28-g0-review-record-2026-11-06.md`](28-g0-review-record-2026-11-06.md). The four `accepted` ledger rows were re-verified then; this decision record is otherwise unchanged and still accepts contract shape only.
 
 **Scope:** Principal/agent binding, policy freshness, idempotency, evidence publication, privacy controls, and the memory historical-candidate boundary.
 
@@ -81,7 +81,7 @@ The following conditions are satisfied for contract-shape acceptance:
 
 This acceptance does not authorize runtime policy propagation, public API exposure of historical memory search, evidence relay enablement, a durable RunEnvelope, atomic budget reservation, provider expansion, MCP governance, control-plane side effects, or changes to cryptographic algorithms. The first implementation seams may be additive and are `provisional` until their required tests and evidence accumulate.
 
-No claim is made here that the contract is hosted, HA-capable, production-supported, or G1-G4 complete. The next review is 2026-11-10, or earlier on material contract/profile change.
+No claim is made here that the contract is hosted, HA-capable, production-supported, or G1-G4 complete. The next review is 2027-02-06, or earlier on material contract/profile change; the 2026-11-06 review that superseded the 2026-11-10 date is [`28-g0-review-record-2026-11-06.md`](28-g0-review-record-2026-11-06.md).
 
 ## 5. Evidence expected at review
 

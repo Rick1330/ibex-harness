@@ -3,7 +3,7 @@
 **Title:** What must be fixed before IBEX Harness can honestly ship `v1.0.0`.
 **Description:** A domain-by-domain audit of architecture, security, data, AI/retrieval, product and operations at `6f12c96c`, merged into one prioritised gate list. It records what blocks 1.0, what should ship with it, and what may ship as a documented limitation.
 **Audience:** The maintainer/owner, the IBEX agent team, and any reviewer asked to approve a 1.0 tag.
-**Status:** Audit input only. It changes no status, closes no gap, and authorises no runtime work.
+**Status:** Audit input only. It changes no status, closes no gap, and authorises no runtime work. **Amended 2026-11-06 at `b400070f`:** P0-22 added (surfaced by the profile review), P0-17 closed at the decision level by ADR-0097, P1-04 and P1-05 corrected against the tree, §6 updated. The two amendments change no status value and run no runtime work; they correct the record.
 **Base:** `main` at `6f12c96c` (2026-11-05). **Method:** six independent read-only domain audits, then a lead merge.
 
 ## 1. The bar this document applies
@@ -23,12 +23,18 @@ So 1.0 means, concretely:
 
 ## 2. Verdict
 
-**Not ready for 1.0.** The audit found **21 P0 blockers**. The two that dominate everything else:
+**Not ready for 1.0.** The audit found **22 P0 rows; 21 remain open**. P0-17 (D5, the unselected profile) was
+discharged at the decision level on 2026-11-06 by
+[ADR-0097](../adr/0097-v1-supported-profile.md) and the [G0 review record](28-g0-review-record-2026-11-06.md); that
+closes the decision, not the profile. The two that dominate everything else:
 
 - **There is no deployable profile that serves the product.** `memory-context` is data-plane only; `services/context` has no Dockerfile at all; the Console has no image; the Helm chart self-declares as lint scaffolding with sentinel digests; and the documented critical path spans services that no single profile starts.
-- **Tenant isolation is not enforced at the database for most services.** Memory, worker, proxy and the shared Go packages set the org GUC but connect as the superuser `ibex`, so RLS never applies; only the API and mcp-operator pin `ibex_app`. A cross-tenant guarantee cannot be claimed until every session runs as a non-superuser role.
+- **Tenant isolation is not enforced at the database for most services, and the bypass survives role pinning.** Memory, worker, proxy and the shared Go packages set the org GUC but connect as the superuser `ibex`, so RLS never applies; only the API and mcp-operator pin `ibex_app`. And `set_service_org` sets `app.is_service_account='true'` on every memory read and write, which the RLS policy treats as "allow every row" — so pinning the role alone does not produce cross-tenant isolation.
 
-A third, on a timer: **the whole accepted G0 evidence packet expires 2026-11-10** — five days from this audit. Per the ledger's own rule, unreviewed accepted rows become `unknown`.
+A third, on a timer — now partly defused, not resolved: **the packet no longer wholly expires on 2026-11-10**. The
+2026-11-06 review re-verified the four `accepted` contract shapes with new evidence and moved only those rows to
+2027-02-06. Every `provisional` runtime row still expires 2026-11-10 and is re-verified by the wave that owns it, because
+re-dating those before the profile runs would be a promotion in disguise.
 
 ## 3. P0 — blocks 1.0
 
@@ -43,6 +49,7 @@ A 1.0 claim would be false, unsafe, or undeliverable without these.
 | P0-03 | ibex-sre | **Kubernetes profile cannot install or upgrade.** Sentinel digests, missing datastore templates, migrate image unpublished and disabled. | `infra/helm/ibex-harness/values-prod.yaml:4-6,17-24`; `check-helm-digest-placeholders.sh` fails today | Guard exit 0; one clean install and one upgrade on a disposable cluster, or Kubernetes declared out of 1.0 scope |
 | P0-04 | ibex-platform-engineer | **The Console cannot be logged into.** No login/refresh/logout page or BFF route; the UI has a "Sign in" state and no way out of it; e2e bypasses auth with a fixture cookie. | no login page under `services/console/app/pages/`; all BFF routes are `*.get.ts`; `services/console/e2e/live-stack.mjs:49-53` | Clean-cookie Playwright: login → live page → refresh → logout, no test bypass |
 | P0-05 | ibex-platform-engineer + ibex-security | **Cookie sessions cannot mutate.** Management writes require a bearer PAT; the BFF forwards only the cookie, so agents/tokens/users/settings are unreachable from the Console by design. | `services/api/app/authz.py:76-94`; `services/console/server/utils/operator/http.ts:130-164` | Cookie + CSRF/step-up capable authorization, or an explicit read-only 1.0 scope |
+| P0-22 | ibex-go-systems + ibex-security | **No non-development environment can authenticate.** The AuthService gRPC server registers no transport credentials, the Go proxy dials TLS for every `IBEX_ENV` except `development`, and the Python API dials `insecure_channel` — so one side of every hop always fails. The Console BFF also refuses a session cookie to a non-HTTPS API origin, and nothing in the Compose path terminates TLS. | `services/auth/cmd/auth/main.go` (`newAuthGRPCServer`); `services/proxy/internal/bootstrap` (`authTransportCredentials`); `services/api/app/auth/session_refresh.py:79,181,210`; `services/console/server/utils/operator/http.ts` (`fetchOperatorJson`); the only ingress `tls:` declaration is the Helm scaffold (`infra/helm/ibex-harness/templates/api-ingress.yaml`), which needs an operator-supplied secret and belongs to the excluded Kubernetes path; the OTel collector configs carry outbound TLS settings, not an inbound terminator | One transport per hop, TLS or co-located loopback, decided in ADR-0097; a start on `IBEX_ENV=production` that authenticates; negative tests for an unauthenticated gRPC client and an unpublished port |
 
 ### 3.2 Tenancy and data safety
 
@@ -63,8 +70,8 @@ A 1.0 claim would be false, unsafe, or undeliverable without these.
 | P0-13 | ibex-platform-engineer | **The OpenAPI snapshot is freshness-checked, not breaking-checked.** Regenerating it in the same PR legalises any `/v1` change across 75 routes. | `.github/scripts/check-openapi-snapshot.sh:9-16` | `oasdiff`-style breaking gate against a pinned release baseline |
 | P0-14 | ibex-architect | **GAP-003: the contract registry covers 5 shapes while 75 REST routes, 3 gRPC services and 8 MCP tools ship.** A compatibility policy cannot bind unregistered surfaces. | `18-gap-register.md:9`; `03-contract-registry.md:120-186`; `route_inventory.json` | Registry complete with owner/version/compat class; CI fails on an unregistered route or tool |
 | P0-15 | owner | **The release pipeline is blocked.** `VERSION_RELEASE_TOKEN` is unset; no release since v0.1.9 (2026-10-04) across 93 commits. | `version-release-pr.yml:51-56`; `release.yml:38-46`; `.version-release-manifest.json` | Green Version Release run → release PR → signed tag |
-| P0-16 | owner | **Evidence expiry is 2026-11-10.** A 1.0 sign-off after it rests on lapsed claims. | `00-status-and-evidence.md:3,95`; `21-g0-owner-decision-record.md:7,84` | Review performed, or the ledger rule exercised and claims downgraded |
-| P0-17 | owner | **The supported profile is unselected (D5).** Every registry row says "Profile not selected", so no certification gate applies. | `26-g0-review-packet.md:134`; `03-contract-registry.md:129,139,149,169,179` | Signed decision naming one profile and its exclusions |
+| P0-16 | owner | **The `provisional` runtime rows still expire 2026-11-10.** The 2026-11-06 review renewed only the four `accepted` contract shapes; a 1.0 sign-off that cites any runtime row after that date rests on a lapsed claim. | `00-status-and-evidence.md:3` and its "When a claim expires" rule; `28-g0-review-record-2026-11-06.md` §4 | Each runtime row re-verified under the selected profile by the wave that owns it, or downgraded per the ledger rule |
+| P0-17 | owner | **The supported profile is unselected (D5).** Every registry row says "Profile not selected", so no certification gate applies. **Closed at the decision level 2026-11-06** by ADR-0097; the profile itself is still not startable (P0-01, P0-02, P0-22). | `26-g0-review-packet.md:134`; `03-contract-registry.md:129,139,149,169,179`; `adr/0097-v1-supported-profile.md` | ~~Signed decision naming one profile and its exclusions~~ — satisfied by ADR-0097; remaining work is acceptance evidence, not a decision |
 
 ### 3.4 Security and observability
 
@@ -82,8 +89,8 @@ A 1.0 claim would be false, unsafe, or undeliverable without these.
 | P1-01 | ibex-architect | Contracts | No deprecation/upgrade policy in code: no `Deprecation`/`Sunset` headers, no support window. | `16-compatibility-and-versioning.md:3-17` |
 | P1-02 | ibex-platform-engineer | Contracts | MCP descriptor hash is runtime-computed and self-consistent-only, so schema changes are invisible in review. | `packages/mcp_gateway/src/mcp_gateway/registry.py:142-146` |
 | P1-03 | ibex-architect | Contracts | ADR-0084 status contradicts the ledger; ADR-0092–0095 remain `Proposed` while their code paths are live. | `adr/0084…:11`; `adr/0092…0095:15` |
-| P1-04 | ibex-sre | Ops | Dependency matrix is inconsistent across docs (ClickHouse 23.x vs 24.8.x; pgvector 0.6/0.7) and has no supported versions for TEI/Redis. | `TECH_STACK.md:719` vs `ARCHITECTURE.md:817`; compose pins |
-| P1-05 | ibex-memory-intelligence | Ops | Embeddings are not shippable: the bundled embedder is a stub, TEI has no image/model pin in any profile. | `infra/bundles/memory-context.json:16`; no TEI in compose/helm |
+| P1-04 | ibex-sre | Ops | The dependency matrix still disagrees across artifacts. pgvector is a mutable `:pg16` tag in dev compose and the site, but a 0.8.6 digest in the bundle and CI, with a sandbox run recorded on 0.8.7. Redis is `redis-stack:7.4.0-v1` in dev/test, `redis:7.4.2` under a sentinel digest in Helm, and 7.0.15 in the sandbox record. TEI has no pinned image or model anywhere. The ClickHouse doc drift (23.x in `TECH_STACK.md`) is corrected by the 2026-11-06 amendment; the remaining ClickHouse issue is the sentinel Helm digest under the excluded Kubernetes profile. ADR-0097 §8 fixes the supported pins for the Compose profile; the docs and dev artifacts still have to follow. | `infra/compose/dev/docker-compose.yml:3,21`; `site/content/docs/12.deployment/01.docker-compose.md:29`; `infra/compose/bundles/memory-context.yml:9`; `infra/helm/ibex-harness/values.yaml:17-18`; `infra/reference/tei-embeddings.compose.yaml:1-20` |
+| P1-05 | ibex-memory-intelligence | Ops | Embeddings are not shippable for a semantic claim. The schema requires `vector(1024)` with `embedding_dim = 1024`; the bundle meets that by forcing `IBEX_EMBEDDING_PROFILE=cpu` with `IBEX_EMBEDDING_DIM=1024`, so the stub writes schema-valid vectors of arbitrary geometry. Writes succeed and search returns something, which is why this is easy to miss. TEI has no image or model pin in any profile. ADR-0097 requires TEI/bge-m3 for `v1-single-node`; the pin is still missing. | `infra/migrations/postgres/000017_memory_schema_v2_expand.up.sql:13,27-36`; `infra/compose/bundles/memory-context.yml:70-71`; `services/embedder/app/config.py:155-166`; `infra/bundles/memory-context.json:16`; `infra/reference/tei-embeddings.compose.yaml` |
 | P1-06 | ibex-sre | Ops | Python `/ready` is startup-only for memory; embedder/reranker/Redis never appear in readiness. | `services/memory/app/probes.py:20`; `services/api/app/probes.py:30-38` |
 | P1-07 | owner | Release | Release tags are lightweight and unsigned; no tag protection. | `git cat-file -t v0.1.9` → `commit` |
 | P1-08 | ibex-sre | Release | The published release manifest is neither schema-validated nor signed **at upload time**: `release-manifest.schema.json` is exercised by `test_manifest_matches_the_published_schema`, but `release-docker.yml` never runs it, and the uploaded file carries no signature. | `release-docker.yml:78-103`; `infra/scripts/test_release_manifest.py`; `infra/release-manifest.schema.json` |
@@ -163,11 +170,18 @@ A 1.0 claim would be false, unsafe, or undeliverable without these.
 
 ## 6. Recommended 1.0 scope
 
+**Decided 2026-11-06:** [ADR-0097](../adr/0097-v1-supported-profile.md) selects the profile below and records its
+component, transport, dependency and readiness contracts. The recommendation is kept here for context; the ADR is the
+controlled text.
+
 Declare **one** profile and exclude the rest in writing:
 
-> **v1.0 supported profile: single-node self-hosted Docker Compose.** Auth, proxy, api, memory, context, embedder, worker and console, each with a published, digest-pinned image and one-command startup. PostgreSQL 16 + pgvector, Redis 7.4 and one embedder/reranker pair are required; ClickHouse and MinIO are optional projections. Kubernetes, HA, hosted SLOs, response-bound evidence acknowledgement, the run envelope, DecisionService, MCP writes and the platform-tier Console surfaces are **out of 1.0 scope**.
+> **v1.0 supported profile: single-node self-hosted Docker Compose.** Auth, proxy, api, memory, context, embedder, worker and console, each with a published, digest-pinned image, one TLS-terminated published origin, one-command startup, and a one-shot migration gate. PostgreSQL 16 + pgvector and Redis 7.4 are required; semantic memory requires a pinned TEI/bge-m3 backend; ClickHouse and MinIO are optional projections. Kubernetes, HA, hosted SLO measurement, response-bound evidence acknowledgement, the run envelope, DecisionService, MCP writes and the platform-tier Console surfaces are **out of 1.0 scope**.
 
-That resolves D5 and gives every other gate a target. Without a named profile, "production-readiness" has no meaning and no evidence can be scored.
+That resolved D5 and gives every other gate a target. Without a named profile, "production-readiness" has no meaning and
+no evidence can be scored. Two components the earlier draft of this section missed, both required by ADR-0097: the edge
+TLS terminator (the Console BFF refuses to carry a session cookie to a non-HTTPS API origin) and the embedding backend
+(the schema's 1024-dimension constraint cannot be satisfied by the bundled 384-dimension stub).
 
 ## 7. Sequenced plan
 
@@ -187,7 +201,7 @@ W1 is time-boxed by 2026-11-10. W2–W4 are the hard security/data core. W5–W7
 
 ## 8. Method and limits
 
-- Six read-only domain audits at `6f12c96c`: architecture/contracts, security/tenancy, data/recovery, AI/retrieval, product/API, operations/release.
+- Six read-only domain audits at `6f12c96c`: architecture/contracts, security/tenancy, data/recovery, AI/retrieval, product/API, operations/release. The 2026-11-06 amendment at `b400070f` added P0-22 and closed P0-17 at the decision level, both from the ADR-0097 review; every other row keeps its original base.
 - Static review plus targeted local commands where possible (migration suite, release-manifest tests, Helm placeholder guard, compose validation, context/proxy test suites). No hosted origin, cluster, ClickHouse, PITR or p99 run was available to this audit, so every such item is recorded as **unverified**, not as passing.
 - Findings are merged and deduplicated by the lead; IDs map to the domain audits (`R*`, `TM/AUT/BND/SEC/ISO/INP/SUP`, `D*`, `AI-*`, `AUTH/CONSOLE/API/CONTRACT/DOC/PKG`, `REL/DEP/CI/OBS/REC/CAP`).
 - Nothing in this document changes a status, closes a gap, or authorises runtime work.
