@@ -221,7 +221,7 @@ Audit logs are special:
 
 **Allowed secret locations:**
 
-- Development: local `.env` files (never committed)
+- Development: exported process environment for host services; explicit Compose `--env-file` for container configuration. A local `.env` file is not loaded unless the process or Compose command is explicitly given it.
 - Production: Vault / cloud secrets manager / Kubernetes external secrets
 
 **Forbidden:**

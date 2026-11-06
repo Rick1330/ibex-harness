@@ -7,7 +7,7 @@ useSeoMeta({
   title: 'Memory and context for AI agents',
   description: 'Self-hosted memory and context for AI agents. Tenant-scoped, budgeted, inspectable, and OpenAI-compatible.',
   ogTitle: 'Memory for agents. Control for you.',
-  ogDescription: 'The self-hosted boundary between your agent and the model. Tenant-scoped memory, bounded context, and evidence attached to every request.',
+  ogDescription: 'The self-hosted boundary between your agent and the model. Tenant-scoped memory, bounded context, and best-effort post-response evidence when the configured session and evidence path are available; evidence is not guaranteed for every request.',
   ogType: 'website',
 })
 </script>

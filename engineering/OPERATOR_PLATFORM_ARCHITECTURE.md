@@ -15,10 +15,12 @@ IBEX is an **auditable context-and-policy provenance debugger**. The operator UI
 | Surface | Status in baseline | Ownership and constraint |
 |---|---|---|
 | `site/` | Implemented public site | Public docs, roadmap, benchmark, and marketing content only. Do not place authenticated operator routes here. |
-| `services/console/` | Mounted-but-provisional | Canonical Nuxt 4 + Nitro operator application (ADR-0088). Six of ten core surfaces are live: Overview, Platform health, metadata-only Explore, the agent inventory, the memory index, and the session ledger (ADR-0089). Hosted AuthService, two-tenant, deployment, and promotion evidence remain open. |
-| Overview/context/health/events contract | Mounted backend foundations, operator composition not fully verified | Ownership must remain server/API-side; the operator client must not infer missing evidence. |
+| `services/console/` | Mounted-but-provisional | Canonical Nuxt 4 + Nitro operator application (ADR-0088). Eight of ten core surfaces are live: Overview and Platform health (D1), Agents, Memories, Evidence, and metadata-only Explore/Trace (D2), Sessions (D3), and directive version metadata (D5). Hosted AuthService, two-tenant, deployment, and promotion evidence remain open. |
+| Overview/context/health/events contract | Mounted D1 read composition, still provisional | Ownership must remain server/API-side; the operator client must not infer missing evidence. |
 | Explore / Trace Inspector metadata slice | Mounted-but-provisional | D2 list/detail metadata is mounted with explicit unavailable sections; full query, provenance joins, content, score, replay, and actions remain unaccepted. |
-| Sessions, Incidents, Directives, Drift, Billing, Analytics, Settings | Specified-not-implemented unless a separate implementation record proves otherwise | Core tier (agents, sessions, memories, evidence, directives, policies, settings) and platform tier (incidents, drift, audit, budgets, analytics, providers, MCP tools, access) are separated by ADR-0089. Enable one core vertical slice at a time after data, security, contract, browser, and rollback gates pass. |
+| Agents, Memories, Evidence, Sessions, Directives | Mounted-but-provisional | Current live core reads span D2, D3, and D5. They are metadata/read slices only; directive text, diffs, promotion history, and all directive mutations/CRUD remain unavailable. |
+| Policies, Settings | Preview | Core-tier designs remain preview and do not render as live evidence. |
+| Incidents, Drift, Billing, Analytics, Audit, Providers, MCP tools, Access | Specified-not-implemented or preview | Platform-tier surfaces remain outside the live core read slice; each needs its owning contract and evidence before promotion. |
 | Full production operator deployment and shell retirement | Deferred | Requires approved runtime ownership, staging browser promotion, rollback evidence, and parity decision. |
 
 ## Contract layers
@@ -27,8 +29,8 @@ IBEX is an **auditable context-and-policy provenance debugger**. The operator UI
 |---|---|---|---|
 | Identity | session, tenant membership, permission, assurance, revocation | Auth service/API | Backend foundations exist; console integration is not claimed. |
 | Operator context | principal, active organization, roles/permissions, step-up, feature/kill-switch state, allowed navigation | API/BFF | Specified; expose only fields verified by the server. |
-| Overview | metrics with source, freshness, completeness, generated time, and optionality | API read model | Specified D1 contract; not a claim that all cards/charts exist. |
-| Platform health | liveness/readiness and dependency-aware health facts | owning runtime/API | Existing service health is separate from an operator health composition. |
+| Overview | metrics with source, freshness, completeness, generated time, and optionality | API read model | Mounted D1 read slice; not a claim that all cards/charts exist. |
+| Platform health | liveness/readiness and dependency-aware health facts | owning runtime/API | Mounted D1 read; hosted freshness, recovery and deployment evidence remain open. |
 | Operator events | versioned SSE envelope, event ID, sequence, resume, deduplication, completeness | API/event plane | Shell parser is tested; production operator stream contract requires evidence. |
 | Evidence | trace/span/event IDs, parent links, sequence, operation kind, status, provenance | evidence plane | Required data model; missing evidence is `unknown`, never fabricated. |
 | Publication | event identity, aggregate sequence, schema version, digest, delivery state | Postgres outbox/relay | Target contract; replay and projection evidence required. |
@@ -47,7 +49,10 @@ Use Nitro server middleware only for lightweight routing and correlation concern
 
 The owning backend service owns each contract; console owns presentation and client behavior, not truth. The API pipeline must produce a versioned **OpenAPI snapshot**, generate the TypeScript client from that snapshot, and run runtime validation at the BFF/DAL boundary. CI must fail on snapshot drift, generated-client drift, incompatible fixtures, or an unhandled response shape. SSE envelopes require a versioned schema validator and `Last-Event-ID` resume tests. Hand-maintained mock types are not a contract.
 
-The initial D1 contract is limited to `context`, `overview`, `platform/health`, and `events` reads as approved by the API owner. Exact deployed paths, hostnames, and route availability remain an open decision unless verified by an implementation record.
+The current live core read slices are D1 (`context`, `overview`, `platform/health`, and event connection state), D2
+(`agents`, `memories`, `evidence`, and metadata-only trace reads), D3 (session metadata and turn-to-trace reads), and
+D5 (directive version metadata). Exact deployed paths and route availability remain implementation-owned; directive
+text, diffs, promotion history, and all mutation/CRUD routes are not mounted.
 
 ## Security and response policy
 

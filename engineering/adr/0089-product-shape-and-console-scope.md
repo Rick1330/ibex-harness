@@ -42,7 +42,7 @@ Packaging has the same shape of problem. "Use only the memory service" is not a 
 
 IBEX is the self-hosted memory and context layer for multi-tenant agents.
 
-- **Promise:** point an agent at an OpenAI-compatible endpoint or add the MCP server. IBEX resolves tenant and agent identity, injects bounded context, stores governed memories, and attaches evidence to every request.
+- **Promise:** point an agent at an OpenAI-compatible endpoint or add the MCP server. IBEX resolves tenant and agent identity, injects bounded context, and stores governed memories. Evidence capture is a best-effort post-response path for governed sessions when the evidence store and authoritative session fence are available; it is not guaranteed for every request or durable before acknowledgement (see ADR-0097).
 - **Primary user:** the platform or security team supporting several agent applications.
 - **Console role:** the operations plane for the memory/context lifecycle, not a general observability product.
 - **Expansion rule:** budgets, evidence depth, drift, incidents, and analytics become product surfaces only when a named design partner needs them. A designed page is not a demand signal.

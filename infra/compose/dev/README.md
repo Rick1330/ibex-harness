@@ -8,10 +8,15 @@ Pinned local stack for IBEX Harness. The default file includes data stores **and
 - GNU Make, Go, Python/uv, Node/pnpm for host processes
 
 ```bash
-cp .env.example .env # local credentials only; never commit
 cd infra/compose/dev
-docker compose --env-file .env up -d
+# Direct Compose invocation must select the env file explicitly.
+docker compose --env-file .env.example up -d
 ```
+
+The root Make targets already pass this file with `--env-file`. Copying an example file alone does not load it. The
+Compose file configures the containerized data stores and workers; services run on the host still require their values
+in the host process environment (for example, `export POSTGRES_DSN=...`). If you copy `.env.example` to an untracked
+`.env` for local overrides, pass that file explicitly instead: `docker compose --env-file .env up -d`.
 
 ## Services and ports
 

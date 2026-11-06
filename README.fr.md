@@ -14,7 +14,8 @@
 
 IBEX est une couche de mémoire et de contexte qui s'exécute sur votre propre infrastructure. Pointez votre agent vers
 un point de terminaison compatible OpenAI ou ajoutez le serveur MCP : IBEX résout l'identité du locataire et de
-l'agent, injecte un contexte borné, stocke des mémoires gouvernées et joint une preuve à chaque requête.
+l'agent, injecte un contexte borné, stocke des mémoires gouvernées et tente, au mieux, d'enregistrer une preuve après
+la réponse pour les sessions gouvernées lorsque le plan de preuve PostgreSQL est configuré.
 
 ## Pourquoi IBEX
 
@@ -22,8 +23,11 @@ l'agent, injecte un contexte borné, stocke des mémoires gouvernées et joint u
   autorité et chaque chemin de données filtre explicitement le locataire.
 - **Contexte borné, pas un déversement de prompt.** L'assemblage récupère, classe et emballe mémoires et directives
   dans un budget de tokens et une échéance, puis se dégrade en contexte de directives plutôt que de bloquer le proxy.
-- **Preuve jointe à la requête.** Traces, état de rédaction, mode de capture et état de publication accompagnent
-  l'exécution.
+- **Preuve après la réponse, au mieux.** Lorsque le plan PostgreSQL, une session durable et une clôture faisant autorité
+  sont disponibles, les chemins gouvernés de chat et de session tentent d'écrire une ligne d'outbox après la réponse.
+  La preuve peut être retenue si la session ou la clôture manque, ou perdue en cas d'échec de persistance, de file
+  bornée saturée ou d'arrêt avant vidage. Le relais est désactivé par défaut ; aucun acquittement durable avant réponse
+  n'est revendiqué.
 
 ## Démarrage rapide
 
@@ -68,7 +72,7 @@ Ouvrez `http://127.0.0.1:3000`. La console est en lecture seule et échoue ferm�
 | Embedder | Python | Implémenté ou expérimental selon le profil |
 | API de gestion | Python / FastAPI | Montée et testée ; surfaces opérateur provisoires |
 | Workers | Python / Celery | Mixte |
-| Console | Nuxt 4 + Nitro | Provisoire ; 3 des 10 surfaces principales ont une lecture en direct |
+| Console | Nuxt 4 + Nitro | Provisoire ; 8 des 10 surfaces principales ont une lecture en direct |
 
 L'inventaire complet se trouve dans [`services/README.md`](services/README.md).
 

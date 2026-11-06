@@ -55,16 +55,16 @@ curl -s http://localhost:8000/v1/ready  || echo "api not ready"
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
 # Postgres
-docker exec -it ibex-postgres psql -U ibex -d ibex -c "SELECT 1;"
+docker exec -it ibex-dev-postgres psql -U ibex -d ibex -c "SELECT 1;"
 
 # Redis
-docker exec -it ibex-redis redis-cli PING
+docker exec -it ibex-dev-redis redis-cli PING
 
 # ClickHouse
 curl -s "http://localhost:8123/ping" && echo "clickhouse ok"
 
 # MinIO
-curl -s "http://localhost:9000/minio/health/live" && echo "minio ok"
+curl -s "http://localhost:9100/minio/health/live" && echo "minio ok"
 ```
 
 ### 2.4 Check logs with correlation IDs
@@ -90,13 +90,15 @@ Symptoms:
 
 Fix:
 
-1. Check `.env` file for that service (untracked):
-   - `services/<service>/.env`
+1. Confirm the variable is present in the **process environment** of the service. Services read the environment only:
+   they do **not** auto-load a `.env` file from the repository or the service directory. Export the value in your shell
+   or inject it through your process manager.
 2. Compare against:
-   - `.env.example` (root)
-   - `services/<service>/.env.example`
+   - `services/<service>/.env.example` (there is **no root `.env.example`**)
    - `engineering/ENVIRONMENT_VARIABLES.md`
-3. Ensure you did not put secrets into any public browser variable; the Console keeps credentials in the server-only BFF.
+3. Dev Docker Compose is the one exception: the Make targets pass
+   `infra/compose/dev/.env.example` to `docker compose --env-file`. Values exported in your shell override that file.
+4. Ensure you did not put secrets into any public browser variable; the Console keeps credentials in the server-only BFF.
 
 Best practice:
 
@@ -209,7 +211,7 @@ Fix:
 - Ensure Redis Stack features exist if used (Bloom/Cuckoo):
 
 ```bash
-docker exec -it ibex-redis redis-cli MODULE LIST
+docker exec -it ibex-dev-redis redis-cli MODULE LIST
 ```
 
 If Lua scripts are missing:
