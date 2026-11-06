@@ -7,6 +7,7 @@ import time
 
 import pytest
 from ibex_async_db import parse_async_database_url
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -18,19 +19,23 @@ from app.config import Settings
 from app.db import create_session_factory
 from app.read.full_text import FullTextSearchQuery, full_text_search
 from app.vectorstore.base import SearchRequest
-from app.vectorstore.pgvector_store import PgVectorStore
-from tests.integration.find_similar_support import bulk_seed_for_plans
+from app.vectorstore.pgvector_store import SEARCH_SQL, PgVectorStore
+from tests.integration.find_similar_support import PlanSeed, bulk_seed_for_plans
 from tests.integration.plan_assert import (
     GinExplainParams,
     assert_gin_index_used,
     assert_hnsw_index_scanned,
+    assert_hnsw_index_used,
     explain_gin_probe_plan,
     hnsw_idx_scan_count,
 )
 
 pytestmark = pytest.mark.integration
 
-_SCAN_FLUSH_TIMEOUT_SECONDS = 15.0
+# pg_stat counters are flushed by the backend at exit or on its next stats
+# interval. Under CI load the flush can lag well past 15s, so poll with a
+# bounded 60s deadline instead of failing on a single early read.
+_SCAN_FLUSH_TIMEOUT_SECONDS = 60.0
 _SCAN_FLUSH_POLL_SECONDS = 0.25
 
 
@@ -42,6 +47,48 @@ async def _wait_for_hnsw_scan(engine: AsyncEngine, *, before: int) -> int:
         if after > before or time.monotonic() >= deadline:
             return after
         await asyncio.sleep(_SCAN_FLUSH_POLL_SECONDS)
+
+
+async def _assert_hnsw_plan(
+    plan_engine: AsyncEngine,
+    plan_seed: PlanSeed,
+    settings: Settings,
+) -> None:
+    """Assert the executed search plan uses the HNSW index.
+
+    This is the direct signal that the production query shape can use HNSW;
+    the pg_stat check below additionally proves the counter path.
+    """
+    vector_literal = "[" + ",".join(str(float(value)) for value in plan_seed.query_vec) + "]"
+    session_factory = create_session_factory(plan_engine)
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SELECT set_config('app.current_org_id', :org_id, true)"
+            ),
+            {"org_id": str(plan_seed.seeded.org_id)},
+        )
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SELECT set_config('hnsw.ef_search', :ef, true)"
+            ),
+            {"ef": str(settings.hnsw_ef_search)},
+        )
+        result = await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + SEARCH_SQL
+            ),
+            {
+                "query": vector_literal,
+                "org_id": str(plan_seed.seeded.org_id),
+                "agent_id": str(plan_seed.seeded.agent_id),
+                "min_similarity": 0.0,
+                "limit": 10,
+                "include_historical_candidates": False,
+            },
+        )
+        plan = result.scalar_one()
+    assert_hnsw_index_used(plan)
 
 
 @pytest.mark.asyncio
@@ -76,6 +123,7 @@ async def test_hnsw_index_scan_at_runtime(
                 min_similarity=0.0,
             )
         )
+        await _assert_hnsw_plan(plan_engine, plan_seed, settings)
     finally:
         await plan_engine.dispose()
     after = await _wait_for_hnsw_scan(engine, before=before)
