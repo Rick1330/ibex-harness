@@ -92,6 +92,17 @@ test.describe('landing hero console', () => {
     await expect(button).toContainText('Copy failed')
     await expect(button).toHaveAttribute('aria-label', 'Copy failed; select commands manually')
     await expect(page.locator('#quickstart .landing-code-sr')).toHaveText('Could not copy commands. Select them manually.')
+
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: () => Promise.resolve() },
+      })
+    })
+    await button.click()
+
+    await expect(button).toContainText('Copied')
+    await expect(button).toHaveAttribute('aria-label', 'Copied quickstart commands')
   })
 
   test('landing field stays on the landing page only', async ({ page }) => {

@@ -21,11 +21,14 @@ const lines = computed(() => commands.split('\n').map(line => ({
   tokens: tokenizeCodeLine(line, 'shell'),
 })))
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
+let copyAttempt = 0
 
 async function copyCommands() {
+  const attempt = ++copyAttempt
   try {
     await navigator.clipboard.writeText(commands)
   } catch {
+    if (attempt !== copyAttempt) return
     copied.value = false
     copyFailed.value = true
     clearTimeout(copiedTimer)
@@ -35,6 +38,8 @@ async function copyCommands() {
     return
   }
 
+  // A slower earlier attempt must not overwrite the status of the latest one.
+  if (attempt !== copyAttempt) return
   copyFailed.value = false
   copied.value = true
   clearTimeout(copiedTimer)

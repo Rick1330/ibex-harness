@@ -45,11 +45,13 @@ Secrets must never be:
 
 ### 2.3 Loading and precedence
 
-Host-run services read the process environment; they do not automatically load a `.env` file from a service directory.
-For those services, export values in the shell or inject them through the process manager. The root Make targets are a
-separate Compose convenience: they pass `infra/compose/<kind>/.env.example` explicitly with `docker compose --env-file`.
-When invoking Compose directly, pass `--env-file` explicitly. A copied example file has no effect until a process or
-Compose command is given that file.
+Host-run Go and Python services read the process environment; they do not automatically load a `.env` file from a
+service directory. Nuxt is the one exception: `services/console` loads its own `.env` during `nuxt dev` and
+`nuxt build`, so an existing file there can set `NUXT_PUBLIC_IBEX_ENV`; the built Console server reads the process
+environment. For every other service, export values in the shell or inject them through the process manager. The root
+Make targets are a separate Compose convenience: they pass `infra/compose/<kind>/.env.example` explicitly with
+`docker compose --env-file`. Compose also reads a project `.env` for interpolation by default, so pass `--env-file`
+explicitly when you need to know which file supplied a value.
 
 Where a service supports CLI flags, the effective order is:
 
@@ -72,6 +74,7 @@ If a variable is marked **Required** for a service, the service must:
 
 - Use Docker Compose to run infra dependencies; Make targets select the tracked `.env.example` with an explicit `--env-file`.
 - Run host services with exported process environment variables; copying a per-service `.env.example` does not load it.
+  The Console is the exception: `nuxt dev` in `services/console` loads that directory's `.env`.
 - Use “mock mode” for Chat Completions if you do not want to set live provider keys. Mock mode does not satisfy the
   Responses route, which requires a registered Responses-capable provider and a verified capability manifest.
 
@@ -185,7 +188,7 @@ Used by: **proxy (trace writes), api (analytics), worker (billing/analytics), da
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `CLICKHOUSE_DSN` | Conditional | (none) | HTTP-oriented app DSN, e.g. `clickhouse://user:pass@host:8123/db`; optional for Chat Completions trace writes, required for the Responses usage writer | Secret if password present |
+| `CLICKHOUSE_DSN` | Conditional | (none) | HTTP app DSN, e.g. `http://user:pass@host:8123/db`; optional for Chat Completions trace writes, required for the Responses usage writer | Secret if password present |
 | `CLICKHOUSE_MIGRATE_DSN` | No | native `localhost:9002` | golang-migrate native TCP DSN; HTTP `8123` is remapped to `9002` when used as fallback | Prefer explicit migrate DSN |
 | `CLICKHOUSE_DATABASE` | No | `ibex` | DB name | |
 | `CLICKHOUSE_HTTP_PORT` | No | `8123` | HTTP API port | |
@@ -257,7 +260,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_IDEMPOTENCY_TTL` | No | `24h` | Redis TTL for completed `idempotency:{org_id}:{key}` chat Idempotency-Key records ([ADR-0035](adr/0035-chat-idempotency-key.md)). Pending claims use a separate ~9m package default. | Requires `REDIS_URL`; empty Redis → Noop (no dedupe) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | No | `50ms` | Per claim/commit Redis budget; timeout fail-opens without dedupe | Aligns with auth validate budget class |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
-| `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` registers an in-process Chat Completions stub; `live` registers OpenAI, Anthropic, and/or self-hosted when configured ([ADR-0026](adr/0026-openai-client-design.md), [ADR-0040](adr/0040-anthropic-provider-adapter.md), [ADR-0042](adr/0042-self-hosted-openai-compatible-adapter.md)). **Rejected when `IBEX_ENV=production`** | Default `mock` for CI/dev Chat Completions without API key; `/v1/responses` additionally requires a Responses-capable provider, verified manifest, credentials, and usage writer |
+| `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` registers an in-process Chat Completions stub; `live` registers OpenAI, Anthropic, and/or self-hosted when configured ([ADR-0026](adr/0026-openai-client-design.md), [ADR-0040](adr/0040-anthropic-provider-adapter.md), [ADR-0042](adr/0042-self-hosted-openai-compatible-adapter.md)). Only `mock` is rejected when `IBEX_ENV=production`; `live` is accepted in every profile and needs at least one configured provider | Default `mock` for CI/dev Chat Completions without API key; `/v1/responses` additionally requires a Responses-capable provider, verified manifest, credentials, and usage writer |
 | `OPENAI_API_KEY` | Live (≥1 of OpenAI/Anthropic/self-hosted) | (none) | OpenAI API key (or OpenAI-compatible provider key) | Secret; never logged |
 | `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI API base URL | Use `https://openrouter.ai/api/v1` for OpenRouter; do **not** point this at self-hosted vLLM ([ADR-0042](adr/0042-self-hosted-openai-compatible-adapter.md)) |
 | `IBEX_LLM_EXTRA_MODELS` | No | (none) | Comma-separated extra live-mode model IDs beyond the default OpenAI allowlist | e.g. `openai/gpt-oss-20b:free` for OpenRouter; each ID needs an `IBEX_MODEL_CAPABILITY_OVERLAYS` entry |

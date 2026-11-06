@@ -61,10 +61,10 @@ docker exec -it ibex-dev-postgres psql -U ibex -d ibex -c "SELECT 1;"
 docker exec -it ibex-dev-redis redis-cli PING
 
 # ClickHouse
-curl -s "http://localhost:8123/ping" && echo "clickhouse ok"
+curl -fsS "http://localhost:8123/ping" && echo "clickhouse ok"
 
 # MinIO
-curl -s "http://localhost:9100/minio/health/live" && echo "minio ok"
+curl -fsS "http://localhost:9100/minio/health/live" && echo "minio ok"
 ```
 
 ### 2.4 Check logs with correlation IDs

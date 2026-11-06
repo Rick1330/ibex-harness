@@ -221,7 +221,7 @@ Audit logs are special:
 
 **Allowed secret locations:**
 
-- Development: exported process environment for host services; explicit Compose `--env-file` for container configuration. A local `.env` file is not loaded unless the process or Compose command is explicitly given it.
+- Development: exported process environment for host services; an explicit Compose `--env-file` for interpolation. Compose also reads a project `.env` file by default for interpolation, but `--env-file` makes the source explicit. `--env-file` supplies interpolation values; it does not by itself pass every entry into a container, so a container value must also appear under the service's `environment`.
 - Production: Vault / cloud secrets manager / Kubernetes external secrets
 
 **Forbidden:**

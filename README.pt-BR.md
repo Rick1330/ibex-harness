@@ -24,11 +24,11 @@ governadas quando o plano de evidências PostgreSQL está configurado.
 - **Contexto limitado, não um despejo de prompt.** A montagem de contexto recupera, ordena e empacota memórias e
   diretivas dentro de um orçamento de tokens e de um prazo, degradando para contexto somente de diretivas em vez de
   bloquear o proxy.
-- **Evidência após a resposta, como melhor esforço.** Com o plano PostgreSQL, uma sessão durável e uma fence autoritativa
-  disponíveis, os caminhos governados de chat e sessão tentam gravar uma linha no outbox após a resposta. A evidência
-  pode ser retida quando falta a sessão ou a fence, ou perdida por falha de persistência, saturação da fila limitada ou
-  desligamento antes do esvaziamento. O relay fica desativado por padrão; não há alegação de acknowledgement durável
-  antes da resposta.
+- **Evidência após a resposta, como melhor esforço.** Com o plano PostgreSQL configurado e a versão de fence de
+  evidência autoritativa da sessão disponível, as requisições governadas de conclusão de chat tentam gravar uma linha no
+  outbox após a resposta; não é necessário encerrar a sessão antes. A evidência pode ser retida quando falta a sessão ou
+  a fence, ou perdida por falha de persistência, saturação da fila limitada ou desligamento antes do esvaziamento. O
+  relay fica desativado por padrão; não há alegação de acknowledgement durável antes da resposta.
 
 ## Início rápido
 
