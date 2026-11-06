@@ -2728,7 +2728,7 @@ Drop-in replacement for OpenAI's chat completions endpoint. Context and memory i
 
 **Service route (direct proxy):** `POST /v1/chat/completions` — same handler; `/proxy` is the external gateway path prefix.
 
-**Current behavior:** Authenticated requests with valid JSON are validated, matched to a registered provider, and forwarded (streaming and non-streaming). When no provider is registered for the requested model the response is **501 Not Implemented** with `PROVIDER_NOT_CONFIGURED`; a provider that is registered but fails upstream returns **502**. Malformed JSON returns **400** with `INVALID_JSON`.
+**Current behavior:** Authenticated requests with valid JSON are validated, matched to a registered provider, and forwarded (streaming and non-streaming). When no provider is registered for the requested model the response is **501 Not Implemented** with `PROVIDER_NOT_CONFIGURED`. A registered provider that fails before the response starts is mapped by `packages/provider.MapError`: an upstream 4xx/5xx without a successful fallback returns **503** `PROVIDER_UNAVAILABLE`, an upstream 429 returns **429** `RATE_LIMITED`, and a provider timeout returns **504** `PROVIDER_TIMEOUT`. Malformed JSON returns **400** with `INVALID_JSON`. Once an SSE stream has started the status line is already **200**; a provider failure mid-stream ends the stream without a `[DONE]` event, so **200 does not prove the stream completed**.
 
 **Request:**
 

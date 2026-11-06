@@ -20,7 +20,7 @@ IBEX is an **auditable context-and-policy provenance debugger**. The operator UI
 | Explore / Trace Inspector metadata slice | Mounted-but-provisional | D2 list/detail metadata is mounted with explicit unavailable sections; full query, provenance joins, content, score, replay, and actions remain unaccepted. |
 | Agents, Memories, Evidence, Sessions, Directives | Mounted-but-provisional | Current live core reads span D2, D3, and D5. They are metadata/read slices only; directive text, diffs, promotion history, and all directive mutations/CRUD remain unavailable. |
 | Policies, Settings | Preview | Core-tier designs remain preview and do not render as live evidence. |
-| Incidents, Drift, Billing, Analytics, Audit, Providers, MCP tools, Access | Specified-not-implemented or preview | Platform-tier surfaces remain outside the live core read slice; each needs its owning contract and evidence before promotion. |
+| Incidents, Drift, Budgets, Analytics, Audit, Providers, MCP tools, Access | Specified-not-implemented or preview | Platform-tier surfaces remain outside the live core read slice; each needs its owning contract and evidence before promotion. |
 | Full production operator deployment and shell retirement | Deferred | Requires approved runtime ownership, staging browser promotion, rollback evidence, and parity decision. |
 
 ## Contract layers

@@ -24,11 +24,12 @@ Antwort nach bestem Bemühen Evidenz zu schreiben, wenn die PostgreSQL-Evidenzeb
 - **Begrenzter Kontext statt Prompt-Dumping.** Die Kontextmontage ruft Erinnerungen und Direktiven ab, ordnet sie und
   packt sie innerhalb eines Token-Budgets und einer Frist; bei Fehlern fällt sie auf Direktiven-Kontext zurück, statt
   den Proxy zu blockieren.
-- **Evidenz nach der Antwort, nach bestem Bemühen.** Wenn die PostgreSQL-Evidenzebene sowie eine dauerhafte Sitzung und
-  ein maßgeblicher Fence vorhanden sind, versuchen governierte Chat- und Sitzungspfade nach der Antwort eine Outbox-Zeile
-  zu schreiben. Bei fehlender Sitzung oder fehlendem Fence wird Evidenz zurückgehalten; bei Persistenzfehlern, voller
-  begrenzter Warteschlange oder Herunterfahren vor dem Leeren kann sie verloren gehen. Das Relay ist standardmäßig
-  deaktiviert; eine synchrone dauerhafte Bestätigung vor der Antwort wird nicht behauptet.
+- **Evidenz nach der Antwort, nach bestem Bemühen.** Wenn die PostgreSQL-Evidenzebene konfiguriert ist und die
+  maßgebliche Evidenz-Fence-Version der Sitzung vorliegt, versuchen gouvernierte Chat-Completion-Anfragen nach der
+  Antwort eine Outbox-Zeile zu schreiben; die Sitzung muss dafür nicht geschlossen sein. Bei fehlender Sitzung oder
+  fehlendem Fence wird Evidenz zurückgehalten; bei Persistenzfehlern, voller begrenzter Warteschlange oder
+  Herunterfahren vor dem Leeren kann sie verloren gehen. Das Relay ist standardmäßig deaktiviert; eine synchrone
+  dauerhafte Bestätigung vor der Antwort wird nicht behauptet.
 
 ## Schnellstart
 

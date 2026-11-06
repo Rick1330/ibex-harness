@@ -51,11 +51,11 @@ tenant-scoped infrastructure:
   authority and every data path filters explicitly.
 - **Bounded context, not a prompt dump.** Context assembly retrieves, ranks, and packs memories and directives within a
   token budget and a deadline, and degrades to directive-only context rather than blocking the proxy.
-- **Best-effort evidence after the response.** When the PostgreSQL evidence plane is configured and a durable session
-  plus authoritative fence are available, governed chat and session paths attempt an evidence outbox write after the
-  response. Evidence may be withheld when that session or fence is missing, or lost when persistence fails, the bounded
-  queue is saturated, or the process shuts down before draining. The relay is default-off; this is not a synchronous
-  durable-before-ack guarantee.
+- **Best-effort evidence after the response.** When the PostgreSQL evidence plane is configured and the session's
+  authoritative evidence-fence version is available, governed chat-completion requests attempt an evidence outbox write
+  after the response. The session does not need to be closed first. Evidence may be withheld when the session or its
+  fence is missing, or lost when persistence fails, the bounded queue is saturated, or the process shuts down before
+  draining. The relay is default-off; this is not a synchronous durable-before-ack guarantee.
 
 ## How it fits together
 

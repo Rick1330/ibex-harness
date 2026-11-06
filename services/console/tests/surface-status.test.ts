@@ -97,6 +97,14 @@ describe("surface status parity", () => {
     expect(coreEnd, "the Console page must have a platform-tier section").toBeGreaterThan(coreStart)
 
     const coreTable = consolePage.slice(coreStart, coreEnd)
+    const documented = coreTable
+      .split("\n")
+      .filter((line) => line.startsWith("| ") && !line.startsWith("| ---") && !line.startsWith("| Surface |"))
+      .map((line) => line.split("|")[1]?.trim())
+
+    expect(documented.sort(), "the core-tier table must list exactly the core surfaces").toEqual(
+      SURFACE_LIST.filter((surface) => surface.tier === "core").map((surface) => surface.label).sort(),
+    )
 
     for (const [, surface] of entries) {
       if (surface.tier !== "core") continue
@@ -115,8 +123,39 @@ describe("surface status parity", () => {
     }
   })
 
+  it("keeps the published platform-tier section consistent with SURFACES", () => {
+    const platformStart = consolePage.indexOf("### Platform tier")
+    const routeMapStart = consolePage.indexOf("## Route map")
+    expect(platformStart).toBeGreaterThan(-1)
+    expect(routeMapStart).toBeGreaterThan(platformStart)
+
+    const platformSection = consolePage.slice(platformStart, routeMapStart)
+    expect(platformSection, "the platform section must not claim a live surface").not.toMatch(/\bLive\b/)
+
+    const platformLabels = SURFACE_LIST.filter((surface) => surface.tier === "platform").map((surface) => surface.label)
+    const normalized = platformSection.replace(/\s+/g, " ").toLowerCase()
+    for (const label of platformLabels) {
+      expect(normalized, `the platform section must name ${label}`).toContain(label.toLowerCase())
+    }
+  })
+
   it("keeps the published architecture overview in parity with the live domains", () => {
     const liveDomains = [...new Set(SURFACE_LIST.filter((surface) => surface.availability === "live").map((s) => s.domain))].sort()
     expect(overviewPage, "the overview must list the live read domains").toContain(`${liveDomains.join("/")} read slices`)
+  })
+
+  it("keeps localized README Console counts current", () => {
+    const core = SURFACE_LIST.filter((surface) => surface.tier === "core")
+    const live = core.filter((surface) => surface.availability === "live").length
+    const files = ["README.es.md", "README.fr.md", "README.de.md", "README.pt-BR.md", "README.zh-CN.md", "README.ar.md"]
+
+    for (const file of files) {
+      const row = read(`../../${file}`)
+        .split("\n")
+        .find((line) => line.includes("Nuxt 4 + Nitro") && line.startsWith("|"))
+      expect(row, `${file} must have a Console inventory row`).toBeDefined()
+      expect(row, `${file} Console count disagrees with SURFACES`).toContain(String(live))
+      expect(row, `${file} Console count disagrees with SURFACES`).toContain(String(core.length))
+    }
   })
 })

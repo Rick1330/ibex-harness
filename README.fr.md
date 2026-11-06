@@ -23,11 +23,11 @@ la réponse pour les sessions gouvernées lorsque le plan de preuve PostgreSQL e
   autorité et chaque chemin de données filtre explicitement le locataire.
 - **Contexte borné, pas un déversement de prompt.** L'assemblage récupère, classe et emballe mémoires et directives
   dans un budget de tokens et une échéance, puis se dégrade en contexte de directives plutôt que de bloquer le proxy.
-- **Preuve après la réponse, au mieux.** Lorsque le plan PostgreSQL, une session durable et une clôture faisant autorité
-  sont disponibles, les chemins gouvernés de chat et de session tentent d'écrire une ligne d'outbox après la réponse.
-  La preuve peut être retenue si la session ou la clôture manque, ou perdue en cas d'échec de persistance, de file
-  bornée saturée ou d'arrêt avant vidage. Le relais est désactivé par défaut ; aucun acquittement durable avant réponse
-  n'est revendiqué.
+- **Preuve après la réponse, au mieux.** Lorsque le plan PostgreSQL est configuré et que la version de fence de preuve
+  de la session fait autorité, les requêtes gouvernées de complétion de chat tentent d'écrire une ligne d'outbox après
+  la réponse ; la session n'a pas besoin d'être clôturée au préalable. La preuve peut être retenue si la session ou son
+  fence manque, ou perdue en cas d'échec de persistance, de file bornée saturée ou d'arrêt avant vidage. Le relais est
+  désactivé par défaut ; aucun acquittement durable avant réponse n'est revendiqué.
 
 ## Démarrage rapide
 

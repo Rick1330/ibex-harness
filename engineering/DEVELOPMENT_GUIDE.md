@@ -275,9 +275,10 @@ curl -s http://localhost:8080/health | jq
 ### 5.1 Environment variable rules
 
 - Use `.env.example` files as reference lists for host services; export the values into the service process environment.
-- Host services do not auto-load a `.env` file, so copying an example file alone has no effect.
-- The root Make targets automatically pass the appropriate Compose `.env.example` with `--env-file`; direct Compose
-  commands must pass `--env-file` explicitly.
+- The Go and Python services do not auto-load a `.env` file, so copying an example file alone has no effect. The Console
+  is the exception: `nuxt dev` in `services/console` loads that directory's `.env`.
+- The root Make targets automatically pass the appropriate Compose `.env.example` with `--env-file`. Compose also reads a
+  project `.env` for interpolation by default, so pass `--env-file` explicitly when the source must be unambiguous.
 - Never commit `.env` files.
 - Secrets must be injected via environment variables in dev, and via Vault/Secrets Manager in production.
 

@@ -23,11 +23,11 @@ las sesiones gobernadas cuando el plano de evidencia PostgreSQL está configurad
   cada ruta de datos filtra el inquilino de forma explícita.
 - **Contexto acotado, no un volcado de prompt.** La ensambladura recupera, ordena y empaqueta memorias y directivas
   dentro de un presupuesto de tokens y un plazo, y degrada a contexto de solo directivas en lugar de bloquear el proxy.
-- **Evidencia posterior a la respuesta, como mejor esfuerzo.** Con el plano PostgreSQL, una sesión durable y un fence
-  autoritativo disponibles, las rutas gobernadas de chat y sesión intentan escribir una fila en el outbox tras la
-  respuesta. La evidencia puede retenerse si falta la sesión o el fence, o perderse por un fallo de persistencia, una
-  cola limitada saturada o un apagado antes del drenaje. El relay está desactivado por defecto; no se afirma un
-  acknowledgement durable antes de la respuesta.
+- **Evidencia posterior a la respuesta, como mejor esfuerzo.** Con el plano PostgreSQL configurado y la versión de fence
+  de evidencia autoritativa de la sesión disponible, las solicitudes gobernadas de finalización de chat intentan
+  escribir una fila en el outbox tras la respuesta; no hace falta cerrar la sesión antes. La evidencia puede retenerse
+  si falta la sesión o su fence, o perderse por un fallo de persistencia, una cola limitada saturada o un apagado antes
+  del drenaje. El relay está desactivado por defecto; no se afirma un acknowledgement durable antes de la respuesta.
 
 ## Inicio rápido
 
