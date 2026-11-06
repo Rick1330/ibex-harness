@@ -43,9 +43,9 @@ Two further reasons:
 | D8 | Provider subset | **OPEN.** If unresolved at release time it is recorded as a 1.0 limitation, not an acceptance. | — |
 | D9 | Lifecycle, retention, holds | **OPEN.** Needed by W3 (erasure) before a deletion-completeness claim can be made. | — |
 | D10 | Durable conversation source | **OPEN.** The profile keeps the trace inspector metadata-only (ADR-0082), so this stays out of 1.0 rather than being decided by omission. | ADR-0097 §2 |
-| D11 | Response-bound acknowledgement | **OPEN.** ADR-0097 **excludes** response-bound acknowledgement from 1.0; the post-response boundary stands and must be stated wherever evidence is described. | ADR-0097 §2, §4 |
+| D11 | Response-bound acknowledgement | **OPEN.** ADR-0097 §10 **excludes** response-bound acknowledgement from 1.0; the post-response boundary stands and must be stated wherever evidence is described. | ADR-0097 §2, §4 |
 | D12 | MCP write disposition | **OPEN.** MCP writes are out of 1.0 scope; MCP memory is optional and default-off, MCP operator is unpublishable today. | ADR-0097 §2 |
-| D13 | Recovery objectives | **OPEN.** Owned by W4; ADR-0097 requires a rehearsal but sets no number. | ADR-0097 §9, §10 |
+| D13 | Recovery objectives | **OPEN.** Owned by W4; ADR-0097 requires a rehearsal but sets no number. | ADR-0097 §9, §11 |
 | D14 | Provider invoice source | **OPEN.** Estimate-grade cost remains estimate-grade. | — |
 
 **What "D5 resolved" means, precisely.** It means a profile is named, its exclusions are written down, and every later
@@ -73,7 +73,13 @@ The combined run over the evidence, session, relay and idempotency packages exec
 (`go test -count=1 -v ./packages/evidenceoutbox/... ./packages/session/... ./packages/idempotency/... ./services/relay/... ./services/proxy/internal/http/session/...`).
 
 **Outcome:** all four shapes are **reaffirmed** at `b400070f`, with their limitations unchanged and their review date
-moved to 2027-02-06. The status value does not change: they remain `accepted` for contract text and safety semantics
+moved to 2027-02-06.
+
+**What this review did not renew:** `idempotency-operation.v1`. The shape is `accepted` in the registry, but it has no
+`accepted` ledger row — its ledger entries are runtime slices, and those are `provisional`. There was therefore nothing
+to re-verify at the shape level, and its acceptance lapses on **2026-11-10** unless a future wave re-verifies it. That
+asymmetry is deliberate and is stated in the registry, the decision record and the ledger header, so that no reader
+treats all five shapes as current until 2027-02-06. The status value does not change: they remain `accepted` for contract text and safety semantics
 only, and no runtime seam is promoted.
 
 ## 4. What was not re-verified, and why
@@ -95,11 +101,13 @@ started. Each row is assigned to the wave that will produce profile evidence for
 
 ## 5. New blocker found by the profile review
 
-**P0-22 — no non-development environment can authenticate.** The AuthService gRPC server registers no transport
-credentials; the Go proxy dials TLS for every `IBEX_ENV` except `development`; the Python API dials
-`grpc.aio.insecure_channel`; and the Console BFF refuses a session cookie over a non-HTTPS API origin, with no TLS
-terminator in the Compose path (the Helm ingress `tls:` block is scaffolding that needs an operator secret and belongs
-to the excluded Kubernetes profile). The three postures cannot all hold, so the only way to start the stack today is
+**P0-22 — the chat path cannot authenticate outside `development`.** Diagnosed per hop, because a single verdict would
+be wrong: the Go proxy dials TLS for every `IBEX_ENV` except `development`, while AuthService registers no server
+transport credentials, so **proxy → auth always fails outside `development`** — and every chat request needs that hop.
+The Python API dials `grpc.aio.insecure_channel` behind `assert_trusted_insecure_auth_target`, so **API → auth works**
+over a Compose short name, but with no transport security. The Console BFF refuses a session cookie over a non-HTTPS API
+origin, and there is no TLS terminator in the Compose path (the Helm ingress `tls:` block is scaffolding that needs an
+operator secret and belongs to the excluded Kubernetes profile). The stack can be started today only with
 `IBEX_ENV=development`, which is not a production posture. Recorded in
 [`27-v1-readiness-audit.md`](27-v1-readiness-audit.md) §3.1 with ADR-0097 §4 as the decision that resolves the transport
 question and W2 as the implementation.

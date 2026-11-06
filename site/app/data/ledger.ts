@@ -161,7 +161,7 @@ export const gates: Gate[] = [
     status: 'PROVISIONAL',
     summary: 'Five contract shapes accepted 2026-10-10; four re-verified 2026-11-06. Runtime seams remain provisional.',
     evidence:
-      'Review/expiry 2027-02-06. Acting owner across all roles; no independent reviewer named. See the 2026-11-06 G0 review record.',
+      'Review/expiry 2027-02-06 for the four re-verified shapes; idempotency-operation.v1 retains 2026-11-10. Acting owner across all roles; no independent reviewer named. See the 2026-11-06 G0 review record.',
   },
   {
     id: 'G1',

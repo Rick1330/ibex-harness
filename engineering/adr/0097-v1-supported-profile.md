@@ -97,19 +97,35 @@ reachable by more than one peer carries TLS.
   co-location), and in `v1-single-node` it would make the required component unusable. It is replaced by a fail-closed
   pair: the target must be a loopback literal (existing rule) **and** the profile must set an explicit
   `IBEX_CONTEXT_COLOCATED=true`. Without that opt-in, non-development environments still refuse to enable context. The
-  change is security-relevant and lands with the negative tests named in §10.
+  change is security-relevant and lands with the negative tests named under **Evidence required**.
 - **AuthService gRPC: TLS with a per-install CA.** Auth serves multiple peers, so it cannot be co-located. Today the
   server serves plaintext (`services/auth/cmd/auth/main.go`, `newAuthGRPCServer` registers no transport credentials),
   the Go proxy dials TLS for every environment except `development`/empty
   (`services/proxy/internal/bootstrap`, `authTransportCredentials`), and the Python API dials
-  `grpc.aio.insecure_channel` (`services/api/app/auth/session_refresh.py`). The three postures cannot all hold, so no
-  non-development profile can authenticate today. The profile requires: TLS server credentials on AuthService, a CA
-  file plumbed to the Go and Python clients, and one negative test proving an unauthenticated client is rejected. The
-  auth port is never published to the host.
-- **Edge TLS terminator: one origin.** The Console BFF refuses to send a session cookie to a non-HTTPS API origin
-  (`services/console/server/utils/operator/http.ts`, `fetchOperatorJson`), and the browser session cookie requires a
-  secure origin. The profile therefore ships a terminator on the single published HTTPS port, path-routing `/` to the
-  Console and `/v1` to the API. Cookie `Domain` is never widened to a parent domain.
+  `grpc.aio.insecure_channel` behind `assert_trusted_insecure_auth_target` (`services/api/app/auth/session_refresh.py`,
+  `packages/authclient/src/authclient/target.py`). Diagnosed per hop: **proxy → auth always fails outside `development`**
+  (TLS client against a plaintext server), and that is the hop every chat request needs; **API → auth works**, because
+  both sides are plaintext over a Compose short name, but with no transport security. The profile requires: TLS server
+  credentials on AuthService, a CA file plumbed to the Go and Python clients, and one negative test proving an
+  unauthenticated client is rejected. The auth port is never published to the host.
+- **Edge TLS terminator: one origin, explicit path ownership.** The Console BFF refuses to send a session cookie to a
+  non-HTTPS API origin (`services/console/server/utils/operator/http.ts`, `fetchOperatorJson`), and the browser session
+  cookie requires a secure origin. The profile therefore ships a terminator on the single published HTTPS port, and it
+  must route by exact path prefix, not by a blanket `/v1`: **the proxy and the API both own `/v1` routes.**
+
+  | Path | Upstream | Why |
+  |---|---|---|
+  | `/v1/chat/completions` | proxy | `router_protected.go:182` |
+  | `/v1/responses` | proxy | `router_protected.go:198` |
+  | `/v1/sessions/{session_id}/terminate` | proxy | `router_protected.go:102` |
+  | `/v1/orgs/{org_id}/auth-probe` | proxy | `router_protected.go:134` |
+  | `/v1/internal/auth-probe` | proxy | `router_protected.go:131`; internal-only, never published |
+  | `/v1/operator/*` | API | the Console BFF's upstream paths (`services/console/server/utils/operator/http.ts`) |
+  | `/v1/organizations/*`, `/v1/tokens`, `/v1/users`, `/v1/agents`, `/v1/tenant/*` | API | `services/api/app/routers/*` |
+  | everything else | Console | Nuxt SSR routes; `/health`, `/ready` and `/metrics` are not published at the edge |
+
+  The BFF's `API_ORIGIN` is the edge URL, not the API container, because the cookie rule keys on that origin. Cookie
+  `Domain` is never widened to a parent domain, and the BFF never accepts an upstream redirect.
 - **Internal HTTP APIs** carry the existing shared bearer tokens (`IBEX_MEMORY_API_TOKEN`, the worker enqueue token,
   the embedding token) over the Compose bridge, with the port unpublished. This is a host-local bridge, not a public
   interface; it is documented as a limitation, not as a security boundary.
@@ -149,7 +165,19 @@ one-shot migration service, start the new images by digest. Rollback: restore th
 digests. Because migrations are forward-only, "start the previous digest against the migrated schema" is not a
 supported rollback and the release note must not imply it is.
 
-**10. Readiness contract, stated honestly for today and for the gate.** Today memory's `/ready` reports bootstrap state
+**10. Exclusions, stated as a list.** These are out of 1.0 scope, in the words a release note may reuse:
+
+- Kubernetes, Helm and any HA topology; no rolling upgrade; a restart is an outage.
+- Hosted or measured SLOs; no p99 claim, and no benchmark result is an SLO.
+- Response-bound evidence acknowledgement. Evidence is acknowledged post-response, on the durable outbox commit.
+- The run envelope as a runtime artifact: no persistence, replay, or approval consumption exists in the repository today, so 1.0 cannot claim it.
+- `DecisionService`, MCP writes (MCP memory is read-only and default-off; MCP operator is not published).
+- The platform-tier Console surfaces (ADR-0089). Only the `core` surfaces are in scope.
+- ClickHouse and MinIO/S3 projections, the reranker, and the observability stack: optional, default off.
+- Multi-user authentication. `PrincipalContext` is unsigned and confined to a loopback namespace, so per-user
+  authentication and any non-loopback deployment are unsupported.
+
+**11. Readiness contract, stated honestly for today and for the gate.** Today memory's `/ready` reports bootstrap state
 only — it surfaces an initialisation error and nothing per request (`services/memory/app/probes.py`); the API does check
 PostgreSQL and AuthService per request (`services/api/app/probes.py`); the proxy registers PostgreSQL, the tokenizer and
 a self-hosted LLM as **advisory** checks that do not gate readiness (`services/proxy/internal/bootstrap/wire.go`); the
@@ -170,7 +198,7 @@ sentences a release note can carry.
 **Negative.** 1.0 will be a single-node release: no HA claim, no rolling upgrade, and a restart is an outage. The profile
 cannot be started today — context, console, edge termination, the migration image job and the TEI pin all have to be
 built, and AuthService needs TLS before any non-development start succeeds. Selecting the profile closes none of the
-audit's P0s; it makes them measurable. The evidence required in §10 is work, not a formality.
+audit's P0s; it makes them measurable. The evidence required at the end of this record is work, not a formality.
 
 **Neutral.** This decision does not promote a ledger row, does not accept a contract shape, and does not resolve D1 (no
 independent reviewer), D4 (relay `required_evidence` gate) or D6 (unsigned `PrincipalContext`). Those stay open and are
