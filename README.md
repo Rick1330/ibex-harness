@@ -11,7 +11,8 @@
 
 <p align="center">
   Point your agent at an OpenAI-compatible endpoint or add the MCP server. IBEX resolves tenant and agent identity,
-  injects bounded context, stores governed memories, and attaches evidence to every request.
+  injects bounded context, stores governed memories, and attempts best-effort post-response evidence for governed
+  sessions when the PostgreSQL evidence plane is configured.
 </p>
 
 <p align="center">
@@ -50,8 +51,11 @@ tenant-scoped infrastructure:
   authority and every data path filters explicitly.
 - **Bounded context, not a prompt dump.** Context assembly retrieves, ranks, and packs memories and directives within a
   token budget and a deadline, and degrades to directive-only context rather than blocking the proxy.
-- **Evidence attached to the request.** Traces, redaction state, capture mode, and publication state travel with the
-  run, so an operator can answer "what happened?" without reconstructing it from logs.
+- **Best-effort evidence after the response.** When the PostgreSQL evidence plane is configured and a durable session
+  plus authoritative fence are available, governed chat and session paths attempt an evidence outbox write after the
+  response. Evidence may be withheld when that session or fence is missing, or lost when persistence fails, the bounded
+  queue is saturated, or the process shuts down before draining. The relay is default-off; this is not a synchronous
+  durable-before-ack guarantee.
 
 ## How it fits together
 
@@ -127,7 +131,7 @@ Open `http://127.0.0.1:3000`. The Console is read-only and fails closed without 
 | **Session** | A conversation or run context that groups turns and traces. |
 | **Memory** | A governed record with provenance, confidence, lifecycle state, and optional PII redaction. |
 | **Directive** | Standing context injected on every request, versioned separately from memories. |
-| **Evidence** | Trace, capture, redaction, and publication facts attached to a request. |
+| **Evidence** | Best-effort post-response trace and capture facts for governed sessions when the evidence store, durable session, and authoritative fence are available; rows may be withheld or lost on failure. |
 
 ## Services
 
@@ -143,7 +147,7 @@ Open `http://127.0.0.1:3000`. The Console is read-only and fails closed without 
 | [`mcp-memory/`](services/mcp-memory/README.md) | Python | Shipped/partial; logging-only audit by default |
 | [`mcp-operator/`](services/mcp-operator/README.md) | Python | Shipped locally, default-off |
 | [`relay/`](services/relay/README.md) | Go | Implemented locally, default-off; no production sink |
-| [`console/`](services/console/README.md) | Nuxt 4 + Nitro | Provisional; 6 of 10 core surfaces have a live read path |
+| [`console/`](services/console/README.md) | Nuxt 4 + Nitro | Provisional; 8 of 10 core surfaces have a live read path |
 
 The full inventory, shared packages, and local infrastructure are in [`services/README.md`](services/README.md),
 [`packages/README.md`](packages/README.md), and [`infra/README.md`](infra/README.md).

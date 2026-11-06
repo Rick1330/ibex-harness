@@ -453,7 +453,7 @@ infra/compose/
   - Postgres: 5432
   - Redis: 6379
   - ClickHouse HTTP: 8123
-  - MinIO: 9000 (API), 9001 (console)
+  - MinIO: 9100 (API), 9101 (console) in dev Compose
 
 ### 5.2 Helm Charts
 

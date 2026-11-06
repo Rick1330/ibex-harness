@@ -8,14 +8,15 @@
 | Surface | Status | Rule |
 |---|---|---|
 | Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`) | **Implemented** in the documented Phase 1 baseline | Auth service owns authentication and revocation. |
-| Proxy HTTP auth probes, health/readiness/metrics, and chat stub | **Implemented** only where verified by the Phase 1 service tests; the chat stub returns `501` | Do not infer operator product APIs from proxy routes. |
+| Proxy HTTP auth probes, health/readiness/metrics, and chat completions | **Implemented locally**; chat forwards to a registered provider and returns `501` `PROVIDER_NOT_CONFIGURED` only when no provider matches the model | Do not infer operator product APIs from proxy routes. |
+| Proxy HTTP Responses (`POST /v1/responses`) | **Mounted locally; provisional**; non-streaming only, and only with a registered Responses-capable provider, a current verified capability-manifest entry, provider credentials, and the usage writer configured by `CLICKHOUSE_DSN` | The default mock provider does not satisfy this route. Missing credential or usage dependencies return `503 SERVICE_DEGRADED`; provider failure returns `502`. |
 | API service operator/session/CSRF/CORS/SSE foundations | **Mounted-but-provisional** | D1 context and Overview reads enforce the metadata-read permission and RLS-bound session scope. Verify canonical secure-cookie/origin policy, real AuthService-backed sessions, and staging evidence before production use. |
 | D1 context and Overview reads | **Mounted; local contract and RLS integration-tested** | `GET /v1/operator/context` and `GET /v1/operator/overview` are documented below and included in the OpenAPI snapshot. This does not certify the full staged operator topology or milestone. |
 | Platform-health and operator-events D1 composition | **Mounted-but-provisional** | Health/SSE path and rendering checks exist locally; hosted health freshness, SSE buffering/reconnect/drain, and operator-origin evidence remain release gates. |
 | D2 metadata trace list/detail | **Mounted-but-provisional** | `GET /v1/operator/traces` and `GET /v1/operator/traces/{trace_id}` are read-only, tenant-scoped, no-store metadata routes. Full provenance panels, content, score explanations, replay, and actions remain planned and unaccepted. |
 | Operator agent summary/detail | **Mounted; local contract and RLS integration-tested** | `GET /v1/operator/agents` and `GET /v1/operator/agents/{agent_id}` are read-only, tenant-scoped projections of the management agent record. They exclude `org_id`, `config`, and `metadata`; mutations remain management-plane. |
 | Memory service create/search/forget routes | **Mounted but provisional for GAP-007 lifecycle** | Runtime route and local tests exist; migration, PostgreSQL/RLS integration evidence, review, and contract acceptance remain open. See provisional forget endpoint below. |
-| Sessions, directives, analytics, incidents, actions, billing UI reads | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. |
+| Directive mutation/CRUD, session mutation/CRUD, analytics, incidents, actions, billing UI writes | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. The mounted directive routes are metadata-only reads listed below; `GET /v1/operator/sessions` and `GET /v1/operator/sessions/{session_id}` are mounted metadata reads, not session management. |
 | Provider, webhook, export, deletion, replay, and advanced governance surfaces | **Deferred or separately gated** | Require explicit owner, permission, audit, redaction, and rollback evidence. |
 
 ### Contract ownership and validation
@@ -33,6 +34,19 @@ The current D2 slice exposes only metadata from the canonical evidence read mode
 
 Both routes require an AuthService-backed operator session outside development, `OPERATOR_METADATA_READ`, an organization-bound database transaction, and `Cache-Control: no-store`. The response source is `postgres.evidence_runs`; `source_watermark` is currently `not_provided`, retention is `unknown`, and unavailable spans, candidates, score explanation, directives, tools, and content are explicit rather than fabricated. The contract is maintained by `services/api/openapi.snapshot.json`, `services/api/scripts/route_inventory.json`, and the Console runtime schemas. Local route/contract evidence is not hosted deployment or milestone acceptance evidence; see ADR-0082 and issue #905.
 
+### Operator directive metadata reads (mounted, metadata-only)
+
+The Management API also mounts these tenant-scoped, no-store operator reads:
+
+| Method | Path | Boundary |
+| --- | --- | --- |
+| `GET` | `/v1/operator/directives` | Metadata-only directive summaries, active pointer, version counts, and usage-window facts. |
+| `GET` | `/v1/operator/directives/{directive_id}` | Metadata-only detail with version timeline and usage facts; directive instruction content is omitted. |
+
+These are mounted read contracts, not directive management. Directive mutation/CRUD, including creating, editing,
+promoting, revoking, or deleting directives and versions, remains unimplemented. The reference `POST` and other
+directive sections later in this document are specification material and must not be read as mounted routes.
+
 ### Operator contract boundary
 
 The first operator slice is limited to server-owned context, overview, platform health, operator events, and a read-only agent projection. Exact deployed paths, hostnames, origins, and workflows are intentionally not asserted here until verified. Personalized RSC, BFF, export, and SSE responses default to request-time `no-store`; any cache exception requires an explicit tenant-safe key design and two-role/two-tenant cache tests. Cookie-authenticated mutations require CSRF protection; cross-origin deployments require exact credentialed CORS allowlists and Origin/Referer validation.
@@ -43,10 +57,10 @@ Every operator request, stream, export, deletion, replay, and asynchronous job d
 
 ---
 
-> **Operator platform contract:** The historical Phase 4 dashboard work is gated by Track P. The current D2 slice mounts only a versioned metadata trace list/detail read; the planned operator UI consumes generated, versioned contracts for identity, tenant scope, query state, trace/span/event evidence, SSE envelopes, privacy state, usage/cost facts, incidents, and operator actions. A permission constant or database table is not an API implementation.
-> **Phase 1 implemented surface (2026-06):** Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`); proxy HTTP (`GET /v1/internal/auth-probe`, `GET /v1/orgs/{org_id}/auth-probe`, `POST /v1/chat/completions` stub → 501); `/health`, `/ready`, `/metrics`. Error envelope per ADR-0013 / `packages/apierror`.
+> **Operator platform contract:** The historical Phase 4 dashboard work is gated by Track P. The currently mounted, provisional core read slices include D1 overview/platform health, D2 agent/memory/evidence and metadata trace list/detail, D3 session metadata, and D5 directive-version metadata. Each route and its exclusions are recorded in the status table above; planned contracts for query, privacy, usage/cost, incidents, and operator actions are not route evidence. A permission constant or database table is not an API implementation.
+> **Phase 1 historical baseline (2026-06, superseded):** Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`); proxy HTTP (`GET /v1/internal/auth-probe`, `GET /v1/orgs/{org_id}/auth-probe`, chat); `/health`, `/ready`, `/metrics`. The chat route returned `501` before provider forwarding landed; current behavior is stated in the status table above and under `POST /v1/chat/completions`. Error envelope per ADR-0013 / `packages/apierror`.
 >
-> **Phase 2+ (below):** REST resources for memories, sessions, agents, directives, analytics, and dashboard APIs are **specified but not implemented** unless a mounted implementation record is called out above. See the [status ledger](https://ibexharness.com/docs/architecture/status-and-evidence).
+> **Phase 2+ (below):** REST resources for memories, sessions, directive mutation/CRUD, analytics, and dashboard APIs are **specified but not implemented** unless a mounted implementation record is called out above. The operator directive metadata-only GET routes are the explicit exception described above. See the [status ledger](https://ibexharness.com/docs/architecture/status-and-evidence).
 
 ## 🎯 API Design Philosophy
 
@@ -318,7 +332,7 @@ HTTP 500 - Internal Server Error
   INTERNAL_ERROR           -- Unexpected server error
 
 HTTP 501 - Not Implemented
-  PROVIDER_NOT_CONFIGURED  -- LLM provider not configured (Phase 1 proxy stub)
+  PROVIDER_NOT_CONFIGURED  -- No provider is registered for the requested model
   DATABASE_ERROR           -- Database operation failed
   UPSTREAM_ERROR           -- External service error
 
@@ -2714,7 +2728,7 @@ Drop-in replacement for OpenAI's chat completions endpoint. Context and memory i
 
 **Service route (direct proxy):** `POST /v1/chat/completions` — same handler; `/proxy` is the external gateway path prefix.
 
-**Phase 1 behavior:** Authenticated requests with valid JSON are parsed; response is **501 Not Implemented** with `PROVIDER_NOT_CONFIGURED` until Phase 2 provider forwarding. Malformed JSON returns **400** with `INVALID_JSON`.
+**Current behavior:** Authenticated requests with valid JSON are validated, matched to a registered provider, and forwarded (streaming and non-streaming). When no provider is registered for the requested model the response is **501 Not Implemented** with `PROVIDER_NOT_CONFIGURED`; a provider that is registered but fails upstream returns **502**. Malformed JSON returns **400** with `INVALID_JSON`.
 
 **Request:**
 

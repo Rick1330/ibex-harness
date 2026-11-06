@@ -43,14 +43,19 @@ Secrets must never be:
 - logged
 - embedded in client bundles (dashboard)
 
-### 2.3 Precedence (recommended)
+### 2.3 Loading and precedence
 
-Each service should load config in this order:
+Host-run services read the process environment; they do not automatically load a `.env` file from a service directory.
+For those services, export values in the shell or inject them through the process manager. The root Make targets are a
+separate Compose convenience: they pass `infra/compose/<kind>/.env.example` explicitly with `docker compose --env-file`.
+When invoking Compose directly, pass `--env-file` explicitly. A copied example file has no effect until a process or
+Compose command is given that file.
 
-1. CLI flags (if supported)
-2. Environment variables
-3. `.env` file (dev only)
-4. Defaults (safe defaults only)
+Where a service supports CLI flags, the effective order is:
+
+1. CLI flags
+2. Process environment
+3. Documented defaults (safe defaults only)
 
 ### 2.4 “Required” means required
 
@@ -65,9 +70,10 @@ If a variable is marked **Required** for a service, the service must:
 
 ### 3.1 Local development
 
-- Use Docker Compose to run infra dependencies
-- Use `.env` files per service (untracked)
-- Use “mock mode” for LLM providers if you do not want to set keys
+- Use Docker Compose to run infra dependencies; Make targets select the tracked `.env.example` with an explicit `--env-file`.
+- Run host services with exported process environment variables; copying a per-service `.env.example` does not load it.
+- Use “mock mode” for Chat Completions if you do not want to set live provider keys. Mock mode does not satisfy the
+  Responses route, which requires a registered Responses-capable provider and a verified capability manifest.
 
 ### 3.2 Staging
 
@@ -118,11 +124,13 @@ These apply across services, or are read by most services.
 
 ## 5) Database (PostgreSQL) Variables
 
-Used by: **auth, api, memory, context, worker, dashboard (server-only)** — and any future Python/Go service that opens Postgres. Shipped today: **auth**, **proxy** (session/directive only).
+Go Auth and Proxy use `POSTGRES_DSN` for their PostgreSQL connections. The Python Management API uses
+`IBEX_API_DATABASE_URL` with the `postgresql+asyncpg://` scheme; it is documented in the Management API table in §10.
+The Worker has separate aliases documented in §13. Do not use the Python API variable or driver scheme for Go services.
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `POSTGRES_DSN` | Yes | (none) | Full DSN, e.g. `postgresql+asyncpg://user:pass@host:5432/db` | Secret (contains password) |
+| `POSTGRES_DSN` | Auth: Yes; Proxy: conditional | (none) | Go PostgreSQL DSN, e.g. `postgres://user:pass@host:5432/db?sslmode=disable` | Secret (contains password) |
 | `POSTGRES_MIGRATE_DSN` | No | (derived) | Go migrate runner DSN (`postgres://...` for lib/pq). If unset, `POSTGRES_DSN` is normalized (driver suffix stripped, `sslmode=disable` added when missing). | Secret |
 | `POSTGRES_TEST_DSN` | No | `postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable` | Integration tests (compose test stack on port 5433) | Secret |
 | `IBEX_USE_TESTCONTAINERS` | No | unset | Set to `1` to start Postgres/Redis via testcontainers instead of compose | Non-secret |
@@ -177,7 +185,7 @@ Used by: **proxy (trace writes), api (analytics), worker (billing/analytics), da
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `CLICKHOUSE_DSN` | Yes (apps) | (none) | HTTP-oriented app DSN, e.g. `clickhouse://user:pass@host:8123/db` | Secret if password present |
+| `CLICKHOUSE_DSN` | Conditional | (none) | HTTP-oriented app DSN, e.g. `clickhouse://user:pass@host:8123/db`; optional for Chat Completions trace writes, required for the Responses usage writer | Secret if password present |
 | `CLICKHOUSE_MIGRATE_DSN` | No | native `localhost:9002` | golang-migrate native TCP DSN; HTTP `8123` is remapped to `9002` when used as fallback | Prefer explicit migrate DSN |
 | `CLICKHOUSE_DATABASE` | No | `ibex` | DB name | |
 | `CLICKHOUSE_HTTP_PORT` | No | `8123` | HTTP API port | |
@@ -197,7 +205,7 @@ Used by: **api, worker, dashboard (exports), session replay subsystems**
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `S3_ENDPOINT` | Yes | (none) | e.g. `http://localhost:9000` for MinIO | Use HTTPS in prod |
+| `S3_ENDPOINT` | Yes | (none) | e.g. `http://localhost:9100` for dev MinIO | Use HTTPS in prod |
 | `S3_REGION` | No | `us-east-1` | Region (AWS compatibility) | |
 | `S3_ACCESS_KEY` | Yes | (none) | Access key | Secret |
 | `S3_SECRET_KEY` | Yes | (none) | Secret key | Secret |
@@ -249,7 +257,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_IDEMPOTENCY_TTL` | No | `24h` | Redis TTL for completed `idempotency:{org_id}:{key}` chat Idempotency-Key records ([ADR-0035](adr/0035-chat-idempotency-key.md)). Pending claims use a separate ~9m package default. | Requires `REDIS_URL`; empty Redis → Noop (no dedupe) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | No | `50ms` | Per claim/commit Redis budget; timeout fail-opens without dedupe | Aligns with auth validate budget class |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
-| `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` registers an in-process stub; `live` registers OpenAI, Anthropic, and/or self-hosted when configured ([ADR-0026](adr/0026-openai-client-design.md), [ADR-0040](adr/0040-anthropic-provider-adapter.md), [ADR-0042](adr/0042-self-hosted-openai-compatible-adapter.md)). **Rejected when `IBEX_ENV=production`** | Default `mock` for CI/dev without API key; production must use `live` |
+| `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` registers an in-process Chat Completions stub; `live` registers OpenAI, Anthropic, and/or self-hosted when configured ([ADR-0026](adr/0026-openai-client-design.md), [ADR-0040](adr/0040-anthropic-provider-adapter.md), [ADR-0042](adr/0042-self-hosted-openai-compatible-adapter.md)). **Rejected when `IBEX_ENV=production`** | Default `mock` for CI/dev Chat Completions without API key; `/v1/responses` additionally requires a Responses-capable provider, verified manifest, credentials, and usage writer |
 | `OPENAI_API_KEY` | Live (≥1 of OpenAI/Anthropic/self-hosted) | (none) | OpenAI API key (or OpenAI-compatible provider key) | Secret; never logged |
 | `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI API base URL | Use `https://openrouter.ai/api/v1` for OpenRouter; do **not** point this at self-hosted vLLM ([ADR-0042](adr/0042-self-hosted-openai-compatible-adapter.md)) |
 | `IBEX_LLM_EXTRA_MODELS` | No | (none) | Comma-separated extra live-mode model IDs beyond the default OpenAI allowlist | e.g. `openai/gpt-oss-20b:free` for OpenRouter; each ID needs an `IBEX_MODEL_CAPABILITY_OVERLAYS` entry |
@@ -353,7 +361,7 @@ Auth stores ciphertext only. Management API validate-before-store then calls `Cr
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `IBEX_API_DATABASE_URL` | for ready | (none) | Async Postgres DSN (`postgresql+asyncpg://...`) | Secret |
+| `IBEX_API_DATABASE_URL` | for ready | (none) | Python Management API async Postgres DSN (`postgresql+asyncpg://...`) | Secret; do not substitute Go `POSTGRES_DSN` here |
 | `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | Yes | `127.0.0.1:9091` | Auth ValidateToken gRPC target | Internal; port 9091 is Auth gRPC (8081 is Auth HTTP) |
 | `IBEX_API_REDIS_URL` | No | (empty) | Org suspend + `ratelimit_config_updates:{org_id}` + `model_policy_updates:{org_id}` publish; live RPM counter GET | Secret if password present |
 | `IBEX_API_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Platform default when no `rate_limit_overrides` row | Matches proxy default |
@@ -784,37 +792,29 @@ Used by: **`infra/scripts/smoke_local.sh`** (not read by service binaries)
 
 ---
 
-## 16) Recommended `.env.example` (Top-level)
+## 16) Local development configuration
 
-Create `/.env.example` for convenience (dev only). Do not put secrets in it.
+There is no root `.env.example`. The tracked Compose reference is
+[`infra/compose/dev/.env.example`](../infra/compose/dev/.env.example); invoke it explicitly:
 
 ```bash
-# Environment
-IBEX_ENV=development
-
-# Core endpoints
-IBEX_PROXY_BASE_URL=http://localhost:8080
-
-# Redis
-REDIS_URL=redis://localhost:6379/0
-
-# Postgres (example DSN; do not commit real passwords)
-POSTGRES_DSN=postgresql+asyncpg://ibex:ibex@localhost:5432/ibex
-
-# ClickHouse (HTTP; local compose maps native protocol to host port 9002 — see infra/compose/dev/README.md)
-CLICKHOUSE_DSN=clickhouse://default:@localhost:8123/ibex
-
-# MinIO
-S3_ENDPOINT=http://localhost:9000
-S3_ACCESS_KEY=minioadmin
-S3_SECRET_KEY=minioadmin
-S3_BUCKET_SESSIONS=ibex-sessions
-S3_BUCKET_EXPORTS=ibex-exports
-
-# Observability (optional in dev)
-OTEL_ENABLED=false
-SENTRY_DSN=
+docker compose -f infra/compose/dev/docker-compose.yml \
+  --env-file infra/compose/dev/.env.example up -d
 ```
+
+Host-run services read exported process variables; copying an example file does not load it. Use the DSN that matches
+the process:
+
+```bash
+# Go Auth/Proxy
+export POSTGRES_DSN='postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable'
+
+# Python Management API
+export IBEX_API_DATABASE_URL='postgresql+asyncpg://ibex:ibex@localhost:5432/ibex'
+```
+
+The Compose reference also records the local ClickHouse HTTP/native ports (`8123`/`9002`) and MinIO API/console ports
+(`9100`/`9101`). Keep credentials local and use the service-specific reference files below for additional variables.
 
 ---
 
@@ -851,9 +851,10 @@ Legacy `BENCHMARK_COMMENT_RENDERER_SHA` is deprecated — use `BENCHMARK_BOT_SHA
 
 ---
 
-## 17) Service-Specific `.env.example` Files (Recommended)
+## 17) Service-Specific `.env.example` Reference Files
 
-Each service should also have its own `.env.example` in its directory, e.g.:
+Tracked service files are reference lists for the variables consumed by each service; host processes do not auto-load
+them. Export their values before starting a service. Examples include:
 
 - `services/proxy/.env.example`
 - `services/auth/.env.example`

@@ -17,13 +17,28 @@ The public documentation site lives in [`site/`](../site/). The current capabili
 | [`auth/`](auth/README.md) | Go AuthService: token validation, agent validation, PAT lifecycle, provider-credential metadata, session/TOTP primitives, health and metrics | **Shipped**, with production topology and key-management gates |
 | [`proxy/`](proxy/README.md) | Go LLM proxy: auth, rate limits, provider forwarding, context injection, streaming, traces, and health/metrics | **Shipped**, with provider/deployment evidence tracked separately |
 | [`relay/`](relay/README.md) | Go evidence relay daemon: default-off outbox claim → authoritative PostgreSQL session fence check → tombstone-fenced projection delivery, with metrics and graceful drain | **Implemented locally, default-off**; no production sink, hosted/HA, or restore evidence (GAP-005/GAP-011 open) |
-| [`api/`](api/README.md) | Python FastAPI management plane: tenant resources, tokens, providers, policies, billing/usage, legal holds, and operator reads/events | **Mounted and tested**; operator D1/D2 surfaces are provisional |
+| [`api/`](api/README.md) | Python FastAPI management plane: tenant resources, tokens, providers, policies, billing/usage, legal holds, and operator reads/events | **Mounted and tested**; operator D1/D2/D3/D5 read slices are provisional |
 | [`memory/`](memory/README.md) | Python FastAPI memory write, semantic search, hot-cache, feedback, PII, deduplication, conflict, labels, and vector persistence | **Shipped locally**; hosted rollout and later retrieval capabilities remain gated |
 | [`context/`](context/README.md) | Python context assembly library/gRPC service: budgets, retrieval, ranking, packing, and degradation behavior | **Shipped for trusted-boundary use**; current gRPC caller authentication limitation is explicit |
 | [`embedder/`](embedder/README.md) | Python embedding service with deterministic CPU stub, TEI GPU backend, hosted backend, probes, and cache | **Shipped/experimental by profile**; backend readiness depends on external service configuration |
 | [`mcp-memory/`](mcp-memory/README.md) | Python MCP memory resource server with AuthService boundary, memory tools, metrics, and optional audit sink | **Shipped/partial**; default audit is logging-only unless ClickHouse is configured |
 | [`worker/`](worker/README.md) | Python Celery extraction, organization deletion, billing reconciliation/rollups, dead-letter handling, maintenance, and scheduled tasks | **Mixed:** several task families are shipped; explicit no-op tasks remain |
-| [`console/`](console/README.md) | Canonical Nuxt 4 + Nitro operator application and server-only BFF boundary | **Mounted-but-provisional:** core-tier D1/D2 reads only; production identity and broader core surfaces are gated |
+| [`console/`](console/README.md) | Canonical Nuxt 4 + Nitro operator application and server-only BFF boundary | **Mounted-but-provisional:** 8 of 10 core read surfaces live across D1/D2/D3/D5; production identity and mutations remain gated |
+
+### Current Console read inventory
+
+The Console currently exposes **8 of 10 core surfaces as live**, all read-only and still provisional:
+
+| Domain | Live core reads |
+| --- | --- |
+| D1 | Overview and Platform health |
+| D2 | Agents, Memories, Evidence, and metadata-only Explore/Trace |
+| D3 | Session index and turn-to-trace ledger |
+| D5 | Directive version timeline, live pointer, and per-version usage metadata |
+
+Directive metadata reads are mounted, but directive text, diffs, promotion history, and directive
+mutation/CRUD routes do not exist. Policies and Settings remain preview core surfaces; incidents, drift,
+audit, budgets, analytics, providers, MCP tools, and access are preview platform surfaces.
 
 ## Planned or intentionally absent services
 

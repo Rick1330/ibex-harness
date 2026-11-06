@@ -153,7 +153,7 @@ We run local dependencies via Compose:
 Expected command (bridge networking example):
 
 ```bash
-docker compose -f infra/compose/dev/docker-compose.yml up -d
+docker compose -f infra/compose/dev/docker-compose.yml --env-file infra/compose/dev/.env.example up -d
 ```
 
 Podman and restricted sandboxes are supported through the same command surface:
@@ -231,8 +231,9 @@ make mcp-conformance                # Streamable HTTP stub handshake evidence
 
 ### 4.4 Run services
 
-Recommended pattern: run infra in Docker, run services on host for fast iteration. There is no single `make dev-stack`
-target; start each service in its own terminal.
+Recommended pattern: run infra and the configured Worker containers in Docker, run the remaining services on host for
+fast iteration. There is no single `make dev-stack` target; start each host service in its own terminal with explicit
+process environment variables. Services do not auto-load `.env` files.
 
 ```bash
 make compose-dev-up
@@ -242,13 +243,13 @@ make db-seed          # fixed local org, user, agent, and PAT; never against a s
 
 | Service | Command (from the repository root) | Port |
 |---|---|---|
-| AuthService | `IBEX_PORT=8081 IBEX_GRPC_PORT=9091 go run ./services/auth/cmd/auth` | 8081 HTTP, 9091 gRPC |
-| Proxy | `IBEX_AUTH_GRPC_ADDR=127.0.0.1:9091 REDIS_URL=redis://localhost:6379/0 go run ./services/proxy/cmd/proxy` | 8080 |
+| AuthService | `IBEX_ENV=development POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable IBEX_PORT=8081 IBEX_GRPC_PORT=9091 go run ./services/auth/cmd/auth` | 8081 HTTP, 9091 gRPC |
+| Proxy | `IBEX_ENV=development IBEX_AUTH_GRPC_ADDR=127.0.0.1:9091 REDIS_URL=redis://localhost:6379/0 IBEX_AUTH_VALIDATE_TIMEOUT=2s go run ./services/proxy/cmd/proxy` | 8080 |
 | Management API | `cd services/api && uv sync --frozen --extra dev`, then `.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8010` | 8010 |
 | Memory | `cd services/memory && uv sync --group dev`, then `uv run --directory services/memory uvicorn app.main:app --host 127.0.0.1 --port 8005` | 8005 |
 | Embedder | `cd services/embedder && uv sync --frozen --extra dev`, then `IBEX_EMBEDDING_PROFILE=cpu .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080` | 8080 |
 | Context | `bash infra/scripts/context-uv-sync.sh`, then `PYTHONPATH=packages/proto/gen/python services/context/.venv/bin/python -m app` | configured gRPC |
-| Worker | `cd services/worker && uv sync --extra dev`, then `celery -A app.celery_app:celery_app worker -Q extraction,embedding,maintenance,mcp_audit --loglevel=info` | — |
+| Worker / Worker Beat | Started by `make compose-dev-up` from `infra/compose/dev/docker-compose.yml` | 8006 metrics, 8007 enqueue |
 | Console | `pnpm --filter @ibex/console dev` | 3000 |
 
 Memory requires AuthService gRPC and the Embedder, plus PostgreSQL with pgvector and applied migrations. Console live
@@ -273,16 +274,18 @@ curl -s http://localhost:8080/health | jq
 
 ### 5.1 Environment variable rules
 
-- Use `.env.example` per service
-- Never commit `.env` files
-- Secrets must be injected via environment variables in dev, and via Vault/Secrets Manager in production
+- Use `.env.example` files as reference lists for host services; export the values into the service process environment.
+- Host services do not auto-load a `.env` file, so copying an example file alone has no effect.
+- The root Make targets automatically pass the appropriate Compose `.env.example` with `--env-file`; direct Compose
+  commands must pass `--env-file` explicitly.
+- Never commit `.env` files.
+- Secrets must be injected via environment variables in dev, and via Vault/Secrets Manager in production.
 
 ### 5.2 Precedence rules
 
 1. CLI flags
-2. Environment variables
-3. Local `.env` file (dev only)
-4. Defaults (safe defaults)
+2. Process environment variables
+3. Documented defaults (safe defaults)
 
 ### 5.3 Required variables (typical)
 

@@ -4,14 +4,19 @@ import { tokenizeCodeLine } from '~/utils/code'
 const commands = [
   'git clone https://github.com/Rick1330/ibex-harness.git',
   'cd ibex-harness',
-  'cp .env.example .env',
+  'export IBEX_ENV=development',
+  'export POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable',
+  'export REDIS_URL=redis://localhost:6379/0',
+  'export IBEX_AUTH_GRPC_ADDR=127.0.0.1:9091',
+  'export IBEX_AUTH_VALIDATE_TIMEOUT=2s',
+  'export IBEX_LLM_MODE=mock',
   'make compose-dev-up',
   'make db-migrate',
   'make db-seed',
-  'make dev-smoke',
 ].join('\n')
 
 const copied = ref(false)
+const copyFailed = ref(false)
 const lines = computed(() => commands.split('\n').map(line => ({
   tokens: tokenizeCodeLine(line, 'shell'),
 })))
@@ -21,9 +26,16 @@ async function copyCommands() {
   try {
     await navigator.clipboard.writeText(commands)
   } catch {
+    copied.value = false
+    copyFailed.value = true
+    clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => {
+      copyFailed.value = false
+    }, 4000)
     return
   }
 
+  copyFailed.value = false
   copied.value = true
   clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => {
@@ -47,9 +59,9 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
           <p class="quickstart-kicker">Start with mock mode</p>
           <h2 id="quickstart-title">Run the boundary locally.</h2>
           <p class="quickstart-lede">
-            Start Postgres, Redis, and the services with Docker Compose. Mock mode returns a
-            response without a provider key, so you can inspect a request before connecting a
-            model.
+            Start the local infrastructure and worker containers with Docker Compose. Mock mode
+            returns a response without a provider key, so you can inspect a request before
+            connecting a model.
           </p>
 
           <ol class="quickstart-steps">
@@ -57,21 +69,21 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
               <span class="quickstart-step-index">01</span>
               <div>
                 <strong>Prepare</strong>
-                <p>Clone the repository and copy the example environment.</p>
+                <p>Clone the repository and export the host-service settings.</p>
               </div>
             </li>
             <li>
               <span class="quickstart-step-index">02</span>
               <div>
                 <strong>Start the stack</strong>
-                <p>Postgres, Redis, and the local services come up together.</p>
+                <p>Postgres, Redis, MinIO, ClickHouse, and the worker containers start in Compose.</p>
               </div>
             </li>
             <li>
               <span class="quickstart-step-index">03</span>
               <div>
                 <strong>Verify the seam</strong>
-                <p>Migrate, seed, and run the smoke path in mock mode.</p>
+                <p>Migrate and seed, then start auth and proxy in separate terminals.</p>
               </div>
             </li>
           </ol>
@@ -107,12 +119,12 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
               type="button"
               class="landing-code-copy"
               :class="{ 'is-copied': copied }"
-              :aria-label="copied ? 'Copied quickstart commands' : 'Copy all quickstart commands'"
+              :aria-label="copyFailed ? 'Copy failed; select commands manually' : copied ? 'Copied quickstart commands' : 'Copy all quickstart commands'"
               title="Copy quickstart commands"
               @click="copyCommands"
             >
               <LandingGlyph :name="copied ? 'check' : 'copy'" class="size-3.5" />
-              {{ copied ? 'Copied' : 'Copy all' }}
+              {{ copyFailed ? 'Copy failed' : copied ? 'Copied' : 'Copy all' }}
             </button>
           </div>
 
@@ -128,13 +140,13 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
             >{{ token.text }}</span></span></span></code></pre>
 
           <div class="landing-code-foot">
-            <span>Mock mode returns 200 without a provider key.</span>
+            <span>These commands start Compose infrastructure and workers; start auth and proxy separately with exported settings.</span>
             <NuxtLink to="/docs/getting-started/quickstart">
               /docs/getting-started/quickstart
             </NuxtLink>
           </div>
 
-          <span class="landing-code-sr" aria-live="polite">{{ copied ? 'Commands copied' : '' }}</span>
+          <span class="landing-code-sr" aria-live="polite">{{ copyFailed ? 'Could not copy commands. Select them manually.' : copied ? 'Commands copied' : '' }}</span>
         </div>
       </div>
 

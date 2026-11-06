@@ -76,6 +76,24 @@ test.describe('landing hero console', () => {
     expect(copied).toContain('X-IBEX-Agent-ID: agent_support')
   })
 
+  test('announces when quickstart commands cannot be copied', async ({ page }) => {
+    await page.goto('/')
+    await waitHydrated(page)
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: () => Promise.reject(new Error('clipboard unavailable')) },
+      })
+    })
+
+    const button = page.locator('#quickstart .landing-code-copy')
+    await button.click()
+
+    await expect(button).toContainText('Copy failed')
+    await expect(button).toHaveAttribute('aria-label', 'Copy failed; select commands manually')
+    await expect(page.locator('#quickstart .landing-code-sr')).toHaveText('Could not copy commands. Select them manually.')
+  })
+
   test('landing field stays on the landing page only', async ({ page }) => {
     await page.goto('/')
 

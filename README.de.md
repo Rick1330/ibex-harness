@@ -14,7 +14,8 @@
 
 IBEX ist eine Speicher- und Kontextschicht, die auf Ihrer eigenen Infrastruktur läuft. Richten Sie Ihren Agenten auf
 einen OpenAI-kompatiblen Endpunkt oder fügen Sie den MCP-Server hinzu: IBEX löst Mandanten- und Agentenidentität auf,
-injiziert begrenzten Kontext, speichert governierte Erinnerungen und hängt jedem Aufruf Evidenz an.
+injiziert begrenzten Kontext, speichert governierte Erinnerungen und versucht für governierte Sitzungen nach der
+Antwort nach bestem Bemühen Evidenz zu schreiben, wenn die PostgreSQL-Evidenzebene konfiguriert ist.
 
 ## Warum IBEX
 
@@ -23,7 +24,11 @@ injiziert begrenzten Kontext, speichert governierte Erinnerungen und hängt jede
 - **Begrenzter Kontext statt Prompt-Dumping.** Die Kontextmontage ruft Erinnerungen und Direktiven ab, ordnet sie und
   packt sie innerhalb eines Token-Budgets und einer Frist; bei Fehlern fällt sie auf Direktiven-Kontext zurück, statt
   den Proxy zu blockieren.
-- **Evidenz am Aufruf.** Traces, Redaktionsstatus, Erfassungsmodus und Veröffentlichungsstatus begleiten den Lauf.
+- **Evidenz nach der Antwort, nach bestem Bemühen.** Wenn die PostgreSQL-Evidenzebene sowie eine dauerhafte Sitzung und
+  ein maßgeblicher Fence vorhanden sind, versuchen governierte Chat- und Sitzungspfade nach der Antwort eine Outbox-Zeile
+  zu schreiben. Bei fehlender Sitzung oder fehlendem Fence wird Evidenz zurückgehalten; bei Persistenzfehlern, voller
+  begrenzter Warteschlange oder Herunterfahren vor dem Leeren kann sie verloren gehen. Das Relay ist standardmäßig
+  deaktiviert; eine synchrone dauerhafte Bestätigung vor der Antwort wird nicht behauptet.
 
 ## Schnellstart
 
@@ -68,7 +73,7 @@ pnpm --filter @ibex/console dev
 | Embedder | Python | Je nach Profil implementiert oder experimentell |
 | Management-API | Python / FastAPI | Eingebunden und getestet; Operator-Oberflächen vorläufig |
 | Worker | Python / Celery | Gemischt |
-| Konsole | Nuxt 4 + Nitro | Vorläufig; 3 von 10 Kernoberflächen mit Live-Lesepfad |
+| Konsole | Nuxt 4 + Nitro | Vorläufig; 8 von 10 Kernoberflächen mit Live-Lesepfad |
 
 Die vollständige Übersicht steht in [`services/README.md`](services/README.md).
 

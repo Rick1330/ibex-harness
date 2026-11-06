@@ -11,11 +11,13 @@ const readme = read("README.md")
 const ledger = read("../../engineering/architecture-v2/00-status-and-evidence.md")
 const siteLedger = read("../../site/app/data/ledger.ts")
 const siteStatus = read("../../site/content/docs/02.architecture/05.status-and-evidence.md")
+const consolePage = read("../../site/content/docs/11.operations/08.console.md")
+const overviewPage = read("../../site/content/docs/02.architecture/01.overview.md")
 
 const coreHeader = readme.indexOf("### Core tier")
 const platformHeader = readme.indexOf("### Platform tier")
 
-const entries = Object.entries(SURFACES) as [SurfaceKey, SurfaceDefinition][]
+const entries = Object.entries(SURFACES) as Array<[SurfaceKey, SurfaceDefinition]>
 
 describe("surface status parity", () => {
   it("declares both tiers in the README", () => {
@@ -76,6 +78,8 @@ describe("surface status parity", () => {
       ["engineering ledger", ledger],
       ["site ledger", siteLedger],
       ["site status page", siteStatus],
+      ["site console page", consolePage],
+      ["site architecture overview", overviewPage],
     ]
 
     for (const [name, text] of sources) {
@@ -84,5 +88,35 @@ describe("surface status parity", () => {
       expect(text, `${name} preview count disagrees with SURFACES`).toContain(`${corePreview} core surfaces`)
       expect(text, `${name} platform count disagrees with SURFACES`).toContain(`${platform} platform-tier surfaces`)
     }
+  })
+
+  it("keeps the published Console page rows in parity with SURFACES", () => {
+    const coreStart = consolePage.indexOf("### Core tier")
+    const coreEnd = consolePage.indexOf("### Platform tier")
+    expect(coreStart, "the Console page must have a core-tier table").toBeGreaterThan(-1)
+    expect(coreEnd, "the Console page must have a platform-tier section").toBeGreaterThan(coreStart)
+
+    const coreTable = consolePage.slice(coreStart, coreEnd)
+
+    for (const [, surface] of entries) {
+      if (surface.tier !== "core") continue
+
+      const rows = coreTable.split("\n").filter((line) => line.startsWith(`| ${surface.label} |`))
+      expect(rows, `${surface.label} must have exactly one core-tier row`).toHaveLength(1)
+
+      const cells = (rows[0] ?? "").split("|").map((cell) => cell.trim())
+      expect(cells[2], `${surface.label} route disagrees with SURFACES`).toBe(`\`${surface.path}\``)
+
+      if (surface.availability === "live") {
+        expect(cells[3], `${surface.label} status disagrees with SURFACES`).toBe(`Live ${surface.domain}`)
+      } else {
+        expect(cells[3], `${surface.label} status disagrees with SURFACES`).toBe("Preview")
+      }
+    }
+  })
+
+  it("keeps the published architecture overview in parity with the live domains", () => {
+    const liveDomains = [...new Set(SURFACE_LIST.filter((surface) => surface.availability === "live").map((s) => s.domain))].sort()
+    expect(overviewPage, "the overview must list the live read domains").toContain(`${liveDomains.join("/")} read slices`)
   })
 })

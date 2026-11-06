@@ -14,7 +14,8 @@
 
 IBEX é uma camada de memória e contexto executada na sua própria infraestrutura. Aponte seu agente para um endpoint
 compatível com OpenAI ou adicione o servidor MCP: o IBEX resolve a identidade do locatário e do agente, injeta contexto
-limitado, armazena memórias governadas e anexa evidências a cada requisição.
+limitado, armazena memórias governadas e tenta, como melhor esforço, registrar evidências após a resposta para sessões
+governadas quando o plano de evidências PostgreSQL está configurado.
 
 ## Por que IBEX
 
@@ -23,8 +24,11 @@ limitado, armazena memórias governadas e anexa evidências a cada requisição.
 - **Contexto limitado, não um despejo de prompt.** A montagem de contexto recupera, ordena e empacota memórias e
   diretivas dentro de um orçamento de tokens e de um prazo, degradando para contexto somente de diretivas em vez de
   bloquear o proxy.
-- **Evidência anexada à requisição.** Traces, estado de redação, modo de captura e estado de publicação acompanham a
-  execução.
+- **Evidência após a resposta, como melhor esforço.** Com o plano PostgreSQL, uma sessão durável e uma fence autoritativa
+  disponíveis, os caminhos governados de chat e sessão tentam gravar uma linha no outbox após a resposta. A evidência
+  pode ser retida quando falta a sessão ou a fence, ou perdida por falha de persistência, saturação da fila limitada ou
+  desligamento antes do esvaziamento. O relay fica desativado por padrão; não há alegação de acknowledgement durável
+  antes da resposta.
 
 ## Início rápido
 
@@ -69,7 +73,7 @@ Abra `http://127.0.0.1:3000`. O console é somente leitura e falha fechado sem u
 | Embedder | Python | Implementado ou experimental conforme o perfil |
 | API de gestão | Python / FastAPI | Montada e testada; superfícies de operador provisórias |
 | Workers | Python / Celery | Misto |
-| Console | Nuxt 4 + Nitro | Provisório; 3 de 10 superfícies principais com leitura ao vivo |
+| Console | Nuxt 4 + Nitro | Provisório; 8 de 10 superfícies principais com leitura ao vivo |
 
 O inventário completo está em [`services/README.md`](services/README.md).
 
