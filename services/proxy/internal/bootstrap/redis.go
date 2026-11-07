@@ -326,10 +326,9 @@ func loadAuthCA(path string) (*x509.CertPool, error) {
 // dial fails closed at the handshake rather than panicking. Operators in that
 // situation must configure IBEX_AUTH_GRPC_CA_FILE.
 func systemCertPool() *x509.CertPool {
-	pool, err := x509.SystemCertPool()
-	if err != nil || pool == nil {
-		return x509.NewCertPool()
-	}
+	// A nil RootCAs makes the Go TLS stack use the host trust store. If the
+	// host has none, the handshake fails closed rather than panicking.
+	pool, _ := x509.SystemCertPool()
 	return pool
 }
 
@@ -356,8 +355,7 @@ func contextTransportName(cfg config.Config) string {
 	if cfg.ContextColocated {
 		return "plaintext-loopback-colocated"
 	}
-	creds, err := contextTransportCredentials(cfg)
-	if err == nil && creds.Info().SecurityProtocol == "insecure" {
+	if cfg.Environment == "development" {
 		return "plaintext-development"
 	}
 	return "tls"

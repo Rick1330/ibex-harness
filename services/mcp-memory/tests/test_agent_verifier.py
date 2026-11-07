@@ -210,3 +210,10 @@ async def test_grpc_verifier_rebuilds_stub_across_loops() -> None:
         assert channel.unary_unary.call_count == 2
     await verifier.aclose()
     channel.close.assert_awaited()
+
+
+def test_agent_verifier_rejects_a_missing_ca_file(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="IBEX_AUTH_GRPC_CA_FILE"):
+        GRPCAgentVerifier(
+            "auth:9091", timeout_seconds=1.0, ca_file=str(tmp_path / "missing.pem")
+        )
