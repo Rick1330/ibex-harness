@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -87,6 +88,61 @@ async def test_grpc_verifier_active_and_aclose() -> None:
     await verifier.aclose()
     assert verifier._channel is None
     assert verifier._stub is None
+
+
+@pytest.mark.asyncio
+async def test_grpc_verifier_uses_tls_when_ca_file_is_set(tmp_path: Path) -> None:
+    bundle = (
+        b"-----BEGIN CERTIFICATE-----\n"
+        b"MIIDDzCCAfegAwIBAgIUYkpMtWlr9joO1DuN8xbJDn+LxUcwDQYJKoZIhvcNAQEL\n"
+        b"BQAwFzEVMBMGA1UEAwwMaWJleC10ZXN0LWNhMB4XDTI2MTEwNzExMjgyM1oXDTM2\n"
+        b"MTEwNDExMjgyM1owFzEVMBMGA1UEAwwMaWJleC10ZXN0LWNhMIIBIjANBgkqhkiG\n"
+        b"9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlH6um7tAtkEPowNbvEAHYaQKSMqhNHVtZ87p\n"
+        b"9z6iHMr8uADSwcPA/aCZP2xPkMN8ExyE/q/bGltJKuvZSJALFZOT8sVbPmHTnqLw\n"
+        b"RuyHwKYOpsdQqBf/SpouDj74cjCTneM1ogoxTnUmlh3iJCn9Q/IC4H2Zacqr9hen\n"
+        b"+IOWsvOZxMNLhqx7BuF1um/S8TZLEeDec79fxMT5JrQPX2zyPuZAx7UzCKbay84C\n"
+        b"cWJRgv2426YC/m3pdYAL+pguUXj9j16EVu2Y39EDktqNdB3cj71CxKXfJDKvNLTH\n"
+        b"341IcMQyyTL+BPDpjmzMwyHfQAFSg7oSJEn4U7TTWKx0VZ252wIDAQABo1MwUTAd\n"
+        b"BgNVHQ4EFgQUUgqAqOchTd6YsmOHGakJUG63T3YwHwYDVR0jBBgwFoAUUgqAqOch\n"
+        b"Td6YsmOHGakJUG63T3YwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOC\n"
+        b"AQEAVKAVyIudfAKDrfy+d0EmUQ7HTrQ4wHCpLZmAaehmznTUiM6ZtxOGRhsRfq8k\n"
+        b"AVZjxV3VSb5j0L8eL7Ykr5Zu1mCCpNM7/IR4PrSBcvTkAsUyN3MCOdXgwibXf9bG\n"
+        b"wMo8A33hi9JDuTwnaCKRLVjqTQ7NTPXl/AYVkPGBxKjaoP8sVJgeysXc0SJfzkkD\n"
+        b"lsG2dbrVWrGcdIiGmQSgf15PToChLV4l32/HlM9YyJH/fCSpA2BC/lUw5SKKvmE0\n"
+        b"lgHBICqtwcF/89B1MFBv86VE0I1rOvRT5OXMWu6zIRZW7rkpcQGQ/e7uBr9GNZS6\n"
+        b"V8+kT7XgiVlD1Y7cOGpFSWvFIg==\n"
+        b"-----END CERTIFICATE-----\n"
+    )
+    ca_file = tmp_path / "auth-ca.pem"
+    ca_file.write_bytes(bundle)
+    # A public host is allowed once TLS authenticates AuthService (ADR-0097 §4).
+    verifier = GRPCAgentVerifier("auth.example.com:9091", 0.01, str(ca_file))
+    channel = MagicMock()
+    channel.close = AsyncMock()
+    channel.unary_unary.return_value = AsyncMock(return_value=_active_payload())
+    credentials = object()
+    with (
+        patch("authclient.channel.grpc.ssl_channel_credentials", return_value=credentials),
+        patch(
+            "authclient.channel.grpc.aio.secure_channel", return_value=channel
+        ) as secure_mock,
+        patch("authclient.channel.grpc.aio.insecure_channel") as insecure_mock,
+    ):
+        await verifier.verify(bearer=TOKEN, org_id=ORG, agent_id=AGENT)
+    secure_mock.assert_called_once_with("auth.example.com:9091", credentials)
+    insecure_mock.assert_not_called()
+    await verifier.aclose()
+
+
+def test_grpc_verifier_rejects_untrusted_target_without_a_ca_file() -> None:
+    with pytest.raises(ValueError, match="refusing target"):
+        GRPCAgentVerifier("auth.example.com:9091", 0.01)
+
+
+def test_grpc_verifier_treats_a_whitespace_ca_file_as_unset() -> None:
+    # Matching the Go client: a padded-but-empty value must not switch to TLS.
+    with pytest.raises(ValueError, match="refusing target"):
+        GRPCAgentVerifier("auth.example.com:9091", 0.01, "   ")
 
 
 @pytest.mark.asyncio

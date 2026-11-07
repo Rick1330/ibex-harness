@@ -7,9 +7,9 @@ import logging
 
 import grpc
 
+from authclient.channel import open_auth_channel
 from authclient.codec import encode_revoke_token_request
 from authclient.errors import AuthFailedError, AuthUnavailableError
-from authclient.target import assert_trusted_insecure_auth_target
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +17,13 @@ _REVOKE_METHOD = "/ibex.auth.v1.AuthService/RevokeToken"
 
 
 class GRPCTokenRevoker:
-    """Insecure-channel RevokeToken client after trust-gate on the target."""
+    """RevokeToken client: TLS when a CA file is set, else the trust-gated insecure dial."""
 
-    def __init__(self, target: str, timeout_seconds: float) -> None:
-        trusted = assert_trusted_insecure_auth_target(target)
+    def __init__(self, target: str, timeout_seconds: float, ca_file: str | None = None) -> None:
         timeout = timeout_seconds if timeout_seconds > 0 else 0.05
         self._timeout = timeout
-        self._channel = grpc.aio.insecure_channel(trusted)  # nosec B321
+        # Transport choice and the plaintext trust gate both live in the factory.
+        self._channel = open_auth_channel(target, ca_file)
         self._stub = self._channel.unary_unary(
             _REVOKE_METHOD,
             request_serializer=lambda req: req,

@@ -119,6 +119,7 @@ async def _memory_service_lifespan(
     auth = validator or GRPCTokenValidator(
         cfg.auth_grpc_addr,
         timeout_seconds=cfg.auth_timeout_ms / 1000.0,
+        ca_file=cfg.auth_grpc_ca_file,
     )
     state.validator = auth
 

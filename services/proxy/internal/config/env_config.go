@@ -13,19 +13,23 @@ import (
 )
 
 type envConfig struct {
-	Environment               string            `env:"IBEX_ENV"`
-	ServiceName               string            `env:"IBEX_SERVICE_NAME" envDefault:"proxy"`
-	LogLevel                  string            `env:"IBEX_LOG_LEVEL" envDefault:"INFO"`
-	Port                      string            `env:"IBEX_PORT" envDefault:"8080"`
-	RedisURL                  ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
-	AuthGRPCAddr              string            `env:"IBEX_AUTH_GRPC_ADDR" envDefault:"127.0.0.1:9091"`
-	AuthValidateTimeout       time.Duration     `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
+	Environment         string            `env:"IBEX_ENV"`
+	ServiceName         string            `env:"IBEX_SERVICE_NAME" envDefault:"proxy"`
+	LogLevel            string            `env:"IBEX_LOG_LEVEL" envDefault:"INFO"`
+	Port                string            `env:"IBEX_PORT" envDefault:"8080"`
+	RedisURL            ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
+	AuthGRPCAddr        string            `env:"IBEX_AUTH_GRPC_ADDR" envDefault:"127.0.0.1:9091"`
+	AuthValidateTimeout time.Duration     `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
+	// The path is not key material, but the auth client contract forbids
+	// logging it, so the resolved-config debug dump redacts it too.
+	AuthGRPCCACertFile        string            `env:"IBEX_AUTH_GRPC_CA_FILE" secret:"true"`
 	PolicyPublicKeysJSON      string            `env:"IBEX_PROXY_POLICY_PUBLIC_KEYS"`
 	PolicyMinEpoch            int64             `env:"IBEX_PROXY_POLICY_MIN_EPOCH"`
 	ContextGRPCTarget         string            `env:"IBEX_CONTEXT_GRPC_TARGET"`
 	ContextAssembleTimeout    time.Duration     `env:"IBEX_CONTEXT_ASSEMBLE_TIMEOUT"`
 	ContextGRPCServiceToken   ibexconfig.Secret `env:"IBEX_CONTEXT_GRPC_SERVICE_TOKEN" secret:"true"`
 	ContextEnabled            string            `env:"IBEX_CONTEXT_ENABLED" envDefault:"false"`
+	ContextColocated          string            `env:"IBEX_CONTEXT_COLOCATED" envDefault:"false"`
 	ContextEmbedMetadata      string            `env:"IBEX_CONTEXT_EMBED_METADATA" envDefault:"false"`
 	MaxRequestBodyBytes       int64             `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
 	RequestIDHeader           string            `env:"IBEX_REQUEST_ID_HEADER" envDefault:"X-Request-ID"`
@@ -246,6 +250,7 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		Port:                    envCfg.Port,
 		RedisURL:                envCfg.RedisURL.String(),
 		AuthGRPCAddr:            envCfg.AuthGRPCAddr,
+		AuthGRPCCACertFile:      strings.TrimSpace(envCfg.AuthGRPCCACertFile),
 		PolicyPublicKeysJSON:    strings.TrimSpace(envCfg.PolicyPublicKeysJSON),
 		ContextGRPCTarget:       envCfg.ContextGRPCTarget,
 		ContextGRPCServiceToken: envCfg.ContextGRPCServiceToken.String(),
@@ -292,6 +297,9 @@ func applyBaseStoreConfig(cfg *Config, envCfg envConfig) {
 func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	applyProxyNumericEnv(cfg, envCfg)
 	if err := applyContextEnabledEnv(cfg, envCfg); err != nil {
+		return err
+	}
+	if err := applyContextColocatedEnv(cfg, envCfg); err != nil {
 		return err
 	}
 	if err := applyContextEmbedMetadataEnv(cfg, envCfg); err != nil {
@@ -342,6 +350,18 @@ func applyContextEnabledEnv(cfg *Config, envCfg envConfig) error {
 		return fmt.Errorf("IBEX_CONTEXT_ENABLED: %w", err)
 	}
 	cfg.ContextEnabled = enabled
+	return nil
+}
+
+// applyContextColocatedEnv parses the ADR-0097 §4 co-location opt-in. It only
+// records the declaration; validateContextEnvironment decides whether the
+// profile may enable context with it.
+func applyContextColocatedEnv(cfg *Config, envCfg envConfig) error {
+	colocated, err := parseEnabledFlag(envCfg.ContextColocated, false)
+	if err != nil {
+		return fmt.Errorf("IBEX_CONTEXT_COLOCATED: %w", err)
+	}
+	cfg.ContextColocated = colocated
 	return nil
 }
 

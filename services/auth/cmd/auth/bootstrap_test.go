@@ -174,7 +174,7 @@ func TestUnit_StartAuthGRPC_PortInUse(t *testing.T) {
 	reg := newTestAuthRegistry(t, db)
 	deps := newTestAuthServiceDeps(t, db, reg)
 
-	_, _, err = startAuthGRPC(config.Config{GRPCPort: port}, deps, reg)
+	_, _, err = startAuthGRPC(config.Config{Environment: "development", GRPCPort: port}, deps, reg)
 
 	if err == nil {
 		t.Fatal("expected listen error when grpc port is in use")
@@ -251,7 +251,7 @@ func TestUnit_NewAuthGRPCServer_RejectsInvalidDeps(t *testing.T) {
 	reg := newTestAuthRegistry(t, db)
 	deps := newTestAuthServiceDeps(t, db, reg)
 
-	_, err := newAuthGRPCServer(deps, nil)
+	_, err := newAuthGRPCServer(config.Config{Environment: "development"}, deps, nil)
 
 	if err == nil {
 		t.Fatal("expected grpc server construction error")
@@ -405,7 +405,7 @@ func TestUnit_NewAuthGRPCServer_BuildsServer(t *testing.T) {
 	reg := newTestAuthRegistry(t, db)
 	deps := newTestAuthServiceDeps(t, db, reg)
 
-	srv, err := newAuthGRPCServer(deps, reg)
+	srv, err := newAuthGRPCServer(config.Config{Environment: "development"}, deps, reg)
 
 	if err != nil {
 		t.Fatalf("newAuthGRPCServer: %v", err)

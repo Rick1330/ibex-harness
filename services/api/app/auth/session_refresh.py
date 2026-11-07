@@ -7,9 +7,9 @@ import logging
 from dataclasses import dataclass
 
 import grpc
+from authclient.channel import open_auth_channel
 from authclient.codec import AuthCodecError, encode_varint
 from authclient.errors import AuthFailedError, AuthUnavailableError
-from authclient.target import assert_trusted_insecure_auth_target
 
 from app.auth.session_refresh_codec import (
     decode_int64_field,
@@ -47,11 +47,12 @@ class ValidatedSession:
 
 @dataclass(frozen=True, slots=True)
 class AuthRPC:
-    """Shared Auth gRPC target + timeout for lifecycle calls."""
+    """Shared Auth gRPC target, service credential, timeout, and optional CA bundle."""
 
     auth_grpc_addr: str
     service_token: str = ""
     timeout_seconds: float = 5.0
+    ca_file: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,9 +75,8 @@ class ConsumeStepUpParams:
 
 
 async def _call_lifecycle(rpc: AuthRPC, *, method: str, payload: bytes) -> bytes:
-    assert_trusted_insecure_auth_target(rpc.auth_grpc_addr)
     try:
-        async with grpc.aio.insecure_channel(rpc.auth_grpc_addr) as channel:
+        async with open_auth_channel(rpc.auth_grpc_addr, rpc.ca_file) as channel:
             stub = channel.unary_unary(
                 method, request_serializer=lambda b: b, response_deserializer=lambda b: b
             )
@@ -176,9 +176,8 @@ def _parse_refreshed_session(raw: bytes) -> RefreshedSession:
 
 async def issue_operator_session(rpc: AuthRPC, *, pat: str) -> RefreshedSession:
     """Issue an Auth-owned session pair for a validated PAT caller."""
-    assert_trusted_insecure_auth_target(rpc.auth_grpc_addr)
     try:
-        async with grpc.aio.insecure_channel(rpc.auth_grpc_addr) as channel:
+        async with open_auth_channel(rpc.auth_grpc_addr, rpc.ca_file) as channel:
             stub = channel.unary_unary(
                 _ISSUE_METHOD,
                 request_serializer=lambda b: b,
@@ -207,7 +206,7 @@ async def issue_operator_session(rpc: AuthRPC, *, pat: str) -> RefreshedSession:
 async def _call_issue_operator_session(rpc: AuthRPC, *, refresh_token: str) -> bytes:
     payload = encode_issue_with_refresh(refresh_token)
     try:
-        async with grpc.aio.insecure_channel(rpc.auth_grpc_addr) as channel:
+        async with open_auth_channel(rpc.auth_grpc_addr, rpc.ca_file) as channel:
             stub = channel.unary_unary(
                 _ISSUE_METHOD,
                 request_serializer=lambda b: b,
@@ -227,6 +226,5 @@ async def _call_issue_operator_session(rpc: AuthRPC, *, refresh_token: str) -> b
 
 async def refresh_operator_session(rpc: AuthRPC, *, refresh_token: str) -> RefreshedSession:
     """Call Auth IssueOperatorSession with refresh_token (no PAT bearer)."""
-    assert_trusted_insecure_auth_target(rpc.auth_grpc_addr)
     raw = await _call_issue_operator_session(rpc, refresh_token=refresh_token)
     return _parse_refreshed_session(raw)

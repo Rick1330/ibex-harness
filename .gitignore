@@ -9,6 +9,9 @@ new findings/
 *.key
 secrets/
 
+# --- Per-install TLS material (infra/scripts/gen-v1-tls.sh) ---
+infra/compose/v1-single-node/certs/
+
 # --- OS / editor ---
 .DS_Store
 Thumbs.db

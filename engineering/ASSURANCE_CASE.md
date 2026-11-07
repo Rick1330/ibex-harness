@@ -65,7 +65,8 @@ Mapped loosely to OWASP/CWE themes: broken access control (C1), crypto failures 
 | Risk | Status |
 | --- | --- |
 | Solo maintainer bus factor | Accepted for pre-1.0; see [GOVERNANCE.md](./GOVERNANCE.md) access continuity |
-| Proxy↔auth gRPC may use plaintext on private networks | Documented; mTLS planned for multi-tenant SaaS |
+| Proxy↔auth gRPC transport | TLS 1.2+ with a per-install CA outside development (`IBEX_AUTH_GRPC_TLS_CERT_FILE` / `IBEX_AUTH_GRPC_TLS_KEY_FILE` on AuthService, `IBEX_AUTH_GRPC_CA_FILE` on clients). Development may use plaintext. The `v1-single-node` profile start remains unverified (W2). |
+| Proxy↔context gRPC is authenticated one way | The caller presents a shared service token, but the server is trusted only by loopback co-location (`IBEX_CONTEXT_COLOCATED`, ADR-0097 §4). A process able to bind the proxy's loopback port can receive the token on the startup probe. Accepted for the single-node profile; a server-side proof or per-install token file is future work. |
 | Formal pen-test / org-wide hardening workshop | Deferred beyond Phase 5 (future roadmap scope); per-phase isolation gates still required |
 
 ---

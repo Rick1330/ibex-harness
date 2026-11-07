@@ -98,7 +98,7 @@ These apply across services, or are read by most services.
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `IBEX_ENV` | Yes | Service-specific; Proxy has no loader default | `development` \| `staging` \| `production` | Proxy must explicitly set this value; an unset/empty value is rejected so a deployment cannot silently become development |
+| `IBEX_ENV` | Yes | Service-specific; Proxy and Auth have no loader default | `development` \| `staging` \| `production` | Proxy and Auth must explicitly set this value; an unset/empty value is rejected so a deployment cannot silently become development and serve plaintext gRPC |
 | `IBEX_SERVICE_NAME` | Yes | (none) | Name of service (e.g., `proxy`, `auth`, `memory`) | Used for logs/metrics; not secret |
 | `IBEX_LOG_LEVEL` | No | `INFO` | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` | `DEBUG` may expose sensitive details; never enable in prod broadly |
 | `IBEX_LOG_FORMAT` | No | `json` | `json` only in production | Human-readable may be okay locally |
@@ -229,7 +229,8 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_ENV` | Yes | (none; required explicitly) | Proxy runtime profile: `development`, `staging`, or `production` | Missing/empty is rejected; do not rely on an implicit development profile in deployment |
 | `REDIS_URL` | Required outside development | (empty in development) | Proxy Redis for shared rate limiting, token-revocation SUBSCRIBE (`ibex:token:revocations`), model-policy invalidation SUBSCRIBE (`model_policy_updates:*`), and `/ready`. Development may use a Noop limiter when unset and start serving local requests, but Redis remains a critical readiness check, so `/ready` intentionally stays degraded until Redis is available. Outside development the Proxy rejects unset Redis. When configured Redis is unavailable, rate-limited work fails closed with 503. Auth-cache wrapping is skipped when Redis is absent/unhealthy so token revocations use direct gRPC validation; model-policy cache may rely on its bounded TTL when invalidations cannot be delivered. | Secret if password present |
 | `IBEX_PORT` | No | `8080` | HTTP listen port | |
-| `IBEX_AUTH_GRPC_ADDR` | No | `127.0.0.1:9091` | Auth gRPC target for ValidateToken | Internal; mTLS in prod |
+| `IBEX_AUTH_GRPC_ADDR` | No | `127.0.0.1:9091` | Auth gRPC target for ValidateToken | Internal; TLS 1.2+ outside development (ADR-0097 §4) |
+| `IBEX_AUTH_GRPC_CA_FILE` | No | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate | When set, the proxy dials with TLS 1.2+ and that CA in every environment; unset outside development falls back to the system root pool, which will not trust the per-install CA, so the dial fails closed |
 | `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |
 | `IBEX_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Default org RPM (also default agent RPM when no per-agent DB override) | |
 | `IBEX_RATE_LIMIT_GLOBAL_RPM` | No | `100000` | Shared RPM ceiling across all proxy instances using the same Redis namespace/deployment | |
@@ -287,7 +288,8 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_MIN_SAMPLES` | No | `10` | Minimum samples before rolling trip | |
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURE_RATE` | No | `0.5` | Rolling failure-rate threshold | Float in (0, 1] |
 | `IBEX_PROVIDER_FALLBACK_MAX_DEPTH` | No (**4.C.4**) | `1` | Max hops from org `fallback_chain` after primary Complete failure | Values `<1` clamp to `1`; empty chain = opt-out |
-| `IBEX_CONTEXT_ENABLED` | No (**3.5.D.2**) | `false` | Master switch for context-assembly injection on chat completions; `false` = Phase 2 directive-only (no Assemble gRPC). Independent of empty `IBEX_CONTEXT_GRPC_TARGET` (nil client) | Additive; fail-open. With a non-empty target, validate rejects `IBEX_CONTEXT_ENABLED=true` outside `IBEX_ENV=development`: the context server has no TLS ([ADR-0096](adr/0096-context-grpc-caller-authentication.md)) |
+| `IBEX_CONTEXT_ENABLED` | No (**3.5.D.2**) | `false` | Master switch for context-assembly injection on chat completions; `false` = Phase 2 directive-only (no Assemble gRPC). Independent of empty `IBEX_CONTEXT_GRPC_TARGET` (nil client) | Additive; fail-open. With a non-empty target, validate rejects `IBEX_CONTEXT_ENABLED=true` outside `IBEX_ENV=development` unless `IBEX_CONTEXT_COLOCATED=true` ([ADR-0097](adr/0097-v1-supported-profile.md) §4) |
+| `IBEX_CONTEXT_COLOCATED` | No (**ADR-0097 §4**) | `false` | Declares that the context process shares the proxy's network namespace and binds a loopback IP literal, permitting the plaintext context hop outside development | Fail-closed opt-in. It never relaxes the loopback-target rule: a non-loopback target is still rejected before the opt-in is considered |
 | `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` | Conditional (**ADR-0096**) | (empty) | Shared caller token sent as exactly one `x-ibex-context-service-token` gRPC metadata entry on every context RPC; required when `IBEX_CONTEXT_ENABLED=true` and `IBEX_CONTEXT_GRPC_TARGET` is set | Secret; never logged. Must be distinct from the auth-service token (`IBEX_AUTH_SERVICE_TOKEN`, `x-ibex-service-token`). Proxy startup also fails when the context server rejects this token, and the target must be a loopback IP literal |
 | `IBEX_CONTEXT_GRPC_TARGET` | No (**3.5.D.1**) | `127.0.0.1:9092` | Proxy dial target for ContextAssemblyService (distinct from server bind `IBEX_CONTEXT_GRPC_ADDR`) | Empty skips dial (nil client); host:port when set. When context is enabled the host must be a loopback IP literal (`127.0.0.1` or `::1`); hostnames are rejected because the dial re-resolves them and the token is cleartext |
 | `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | No (**3.5.D.1**) | `45ms` | Per-call AssembleContext budget on the proxy client | Independent of server `IBEX_CONTEXT_TIMEOUT` / `IBEX_CONTEXT_DEADLINE_MS` |
@@ -306,7 +308,7 @@ Used by: **proxy** (`services/proxy`)
 
 - `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` is required when `IBEX_CONTEXT_ENABLED=true` and `IBEX_CONTEXT_GRPC_TARGET` is set. The value is secret, is never logged, and must be at least 32 characters of `[A-Za-z0-9_-]`. **Operator obligation:** use a distinct value from `IBEX_AUTH_SERVICE_TOKEN` (and from `IBEX_CONTEXT_MEMORY_API_TOKEN`, which the context server does enforce at startup). The proxy does not hold the auth-service token, so it cannot compare against it; reusing one value would let a holder of either credential stand in for the other.
 - `IBEX_CONTEXT_GRPC_TARGET` must resolve exclusively to loopback when context is enabled, because the token travels in cleartext metadata.
-- `IBEX_CONTEXT_ENABLED=true` with a non-empty target is rejected outside `IBEX_ENV=development`; the context server serves plaintext only, so TLS is a prerequisite for any other profile.
+- `IBEX_CONTEXT_ENABLED=true` with a non-empty target is rejected outside `IBEX_ENV=development` unless `IBEX_CONTEXT_COLOCATED=true`. The context server serves plaintext only, so any other profile must assert co-location (shared network namespace, loopback IP literal, ADR-0097 §4). The opt-in never relaxes the loopback-target rule.
 - The proxy probes the server's caller authentication at startup and fails closed when the token is rejected. A rejected or unreachable context server still fails open per request: chat proceeds with directive-only context and `X-IBEX-Context-Fallback: true`.
 
 This closes unauthenticated reachability, not per-user identity: the token is a shared secret and the asserted principal is unsigned, so a token holder can still assert any principal. Tenant isolation remains a proxy-side property.
@@ -327,9 +329,11 @@ Used by: **auth** (`services/auth`)
 | `REDIS_URL` | No | (empty) | Redis for token-revocation PUBLISH (`ibex:token:revocations`) **and** ValidateToken peer rate limiting (`ratelimit:auth:validate:*`). Empty → Noop publisher + Noop ValidateToken rate limit (private-network assumption). Proxies with empty Redis skip auth-cache wrap (immediate revoke via gRPC); do not rely on LRU TTL alone. Must match proxy Redis when auth cache is active. | Secret if password present |
 | `IBEX_AUTH_VALIDATE_RPM` | No | `6000` | Per-**proxy-host** calendar-minute cap on gRPC `ValidateToken` when `REDIS_URL` is set (key = peer IP/host after stripping port). All ValidateToken calls from that host — valid and invalid — share one counter. Size to peak legitimate proxy RPS×60, not only abuse thresholds (~100 RPS at default 6000). Exceed → `RESOURCE_EXHAUSTED`. Redis check errors fail-open with WARN. | Defense-in-depth; ValidateToken remains an internal RPC |
 | `IBEX_PORT` | No | `8081` | HTTP port for `/health`, `/ready`, `/metrics` | |
-| `IBEX_GRPC_PORT` | No | `9091` | gRPC listen port for `AuthService` | Internal only; use mTLS in production |
+| `IBEX_GRPC_PORT` | No | `9091` | gRPC listen port for `AuthService` | Internal only; TLS 1.2+ outside development (ADR-0097 §4) |
+| `IBEX_AUTH_GRPC_TLS_CERT_FILE` | Conditional | (empty) | PEM server certificate for the AuthService gRPC listener | Required with the key outside development; startup fails without a valid pair. Not secret |
+| `IBEX_AUTH_GRPC_TLS_KEY_FILE` | Conditional | (empty) | PEM private key for the AuthService gRPC listener | **Secret.** Required with the certificate outside development; never log or ship to another service |
 | `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |
-| `IBEX_ENV` | No | `development` | `development` \| `staging` \| `production` | |
+| `IBEX_ENV` | Yes | (none; required explicitly) | `development` \| `staging` \| `production` | Missing/empty is rejected. Outside `development` the gRPC listener requires the TLS pair; clients must set `IBEX_AUTH_GRPC_CA_FILE` to trust the per-install CA |
 | `IBEX_SERVICE_NAME` | No | `auth` | Service name for logs/telemetry | |
 | `IBEX_LOG_LEVEL` | No | `INFO` | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` | |
 
@@ -366,6 +370,7 @@ Auth stores ciphertext only. Management API validate-before-store then calls `Cr
 |----------|----------|---------|-------------|----------------|
 | `IBEX_API_DATABASE_URL` | for ready | (none) | Python Management API async Postgres DSN (`postgresql+asyncpg://...`) | Secret; do not substitute Go `POSTGRES_DSN` here |
 | `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | Yes | `127.0.0.1:9091` | Auth ValidateToken gRPC target | Internal; port 9091 is Auth gRPC (8081 is Auth HTTP) |
+| `IBEX_AUTH_GRPC_CA_FILE` | No | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate | When set, every API AuthService channel uses TLS 1.2+ with that CA; unset keeps the trust-gated plaintext path |
 | `IBEX_API_REDIS_URL` | No | (empty) | Org suspend + `ratelimit_config_updates:{org_id}` + `model_policy_updates:{org_id}` publish; live RPM counter GET | Secret if password present |
 | `IBEX_API_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Platform default when no `rate_limit_overrides` row | Matches proxy default |
 | `IBEX_API_CELERY_BROKER_URL` | for org DELETE | (none) | Celery broker for org deletion enqueue | |
@@ -483,6 +488,7 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | Variable | Required | Default | Description | Notes |
 |----------|----------|---------|-------------|-------|
 | `IBEX_MEMORY_DATABASE_URL` | Conditional | (none) | Postgres DSN for memory service | Required when vector store is used (`Settings.database_url`) |
+| `IBEX_AUTH_GRPC_CA_FILE` | No | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate (`IBEX_AUTH_GRPC_ADDR`) | When set, the memory ValidateToken channel uses TLS 1.2+ with that CA |
 | `IBEX_MEMORY_MAX_CONTENT_CHARS` | No | `10000` | Max memory size | |
 | `IBEX_MEMORY_MAX_TAGS` | No | `20` | Max tags | |
 | `IBEX_MEMORY_QUARANTINE_INJECTION_THRESHOLD` | No | `0.70` | Quarantine if injection risk > threshold | Prompt-injection only — not PII |
@@ -615,7 +621,8 @@ Used by: **`services/mcp-memory/`** — see [MCP_SERVER.md](MCP_SERVER.md) and [
 | `IBEX_MCP_PORT` | No | `8090` | HTTP listen port | |
 | `IBEX_MCP_RESOURCE_URL` | No | `http://127.0.0.1:8090/mcp` | Public MCP resource URL | Used in auth challenge metadata; production requires non-loopback HTTPS |
 | `IBEX_MCP_AUTH_SERVER_URL` | No | `http://127.0.0.1:8080` | AS URL advertised in protected-resource metadata | Discovery hook only; production requires non-loopback HTTPS |
-| `IBEX_AUTH_GRPC_ADDR` | Yes (HTTP mode) | `127.0.0.1:9091` | Auth `ValidateToken` target | Insecure channel only for loopback/private IP or mesh short name (e.g. `auth`) |
+| `IBEX_AUTH_GRPC_ADDR` | Yes (HTTP mode) | `127.0.0.1:9091` | Auth `ValidateToken` target | TLS 1.2+ when `IBEX_AUTH_GRPC_CA_FILE` is set; otherwise plaintext only for loopback/private IP or mesh short name (e.g. `auth`) |
+| `IBEX_AUTH_GRPC_CA_FILE` | No | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate | When set, the MCP memory Auth channel uses TLS 1.2+ with that CA; unset keeps the trust-gated plaintext path |
 | `IBEX_MCP_AUTH_TIMEOUT_MS` | No | `50` | Per-call auth deadline | Fail closed on timeout |
 | `IBEX_MCP_CLICKHOUSE_URL` | No | (empty) | ClickHouse HTTP base for audit inserts (include credentials when required, e.g. `http://<user>:<password>@127.0.0.1:8123`; compose-dev fixture uses `CLICKHOUSE_PASSWORD` from `infra/compose/dev/.env`) | Empty → logging sink |
 | `IBEX_MCP_AUDIT_QUEUE_SIZE` | No | `1024` | Async audit queue depth | Drops + metric when full |

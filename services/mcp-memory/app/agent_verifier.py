@@ -15,6 +15,7 @@ from authclient import (
     decode_validate_agent_response,
     encode_validate_agent_request,
 )
+from authclient.channel import assert_auth_target, open_auth_channel
 
 from app.errors import AuthUnavailableError, PermissionDeniedError
 
@@ -42,8 +43,18 @@ class GRPCAgentVerifier(AgentVerifier):
     lifespan/request loop mismatches do not leak cross-loop Futures.
     """
 
-    def __init__(self, target: str, timeout_seconds: float) -> None:
-        self._target = assert_trusted_insecure_auth_target(target)
+    def __init__(self, target: str, timeout_seconds: float, ca_file: str | None = None) -> None:
+        # Validate eagerly so a bad target fails at construction, not on the first
+        # tool call. The TLS path authenticates the server and does not restrict the
+        # host; the plaintext path keeps the loopback/private trust gate. Trim first
+        # so a whitespace-only value is unset here and in open_auth_channel alike.
+        ca_file = (ca_file or "").strip() or None
+        self._target = (
+            assert_auth_target(target)
+            if ca_file
+            else assert_trusted_insecure_auth_target(target)
+        )
+        self._ca_file = ca_file
         if timeout_seconds <= 0:
             timeout_seconds = 0.05
         self._timeout = timeout_seconds
@@ -82,7 +93,7 @@ class GRPCAgentVerifier(AgentVerifier):
         if self._stub is not None and self._loop is loop:
             return self._stub
         self._drop_stale_channel()
-        self._channel = grpc.aio.insecure_channel(self._target)
+        self._channel = open_auth_channel(self._target, self._ca_file)
         self._stub = self._channel.unary_unary(
             _VALIDATE_AGENT_METHOD,
             request_serializer=_serialize_request,
