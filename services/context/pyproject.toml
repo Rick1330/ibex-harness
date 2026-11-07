@@ -25,6 +25,11 @@ dev = [
   "pytest-cov>=5.0.0",
   "ruff>=0.6.0",
 ]
+# Stub generation only: pinned exactly so the Dockerfile generates the same
+# stubs from the lockfile instead of resolving grpcio-tools at build time.
+stubs = [
+  "grpcio-tools==1.83.1",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

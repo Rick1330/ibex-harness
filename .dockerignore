@@ -1,0 +1,115 @@
+# IBEX Harness — root build-context filter for every service image.
+#
+# Every Dockerfile in this repository builds from the repository root:
+#   podman build -t ibex-<service>:local -f services/<service>/Dockerfile .
+# so this file applies to all of them. It removes build noise, local caches,
+# and secrets without excluding any path a Dockerfile copies.
+#
+# Copied build inputs that MUST stay visible (audited against every COPY):
+#   go.mod, go.sum, package.json, pnpm-lock.yaml, pnpm-workspace.yaml, .npmrc
+#   packages/**          (Go builds copy the whole tree; Python builds copy
+#                         authclient, apierror_py, ibex_async_db,
+#                         ibex_idempotency, mcp_gateway, mcp_runtime, proto)
+#   services/**/         (each Dockerfile copies its own service tree)
+#   infra/provider-capabilities/**
+#   infra/migrations/**
+#   site/package.json, packages/proto/package.json (pnpm workspace manifests)
+#
+# Verified by building services/auth (Go), services/context, and
+# services/console from this context.
+
+# --- VCS metadata -----------------------------------------------------------
+.git
+.gitignore
+.gitattributes
+.github
+
+# --- Agent / editor / loop scratch (not repository content) -----------------
+.opencode
+.claude
+.cursor
+.zcode
+.idea
+.vscode
+.codacy
+.codescene
+.semgrep
+.semgrepignore
+new findings
+LOOP.md
+STATE.md
+loop-budget.md
+loop-constraints.md
+loop-run-log.md
+safety.md
+gate.yaml
+opencode.json
+MODEL-POLICY.md
+
+# --- Secrets: never send a real environment file into a build context -------
+**/.env
+**/.env.*
+**/*.env
+**/*.env.*
+!**/.env.example
+secrets
+**/*.pem
+**/*.key
+**/*.crt
+infra/compose/v1-single-node/certs
+
+# --- Node / pnpm ------------------------------------------------------------
+node_modules
+**/node_modules
+.nuxt
+**/.nuxt
+**/.nuxt-stale-*
+.output
+**/.output
+.next
+**/.next
+.turbo
+**/.turbo
+**/*.tsbuildinfo
+**/.wrangler
+.wrangler
+**/.cache
+**/playwright-report
+**/blob-report
+**/test-results
+
+# --- Python -----------------------------------------------------------------
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/*.egg-info
+**/.eggs
+**/htmlcov
+**/.coverage
+**/.coverage.*
+**/coverage
+**/coverage*.xml
+**/coverage*.out
+**/build
+**/dist
+**/uv.lock.bak
+
+# --- Go / binaries ----------------------------------------------------------
+**/bin
+**/*.exe
+**/*.test
+**/coverage.out
+
+# --- Logs and generic scratch -----------------------------------------------
+**/*.log
+**/*.out
+**/*.dump
+**/*.sqlite
+**/*.db
+**/.DS_Store
+**/*.swp
+**/*.swo
