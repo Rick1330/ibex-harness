@@ -287,11 +287,8 @@ func probeContextCallerAuth(prober contextCallerAuthProber, log *logger.Logger) 
 	return nil
 }
 
-// authTransportCredentials selects the AuthService transport. A configured CA
-// bundle always selects TLS, including development, so the per-install CA path
-// is testable locally. Without a CA only development stays plaintext; every
-// other profile, including an empty environment, verifies the server against
-// the system root pool rather than falling back to plaintext.
+// authTransportCredentials requires a per-install CA outside development.
+// A configured CA always selects TLS, including development.
 func authTransportCredentials(environment, caFile string) (credentials.TransportCredentials, error) {
 	if path := strings.TrimSpace(caFile); path != "" {
 		pool, err := loadAuthCA(path)
@@ -303,7 +300,7 @@ func authTransportCredentials(environment, caFile string) (credentials.Transport
 	if environment == "development" {
 		return insecure.NewCredentials(), nil
 	}
-	return credentials.NewTLS(&tls.Config{RootCAs: systemCertPool(), MinVersion: tls.VersionTLS12}), nil
+	return nil, fmt.Errorf("IBEX_AUTH_GRPC_CA_FILE is required outside development")
 }
 
 // loadAuthCA reads the per-install CA bundle. The error names the variable and
@@ -321,30 +318,19 @@ func loadAuthCA(path string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
-// systemCertPool returns the host trust store. A minimal container without
-// ca-certificates has no system pool; an empty pool is used in that case so the
-// dial fails closed at the handshake rather than panicking. Operators in that
-// situation must configure IBEX_AUTH_GRPC_CA_FILE.
-func systemCertPool() *x509.CertPool {
-	// A nil RootCAs makes the Go TLS stack use the host trust store. If the
-	// host has none, the handshake fails closed rather than panicking.
-	pool, _ := x509.SystemCertPool()
-	return pool
-}
-
 // contextTransportCredentials selects the transport for the context hop.
 // ADR-0097 §4 permits plaintext only on loopback inside one network namespace:
 // when the profile declares the context process co-located (network_mode
 // "service:proxy", binding a loopback literal), the hop is plaintext by design.
-// Every other environment keeps the auth client's environment-derived
-// behaviour, so a non-co-located staging/production proxy still dials TLS rather
+// Outside development, a non-co-located proxy still dials TLS rather
 // than silently sending a cleartext service token. The auth dial is never
 // affected by this decision, and the context hop never uses the auth CA.
 func contextTransportCredentials(cfg config.Config) (credentials.TransportCredentials, error) {
-	if cfg.ContextColocated {
+	if cfg.ContextColocated || cfg.Environment == "development" {
 		return insecure.NewCredentials(), nil
 	}
-	return authTransportCredentials(cfg.Environment, "")
+	// Context retains system trust; the AuthService CA belongs only to that hop.
+	return credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12}), nil
 }
 
 // contextTransportName reports the transport contextTransportCredentials

@@ -41,9 +41,9 @@ func TestUnit_AuthTransportCredentials(t *testing.T) {
 		wantErr     bool
 	}{
 		{name: "development without CA is insecure", environment: "development", wantProto: "insecure"},
-		{name: "empty environment without CA is TLS", environment: "", wantProto: "tls"},
-		{name: "production without CA is TLS", environment: "production", wantProto: "tls"},
-		{name: "staging without CA is TLS", environment: "staging", wantProto: "tls"},
+		{name: "empty environment without CA fails", environment: "", wantErr: true},
+		{name: "production without CA fails", environment: "production", wantErr: true},
+		{name: "staging without CA fails", environment: "staging", wantErr: true},
 		{name: "development with custom CA is TLS", environment: "development", caFile: validPair.CAFile, wantProto: "tls"},
 		{name: "production with custom CA is TLS", environment: "production", caFile: validPair.CAFile, wantProto: "tls"},
 		{name: "missing CA file is an error", environment: "development", caFile: missing, wantErr: true},
