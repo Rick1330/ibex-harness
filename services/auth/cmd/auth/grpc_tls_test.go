@@ -26,18 +26,30 @@ import (
 // newAuthGRPCServer path serves TLS, not just that credentials were configured.
 func TestUnit_GRPCTLSNegativeTransport(t *testing.T) {
 	t.Parallel()
-
 	pair := tlscert.Generate(t, t.TempDir(), tlscert.Options{})
+	addr := startAuthTLSTestServer(t, pair)
+
+	t.Run("insecure client is rejected at the transport", func(t *testing.T) {
+		assertInsecureClientRejected(t, addr)
+	})
+	t.Run("TLS 1.1 client is rejected before the interceptor", func(t *testing.T) {
+		assertTLS11ClientRejected(t, addr, pair)
+	})
+	t.Run("client holding the CA reaches the interceptor", func(t *testing.T) {
+		assertCAClientReachesInterceptor(t, addr, pair)
+	})
+}
+
+func startAuthTLSTestServer(t *testing.T, pair tlscert.Pair) string {
+	t.Helper()
 	cfg := config.Config{
 		Environment:     "production",
 		GRPCTLSCertFile: pair.CertFile,
 		GRPCTLSKeyFile:  pair.KeyFile,
 	}
-
 	db := openTestDB(t)
 	reg := newTestAuthRegistry(t, db)
 	deps := newTestAuthServiceDeps(t, db, reg)
-
 	srv, err := newAuthGRPCServer(cfg, deps, reg)
 	if err != nil {
 		t.Fatalf("newAuthGRPCServer: %v", err)
@@ -51,58 +63,69 @@ func TestUnit_GRPCTLSNegativeTransport(t *testing.T) {
 		srv.Stop()
 		_ = lis.Close()
 	})
+	return lis.Addr().String()
+}
 
-	t.Run("insecure client is rejected at the transport", func(t *testing.T) {
-		conn := dialTestClient(t, lis.Addr().String(), insecure.NewCredentials())
-		_, err := authv1.NewAuthServiceClient(conn).CreateToken(
-			testCallContext(t), &authv1.CreateTokenRequest{})
-		code := status.Code(err)
-		if code != codes.Unavailable && code != codes.Internal {
-			t.Fatalf("insecure client code = %s (err %v), want Unavailable/Internal transport failure", code, err)
-		}
-		if code == codes.Unauthenticated {
-			t.Fatal("insecure client reached the auth interceptor; the server is not serving TLS")
-		}
-	})
+func assertInsecureClientRejected(t *testing.T, addr string) {
+	t.Helper()
+	conn := dialTestClient(t, addr, insecure.NewCredentials())
+	_, err := authv1.NewAuthServiceClient(conn).CreateToken(
+		testCallContext(t), &authv1.CreateTokenRequest{})
+	code := status.Code(err)
+	if code == codes.Unauthenticated {
+		t.Fatal("insecure client reached the auth interceptor; the server is not serving TLS")
+	}
+	if code != codes.Unavailable && code != codes.Internal {
+		t.Fatalf("insecure client code = %s (err %v), want Unavailable/Internal transport failure", code, err)
+	}
+}
 
-	t.Run("TLS 1.1 client is rejected before the interceptor", func(t *testing.T) {
-		conn := dialTestClient(t, lis.Addr().String(), credentials.NewTLS(&tls.Config{
-			//nolint:gosec // deliberate legacy-version probe
-			InsecureSkipVerify: true,
-			MinVersion:         tls.VersionTLS10,
-			MaxVersion:         tls.VersionTLS11,
-		}))
-		_, err := authv1.NewAuthServiceClient(conn).CreateToken(
-			testCallContext(t), &authv1.CreateTokenRequest{})
-		if err == nil {
-			t.Fatal("TLS 1.1 client reached the server")
-		}
-		// Go refuses TLS 1.0/1.1 client-side by default in recent releases;
-		// when the client can offer them, the server's TLS 1.2 minimum returns
-		// a protocol alert. Either way the client must not reach the handler.
-		msg := err.Error()
-		if !strings.Contains(msg, "protocol version") &&
-			!strings.Contains(msg, "no supported versions") &&
-			!strings.Contains(msg, "handshake failure") {
-			t.Fatalf("unexpected TLS 1.1 failure: %v", err)
-		}
-		if status.Code(err) == codes.Unauthenticated {
-			t.Fatal("TLS 1.1 client reached the auth interceptor")
-		}
-	})
+func assertTLS11ClientRejected(t *testing.T, addr string, pair tlscert.Pair) {
+	t.Helper()
+	// Deliberate negative test: a legacy client must not reach the server.
+	// nosemgrep: problem-based-packs.insecure-transport.go-stdlib.disallow-old-tls-versions.disallow-old-tls-versions
+	conn := dialTestClient(t, addr, credentials.NewTLS(&tls.Config{
+		RootCAs: pair.CAPool,
+		// nosemgrep: go_crypto_rule-tlsversion
+		MinVersion: tls.VersionTLS10,
+		// nosemgrep: go_crypto_rule-tlsversion
+		MaxVersion: tls.VersionTLS11,
+	}))
+	_, err := authv1.NewAuthServiceClient(conn).CreateToken(
+		testCallContext(t), &authv1.CreateTokenRequest{})
+	if err == nil {
+		t.Fatal("TLS 1.1 client reached the server")
+	}
+	assertTLSVersionRejected(t, err)
+}
 
-	t.Run("client holding the CA reaches the interceptor", func(t *testing.T) {
-		conn := dialTestClient(t, lis.Addr().String(), credentials.NewTLS(&tls.Config{
-			RootCAs:    pair.CAPool,
-			MinVersion: tls.VersionTLS12,
-		}))
-		_, err := authv1.NewAuthServiceClient(conn).CreateToken(
-			testCallContext(t), &authv1.CreateTokenRequest{})
-		code := status.Code(err)
-		if code != codes.Unauthenticated && code != codes.PermissionDenied {
-			t.Fatalf("CA client code = %s (err %v), want Unauthenticated/PermissionDenied from the interceptor", code, err)
-		}
-	})
+func assertTLSVersionRejected(t *testing.T, err error) {
+	t.Helper()
+	msg := err.Error()
+	if strings.Contains(msg, "protocol version") {
+		return
+	}
+	if strings.Contains(msg, "no supported versions") {
+		return
+	}
+	if strings.Contains(msg, "handshake failure") {
+		return
+	}
+	t.Fatalf("unexpected TLS 1.1 failure: %v", err)
+}
+
+func assertCAClientReachesInterceptor(t *testing.T, addr string, pair tlscert.Pair) {
+	t.Helper()
+	conn := dialTestClient(t, addr, credentials.NewTLS(&tls.Config{
+		RootCAs:    pair.CAPool,
+		MinVersion: tls.VersionTLS12,
+	}))
+	_, err := authv1.NewAuthServiceClient(conn).CreateToken(
+		testCallContext(t), &authv1.CreateTokenRequest{})
+	code := status.Code(err)
+	if code != codes.Unauthenticated && code != codes.PermissionDenied {
+		t.Fatalf("CA client code = %s (err %v), want Unauthenticated/PermissionDenied from the interceptor", code, err)
+	}
 }
 
 // TestUnit_AuthGRPCServerTransportCredentials_RefusesNonDevelopmentWithoutPair
