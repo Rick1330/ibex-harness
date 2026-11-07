@@ -1,7 +1,3 @@
-<!-- coderabbit-ai-generated:v1 -->
-
-<!-- coderabbit-ai-generated-section:v1:07ab075ff907dee78bcda1fe7c174929b5a25dc3143bba4297174adcf384fd81 -->
-
 # Auth service
 
 Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC `AuthService` ([ADR-0006](../../engineering/adr/0006-auth-proto-contract.md), [ADR-0007](../../engineering/adr/0007-auth-token-validation.md), [ADR-0009](../../engineering/adr/0009-permission-bitmap.md)).
@@ -131,6 +127,3 @@ Integration tests use `POSTGRES_TEST_DSN` (default port 5433 test compose) or th
 ```bash
 docker build -f services/auth/Dockerfile .
 ```
-
-
-<!-- /coderabbit-ai-generated:v1 -->

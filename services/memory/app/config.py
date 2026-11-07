@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     )
     port: int = Field(default=8005, description="Bind port")
 
+    environment: str = Field(
+        default="development",
+        validation_alias=AliasChoices("IBEX_ENV", "IBEX_MEMORY_ENV"),
+        description="Deployment profile; outside development the AuthService CA is required",
+    )
+
+    @field_validator("environment", mode="before")
+    @classmethod
+    def _normalize_environment(cls, value: object) -> str:
+        return str(value).strip().lower() or "development"
+
     otel_endpoint: str = Field(
         default="",
         validation_alias=AliasChoices(
@@ -319,6 +330,15 @@ class Settings(BaseSettings):
             msg = f"unsupported pii_spacy_model {normalized!r}; allowed: {allowed}"
             raise ValueError(msg)
         return normalized
+
+    @model_validator(mode="after")
+    def _auth_ca_boundary(self) -> Settings:
+        if self.environment != "development" and not self.auth_grpc_ca_file:
+            raise ValueError(
+                "IBEX_AUTH_GRPC_CA_FILE is required outside development; "
+                "plaintext AuthService connections are not allowed"
+            )
+        return self
 
     @model_validator(mode="after")
     def _weights_sum_to_one(self) -> Settings:

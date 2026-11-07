@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/infra/testing/tlscert"
 	"github.com/google/uuid"
 )
 
@@ -101,6 +102,8 @@ func TestValidate_RequiresRedisOutsideDevelopment(t *testing.T) {
 			}
 
 			cfg.RedisURL = "redis://redis.internal:6379/0"
+			pair := tlscert.Generate(t, t.TempDir(), tlscert.Options{})
+			cfg.AuthGRPCCACertFile = pair.CAFile
 			if environment == "production" {
 				cfg.LLMMode = "live"
 				cfg.OpenAI.APIKey = "test-key"

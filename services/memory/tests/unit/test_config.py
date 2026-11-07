@@ -67,3 +67,10 @@ def test_auth_grpc_default_targets_auth_grpc_not_its_http_port(
     monkeypatch.delenv("IBEX_AUTH_GRPC_ADDR", raising=False)
     monkeypatch.delenv("IBEX_MEMORY_AUTH_GRPC_ADDR", raising=False)
     assert Settings().auth_grpc_addr == "127.0.0.1:9091"
+
+
+def test_non_development_requires_auth_ca() -> None:
+    with pytest.raises(ValidationError, match="IBEX_AUTH_GRPC_CA_FILE"):
+        Settings(environment="production")
+    Settings(environment="development")
+    Settings(environment="production", auth_grpc_ca_file="/etc/ibex/auth-grpc-ca.pem")

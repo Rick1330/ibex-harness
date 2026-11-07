@@ -310,6 +310,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _operator_session_boundary(self) -> Settings:
         _validate_operator_session_boundary(self)
+        _validate_auth_ca_boundary(self)
         return self
 
     def cors_origin_list(self) -> list[str]:
@@ -319,6 +320,22 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def _validate_auth_ca_boundary(settings: Settings) -> None:
+    """Outside development the AuthService TLS CA is mandatory (ADR-0097 §4).
+
+    The API sends bearer tokens and the service token on this hop; a plaintext
+    fallback in a protected profile would expose them. Development keeps the
+    existing trust-gated plaintext path for a host-run AuthService.
+    """
+    if settings.environment == "development":
+        return
+    if not settings.auth_grpc_ca_file:
+        raise ValueError(
+            "IBEX_AUTH_GRPC_CA_FILE is required outside development; "
+            "plaintext AuthService connections are not allowed"
+        )
 
 
 def _validate_operator_session_boundary(settings: Settings) -> None:

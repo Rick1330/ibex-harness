@@ -57,7 +57,7 @@ See [.env.example](.env.example).
 | `IBEX_PORT` | `8080` | HTTP listen port |
 | `REDIS_URL` | (empty in development) | Required outside development for shared rate limiting; Redis operation failure returns `503 SERVICE_DEGRADED` before provider work. Development may omit it and use the explicit Noop limiter. |
 | `IBEX_AUTH_GRPC_ADDR` | `127.0.0.1:9091` | Auth gRPC target |
-| `IBEX_AUTH_GRPC_CA_FILE` | (empty) | PEM CA bundle used to verify AuthService TLS (ADR-0097 §4); when set, the dial uses TLS 1.2+ in every environment |
+| `IBEX_AUTH_GRPC_CA_FILE` | (empty; required outside development) | PEM CA bundle used to verify AuthService TLS (ADR-0097 §4). Outside development the proxy pins this CA and fails startup if it is missing; development may omit it for the plaintext local AuthService |
 | `IBEX_AUTH_VALIDATE_TIMEOUT` | `50ms` | Per-request validate budget (also bounds `IssuePolicySnapshot`) |
 | `IBEX_PROXY_POLICY_PUBLIC_KEYS` | (empty; stage disabled) | JSON `key_id` → PEM RSA public keys for `policy-snapshot.v1` verification (GAP-002); required outside development when protected routes are mounted |
 | `IBEX_PROXY_POLICY_MIN_EPOCH` | `0` | Minimum accepted policy-signing epoch |

@@ -74,6 +74,6 @@ USER 10001:10001
 EXPOSE 3000
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
-    CMD node -e "fetch('http://127.0.0.1:' + (process.env.NITRO_PORT || process.env.PORT || '3000') + '/').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"
+    CMD ["node", "-e", "const p = process.env.NITRO_PORT || process.env.PORT || '3000'; fetch(`http://127.0.0.1:${p}/`).then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"]
 
 CMD ["node", ".output/server/index.mjs"]
