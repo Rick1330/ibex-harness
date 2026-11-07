@@ -333,7 +333,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _auth_ca_boundary(self) -> Settings:
-        if self.environment != "development" and not self.auth_grpc_ca_file:
+        if self.environment != "development" and not (self.auth_grpc_ca_file or "").strip():
             raise ValueError(
                 "IBEX_AUTH_GRPC_CA_FILE is required outside development; "
                 "plaintext AuthService connections are not allowed"

@@ -331,7 +331,7 @@ def _validate_auth_ca_boundary(settings: Settings) -> None:
     """
     if settings.environment == "development":
         return
-    if not settings.auth_grpc_ca_file:
+    if not (settings.auth_grpc_ca_file or "").strip():
         raise ValueError(
             "IBEX_AUTH_GRPC_CA_FILE is required outside development; "
             "plaintext AuthService connections are not allowed"

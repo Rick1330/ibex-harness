@@ -72,5 +72,7 @@ def test_auth_grpc_default_targets_auth_grpc_not_its_http_port(
 def test_non_development_requires_auth_ca() -> None:
     with pytest.raises(ValidationError, match="IBEX_AUTH_GRPC_CA_FILE"):
         Settings(environment="production")
+    with pytest.raises(ValidationError, match="IBEX_AUTH_GRPC_CA_FILE"):
+        Settings(environment="production", auth_grpc_ca_file="   ")
     Settings(environment="development")
     Settings(environment="production", auth_grpc_ca_file="/etc/ibex/auth-grpc-ca.pem")

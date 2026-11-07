@@ -74,6 +74,8 @@ def test_staging_operator_feature_disabled_allows_minimal_config() -> None:
 def test_non_development_requires_auth_ca() -> None:
     with pytest.raises(ValidationError, match="IBEX_AUTH_GRPC_CA_FILE"):
         Settings(environment="production", jwt_hmac_secret=None)
+    with pytest.raises(ValidationError, match="IBEX_AUTH_GRPC_CA_FILE"):
+        Settings(environment="production", auth_grpc_ca_file="   ", jwt_hmac_secret=None)
     Settings(environment="development")
     Settings(
         environment="production",

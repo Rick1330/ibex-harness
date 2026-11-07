@@ -155,6 +155,8 @@ def test_protected_profile_requires_auth_ca(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.delenv("IBEX_AUTH_GRPC_CA_FILE", raising=False)
     with pytest.raises(ValueError, match="IBEX_AUTH_GRPC_CA_FILE"):
         Settings(env="staging", redis_url="redis://redis:6379/0")
+    with pytest.raises(ValueError, match="IBEX_AUTH_GRPC_CA_FILE"):
+        Settings(env="staging", redis_url="redis://redis:6379/0", auth_grpc_ca_file="   ")
     Settings(env="development")
     Settings(
         env="staging",

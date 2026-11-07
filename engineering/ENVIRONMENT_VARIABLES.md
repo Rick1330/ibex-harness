@@ -621,7 +621,7 @@ Used by: **`services/mcp-memory/`** — see [MCP_SERVER.md](MCP_SERVER.md) and [
 | `IBEX_MCP_PORT` | No | `8090` | HTTP listen port | |
 | `IBEX_MCP_RESOURCE_URL` | No | `http://127.0.0.1:8090/mcp` | Public MCP resource URL | Used in auth challenge metadata; production requires non-loopback HTTPS |
 | `IBEX_MCP_AUTH_SERVER_URL` | No | `http://127.0.0.1:8080` | AS URL advertised in protected-resource metadata | Discovery hook only; production requires non-loopback HTTPS |
-| `IBEX_AUTH_GRPC_ADDR` | Yes (HTTP mode) | `127.0.0.1:9091` | Auth `ValidateToken` target | TLS 1.2+ when `IBEX_AUTH_GRPC_CA_FILE` is set; otherwise plaintext only for loopback/private IP or mesh short name (e.g. `auth`) |
+| `IBEX_AUTH_GRPC_ADDR` | Yes (HTTP mode) | `127.0.0.1:9091` | Auth `ValidateToken` target | TLS 1.2+ outside development with the required CA; development may use plaintext only for loopback/private IP or mesh short name (e.g. `auth`) |
 | `IBEX_AUTH_GRPC_CA_FILE` | Outside development | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate | Required outside development; the MCP memory Auth channel uses TLS 1.2+ with that CA. Development may omit it for the trust-gated plaintext path |
 | `IBEX_MCP_AUTH_TIMEOUT_MS` | No | `50` | Per-call auth deadline | Fail closed on timeout |
 | `IBEX_MCP_CLICKHOUSE_URL` | No | (empty) | ClickHouse HTTP base for audit inserts (include credentials when required, e.g. `http://<user>:<password>@127.0.0.1:8123`; compose-dev fixture uses `CLICKHOUSE_PASSWORD` from `infra/compose/dev/.env`) | Empty → logging sink |
