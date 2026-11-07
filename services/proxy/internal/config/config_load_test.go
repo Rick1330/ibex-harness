@@ -71,6 +71,12 @@ func baseLoadCases() []loadCase {
 }
 
 func contextFlagLoadCases() []loadCase {
+	cases := contextEnabledLoadCases()
+	cases = append(cases, contextColocatedLoadCases()...)
+	return append(cases, contextEmbedMetadataLoadCases()...)
+}
+
+func contextEnabledLoadCases() []loadCase {
 	return []loadCase{
 		{
 			name: "context enabled true",
@@ -121,23 +127,15 @@ func contextFlagLoadCases() []loadCase {
 			},
 		},
 		{
-			name: "context embed metadata true",
-			env: map[string]string{
-				"IBEX_ENV":                    "development",
-				"IBEX_CONTEXT_EMBED_METADATA": "true",
-			},
-			check: func(t *testing.T, cfg Config) {
-				t.Helper()
-				if !cfg.ContextEmbedMetadata {
-					t.Fatal("ContextEmbedMetadata = false, want true")
-				}
-			},
-		},
-		{
 			name:    "invalid context enabled",
 			env:     map[string]string{"IBEX_ENV": "development", "IBEX_CONTEXT_ENABLED": "maybe"},
 			wantErr: true,
 		},
+	}
+}
+
+func contextColocatedLoadCases() []loadCase {
+	return []loadCase{
 		{
 			name: "context colocated true",
 			env: map[string]string{
@@ -168,6 +166,24 @@ func contextFlagLoadCases() []loadCase {
 			name:    "invalid context colocated",
 			env:     map[string]string{"IBEX_ENV": "development", "IBEX_CONTEXT_COLOCATED": "maybe"},
 			wantErr: true,
+		},
+	}
+}
+
+func contextEmbedMetadataLoadCases() []loadCase {
+	return []loadCase{
+		{
+			name: "context embed metadata true",
+			env: map[string]string{
+				"IBEX_ENV":                    "development",
+				"IBEX_CONTEXT_EMBED_METADATA": "true",
+			},
+			check: func(t *testing.T, cfg Config) {
+				t.Helper()
+				if !cfg.ContextEmbedMetadata {
+					t.Fatal("ContextEmbedMetadata = false, want true")
+				}
+			},
 		},
 		{
 			name:    "invalid context embed metadata",

@@ -156,19 +156,41 @@ async def test_secure_channel_completes_the_handshake_with_the_configured_ca(
             await channel.close()
 
 
-async def test_wrong_ca_fails_the_handshake(tmp_path: Path) -> None:
-    ca_key, ca_certificate = _make_ca()
-    _, other_ca_certificate = _make_ca("other-ca")
-    other_ca_file = _write_ca(tmp_path / "other-ca.pem", other_ca_certificate)
+async def _assert_handshake_rejected(
+    tmp_path: Path,
+    *,
+    server_dns_names: list[str],
+    server_ip_addresses: list[str],
+    trust_server_ca: bool,
+) -> None:
+    """Open a channel to a real TLS server that must not complete the handshake.
 
+    ``trust_server_ca=False`` presents the wrong CA; ``True`` trusts the correct
+    CA but the server certificate names do not match the dialed host.
+    """
+    ca_key, ca_certificate = _make_ca()
     async with _tls_server(
-        ca_key, ca_certificate, dns_names=["localhost"], ip_addresses=["127.0.0.1"]
+        ca_key, ca_certificate, dns_names=server_dns_names, ip_addresses=server_ip_addresses
     ) as port:
-        channel = open_auth_channel(f"localhost:{port}", other_ca_file)
+        if trust_server_ca:
+            ca_file = _write_ca(tmp_path / "ca.pem", ca_certificate)
+        else:
+            _, other_ca_certificate = _make_ca("other-ca")
+            ca_file = _write_ca(tmp_path / "other-ca.pem", other_ca_certificate)
+        channel = open_auth_channel(f"localhost:{port}", ca_file)
         try:
             await _assert_transport_unavailable(channel)
         finally:
             await channel.close()
+
+
+async def test_wrong_ca_fails_the_handshake(tmp_path: Path) -> None:
+    await _assert_handshake_rejected(
+        tmp_path,
+        server_dns_names=["localhost"],
+        server_ip_addresses=["127.0.0.1"],
+        trust_server_ca=False,
+    )
 
 
 async def test_plaintext_channel_cannot_talk_to_the_tls_server(tmp_path: Path) -> None:
@@ -185,14 +207,9 @@ async def test_plaintext_channel_cannot_talk_to_the_tls_server(tmp_path: Path) -
 
 
 async def test_certificate_for_another_host_fails_the_handshake(tmp_path: Path) -> None:
-    ca_key, ca_certificate = _make_ca()
-    ca_file = _write_ca(tmp_path / "ca.pem", ca_certificate)
-
-    async with _tls_server(
-        ca_key, ca_certificate, dns_names=["otherhost"], ip_addresses=[]
-    ) as port:
-        channel = open_auth_channel(f"localhost:{port}", ca_file)
-        try:
-            await _assert_transport_unavailable(channel)
-        finally:
-            await channel.close()
+    await _assert_handshake_rejected(
+        tmp_path,
+        server_dns_names=["otherhost"],
+        server_ip_addresses=[],
+        trust_server_ca=True,
+    )

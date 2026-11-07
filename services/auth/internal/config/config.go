@@ -131,14 +131,28 @@ func validateGRPCTLS(c Config) error {
 // disagree about what a valid pair is. Errors name the environment variable and
 // never echo key material.
 func (c Config) LoadGRPCTLSCertificate() (*tls.Certificate, error) {
+	pair, err := c.loadGRPCTLSPair()
+	if err != nil || pair == nil {
+		return pair, err
+	}
+	if err := validateGRPCTLSLeaf(pair, time.Now()); err != nil {
+		return nil, err
+	}
+	return pair, nil
+}
+
+// loadGRPCTLSPair reads the configured cert/key pair. It returns (nil, nil)
+// when neither path is set, and the one-of-two errors when only one is.
+func (c Config) loadGRPCTLSPair() (*tls.Certificate, error) {
 	certFile := strings.TrimSpace(c.GRPCTLSCertFile)
 	keyFile := strings.TrimSpace(c.GRPCTLSKeyFile)
-	switch {
-	case certFile == "" && keyFile == "":
+	if certFile == "" && keyFile == "" {
 		return nil, nil
-	case certFile == "":
+	}
+	if certFile == "" {
 		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE is required when IBEX_AUTH_GRPC_TLS_KEY_FILE is set; both must be set together")
-	case keyFile == "":
+	}
+	if keyFile == "" {
 		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_KEY_FILE is required when IBEX_AUTH_GRPC_TLS_CERT_FILE is set; both must be set together")
 	}
 	pair, err := tls.LoadX509KeyPair(certFile, keyFile)
@@ -148,22 +162,27 @@ func (c Config) LoadGRPCTLSCertificate() (*tls.Certificate, error) {
 	if len(pair.Certificate) == 0 {
 		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE: certificate file contains no certificate")
 	}
+	return &pair, nil
+}
+
+// validateGRPCTLSLeaf rejects a leaf that is unparsable, outside its validity
+// window, or CN-only (modern clients ignore CN for server identity).
+func validateGRPCTLSLeaf(pair *tls.Certificate, now time.Time) error {
 	leaf, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
-		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE: parse leaf certificate: %w", err)
+		return fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE: parse leaf certificate: %w", err)
 	}
 	pair.Leaf = leaf
-	now := time.Now()
 	if now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"IBEX_AUTH_GRPC_TLS_CERT_FILE: certificate is not valid now (notBefore=%s notAfter=%s)",
 			leaf.NotBefore.UTC().Format(time.RFC3339), leaf.NotAfter.UTC().Format(time.RFC3339),
 		)
 	}
 	if len(leaf.DNSNames) == 0 && len(leaf.IPAddresses) == 0 {
-		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE: leaf certificate has no DNS or IP subject alternative name; modern clients reject CN-only certificates")
+		return fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE: leaf certificate has no DNS or IP subject alternative name; modern clients reject CN-only certificates")
 	}
-	return &pair, nil
+	return nil
 }
 
 // PolicyIssuerConfig normalizes policy-signing settings for Issuer

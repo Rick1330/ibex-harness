@@ -32,13 +32,24 @@ from authclient.target import (
 _MIN_PORT = 1
 _MAX_PORT = 65535
 
+
+class AuthCAError(ValueError):
+    """The configured AuthService CA bundle could not be loaded or parsed.
+
+    Subclasses :class:`ValueError` so existing callers and tests that treat a
+    bad CA as a value error keep working, while a caller can translate only this
+    class (and leave target-validation errors untouched).
+    """
+
 # A CA bundle must carry certificates only. ``grpc.ssl_channel_credentials``
 # accepts a combined cert+key PEM but would then hand the private key to the
 # TLS stack, so any private-key block is rejected before it reaches gRPC.
 _PRIVATE_KEY_BLOCK = re.compile(rb"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
 
-# The parsed bundle is cached by (resolved path, mtime, size) so the per-RPC
-# channel construction does not re-stat/re-read/re-parse the CA every time.
+# The parsed bundle is cached by path. The first call happens during service
+# startup (the validator/channel construction in the lifespan); every later call
+# is a pure memory lookup, so a request handler never performs blocking file I/O.
+# A rotated CA is picked up on process restart, matching the Go client.
 _CA_CACHE_MAXSIZE = 8
 
 
@@ -50,21 +61,20 @@ def read_auth_ca(ca_file: str) -> bytes:
     certificate: a garbage or directive-only file is rejected here rather than at
     request time by :func:`grpc.ssl_channel_credentials`.
 
+    The result is cached by path. Call this once during startup (the service
+    lifespans do, through the validator construction); a rotated file requires a
+    process restart, which is also how the Go client picks it up.
+
     Raises :class:`ValueError` when the file is missing, unreadable, empty, or not
     a PEM certificate bundle. The message names the environment variable and the
     path, never the file contents.
     """
-    path = Path(ca_file.strip())
-    try:
-        stat = path.stat()
-    except OSError as exc:
-        raise ValueError(f"IBEX_AUTH_GRPC_CA_FILE is not readable: {path}") from exc
-    return _load_auth_ca(str(path.resolve()), stat.st_mtime_ns, stat.st_size)
+    return _load_auth_ca(ca_file.strip())
 
 
 @functools.lru_cache(maxsize=_CA_CACHE_MAXSIZE)
-def _load_auth_ca(path: str, _mtime_ns: int, _size: int) -> bytes:
-    """Read and validate one CA bundle; ``_mtime_ns`` and ``_size`` are the cache key.
+def _load_auth_ca(path: str) -> bytes:
+    """Read and validate one CA bundle; ``path`` is the cache key.
 
     ``lru_cache`` is thread-safe and does not cache exceptions, so a failed read
     or an invalid bundle is retried on the next call rather than remembered.
@@ -73,30 +83,30 @@ def _load_auth_ca(path: str, _mtime_ns: int, _size: int) -> bytes:
     try:
         bundle = ca_path.read_bytes()
     except OSError as exc:
-        raise ValueError(f"IBEX_AUTH_GRPC_CA_FILE is not readable: {ca_path}") from exc
+        raise AuthCAError(f"IBEX_AUTH_GRPC_CA_FILE is not readable: {ca_path}") from exc
     if not bundle.strip():
-        raise ValueError(f"IBEX_AUTH_GRPC_CA_FILE is empty: {ca_path}")
+        raise AuthCAError(f"IBEX_AUTH_GRPC_CA_FILE is empty: {ca_path}")
     _assert_pem_certificate_bundle(bundle, ca_path)
     return bundle
 
 
 def _assert_pem_certificate_bundle(bundle: bytes, path: Path) -> None:
     if _PRIVATE_KEY_BLOCK.search(bundle):
-        raise ValueError(
+        raise AuthCAError(
             f"IBEX_AUTH_GRPC_CA_FILE must contain certificates only, "
             f"not a private key: {path}"
         )
     try:
         pem = bundle.decode("ascii")
     except UnicodeDecodeError as exc:
-        raise ValueError(
+        raise AuthCAError(
             f"IBEX_AUTH_GRPC_CA_FILE is not a PEM certificate bundle: {path}"
         ) from exc
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     try:
         context.load_verify_locations(cadata=pem)
     except (ssl.SSLError, ValueError) as exc:
-        raise ValueError(
+        raise AuthCAError(
             f"IBEX_AUTH_GRPC_CA_FILE does not contain a certificate: {path}"
         ) from exc
 

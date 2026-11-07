@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -144,7 +143,7 @@ def test_read_auth_ca_caches_the_parsed_bundle(
     assert len(reads) == 1
 
 
-def test_read_auth_ca_reloads_when_the_file_changes(
+def test_read_auth_ca_reloads_after_cache_clear(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ca_file = Path(_write_ca(tmp_path))
@@ -159,8 +158,12 @@ def test_read_auth_ca_reloads_when_the_file_changes(
     monkeypatch.setattr(Path, "read_bytes", _counting_read)
 
     assert read_auth_ca(str(ca_file)) == _PEM_BUNDLE
-    stat = ca_file.stat()
-    os.utime(ca_file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+    assert read_auth_ca(str(ca_file)) == _PEM_BUNDLE
+    assert len(reads) == 1
+
+    # A restart (or an explicit cache clear) is the supported rotation point;
+    # the request path never re-reads the file.
+    channel_module._load_auth_ca.cache_clear()
     assert read_auth_ca(str(ca_file)) == _PEM_BUNDLE
     assert len(reads) == 2
 

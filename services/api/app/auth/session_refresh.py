@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import grpc
-from authclient.channel import open_auth_channel
+from authclient.channel import AuthCAError, open_auth_channel
 from authclient.codec import AuthCodecError, encode_varint
 from authclient.errors import AuthFailedError, AuthUnavailableError
 
@@ -74,9 +76,25 @@ class ConsumeStepUpParams:
     permission: int = 0
 
 
+@asynccontextmanager
+async def _auth_channel(rpc: AuthRPC) -> AsyncIterator[grpc.aio.Channel]:
+    """Open the Auth channel, mapping a CA load failure to AuthUnavailableError.
+
+    A CA file that disappears or becomes invalid after startup is a degraded
+    dependency, not a programming error: the session routes already translate
+    AuthUnavailableError into their SERVICE_DEGRADED response.
+    """
+    try:
+        channel = open_auth_channel(rpc.auth_grpc_addr, rpc.ca_file)
+    except AuthCAError as exc:
+        raise AuthUnavailableError("auth CA unavailable") from exc
+    async with channel as opened:
+        yield opened
+
+
 async def _call_lifecycle(rpc: AuthRPC, *, method: str, payload: bytes) -> bytes:
     try:
-        async with open_auth_channel(rpc.auth_grpc_addr, rpc.ca_file) as channel:
+        async with _auth_channel(rpc) as channel:
             stub = channel.unary_unary(
                 method, request_serializer=lambda b: b, response_deserializer=lambda b: b
             )
@@ -177,7 +195,7 @@ def _parse_refreshed_session(raw: bytes) -> RefreshedSession:
 async def issue_operator_session(rpc: AuthRPC, *, pat: str) -> RefreshedSession:
     """Issue an Auth-owned session pair for a validated PAT caller."""
     try:
-        async with open_auth_channel(rpc.auth_grpc_addr, rpc.ca_file) as channel:
+        async with _auth_channel(rpc) as channel:
             stub = channel.unary_unary(
                 _ISSUE_METHOD,
                 request_serializer=lambda b: b,
@@ -206,7 +224,7 @@ async def issue_operator_session(rpc: AuthRPC, *, pat: str) -> RefreshedSession:
 async def _call_issue_operator_session(rpc: AuthRPC, *, refresh_token: str) -> bytes:
     payload = encode_issue_with_refresh(refresh_token)
     try:
-        async with open_auth_channel(rpc.auth_grpc_addr, rpc.ca_file) as channel:
+        async with _auth_channel(rpc) as channel:
             stub = channel.unary_unary(
                 _ISSUE_METHOD,
                 request_serializer=lambda b: b,
