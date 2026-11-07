@@ -308,7 +308,6 @@ if ! leaf_names_ok "$AUTH_CRT" "DNS:auth" "DNS:localhost" "IP Address:127.0.0.1"
   exit 1
 fi
 
-edge_san="$(openssl x509 -in "$EDGE_CRT" -noout -ext subjectAltName)"
 if ! leaf_names_ok "$EDGE_CRT" "DNS:localhost"; then
   echo "gen-v1-tls.sh: edge.crt is missing the DNS:localhost SAN" >&2
   exit 1
