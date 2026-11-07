@@ -94,15 +94,19 @@ class Settings(BaseSettings):
         if not self.enabled:
             # A disabled gateway exposes no surface, so no dependency is required.
             return self
-        if not self.database_url.strip():
-            raise ValueError("IBEX_MCP_OPERATOR_DATABASE_URL is required when enabled")
-        if self.protected_profile and not self.redis_url.strip():
-            raise ValueError("IBEX_MCP_OPERATOR_REDIS_URL is required in protected profiles")
+        _require_auth_ca_outside_development(self.env, self.auth_grpc_ca_file)
+        self._require_dependencies()
         if self.env != "production":
             return self
         self._require_public_https("IBEX_MCP_OPERATOR_RESOURCE_URL", self.resource_url)
         self._require_public_https("IBEX_MCP_OPERATOR_AUTH_SERVER_URL", self.auth_server_url)
         return self
+
+    def _require_dependencies(self) -> None:
+        if not self.database_url.strip():
+            raise ValueError("IBEX_MCP_OPERATOR_DATABASE_URL is required when enabled")
+        if self.protected_profile and not self.redis_url.strip():
+            raise ValueError("IBEX_MCP_OPERATOR_REDIS_URL is required in protected profiles")
 
     @staticmethod
     def _require_public_https(name: str, value: str) -> None:
@@ -112,6 +116,15 @@ class Settings(BaseSettings):
             raise ValueError(f"{name} must use https in production")
         if not host or _is_loopback_host(host):
             raise ValueError(f"{name} must not use a loopback host in production")
+
+
+def _require_auth_ca_outside_development(environment: str, ca_file: str | None) -> None:
+    """Outside development the AuthService CA is mandatory (ADR-0097 §4)."""
+    if environment != "development" and not ca_file:
+        raise ValueError(
+            "IBEX_AUTH_GRPC_CA_FILE is required outside development; "
+            "plaintext AuthService connections are not allowed"
+        )
 
 
 def _is_loopback_host(host: str) -> bool:

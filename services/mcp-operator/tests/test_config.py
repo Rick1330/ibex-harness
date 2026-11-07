@@ -43,6 +43,7 @@ def test_protected_profile_requires_redis() -> None:
             enabled=True,
             env="staging",
             database_url="postgresql+asyncpg://u:p@db/ibex",
+            auth_grpc_ca_file="/etc/ibex/auth-grpc-ca.pem",
         )
 
 
@@ -54,6 +55,9 @@ def _production_settings(**overrides: object) -> Settings:
         "redis_url": "redis://db:6379/0",
         "resource_url": "https://mcp.example.com/mcp",
         "auth_server_url": "https://auth.example.com",
+        # Present so the URL-validation cases reach the URL checks instead of
+        # failing on the ADR-0097 §4 client CA requirement.
+        "auth_grpc_ca_file": "/etc/ibex/auth-grpc-ca.pem",
     }
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]
@@ -88,3 +92,15 @@ def test_org_override_map_parses() -> None:
 def test_bad_org_override_rejected_at_construction() -> None:
     with pytest.raises(ValueError, match="expected uuid=rpm"):
         Settings(enabled=False, rate_limit_org_overrides="broken")
+
+
+def test_enabled_protected_profile_requires_auth_ca() -> None:
+    kwargs = {
+        "enabled": True,
+        "env": "staging",
+        "database_url": "postgresql://ibex@postgres/ibex",
+        "redis_url": "redis://redis:6379/0",
+    }
+    with pytest.raises(ValueError, match="IBEX_AUTH_GRPC_CA_FILE"):
+        Settings(**kwargs)
+    Settings(**kwargs, auth_grpc_ca_file="/etc/ibex/auth-grpc-ca.pem")

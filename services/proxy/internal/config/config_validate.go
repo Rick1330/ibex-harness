@@ -48,15 +48,20 @@ func (c Config) Validate() error {
 	)
 }
 
-// validateAuthGRPCCACert checks the optional per-install CA bundle used to
-// verify the AuthService gRPC server certificate (ADR-0097 §4). Empty means the
-// environment default applies; when set, the file must be readable and carry at
-// least one parseable PEM certificate so a misconfigured path fails startup
-// instead of every ValidateToken dial.
+// validateAuthGRPCCACert checks the per-install CA bundle used to verify the
+// AuthService gRPC server certificate (ADR-0097 §4). Outside development the
+// bundle is required: falling back to the host roots would let a redirected
+// target with a public certificate receive PATs. In development it stays
+// optional so a host-run AuthService can use the trust-gated plaintext path.
+// When set, the file must be readable and carry at least one parseable PEM
+// certificate so a misconfigured path fails startup instead of every dial.
 func (c Config) validateAuthGRPCCACert() error {
 	path := strings.TrimSpace(c.AuthGRPCCACertFile)
 	if path == "" {
-		return nil
+		if c.Environment == envDevelopment {
+			return nil
+		}
+		return fmt.Errorf("IBEX_AUTH_GRPC_CA_FILE is required when IBEX_ENV is not development")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

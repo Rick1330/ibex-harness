@@ -6,7 +6,7 @@ internal hops rely on. Every Python AuthService dialer therefore goes through
 :func:`open_auth_channel`:
 
 * ``IBEX_AUTH_GRPC_CA_FILE`` set -> TLS with that CA bundle as the only root of trust.
-* unset -> an insecure channel only with ``IBEX_ENV=development``, gated by
+* unset -> an insecure channel, still gated by
   :func:`authclient.target.assert_trusted_insecure_auth_target`.
 
 Keeping the decision in one place means a service cannot accidentally dial
@@ -17,7 +17,6 @@ trust gate cannot drift between callers.
 from __future__ import annotations
 
 import functools
-import os
 import re
 import ssl
 from pathlib import Path
@@ -140,8 +139,6 @@ def open_auth_channel(target: str, ca_file: str | None = None) -> grpc.aio.Chann
     if ca_file:
         credentials = grpc.ssl_channel_credentials(root_certificates=read_auth_ca(ca_file))
         return grpc.aio.secure_channel(assert_auth_target(target), credentials)
-    if os.environ.get("IBEX_ENV") != "development":
-        raise AuthCAError("IBEX_AUTH_GRPC_CA_FILE is required outside development")
     # Plaintext is only reachable after the loopback/private trust gate.
     return grpc.aio.insecure_channel(assert_trusted_insecure_auth_target(target))  # nosec B321
 

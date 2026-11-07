@@ -95,8 +95,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _check_discovery_urls(self) -> Settings:
         """Production must advertise non-loopback HTTPS discovery URLs."""
-        if self.env in {"staging", "production"} and not self.redis_url.strip():
-            raise ValueError("IBEX_MCP_REDIS_URL is required in protected profiles")
+        self._check_protected_dependencies()
         if self.env != "production":
             return self
         self._require_public_https("IBEX_MCP_RESOURCE_URL", self.resource_url)
@@ -105,6 +104,11 @@ class Settings(BaseSettings):
         if self.memory_http_url.strip():
             self._require_public_https("IBEX_MEMORY_HTTP_URL", self.memory_http_url)
         return self
+
+    def _check_protected_dependencies(self) -> None:
+        if self.env in {"staging", "production"} and not self.redis_url.strip():
+            raise ValueError("IBEX_MCP_REDIS_URL is required in protected profiles")
+        _require_auth_ca_outside_development(self.env, self.auth_grpc_ca_file)
 
     @staticmethod
     def _require_public_https(name: str, value: str) -> None:
@@ -123,6 +127,15 @@ class Settings(BaseSettings):
             raise ValueError("stdio MCP transport is forbidden when IBEX_ENV=production")
         if not self.allow_stdio:
             raise ValueError("stdio MCP transport requires IBEX_MCP_ALLOW_STDIO=true")
+
+
+def _require_auth_ca_outside_development(environment: str, ca_file: str | None) -> None:
+    """Outside development the AuthService CA is mandatory (ADR-0097 §4)."""
+    if environment != "development" and not ca_file:
+        raise ValueError(
+            "IBEX_AUTH_GRPC_CA_FILE is required outside development; "
+            "plaintext AuthService connections are not allowed"
+        )
 
 
 def _is_loopback_host(host: str) -> bool:

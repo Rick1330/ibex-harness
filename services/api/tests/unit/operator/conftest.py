@@ -29,6 +29,9 @@ def operator_settings(**kwargs: object) -> Settings:
         "cookie_samesite": "lax",
         "operator_feature_enabled": True,
         "environment": "development",
+        # Present so any test that switches to a protected profile satisfies
+        # the ADR-0097 §4 client CA requirement; the file is never read here.
+        "auth_grpc_ca_file": "/etc/ibex/auth-grpc-ca.pem",
     }
     base.update(kwargs)
     return Settings(**base)  # type: ignore[arg-type]

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from app.config import Settings, get_settings
 
 
@@ -23,6 +26,7 @@ def test_non_development_operator_sessions_require_auth_service_token() -> None:
         "dashboard_csrf_secret": "configured",
         "operator_cursor_secret": "cursor-secret-for-tests-32-bytes-min!!",
         "cookie_secure": True,
+        "auth_grpc_ca_file": "/etc/ibex/auth-grpc-ca.pem",
     }
     try:
         Settings(**kwargs)
@@ -60,5 +64,19 @@ def test_staging_operator_feature_disabled_allows_minimal_config() -> None:
         operator_feature_enabled=False,
         redis_url="redis://localhost",
         cookie_secure=True,
+        # A protected profile now requires the AuthService client CA even when
+        # operator sessions are off; the API still validates bearer tokens.
+        auth_grpc_ca_file="/etc/ibex/auth-grpc-ca.pem",
     )
     assert settings.operator_feature_enabled is False
+
+
+def test_non_development_requires_auth_ca() -> None:
+    with pytest.raises(ValidationError, match="IBEX_AUTH_GRPC_CA_FILE"):
+        Settings(environment="production", jwt_hmac_secret=None)
+    Settings(environment="development")
+    Settings(
+        environment="production",
+        auth_grpc_ca_file="/etc/ibex/auth-grpc-ca.pem",
+        jwt_hmac_secret=None,
+    )

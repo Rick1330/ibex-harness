@@ -230,7 +230,7 @@ Used by: **proxy** (`services/proxy`)
 | `REDIS_URL` | Required outside development | (empty in development) | Proxy Redis for shared rate limiting, token-revocation SUBSCRIBE (`ibex:token:revocations`), model-policy invalidation SUBSCRIBE (`model_policy_updates:*`), and `/ready`. Development may use a Noop limiter when unset and start serving local requests, but Redis remains a critical readiness check, so `/ready` intentionally stays degraded until Redis is available. Outside development the Proxy rejects unset Redis. When configured Redis is unavailable, rate-limited work fails closed with 503. Auth-cache wrapping is skipped when Redis is absent/unhealthy so token revocations use direct gRPC validation; model-policy cache may rely on its bounded TTL when invalidations cannot be delivered. | Secret if password present |
 | `IBEX_PORT` | No | `8080` | HTTP listen port | |
 | `IBEX_AUTH_GRPC_ADDR` | No | `127.0.0.1:9091` | Auth gRPC target for ValidateToken | Internal; TLS 1.2+ outside development (ADR-0097 §4) |
-| `IBEX_AUTH_GRPC_CA_FILE` | No | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate | When set, the proxy dials with TLS 1.2+ and that CA in every environment; unset outside development falls back to the system root pool, which will not trust the per-install CA, so the dial fails closed |
+| `IBEX_AUTH_GRPC_CA_FILE` | Outside development | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate | Required outside development: the proxy dials TLS 1.2+ with only that CA and fails startup if it is missing. Development may omit it for the plaintext local AuthService |
 | `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |
 | `IBEX_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Default org RPM (also default agent RPM when no per-agent DB override) | |
 | `IBEX_RATE_LIMIT_GLOBAL_RPM` | No | `100000` | Shared RPM ceiling across all proxy instances using the same Redis namespace/deployment | |
@@ -370,7 +370,7 @@ Auth stores ciphertext only. Management API validate-before-store then calls `Cr
 |----------|----------|---------|-------------|----------------|
 | `IBEX_API_DATABASE_URL` | for ready | (none) | Python Management API async Postgres DSN (`postgresql+asyncpg://...`) | Secret; do not substitute Go `POSTGRES_DSN` here |
 | `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | Yes | `127.0.0.1:9091` | Auth ValidateToken gRPC target | Internal; port 9091 is Auth gRPC (8081 is Auth HTTP) |
-| `IBEX_AUTH_GRPC_CA_FILE` | No | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate | When set, every API AuthService channel uses TLS 1.2+ with that CA; unset keeps the trust-gated plaintext path |
+| `IBEX_AUTH_GRPC_CA_FILE` | Outside development | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate | Required outside development; every API AuthService channel uses TLS 1.2+ with that CA. Development may omit it for the trust-gated plaintext path |
 | `IBEX_API_REDIS_URL` | No | (empty) | Org suspend + `ratelimit_config_updates:{org_id}` + `model_policy_updates:{org_id}` publish; live RPM counter GET | Secret if password present |
 | `IBEX_API_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Platform default when no `rate_limit_overrides` row | Matches proxy default |
 | `IBEX_API_CELERY_BROKER_URL` | for org DELETE | (none) | Celery broker for org deletion enqueue | |
@@ -488,7 +488,7 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | Variable | Required | Default | Description | Notes |
 |----------|----------|---------|-------------|-------|
 | `IBEX_MEMORY_DATABASE_URL` | Conditional | (none) | Postgres DSN for memory service | Required when vector store is used (`Settings.database_url`) |
-| `IBEX_AUTH_GRPC_CA_FILE` | No | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate (`IBEX_AUTH_GRPC_ADDR`) | When set, the memory ValidateToken channel uses TLS 1.2+ with that CA |
+| `IBEX_AUTH_GRPC_CA_FILE` | Outside development | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate (`IBEX_AUTH_GRPC_ADDR`) | Required outside development; the memory ValidateToken channel uses TLS 1.2+ with that CA. Development may omit it for the trust-gated plaintext path |
 | `IBEX_MEMORY_MAX_CONTENT_CHARS` | No | `10000` | Max memory size | |
 | `IBEX_MEMORY_MAX_TAGS` | No | `20` | Max tags | |
 | `IBEX_MEMORY_QUARANTINE_INJECTION_THRESHOLD` | No | `0.70` | Quarantine if injection risk > threshold | Prompt-injection only — not PII |
@@ -622,7 +622,7 @@ Used by: **`services/mcp-memory/`** — see [MCP_SERVER.md](MCP_SERVER.md) and [
 | `IBEX_MCP_RESOURCE_URL` | No | `http://127.0.0.1:8090/mcp` | Public MCP resource URL | Used in auth challenge metadata; production requires non-loopback HTTPS |
 | `IBEX_MCP_AUTH_SERVER_URL` | No | `http://127.0.0.1:8080` | AS URL advertised in protected-resource metadata | Discovery hook only; production requires non-loopback HTTPS |
 | `IBEX_AUTH_GRPC_ADDR` | Yes (HTTP mode) | `127.0.0.1:9091` | Auth `ValidateToken` target | TLS 1.2+ when `IBEX_AUTH_GRPC_CA_FILE` is set; otherwise plaintext only for loopback/private IP or mesh short name (e.g. `auth`) |
-| `IBEX_AUTH_GRPC_CA_FILE` | No | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate | When set, the MCP memory Auth channel uses TLS 1.2+ with that CA; unset keeps the trust-gated plaintext path |
+| `IBEX_AUTH_GRPC_CA_FILE` | Outside development | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate | Required outside development; the MCP memory Auth channel uses TLS 1.2+ with that CA. Development may omit it for the trust-gated plaintext path |
 | `IBEX_MCP_AUTH_TIMEOUT_MS` | No | `50` | Per-call auth deadline | Fail closed on timeout |
 | `IBEX_MCP_CLICKHOUSE_URL` | No | (empty) | ClickHouse HTTP base for audit inserts (include credentials when required, e.g. `http://<user>:<password>@127.0.0.1:8123`; compose-dev fixture uses `CLICKHOUSE_PASSWORD` from `infra/compose/dev/.env`) | Empty → logging sink |
 | `IBEX_MCP_AUDIT_QUEUE_SIZE` | No | `1024` | Async audit queue depth | Drops + metric when full |

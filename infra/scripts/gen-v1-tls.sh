@@ -5,6 +5,13 @@
 # one directory. The files are secrets: never commit them and never print the
 # private keys. ADR-0097 §4/§5 defines the transport contract this supports.
 #
+# Delivery: the AuthService container runs as UID 10001 and must read auth.key,
+# but this script writes keys 0600 owned by the invoking operator. Do not bind
+# mount auth.key directly when the container UID differs: deliver it through a
+# Compose secret (the daemon mounts a readable copy) or run the service with the
+# file owner's UID. The same applies after a leaf reissue. ca.key is operator-only:
+# never mount it or copy it into an image.
+#
 # Runtime mount contract:
 #   - Mount only ca.crt plus the leaf pairs (auth.crt/auth.key,
 #     edge.crt/edge.key) into containers.
@@ -70,11 +77,6 @@ if [[ -z "$TARGET_DIR" ]]; then
   TARGET_DIR="$DEFAULT_TARGET"
 fi
 
-command -v setfacl >/dev/null 2>&1 || {
-  echo "gen-v1-tls.sh: setfacl is required (install the acl package)" >&2
-  exit 1
-}
-
 command -v openssl >/dev/null 2>&1 || {
   echo "gen-v1-tls.sh: openssl is required" >&2
   exit 1
@@ -132,14 +134,6 @@ else
   done
 fi
 
-# AuthService runs as UID 10001 without host UID mapping. Grant only that
-# identity read access; ca.key and edge.key remain operator-only. Reapply after
-# chmod on reuse and after issuance, since chmod 0600 masks named ACL entries.
-allow_auth_key_read() {
-  setfacl -b "$AUTH_KEY"
-  setfacl -m u:10001:r-- "$AUTH_KEY"
-}
-
 # run_openssl keeps the generation output quiet (it contains no key material,
 # only progress banners) while still surfacing the full diagnostics on failure.
 run_openssl() {
@@ -174,8 +168,10 @@ ca_pair_usable() {
 }
 
 # leaf_pair_usable reports whether both files of a leaf pair exist, match each
-# other, and verify against the current CA. Either condition failing means the
-# pair is missing or stale and must be reissued; the CA is never touched.
+# other, verify against the current CA, and are valid for the sslserver purpose.
+# The purpose check matters: a clientAuth-only leaf verifies against the CA but
+# TLS clients reject it for a server endpoint. A failing pair is reissued; the
+# CA is never touched.
 leaf_pair_usable() {
   local cert="$1" key="$2"
   [[ -f "$cert" && -f "$key" ]] || return 1
@@ -189,17 +185,19 @@ leaf_pair_usable() {
   return 0
 }
 
-# leaf_names_ok verifies that a reusable leaf carries every required SAN. Both
-# leaves are signed by the same CA, so a copied edge pair would otherwise pass
-# the CA/key check while clients dialing auth:9091 reject the certificate.
+# leaf_names_ok verifies that a reusable leaf carries every required SAN as a
+# complete entry, not a substring (DNS:auth must not match DNS:auth-other, and
+# 127.0.0.1 must not match 127.0.0.10). Both leaves are signed by the same CA,
+# so a copied edge pair would otherwise pass the CA/key check while clients
+# dialing auth:9091 reject the certificate.
 leaf_names_ok() {
   local cert="$1"
   shift
-  local san wanted
+  local san entries wanted
   san="$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null)" || return 1
-  san="$(sed '1d' <<<"$san" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" || return 1
+  entries="$(printf '%s\n' "$san" | tail -n +2 | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
   for wanted in "$@"; do
-    grep -qxF -- "$wanted" <<<"$san" || return 1
+    grep -Fxq -- "$wanted" <<<"$entries" || return 1
   done
   return 0
 }
@@ -210,7 +208,6 @@ if [[ "$FORCE" -eq 0 ]] &&
   leaf_names_ok "$AUTH_CRT" "DNS:auth" "IP Address:127.0.0.1" &&
   leaf_pair_usable "$EDGE_CRT" "$EDGE_KEY" &&
   leaf_names_ok "$EDGE_CRT" "DNS:localhost"; then
-  allow_auth_key_read
   echo "CA SHA-256 fingerprint: $(ca_fingerprint)"
   echo "reusing existing CA in $TARGET_DIR"
   echo "TLS material already present in $TARGET_DIR (use --force to regenerate)"
@@ -294,25 +291,20 @@ if [[ "$issue_edge" -eq 1 ]]; then
 fi
 
 chmod 0600 "$CA_KEY" "$AUTH_KEY" "$EDGE_KEY"
-allow_auth_key_read
 chmod 0644 "$CA_CRT" "$AUTH_CRT" "$EDGE_CRT"
 
 if ! openssl verify -purpose sslserver -CAfile "$CA_CRT" "$AUTH_CRT"; then
-  echo "gen-v1-tls.sh: auth.crt does not verify against ca.crt" >&2
+  echo "gen-v1-tls.sh: auth.crt does not verify as an sslserver certificate against ca.crt" >&2
   exit 1
 fi
 if ! openssl verify -purpose sslserver -CAfile "$CA_CRT" "$EDGE_CRT"; then
-  echo "gen-v1-tls.sh: edge.crt does not verify against ca.crt" >&2
+  echo "gen-v1-tls.sh: edge.crt does not verify as an sslserver certificate against ca.crt" >&2
   exit 1
 fi
 
 auth_san="$(openssl x509 -in "$AUTH_CRT" -noout -ext subjectAltName)"
-if ! leaf_names_ok "$AUTH_CRT" "DNS:auth"; then
-  echo "gen-v1-tls.sh: auth.crt is missing the DNS:auth SAN" >&2
-  exit 1
-fi
-if ! leaf_names_ok "$AUTH_CRT" "IP Address:127.0.0.1"; then
-  echo "gen-v1-tls.sh: auth.crt is missing the IP:127.0.0.1 SAN" >&2
+if ! leaf_names_ok "$AUTH_CRT" "DNS:auth" "DNS:localhost" "IP Address:127.0.0.1"; then
+  echo "gen-v1-tls.sh: auth.crt is missing a required SAN (DNS:auth, DNS:localhost, IP:127.0.0.1)" >&2
   exit 1
 fi
 

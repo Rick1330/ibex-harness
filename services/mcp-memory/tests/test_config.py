@@ -8,7 +8,11 @@ from app.config import Settings, get_settings
 
 
 @pytest.fixture(autouse=True)
-def _clear_settings() -> None:
+def _clear_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A protected profile requires the AuthService client CA (ADR-0097 §4).
+    # Provide it by default so unrelated assertions reach their own checks;
+    # the CA-specific test deletes it explicitly.
+    monkeypatch.setenv("IBEX_AUTH_GRPC_CA_FILE", "/etc/ibex/auth-grpc-ca.pem")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -145,3 +149,15 @@ def test_production_rejects_localhost_trailing_dot(monkeypatch: pytest.MonkeyPat
     get_settings.cache_clear()
     with pytest.raises(ValueError, match="loopback"):
         get_settings()
+
+
+def test_protected_profile_requires_auth_ca(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("IBEX_AUTH_GRPC_CA_FILE", raising=False)
+    with pytest.raises(ValueError, match="IBEX_AUTH_GRPC_CA_FILE"):
+        Settings(env="staging", redis_url="redis://redis:6379/0")
+    Settings(env="development")
+    Settings(
+        env="staging",
+        redis_url="redis://redis:6379/0",
+        auth_grpc_ca_file="/etc/ibex/auth-grpc-ca.pem",
+    )

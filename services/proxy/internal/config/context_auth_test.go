@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/Rick1330/ibex-harness/infra/testing/tlscert"
 )
 
 // testContextServiceToken is a stand-in for IBEX_CONTEXT_GRPC_SERVICE_TOKEN.
@@ -308,6 +310,8 @@ func TestValidate_AcceptsColocatedContextOutsideDevelopment(t *testing.T) {
 	cfg.ContextGRPCServiceToken = testContextServiceToken
 	cfg.LLMMode = envLLMModeLive
 	cfg.OpenAI.APIKey = "sk-test-not-a-real-credential"
+	pair := tlscert.Generate(t, t.TempDir(), tlscert.Options{})
+	cfg.AuthGRPCCACertFile = pair.CAFile
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error=%v, want accept", err)
 	}
