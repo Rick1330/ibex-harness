@@ -159,9 +159,6 @@ func (c Config) loadGRPCTLSPair() (*tls.Certificate, error) {
 	if err != nil {
 		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE/IBEX_AUTH_GRPC_TLS_KEY_FILE: load certificate pair: %w", err)
 	}
-	if len(pair.Certificate) == 0 {
-		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE: certificate file contains no certificate")
-	}
 	return &pair, nil
 }
 

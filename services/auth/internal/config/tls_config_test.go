@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"strings"
 	"testing"
 	"time"
@@ -96,6 +97,14 @@ func TestValidate_GRPCTLS_MismatchedPairRejected(t *testing.T) {
 	cfg.GRPCTLSKeyFile = keyPair.KeyFile
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected mismatched gRPC TLS pair error")
+	}
+}
+
+func TestValidateGRPCTLSLeaf_ParseError(t *testing.T) {
+	t.Parallel()
+	pair := &tls.Certificate{Certificate: [][]byte{[]byte("not DER")}}
+	if err := validateGRPCTLSLeaf(pair, time.Now()); err == nil {
+		t.Fatal("validateGRPCTLSLeaf accepted a non-DER certificate")
 	}
 }
 

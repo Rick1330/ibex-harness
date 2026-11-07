@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -106,6 +108,29 @@ func TestUnit_NewAuthGRPCServer_RefusesNonDevelopmentWithoutPair(t *testing.T) {
 	deps := newTestAuthServiceDeps(t, db, reg)
 	if _, err := newAuthGRPCServer(config.Config{Environment: "production"}, deps, reg); err == nil {
 		t.Fatal("newAuthGRPCServer accepted production without a gRPC TLS pair")
+	}
+}
+
+// TestUnit_AuthGRPCServerTransportCredentials_RejectsBadPair covers the
+// load-error path: a configured but unreadable/garbage pair must fail the
+// constructor, never fall back to plaintext.
+func TestUnit_AuthGRPCServerTransportCredentials_RejectsBadPair(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "bad.crt")
+	keyFile := filepath.Join(dir, "bad.key")
+	if err := os.WriteFile(certFile, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatalf("write bad cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, []byte("not a key"), 0o600); err != nil {
+		t.Fatalf("write bad key: %v", err)
+	}
+	if _, err := authGRPCServerTransportCredentials(config.Config{
+		Environment:     "development",
+		GRPCTLSCertFile: certFile,
+		GRPCTLSKeyFile:  keyFile,
+	}); err == nil {
+		t.Fatal("authGRPCServerTransportCredentials accepted a garbage pair")
 	}
 }
 

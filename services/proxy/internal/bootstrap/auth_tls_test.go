@@ -106,6 +106,20 @@ func TestUnit_ContextTransportCredentials_IgnoresAuthCA(t *testing.T) {
 	}
 }
 
+// TestUnit_DialAuthGRPC_RejectsBadCA covers the startup wrapper: a configured
+// CA that cannot be loaded must fail the dial construction, not every request.
+func TestUnit_DialAuthGRPC_RejectsBadCA(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		Environment:        "development",
+		AuthGRPCAddr:       "127.0.0.1:1",
+		AuthGRPCCACertFile: filepath.Join(t.TempDir(), "missing.pem"),
+	}
+	if _, err := dialAuthGRPC(cfg); err == nil {
+		t.Fatal("dialAuthGRPC accepted a missing CA file")
+	}
+}
+
 // TestUnit_AuthTransportCredentials_Handshake is the hermetic handshake
 // negative: a client holding the server CA reaches the gRPC service, while a
 // client holding a different CA fails at the TLS handshake.
