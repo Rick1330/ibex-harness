@@ -15,7 +15,7 @@ from authclient import (
     decode_validate_agent_response,
     encode_validate_agent_request,
 )
-from authclient.channel import assert_auth_target, open_auth_channel
+from authclient.channel import assert_auth_target, open_auth_channel, read_auth_ca
 
 from app.errors import AuthUnavailableError, PermissionDeniedError
 
@@ -55,6 +55,10 @@ class GRPCAgentVerifier(AgentVerifier):
             else assert_trusted_insecure_auth_target(target)
         )
         self._ca_file = ca_file
+        # Warm the CA cache at construction, not on the first tool call, so the
+        # request path never performs blocking file I/O.
+        if ca_file:
+            read_auth_ca(ca_file)
         if timeout_seconds <= 0:
             timeout_seconds = 0.05
         self._timeout = timeout_seconds

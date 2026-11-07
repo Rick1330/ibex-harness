@@ -522,3 +522,15 @@ async def test_issue_operator_session_timeout_maps_to_unavailable() -> None:
         AuthUnavailableError,
         "issue timeout",
     )
+
+
+@pytest.mark.asyncio
+async def test_missing_ca_file_maps_to_auth_unavailable() -> None:
+    rpc = AuthRPC(
+        "127.0.0.1:50051",
+        "",
+        1.0,
+        ca_file="/nonexistent/ibex-auth-ca.pem",
+    )
+    with pytest.raises(AuthUnavailableError, match="CA"):
+        await refresh_operator_session(rpc, refresh_token="refresh")

@@ -65,8 +65,8 @@ func Generate(t *testing.T, dir string, opts Options) Pair {
 	if dir == "" {
 		dir = t.TempDir()
 	}
-	if opts.NoSAN && (len(opts.DNSNames) > 0 || len(opts.IPAddresses) > 0) {
-		t.Fatalf("tlscert: NoSAN cannot be combined with SAN entries")
+	if opts.NoSAN {
+		requireNoSANEntries(t, opts)
 	}
 	applyDefaults(t, &opts)
 
@@ -94,12 +94,37 @@ func Generate(t *testing.T, dir string, opts Options) Pair {
 	}
 }
 
+// requireNoSANEntries keeps the NoSAN/SAN conflict check out of Generate so
+// each conditional stays single-branch for Code Health.
+func requireNoSANEntries(t *testing.T, opts Options) {
+	t.Helper()
+	if len(opts.DNSNames) > 0 {
+		t.Fatalf("tlscert: NoSAN cannot be combined with SAN entries")
+	}
+	if len(opts.IPAddresses) > 0 {
+		t.Fatalf("tlscert: NoSAN cannot be combined with SAN entries")
+	}
+}
+
+// applySANDefaults mirrors the two SAN inputs into the same default only when
+// the caller supplied neither; early returns keep each branch single.
+func applySANDefaults(opts *Options) {
+	if opts.NoSAN {
+		return
+	}
+	if len(opts.DNSNames) > 0 {
+		return
+	}
+	if len(opts.IPAddresses) > 0 {
+		return
+	}
+	opts.DNSNames = []string{"localhost"}
+	opts.IPAddresses = []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+}
+
 func applyDefaults(t *testing.T, opts *Options) {
 	t.Helper()
-	if !opts.NoSAN && len(opts.DNSNames) == 0 && len(opts.IPAddresses) == 0 {
-		opts.DNSNames = []string{"localhost"}
-		opts.IPAddresses = []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
-	}
+	applySANDefaults(opts)
 	now := time.Now()
 	if opts.NotBefore.IsZero() {
 		opts.NotBefore = now.Add(-time.Hour)

@@ -176,10 +176,26 @@ leaf_pair_usable() {
   return 0
 }
 
+# leaf_names_ok verifies that a reusable leaf carries every required SAN. Both
+# leaves are signed by the same CA, so a copied edge pair would otherwise pass
+# the CA/key check while clients dialing auth:9091 reject the certificate.
+leaf_names_ok() {
+  local cert="$1"
+  shift
+  local san wanted
+  san="$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null)" || return 1
+  for wanted in "$@"; do
+    grep -qF -- "$wanted" <<<"$san" || return 1
+  done
+  return 0
+}
+
 if [[ "$FORCE" -eq 0 ]] &&
   ca_pair_usable &&
   leaf_pair_usable "$AUTH_CRT" "$AUTH_KEY" &&
-  leaf_pair_usable "$EDGE_CRT" "$EDGE_KEY"; then
+  leaf_names_ok "$AUTH_CRT" "DNS:auth" "IP Address:127.0.0.1" &&
+  leaf_pair_usable "$EDGE_CRT" "$EDGE_KEY" &&
+  leaf_names_ok "$EDGE_CRT" "DNS:localhost"; then
   echo "CA SHA-256 fingerprint: $(ca_fingerprint)"
   echo "reusing existing CA in $TARGET_DIR"
   echo "TLS material already present in $TARGET_DIR (use --force to regenerate)"
@@ -245,10 +261,12 @@ if [[ "$rotate_ca" -eq 1 ]]; then
   issue_auth=1
   issue_edge=1
 else
-  if ! leaf_pair_usable "$AUTH_CRT" "$AUTH_KEY"; then
+  if ! leaf_pair_usable "$AUTH_CRT" "$AUTH_KEY" ||
+    ! leaf_names_ok "$AUTH_CRT" "DNS:auth" "IP Address:127.0.0.1"; then
     issue_auth=1
   fi
-  if ! leaf_pair_usable "$EDGE_CRT" "$EDGE_KEY"; then
+  if ! leaf_pair_usable "$EDGE_CRT" "$EDGE_KEY" ||
+    ! leaf_names_ok "$EDGE_CRT" "DNS:localhost"; then
     issue_edge=1
   fi
 fi
@@ -279,6 +297,12 @@ if ! grep -q "DNS:auth" <<<"$auth_san"; then
 fi
 if ! grep -q "IP Address:127.0.0.1" <<<"$auth_san"; then
   echo "gen-v1-tls.sh: auth.crt is missing the IP:127.0.0.1 SAN" >&2
+  exit 1
+fi
+
+edge_san="$(openssl x509 -in "$EDGE_CRT" -noout -ext subjectAltName)"
+if ! grep -q "DNS:localhost" <<<"$edge_san"; then
+  echo "gen-v1-tls.sh: edge.crt is missing the DNS:localhost SAN" >&2
   exit 1
 fi
 
