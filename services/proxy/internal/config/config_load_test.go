@@ -139,6 +139,37 @@ func contextFlagLoadCases() []loadCase {
 			wantErr: true,
 		},
 		{
+			name: "context colocated true",
+			env: map[string]string{
+				"IBEX_ENV":               "development",
+				"IBEX_CONTEXT_COLOCATED": "true",
+			},
+			check: func(t *testing.T, cfg Config) {
+				t.Helper()
+				if !cfg.ContextColocated {
+					t.Fatal("ContextColocated = false, want true")
+				}
+			},
+		},
+		{
+			name: "context colocated false",
+			env: map[string]string{
+				"IBEX_ENV":               "development",
+				"IBEX_CONTEXT_COLOCATED": "false",
+			},
+			check: func(t *testing.T, cfg Config) {
+				t.Helper()
+				if cfg.ContextColocated {
+					t.Fatal("ContextColocated = true, want false")
+				}
+			},
+		},
+		{
+			name:    "invalid context colocated",
+			env:     map[string]string{"IBEX_ENV": "development", "IBEX_CONTEXT_COLOCATED": "maybe"},
+			wantErr: true,
+		},
+		{
 			name:    "invalid context embed metadata",
 			env:     map[string]string{"IBEX_ENV": "development", "IBEX_CONTEXT_EMBED_METADATA": "maybe"},
 			wantErr: true,
@@ -211,6 +242,15 @@ func TestLoad_RejectsRemovedModelPolicyPassthrough(t *testing.T) {
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "has been removed") {
 		t.Fatalf("Load() error=%v, want removed fail-open setting error", err)
+	}
+}
+
+func TestLoad_RejectsInvalidContextColocated(t *testing.T) {
+	t.Setenv("IBEX_ENV", "development")
+	t.Setenv("IBEX_CONTEXT_COLOCATED", "maybe")
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "IBEX_CONTEXT_COLOCATED") {
+		t.Fatalf("Load() error=%v, want error naming IBEX_CONTEXT_COLOCATED", err)
 	}
 }
 

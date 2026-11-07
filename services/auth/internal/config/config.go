@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,7 +18,6 @@ import (
 )
 
 const (
-	defaultEnvironment     = "development"
 	defaultServiceName     = "auth"
 	defaultLogLevel        = slog.LevelInfo
 	defaultPort            = "8081"
@@ -25,11 +26,16 @@ const (
 )
 
 type Config struct {
-	Environment            string
-	ServiceName            string
-	LogLevel               slog.Level
-	Port                   string
-	GRPCPort               string
+	Environment string
+	ServiceName string
+	LogLevel    slog.Level
+	Port        string
+	GRPCPort    string
+	// GRPCTLSCertFile and GRPCTLSKeyFile are the AuthService gRPC server
+	// certificate pair (ADR-0097 §4). Both empty is allowed only in
+	// development; outside development the pair is required.
+	GRPCTLSCertFile        string
+	GRPCTLSKeyFile         string
 	PostgresDSN            string
 	RedisURL               string
 	ValidateTokenRPM       int64
@@ -66,6 +72,7 @@ func (c Config) Validate() error {
 		func() error { return validateTOTPSessionConfig(c) },
 		func() error { return validateAuthServiceToken(c) },
 		func() error { return validatePolicySigningConfig(c) },
+		func() error { return validateGRPCTLS(c) },
 		func() error { return validateValidateTokenRPM(c.ValidateTokenRPM) },
 		func() error { return shutdown.ValidateTimeout(c.ShutdownTimeout) },
 	}
@@ -100,6 +107,63 @@ func validatePolicySigningConfig(c Config) error {
 		return fmt.Errorf("IBEX_AUTH_POLICY_SIGNING_KEY_PEM: %w", err)
 	}
 	return nil
+}
+
+// validateGRPCTLS enforces the ADR-0097 §4 gRPC server TLS rule: development may
+// serve plaintext, every other profile must present a certificate pair. When the
+// pair is configured it must load and validate.
+func validateGRPCTLS(c Config) error {
+	certFile := strings.TrimSpace(c.GRPCTLSCertFile)
+	keyFile := strings.TrimSpace(c.GRPCTLSKeyFile)
+	if certFile == "" && keyFile == "" {
+		if c.Environment == "development" {
+			return nil
+		}
+		return fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE and IBEX_AUTH_GRPC_TLS_KEY_FILE are required when IBEX_ENV is not development")
+	}
+	_, err := c.LoadGRPCTLSCertificate()
+	return err
+}
+
+// LoadGRPCTLSCertificate loads and validates the configured gRPC server
+// certificate pair. It returns (nil, nil) when neither path is configured.
+// Config.Validate and the server constructor both call it so they cannot
+// disagree about what a valid pair is. Errors name the environment variable and
+// never echo key material.
+func (c Config) LoadGRPCTLSCertificate() (*tls.Certificate, error) {
+	certFile := strings.TrimSpace(c.GRPCTLSCertFile)
+	keyFile := strings.TrimSpace(c.GRPCTLSKeyFile)
+	switch {
+	case certFile == "" && keyFile == "":
+		return nil, nil
+	case certFile == "":
+		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE is required when IBEX_AUTH_GRPC_TLS_KEY_FILE is set; both must be set together")
+	case keyFile == "":
+		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_KEY_FILE is required when IBEX_AUTH_GRPC_TLS_CERT_FILE is set; both must be set together")
+	}
+	pair, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE/IBEX_AUTH_GRPC_TLS_KEY_FILE: load certificate pair: %w", err)
+	}
+	if len(pair.Certificate) == 0 {
+		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE: certificate file contains no certificate")
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE: parse leaf certificate: %w", err)
+	}
+	pair.Leaf = leaf
+	now := time.Now()
+	if now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+		return nil, fmt.Errorf(
+			"IBEX_AUTH_GRPC_TLS_CERT_FILE: certificate is not valid now (notBefore=%s notAfter=%s)",
+			leaf.NotBefore.UTC().Format(time.RFC3339), leaf.NotAfter.UTC().Format(time.RFC3339),
+		)
+	}
+	if len(leaf.DNSNames) == 0 && len(leaf.IPAddresses) == 0 {
+		return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE: leaf certificate has no DNS or IP subject alternative name; modern clients reject CN-only certificates")
+	}
+	return &pair, nil
 }
 
 // PolicyIssuerConfig normalizes policy-signing settings for Issuer

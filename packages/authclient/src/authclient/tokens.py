@@ -11,6 +11,7 @@ from typing import Protocol
 
 import grpc
 
+from authclient.channel import open_auth_channel
 from authclient.codec import (
     AuthCodecError,
     CreateTokenEncodeFields,
@@ -29,7 +30,6 @@ from authclient.errors import (
     InsufficientPermissionsError,
     TokenNotFoundError,
 )
-from authclient.target import assert_trusted_insecure_auth_target
 
 logger = logging.getLogger(__name__)
 
@@ -90,19 +90,17 @@ class TokenManager(Protocol):
 
 
 class GRPCTokenManager:
-    """Create/List/Revoke dial client after the shared insecure-target trust gate.
+    """Create/List/Revoke dial client: TLS when a CA file is set, else the trust-gated insecure dial.
 
-    Transport matches ``GRPCTokenValidator`` / ``GRPCTokenRevoker``: insecure channel
-    only after ``assert_trusted_insecure_auth_target`` (loopback / private / mesh).
-    Package-wide TLS for non-loopback is a separate authclient change.
+    Transport matches ``GRPCTokenValidator`` / ``GRPCTokenRevoker`` because all three
+    go through :func:`authclient.channel.open_auth_channel` (ADR-0097 §4).
     """
 
-    def __init__(self, target: str, timeout_seconds: float) -> None:
-        trusted = assert_trusted_insecure_auth_target(target)
+    def __init__(self, target: str, timeout_seconds: float, ca_file: str | None = None) -> None:
         timeout = timeout_seconds if timeout_seconds > 0 else 0.05
         self._timeout = timeout
-        # nosec B321 — same trust-gated insecure dial as validate/revoke.
-        self._channel = grpc.aio.insecure_channel(trusted)
+        # Transport choice and the plaintext trust gate both live in the factory.
+        self._channel = open_auth_channel(target, ca_file)
         self._create = self._channel.unary_unary(
             _CREATE_METHOD,
             request_serializer=lambda req: req,

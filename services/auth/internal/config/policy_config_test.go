@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Rick1330/ibex-harness/infra/testing/tlscert"
 )
 
 var (
@@ -68,6 +70,9 @@ func TestValidate_PolicySigningAcceptsValidKey(t *testing.T) {
 	cfg.PolicySigningKeyPEM = policySigningPEM(t)
 	cfg.PolicyEpoch = 3
 	cfg.PolicySigningKeyID = "v2"
+	pair := tlscert.Generate(t, t.TempDir(), tlscert.Options{})
+	cfg.GRPCTLSCertFile = pair.CertFile
+	cfg.GRPCTLSKeyFile = pair.KeyFile
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid signing key: %v", err)
 	}

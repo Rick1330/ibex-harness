@@ -144,12 +144,17 @@ func TestUnit_SetupAuthClients_InvalidAuthCacheConfig(t *testing.T) {
 func TestUnit_AuthTransportCredentials_DevelopmentInsecure(t *testing.T) {
 	t.Parallel()
 
-	creds := authTransportCredentials("development")
-
+	creds, err := authTransportCredentials("development", "")
+	if err != nil {
+		t.Fatalf("authTransportCredentials: %v", err)
+	}
 	if creds.Info().SecurityProtocol != "insecure" {
 		t.Fatalf("protocol=%q", creds.Info().SecurityProtocol)
 	}
-	tlsCreds := authTransportCredentials("production")
+	tlsCreds, err := authTransportCredentials("production", "")
+	if err != nil {
+		t.Fatalf("authTransportCredentials production: %v", err)
+	}
 	if tlsCreds.Info().SecurityProtocol == "insecure" {
 		t.Fatal("production must use TLS")
 	}

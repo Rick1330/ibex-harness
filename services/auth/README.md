@@ -9,7 +9,7 @@ Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC
 | `GET /health` | Liveness — `{"status":"ok","checks":{}}` ([ADR-0022](../../engineering/adr/0022-health-check-contract.md)) |
 | `GET /ready` | Readiness — critical: `postgres` (`SELECT 1`), `grpc` (TCP) |
 | `GET /metrics` | Prometheus text metrics |
-| gRPC `ValidateToken` | Internal token validation (no caller bearer). **Private-network only** — listen for trusted proxy hosts (mTLS / internal net). `IBEX_AUTH_VALIDATE_RPM` is a per-proxy-host aggregate cap when `REDIS_URL` is set (disabled when Redis is empty); it is **not** client-facing internet rate limiting. Constant-cost miss path. |
+| gRPC `ValidateToken` | Internal token validation (no caller bearer). **Private-network only** — outside `development` the listener serves TLS 1.2+ with a per-install CA (`IBEX_AUTH_GRPC_TLS_CERT_FILE` / `_KEY_FILE`), and callers authenticate with the application-level service token, not client certificates. `IBEX_AUTH_VALIDATE_RPM` is a per-proxy-host aggregate cap when `REDIS_URL` is set (disabled when Redis is empty); it is **not** client-facing internet rate limiting. Constant-cost miss path. |
 | gRPC `ValidateAgent` | Checks `agent_id` belongs to token `org_id` and is active (called by proxy after `ValidateToken`) |
 | gRPC `CreateToken` / `RevokeToken` / `ListTokens` | PAT lifecycle (caller bearer required) |
 | gRPC `CreateProviderCredential` / `GetProviderCredential` / `DeleteProviderCredential` / `ListProviderCredentials` | Organization-scoped BYO-provider credential lifecycle; secrets are sealed at rest and responses expose metadata, not plaintext |
@@ -22,7 +22,9 @@ See [.env.example](.env.example) and [ENVIRONMENT_VARIABLES.md](../../engineerin
 
 | Variable | Required | Default |
 | --- | --- | --- |
+| `IBEX_ENV` | Yes (no loader default) | — |
 | `POSTGRES_DSN` | Yes | — |
+| `IBEX_AUTH_GRPC_TLS_CERT_FILE` / `IBEX_AUTH_GRPC_TLS_KEY_FILE` | Outside `development` | — (plaintext only in `development`) |
 | `REDIS_URL` | No | empty (disables revoke pub/sub + ValidateToken RPM) |
 | `IBEX_AUTH_VALIDATE_RPM` | No | `6000` (per proxy-host aggregate) |
 | `IBEX_AUTH_POLICY_SIGNING_KEY_PEM` | Outside development | empty (issuance fails closed) |
@@ -57,7 +59,7 @@ make compose-dev-up
 make db-migrate
 make proto-gen
 
-IBEX_PORT=8081 IBEX_GRPC_PORT=9091 \
+IBEX_ENV=development IBEX_PORT=8081 IBEX_GRPC_PORT=9091 \
   POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable \
   go run ./services/auth/cmd/auth
 ```
@@ -71,12 +73,15 @@ Set-Location $RepoRoot
 make compose-dev-up
 make db-migrate
 make proto-gen
+$env:IBEX_ENV = "development"
 $env:POSTGRES_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"
 $env:IBEX_GRPC_PORT = "9091"
 go run ./services/auth/cmd/auth
 ```
 
 ## gRPC examples (grpcurl)
+
+These examples use `-plaintext`, so they apply only to `IBEX_ENV=development`. Against a TLS listener use `-cacert ca.crt` with the target named in the certificate SAN (`auth` in the Compose profile).
 
 **ValidateToken** (no authorization metadata):
 

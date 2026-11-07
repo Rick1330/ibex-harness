@@ -323,6 +323,7 @@ async def _login_via_auth(
                 settings.auth_grpc_addr,
                 settings.auth_service_token or "",
                 max(settings.auth_timeout_ms / 1000.0, 0.2),
+                settings.auth_grpc_ca_file or "",
             ),
             pat=pat,
         )
@@ -395,7 +396,11 @@ async def _refresh_via_auth(
 async def _refresh_pair_from_auth(settings: Settings, refresh_token: str):
     try:
         return await refresh_operator_session(
-            AuthRPC(settings.auth_grpc_addr, settings.auth_service_token or ""),
+            AuthRPC(
+                settings.auth_grpc_addr,
+                settings.auth_service_token or "",
+                ca_file=settings.auth_grpc_ca_file or "",
+            ),
             refresh_token=refresh_token,
         )
     except AuthFailedError as exc:
@@ -531,6 +536,7 @@ async def _revoke_logout_session(settings: Settings, proofs: _LogoutProofs) -> R
                 settings.auth_grpc_addr,
                 settings.auth_service_token or "",
                 max(settings.auth_timeout_ms / 1000.0, 0.2),
+                settings.auth_grpc_ca_file or "",
             ),
             RevokeSessionParams(
                 session_id=proofs.claims.session_id,
@@ -627,6 +633,7 @@ async def _me_auth(raw: str, settings: Settings) -> dict[str, object]:
                 settings.auth_grpc_addr,
                 settings.auth_service_token or "",
                 max(settings.auth_timeout_ms / 1000.0, 0.2),
+                settings.auth_grpc_ca_file or "",
             ),
             access_token=raw,
         )

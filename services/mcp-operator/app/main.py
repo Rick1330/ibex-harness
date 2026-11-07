@@ -180,6 +180,7 @@ def _build_lifespan(
             or GRPCTokenValidator(
                 runtime.cfg.auth_grpc_addr,
                 timeout_seconds=runtime.cfg.auth_timeout_ms / 1000.0,
+                ca_file=runtime.cfg.auth_grpc_ca_file,
             )
         )
         runtime.state.validator = validator

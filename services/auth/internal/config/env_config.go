@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -13,11 +14,16 @@ import (
 )
 
 type envConfig struct {
-	Environment            string            `env:"IBEX_ENV" envDefault:"development"`
-	ServiceName            string            `env:"IBEX_SERVICE_NAME" envDefault:"auth"`
-	LogLevel               string            `env:"IBEX_LOG_LEVEL" envDefault:"INFO"`
-	Port                   string            `env:"IBEX_PORT" envDefault:"8081"`
-	GRPCPort               string            `env:"IBEX_GRPC_PORT" envDefault:"9091"`
+	Environment string `env:"IBEX_ENV"`
+	ServiceName string `env:"IBEX_SERVICE_NAME" envDefault:"auth"`
+	LogLevel    string `env:"IBEX_LOG_LEVEL" envDefault:"INFO"`
+	Port        string `env:"IBEX_PORT" envDefault:"8081"`
+	GRPCPort    string `env:"IBEX_GRPC_PORT" envDefault:"9091"`
+	// The certificate and key paths are not secret material, but the auth
+	// client contract forbids logging them, so the resolved-config debug dump
+	// redacts them too (matching the proxy's IBEX_AUTH_GRPC_CA_FILE).
+	GRPCTLSCertFile        string            `env:"IBEX_AUTH_GRPC_TLS_CERT_FILE" secret:"true"`
+	GRPCTLSKeyFile         string            `env:"IBEX_AUTH_GRPC_TLS_KEY_FILE" secret:"true"`
 	PostgresDSN            ibexconfig.Secret `env:"POSTGRES_DSN,required" secret:"true"`
 	RedisURL               ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
 	ValidateTokenRPM       int64             `env:"IBEX_AUTH_VALIDATE_RPM" envDefault:"6000"`
@@ -41,6 +47,9 @@ type envConfig struct {
 }
 
 func loadFromEnv() (Config, error) {
+	if err := requireExplicitEnvironment(); err != nil {
+		return Config{}, err
+	}
 	envCfg, err := ibexconfig.Load[envConfig]()
 	if err != nil {
 		return Config{}, err
@@ -58,6 +67,17 @@ func loadFromEnv() (Config, error) {
 	return finalizeAuthConfig(cfg, envCfg)
 }
 
+// requireExplicitEnvironment refuses an ambient default so a deployment that
+// omits IBEX_ENV cannot silently fall into development, where validateGRPCTLS
+// permits a plaintext gRPC server. Mirrors the proxy's check.
+func requireExplicitEnvironment() error {
+	raw, ok := os.LookupEnv("IBEX_ENV")
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fmt.Errorf("IBEX_ENV must be set explicitly to development, staging, or production")
+	}
+	return nil
+}
+
 func baseAuthConfig(envCfg envConfig, level slog.Level) (Config, error) {
 	cfg := Config{
 		Environment:            envCfg.Environment,
@@ -65,6 +85,8 @@ func baseAuthConfig(envCfg envConfig, level slog.Level) (Config, error) {
 		LogLevel:               level,
 		Port:                   envCfg.Port,
 		GRPCPort:               envCfg.GRPCPort,
+		GRPCTLSCertFile:        strings.TrimSpace(envCfg.GRPCTLSCertFile),
+		GRPCTLSKeyFile:         strings.TrimSpace(envCfg.GRPCTLSKeyFile),
 		PostgresDSN:            envCfg.PostgresDSN.String(),
 		RedisURL:               envCfg.RedisURL.String(),
 		ValidateTokenRPM:       envCfg.ValidateTokenRPM,

@@ -122,6 +122,7 @@ def _build_lifespan(
         inner = runtime.injected.validator or GRPCTokenValidator(
             runtime.cfg.auth_grpc_addr,
             timeout_seconds=runtime.cfg.auth_timeout_ms / 1000.0,
+            ca_file=runtime.cfg.auth_grpc_ca_file,
         )
         auth = _with_auth_breaker(inner)
         runtime.state.validator = auth
@@ -194,6 +195,7 @@ def _resolve_agent_verifier(
         GRPCAgentVerifier(
             cfg.auth_grpc_addr,
             timeout_seconds=cfg.auth_timeout_ms / 1000.0,
+            ca_file=cfg.auth_grpc_ca_file,
         ),
         True,
     )

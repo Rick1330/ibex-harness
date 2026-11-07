@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"fmt"
 	"net"
@@ -29,6 +30,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 func main() {
@@ -390,8 +392,12 @@ func newValidateTokenLimiter(
 	return limiter, nil
 }
 
-func newAuthGRPCServer(deps authServiceDeps, reg *ibexmetrics.AuthRegistry) (*grpc.Server, error) {
-	grpcSrv := grpc.NewServer(
+func newAuthGRPCServer(cfg config.Config, deps authServiceDeps, reg *ibexmetrics.AuthRegistry) (*grpc.Server, error) {
+	transport, err := authGRPCServerTransportCredentials(cfg)
+	if err != nil {
+		return nil, err
+	}
+	opts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(
 			grpcserver.MetricsUnaryInterceptor(reg),
 			grpcserver.ValidateTokenRateLimitInterceptor(grpcserver.ValidateRateLimitOpts{
@@ -400,11 +406,36 @@ func newAuthGRPCServer(deps authServiceDeps, reg *ibexmetrics.AuthRegistry) (*gr
 			}),
 			grpcserver.AuthzUnaryInterceptorWithServiceToken(deps.validator, deps.authServiceToken),
 		),
-	)
+	}
+	if transport != nil {
+		opts = append(opts, grpc.Creds(transport))
+	}
+	grpcSrv := grpc.NewServer(opts...)
 	if err := registerAuthGRPC(grpcSrv, deps, reg); err != nil {
 		return nil, fmt.Errorf("register auth grpc: %w", err)
 	}
 	return grpcSrv, nil
+}
+
+// authGRPCServerTransportCredentials returns nil for a plaintext development
+// server and TLS credentials otherwise. The environment check duplicates
+// Config.Validate deliberately: a Config assembled by hand must not silently
+// serve plaintext outside development (ADR-0097 §4, fail closed).
+func authGRPCServerTransportCredentials(cfg config.Config) (credentials.TransportCredentials, error) {
+	pair, err := cfg.LoadGRPCTLSCertificate()
+	if err != nil {
+		return nil, err
+	}
+	if pair == nil {
+		if cfg.Environment != "development" {
+			return nil, fmt.Errorf("IBEX_AUTH_GRPC_TLS_CERT_FILE and IBEX_AUTH_GRPC_TLS_KEY_FILE are required when IBEX_ENV is not development")
+		}
+		return nil, nil
+	}
+	return credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{*pair},
+		MinVersion:   tls.VersionTLS12,
+	}), nil
 }
 
 func setupRevocationPublisher(
@@ -440,7 +471,7 @@ func startAuthGRPC(
 	deps authServiceDeps,
 	reg *ibexmetrics.AuthRegistry,
 ) (*grpc.Server, net.Listener, error) {
-	grpcSrv, err := newAuthGRPCServer(deps, reg)
+	grpcSrv, err := newAuthGRPCServer(cfg, deps, reg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth grpc server: %w", err)
 	}

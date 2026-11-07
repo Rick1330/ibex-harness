@@ -70,8 +70,8 @@ def principal_from_shared(result: shared.ValidateResult) -> GatewayPrincipal:
 class GRPCTokenValidator(TokenValidator):
     """Bounded ValidateToken client. Never logs the access token."""
 
-    def __init__(self, target: str, timeout_seconds: float) -> None:
-        self._inner = shared.GRPCTokenValidator(target, timeout_seconds)
+    def __init__(self, target: str, timeout_seconds: float, ca_file: str | None = None) -> None:
+        self._inner = shared.GRPCTokenValidator(target, timeout_seconds, ca_file)
 
     async def validate(self, access_token: str) -> GatewayPrincipal:
         with get_tracer().start_as_current_span("auth.validate"):

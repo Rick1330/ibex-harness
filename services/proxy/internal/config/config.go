@@ -104,6 +104,11 @@ type Config struct {
 	RedisURL            string
 	AuthGRPCAddr        string
 	AuthValidateTimeout time.Duration
+	// AuthGRPCCACertFile is the PEM CA bundle used to verify the AuthService
+	// gRPC server certificate (IBEX_AUTH_GRPC_CA_FILE, ADR-0097 §4). Empty
+	// selects the environment default: insecure in development, the system
+	// root pool elsewhere. When set, TLS is used in every environment.
+	AuthGRPCCACertFile string
 	// PolicyPublicKeysJSON maps key ids to PEM-encoded AuthService policy-signing
 	// public keys (IBEX_PROXY_POLICY_PUBLIC_KEYS, JSON object). Empty disables
 	// the GAP-002 policy snapshot stage.
@@ -119,6 +124,12 @@ type Config struct {
 	// ContextEnabled gates Assemble on the chat hot path (3.5.D.2). Default false:
 	// Phase 2 directive-only injection. Independent of ContextGRPCTarget (nil client).
 	ContextEnabled bool
+	// ContextColocated declares that the context assembly process shares the
+	// proxy's network namespace and binds a loopback IP literal, so the context
+	// hop is plaintext by design (IBEX_CONTEXT_COLOCATED, ADR-0097 §4). It is the
+	// only way to enable context outside development, and it does not relax the
+	// loopback-target rule: a non-loopback target is still rejected.
+	ContextColocated bool
 	// ContextEmbedMetadata gates embedding the top-level `ibex` JSON block in
 	// non-streaming chat responses (3.5.D.3). Default false: headers-only surface.
 	ContextEmbedMetadata bool

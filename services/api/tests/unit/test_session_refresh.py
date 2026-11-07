@@ -96,10 +96,11 @@ def _patch_channel(stub: AsyncMock):
     channel.unary_unary.return_value = stub
 
     @asynccontextmanager
-    async def _cm(_addr: str):
+    async def _cm(_addr: str, _ca_file: str = ""):
         yield channel
 
-    return patch("app.auth.session_refresh.grpc.aio.insecure_channel", side_effect=_cm)
+    # session_refresh delegates transport selection to the shared factory.
+    return patch("app.auth.session_refresh.open_auth_channel", side_effect=_cm)
 
 
 async def _assert_rpc_raises(
@@ -458,6 +459,33 @@ async def test_issue_operator_session_rejects_untrusted_insecure_target_before_d
     rpc = _rpc("auth.example.com:50051")
     with pytest.raises(ValueError, match="refusing target"):
         await issue_operator_session(rpc, pat="pat")
+
+
+@pytest.mark.asyncio
+async def test_issue_operator_session_forwards_ca_file_to_the_channel_factory() -> None:
+    stub = AsyncMock(return_value=_proto_string(1, "access") + _proto_string(2, "refresh"))
+    calls: list[tuple[str, str]] = []
+
+    @asynccontextmanager
+    async def _cm(addr: str, ca_file: str = ""):
+        calls.append((addr, ca_file))
+        channel = MagicMock()
+        channel.unary_unary.return_value = stub
+        yield channel
+
+    with patch("app.auth.session_refresh.open_auth_channel", side_effect=_cm):
+        # A public host is permitted once TLS verifies AuthService (ADR-0097 §4).
+        pair = await issue_operator_session(
+            AuthRPC(
+                "auth.example.com:50051",
+                "service-token",
+                5.0,
+                "/etc/ibex/auth-ca.pem",
+            ),
+            pat="pat",
+        )
+    assert pair.access_token == "access"
+    assert calls == [("auth.example.com:50051", "/etc/ibex/auth-ca.pem")]
 
 
 @pytest.mark.parametrize("field_num", [1, 2])

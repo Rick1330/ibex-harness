@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError
 
@@ -103,6 +104,65 @@ def test_create_app_postgres_unreachable_not_ready() -> None:
             assert app.state.api.ready is False
             assert app.state.api.ready_error == "database not reachable"
             assert client.get("/ready").status_code == 503
+
+
+def _recording_auth_client(captured: dict[str, object], role: str) -> type:
+    class _Recording:
+        def __init__(
+            self, target: str, timeout_seconds: float, ca_file: str | None = None
+        ) -> None:
+            captured[role] = {
+                "target": target,
+                "timeout_seconds": timeout_seconds,
+                "ca_file": ca_file,
+            }
+
+        async def aclose(self) -> None:
+            return None
+
+    return _Recording
+
+
+async def test_api_lifespan_forwards_the_ca_file_to_every_auth_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleting a ``ca_file=`` argument would silently downgrade one auth hop."""
+    from app.main import ApiAppState, _api_service_lifespan
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "app.main.GRPCTokenValidator", _recording_auth_client(captured, "validator")
+    )
+    monkeypatch.setattr(
+        "authclient.revoke.GRPCTokenRevoker", _recording_auth_client(captured, "revoker")
+    )
+    monkeypatch.setattr(
+        "authclient.tokens.GRPCTokenManager", _recording_auth_client(captured, "token_manager")
+    )
+    monkeypatch.setattr(
+        "authclient.provider_credentials.GRPCProviderCredentialManager",
+        _recording_auth_client(captured, "provider_credentials"),
+    )
+
+    settings = Settings(
+        database_url=None,
+        auth_grpc_addr="auth.example.com:9091",
+        auth_grpc_ca_file="/tmp/ca.pem",
+    )
+    state = ApiAppState(settings=settings)
+
+    async with _api_service_lifespan(state, settings, None):
+        assert state.validator is not None
+
+    assert set(captured) == {
+        "validator",
+        "revoker",
+        "token_manager",
+        "provider_credentials",
+    }
+    for role, call in captured.items():
+        assert call["ca_file"] == "/tmp/ca.pem", role
+        assert call["target"] == "auth.example.com:9091", role
 
 
 def test_wire_publishers_budget_redis_and_preset() -> None:

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"crypto/x509"
 	"fmt"
 	"net"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -42,7 +44,29 @@ func (c Config) Validate() error {
 		c.validateClickHouse,
 		c.validateIdempotency,
 		c.validatePolicySnapshot,
+		c.validateAuthGRPCCACert,
 	)
+}
+
+// validateAuthGRPCCACert checks the optional per-install CA bundle used to
+// verify the AuthService gRPC server certificate (ADR-0097 §4). Empty means the
+// environment default applies; when set, the file must be readable and carry at
+// least one parseable PEM certificate so a misconfigured path fails startup
+// instead of every ValidateToken dial.
+func (c Config) validateAuthGRPCCACert() error {
+	path := strings.TrimSpace(c.AuthGRPCCACertFile)
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("IBEX_AUTH_GRPC_CA_FILE: cannot read CA bundle: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(data) {
+		return fmt.Errorf("IBEX_AUTH_GRPC_CA_FILE: %s contains no parseable PEM certificate", path)
+	}
+	return nil
 }
 
 // validatePolicySnapshot validates the optional GAP-002 policy snapshot key
@@ -208,20 +232,23 @@ func (c Config) validateAuthConfig() error {
 	return c.validateContextGRPCConfig()
 }
 
-// contextCallerInputs groups the three ADR-0096 caller-auth inputs the
-// context-client validators need: the environment gates TLS, the host bounds
-// where the cleartext token may travel, and the token itself.
+// contextCallerInputs groups the ADR-0096/ADR-0097 §4 caller-auth inputs the
+// context-client validators need: the environment and co-location opt-in govern
+// the transport, the host bounds where the cleartext token may travel, and the
+// token itself.
 type contextCallerInputs struct {
 	environment string
+	colocated   bool
 	host        string
 	token       string
 }
 
 // validateContextGRPCConfig allows an empty target (skip dial until D.5 feature flag).
 // When set, the value must be host:port; timeout must be positive after ApplyDefaults.
-// When context assembly is enabled it additionally enforces the ADR-0096 caller
-// constraints: the environment must be TLS-free (development/test), the target
-// must be loopback, and the service token must be present.
+// When context assembly is enabled it additionally enforces the caller
+// constraints: the target must be loopback, plaintext is allowed only in
+// development or with the ADR-0097 §4 co-location opt-in, and the service token
+// must be present.
 func (c Config) validateContextGRPCConfig() error {
 	target := strings.TrimSpace(c.ContextGRPCTarget)
 	if target == "" {
@@ -241,6 +268,7 @@ func (c Config) validateContextGRPCConfig() error {
 	}
 	return c.validateEnabledContextCaller(contextCallerInputs{
 		environment: c.Environment,
+		colocated:   c.ContextColocated,
 		host:        host,
 		token:       c.ContextGRPCServiceToken,
 	})
@@ -249,14 +277,18 @@ func (c Config) validateContextGRPCConfig() error {
 // validateEnabledContextCaller enforces the caller-auth preconditions that only
 // matter when Assemble can actually run. A disabled client never carries the
 // token, so its target and token stay unconstrained beyond host:port.
+//
+// Order is deliberate: the loopback rule is checked before the environment rule
+// so the co-location opt-in can never be reached for a target that would send
+// the cleartext token off the loopback literal (ADR-0097 §4).
 func (c Config) validateEnabledContextCaller(caller contextCallerInputs) error {
 	if !c.ContextEnabled {
 		return nil
 	}
-	if err := validateContextEnvironment(caller.environment); err != nil {
+	if err := validateContextTargetLoopback(caller.host); err != nil {
 		return err
 	}
-	if err := validateContextTargetLoopback(caller.host); err != nil {
+	if err := validateContextEnvironment(caller.environment, caller.colocated); err != nil {
 		return err
 	}
 	return validateContextServiceToken(caller.token)
@@ -277,18 +309,21 @@ func validateContextServiceToken(token string) error {
 	return nil
 }
 
-// validateContextEnvironment refuses to enable context outside development.
-// The context server serves plaintext only; authTransportCredentials would dial
-// TLS for any other environment and every Assemble would fail silently (fail-open
-// to directive-only), which looks healthy while context is dead. "test" is not a
-// deployable IBEX_ENV profile and is TLS-classified by the transport helper, so it
-// is rejected here too.
-func validateContextEnvironment(environment string) error {
-	if environment == envDevelopment {
+// validateContextEnvironment applies the ADR-0097 §4 plaintext boundary to the
+// context hop. Development may dial plaintext because the whole stack is local.
+// Every other profile must state, with IBEX_CONTEXT_COLOCATED=true, that the
+// context process shares the proxy's network namespace and binds a loopback
+// literal; without that opt-in the proxy would dial TLS at a plaintext server
+// and every Assemble would fail open to directive-only, which looks healthy
+// while context is dead. "test" is not a deployable IBEX_ENV profile, so it is
+// rejected too. The opt-in never relaxes the loopback-target rule; that check
+// runs first.
+func validateContextEnvironment(environment string, colocated bool) error {
+	if environment == envDevelopment || colocated {
 		return nil
 	}
 	return fmt.Errorf(
-		"IBEX_CONTEXT_ENABLED=true is not supported when IBEX_ENV=%s: the context service does not serve TLS, so this proxy would dial it with TLS credentials and every Assemble would fail; enable context only in development",
+		"IBEX_CONTEXT_ENABLED=true is not supported when IBEX_ENV=%s unless IBEX_CONTEXT_COLOCATED=true: the context service serves plaintext only, and plaintext context is permitted only when the context process shares the proxy's network namespace on a loopback IP literal (ADR-0097 §4); enable IBEX_CONTEXT_COLOCATED in the co-located profile or leave context disabled",
 		environment,
 	)
 }

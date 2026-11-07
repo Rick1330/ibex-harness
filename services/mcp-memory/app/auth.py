@@ -107,8 +107,8 @@ def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailab
 class GRPCTokenValidator(TokenValidator):
     """Bounded ValidateToken client. Never logs the access token."""
 
-    def __init__(self, target: str, timeout_seconds: float) -> None:
-        self._inner = shared.GRPCTokenValidator(target, timeout_seconds)
+    def __init__(self, target: str, timeout_seconds: float, ca_file: str | None = None) -> None:
+        self._inner = shared.GRPCTokenValidator(target, timeout_seconds, ca_file)
 
     async def validate(self, access_token: str) -> ValidateResult:
         try:
