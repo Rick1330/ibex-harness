@@ -70,6 +70,11 @@ if [[ -z "$TARGET_DIR" ]]; then
   TARGET_DIR="$DEFAULT_TARGET"
 fi
 
+command -v setfacl >/dev/null 2>&1 || {
+  echo "gen-v1-tls.sh: setfacl is required (install the acl package)" >&2
+  exit 1
+}
+
 command -v openssl >/dev/null 2>&1 || {
   echo "gen-v1-tls.sh: openssl is required" >&2
   exit 1
@@ -127,6 +132,14 @@ else
   done
 fi
 
+# AuthService runs as UID 10001 without host UID mapping. Grant only that
+# identity read access; ca.key and edge.key remain operator-only. Reapply after
+# chmod on reuse and after issuance, since chmod 0600 masks named ACL entries.
+allow_auth_key_read() {
+  setfacl -b "$AUTH_KEY"
+  setfacl -m u:10001:r-- "$AUTH_KEY"
+}
+
 # run_openssl keeps the generation output quiet (it contains no key material,
 # only progress banners) while still surfacing the full diagnostics on failure.
 run_openssl() {
@@ -172,7 +185,7 @@ leaf_pair_usable() {
   cert_pub="$(openssl x509 -in "$cert" -noout -pubkey 2>/dev/null)" || return 1
   key_pub="$(openssl pkey -in "$key" -pubout 2>/dev/null)" || return 1
   [[ "$cert_pub" == "$key_pub" ]] || return 1
-  openssl verify -CAfile "$CA_CRT" "$cert" >/dev/null 2>&1 || return 1
+  openssl verify -purpose sslserver -CAfile "$CA_CRT" "$cert" >/dev/null 2>&1 || return 1
   return 0
 }
 
@@ -184,8 +197,9 @@ leaf_names_ok() {
   shift
   local san wanted
   san="$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null)" || return 1
+  san="$(sed '1d' <<<"$san" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" || return 1
   for wanted in "$@"; do
-    grep -qF -- "$wanted" <<<"$san" || return 1
+    grep -qxF -- "$wanted" <<<"$san" || return 1
   done
   return 0
 }
@@ -196,6 +210,7 @@ if [[ "$FORCE" -eq 0 ]] &&
   leaf_names_ok "$AUTH_CRT" "DNS:auth" "IP Address:127.0.0.1" &&
   leaf_pair_usable "$EDGE_CRT" "$EDGE_KEY" &&
   leaf_names_ok "$EDGE_CRT" "DNS:localhost"; then
+  allow_auth_key_read
   echo "CA SHA-256 fingerprint: $(ca_fingerprint)"
   echo "reusing existing CA in $TARGET_DIR"
   echo "TLS material already present in $TARGET_DIR (use --force to regenerate)"
@@ -279,29 +294,30 @@ if [[ "$issue_edge" -eq 1 ]]; then
 fi
 
 chmod 0600 "$CA_KEY" "$AUTH_KEY" "$EDGE_KEY"
+allow_auth_key_read
 chmod 0644 "$CA_CRT" "$AUTH_CRT" "$EDGE_CRT"
 
-if ! openssl verify -CAfile "$CA_CRT" "$AUTH_CRT"; then
+if ! openssl verify -purpose sslserver -CAfile "$CA_CRT" "$AUTH_CRT"; then
   echo "gen-v1-tls.sh: auth.crt does not verify against ca.crt" >&2
   exit 1
 fi
-if ! openssl verify -CAfile "$CA_CRT" "$EDGE_CRT"; then
+if ! openssl verify -purpose sslserver -CAfile "$CA_CRT" "$EDGE_CRT"; then
   echo "gen-v1-tls.sh: edge.crt does not verify against ca.crt" >&2
   exit 1
 fi
 
 auth_san="$(openssl x509 -in "$AUTH_CRT" -noout -ext subjectAltName)"
-if ! grep -q "DNS:auth" <<<"$auth_san"; then
+if ! leaf_names_ok "$AUTH_CRT" "DNS:auth"; then
   echo "gen-v1-tls.sh: auth.crt is missing the DNS:auth SAN" >&2
   exit 1
 fi
-if ! grep -q "IP Address:127.0.0.1" <<<"$auth_san"; then
+if ! leaf_names_ok "$AUTH_CRT" "IP Address:127.0.0.1"; then
   echo "gen-v1-tls.sh: auth.crt is missing the IP:127.0.0.1 SAN" >&2
   exit 1
 fi
 
 edge_san="$(openssl x509 -in "$EDGE_CRT" -noout -ext subjectAltName)"
-if ! grep -q "DNS:localhost" <<<"$edge_san"; then
+if ! leaf_names_ok "$EDGE_CRT" "DNS:localhost"; then
   echo "gen-v1-tls.sh: edge.crt is missing the DNS:localhost SAN" >&2
   exit 1
 fi

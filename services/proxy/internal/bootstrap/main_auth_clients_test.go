@@ -151,11 +151,8 @@ func TestUnit_AuthTransportCredentials_DevelopmentInsecure(t *testing.T) {
 	if creds.Info().SecurityProtocol != "insecure" {
 		t.Fatalf("protocol=%q", creds.Info().SecurityProtocol)
 	}
-	tlsCreds, err := authTransportCredentials("production", "")
-	if err != nil {
-		t.Fatalf("authTransportCredentials production: %v", err)
-	}
-	if tlsCreds.Info().SecurityProtocol == "insecure" {
-		t.Fatal("production must use TLS")
+	_, err = authTransportCredentials("production", "")
+	if err == nil {
+		t.Fatal("production must require a per-install CA")
 	}
 }

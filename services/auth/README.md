@@ -1,3 +1,7 @@
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:07ab075ff907dee78bcda1fe7c174929b5a25dc3143bba4297174adcf384fd81 -->
+
 # Auth service
 
 Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC `AuthService` ([ADR-0006](../../engineering/adr/0006-auth-proto-contract.md), [ADR-0007](../../engineering/adr/0007-auth-token-validation.md), [ADR-0009](../../engineering/adr/0009-permission-bitmap.md)).
@@ -9,7 +13,7 @@ Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC
 | `GET /health` | Liveness — `{"status":"ok","checks":{}}` ([ADR-0022](../../engineering/adr/0022-health-check-contract.md)) |
 | `GET /ready` | Readiness — critical: `postgres` (`SELECT 1`), `grpc` (TCP) |
 | `GET /metrics` | Prometheus text metrics |
-| gRPC `ValidateToken` | Internal token validation (no caller bearer). **Private-network only** — outside `development` the listener serves TLS 1.2+ with a per-install CA (`IBEX_AUTH_GRPC_TLS_CERT_FILE` / `_KEY_FILE`), and callers authenticate with the application-level service token, not client certificates. `IBEX_AUTH_VALIDATE_RPM` is a per-proxy-host aggregate cap when `REDIS_URL` is set (disabled when Redis is empty); it is **not** client-facing internet rate limiting. Constant-cost miss path. |
+| gRPC `ValidateToken` | Internal token validation (does not authenticate callers). **Private-network only** — outside `development` the listener serves TLS 1.2+ with a per-install CA (`IBEX_AUTH_GRPC_TLS_CERT_FILE` / `_KEY_FILE`), without client certificates. The application-level service token applies only to selected lifecycle RPCs. `IBEX_AUTH_VALIDATE_RPM` is a per-proxy-host aggregate cap when `REDIS_URL` is set (disabled when Redis is empty); it is **not** client-facing internet rate limiting. Constant-cost miss path. |
 | gRPC `ValidateAgent` | Checks `agent_id` belongs to token `org_id` and is active (called by proxy after `ValidateToken`) |
 | gRPC `CreateToken` / `RevokeToken` / `ListTokens` | PAT lifecycle (caller bearer required) |
 | gRPC `CreateProviderCredential` / `GetProviderCredential` / `DeleteProviderCredential` / `ListProviderCredentials` | Organization-scoped BYO-provider credential lifecycle; secrets are sealed at rest and responses expose metadata, not plaintext |
@@ -127,3 +131,6 @@ Integration tests use `POSTGRES_TEST_DSN` (default port 5433 test compose) or th
 ```bash
 docker build -f services/auth/Dockerfile .
 ```
+
+
+<!-- /coderabbit-ai-generated:v1 -->

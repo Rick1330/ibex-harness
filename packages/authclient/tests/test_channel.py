@@ -232,6 +232,7 @@ def test_open_auth_channel_uses_tls_with_the_ca_bundle(
 def test_open_auth_channel_treats_empty_ca_file_as_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("IBEX_ENV", "development")
     insecure_channel = object()
 
     def _insecure(target: str) -> object:
@@ -247,6 +248,7 @@ def test_open_auth_channel_treats_empty_ca_file_as_unset(
 
 
 def test_open_auth_channel_gates_the_plaintext_dial(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IBEX_ENV", "development")
     insecure_channel = object()
     gated: list[str] = []
 
@@ -269,6 +271,20 @@ def test_open_auth_channel_gates_the_plaintext_dial(monkeypatch: pytest.MonkeyPa
 def test_open_auth_channel_propagates_the_trust_gate_refusal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("IBEX_ENV", "development")
     monkeypatch.setattr(channel_module.grpc.aio, "insecure_channel", _forbid)
     with pytest.raises(ValueError, match="refusing target"):
         open_auth_channel("auth.example.com:9091")
+
+
+@pytest.mark.parametrize("environment", [None, "", "production", "staging"])
+@pytest.mark.parametrize("ca_file", [None, "", "   "])
+def test_missing_ca_fails_before_dial(monkeypatch, environment, ca_file):
+    if environment is None:
+        monkeypatch.delenv("IBEX_ENV", raising=False)
+    else:
+        monkeypatch.setenv("IBEX_ENV", environment)
+    monkeypatch.setattr(channel_module.grpc.aio, "insecure_channel", _forbid)
+    monkeypatch.setattr(channel_module.grpc.aio, "secure_channel", _forbid)
+    with pytest.raises(channel_module.AuthCAError, match="required outside development"):
+        open_auth_channel("auth:9091", ca_file)
