@@ -3,8 +3,10 @@ package bootstrap
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -113,7 +115,7 @@ func setupAuthClients(
 		_ = dialed.conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
 		return authClients{}, err
 	}
-	logAuthClientsConfigured(log, cfg, validator)
+	logAuthClientsConfigured(log, cfg, validator, dialed.transport)
 	return authClients{
 		validator: validator, agentVerifier: agentVerifier,
 		policyFetcher: policyFetcher, policyVerifier: policyVerifier,
@@ -156,11 +158,16 @@ type dialedAuthGRPC struct {
 	conn      *grpc.ClientConn
 	client    authv1.AuthServiceClient
 	validator auth.TokenValidator
+	transport string
 }
 
 func dialAuthGRPC(cfg config.Config) (dialedAuthGRPC, error) {
+	creds, err := authTransportCredentials(cfg.Environment, cfg.AuthGRPCCACertFile)
+	if err != nil {
+		return dialedAuthGRPC{}, fmt.Errorf("auth grpc transport credentials: %w", err)
+	}
 	conn, err := grpc.NewClient(cfg.AuthGRPCAddr,
-		grpc.WithTransportCredentials(authTransportCredentials(cfg.Environment)),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithChainUnaryInterceptor(proxygrpc.RequestIDUnaryInterceptor()),
 	)
@@ -173,17 +180,21 @@ func dialAuthGRPC(cfg config.Config) (dialedAuthGRPC, error) {
 		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
 		return dialedAuthGRPC{}, fmt.Errorf("auth validator: %w", err)
 	}
-	return dialedAuthGRPC{conn: conn, client: client, validator: grpcValidator}, nil
+	return dialedAuthGRPC{
+		conn: conn, client: client, validator: grpcValidator,
+		transport: creds.Info().SecurityProtocol,
+	}, nil
 }
 
-func logAuthClientsConfigured(log *logger.Logger, cfg config.Config, validator auth.TokenValidator) {
+func logAuthClientsConfigured(log *logger.Logger, cfg config.Config, validator auth.TokenValidator, transport string) {
 	_, cacheActive := validator.(auth.CacheInvalidator)
 	log.InfoCtx(context.Background(), "auth grpc client configured",
 		"addr", cfg.AuthGRPCAddr,
 		"timeout", cfg.AuthValidateTimeout.String(),
 		"auth_cache_enabled", cfg.AuthCache.Enabled,
 		"auth_cache_active", cacheActive,
-		"tls", cfg.Environment != "development",
+		"transport", transport,
+		"custom_ca", strings.TrimSpace(cfg.AuthGRPCCACertFile) != "",
 	)
 }
 
@@ -211,11 +222,12 @@ func setupContextClient(cfg config.Config, log *logger.Logger, m *ibexmetrics.Pr
 }
 
 func dialContextGRPC(cfg config.Config, log *logger.Logger, m *ibexmetrics.ProxyRegistry) (contextClients, error) {
+	creds, err := contextTransportCredentials(cfg)
+	if err != nil {
+		return contextClients{}, fmt.Errorf("context grpc transport credentials: %w", err)
+	}
 	conn, err := grpc.NewClient(cfg.ContextGRPCTarget,
-		// Same env-gated transport as dialAuthGRPC: plaintext only in development.
-		// Staging/production use TLS12. Do not force TLS in development — local auth/context
-		// stacks run without certs (acceptable risk; mirrors auth client).
-		grpc.WithTransportCredentials(authTransportCredentials(cfg.Environment)), // nosemgrep: go.grpc.tls.grpc-client-new-insecure-connection.grpc-client-new-insecure-connection
+		grpc.WithTransportCredentials(creds), // nosemgrep: go.grpc.tls.grpc-client-new-insecure-connection.grpc-client-new-insecure-connection
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithChainUnaryInterceptor(proxygrpc.RequestIDUnaryInterceptor()),
 	)
@@ -233,7 +245,7 @@ func dialContextGRPC(cfg config.Config, log *logger.Logger, m *ibexmetrics.Proxy
 		"target", cfg.ContextGRPCTarget,
 		"timeout", cfg.ContextAssembleTimeout.String(),
 		"caller_auth", callerAuthServiceToken,
-		"tls", cfg.Environment != "development",
+		"transport", contextTransportName(cfg),
 	)
 	return contextClients{client: client, conn: conn}, nil
 }
@@ -275,11 +287,80 @@ func probeContextCallerAuth(prober contextCallerAuthProber, log *logger.Logger) 
 	return nil
 }
 
-func authTransportCredentials(environment string) credentials.TransportCredentials {
-	if environment == "" || environment == "development" {
-		return insecure.NewCredentials()
+// authTransportCredentials selects the AuthService transport. A configured CA
+// bundle always selects TLS, including development, so the per-install CA path
+// is testable locally. Without a CA only development stays plaintext; every
+// other profile, including an empty environment, verifies the server against
+// the system root pool rather than falling back to plaintext.
+func authTransportCredentials(environment, caFile string) (credentials.TransportCredentials, error) {
+	if path := strings.TrimSpace(caFile); path != "" {
+		pool, err := loadAuthCA(path)
+		if err != nil {
+			return nil, err
+		}
+		return credentials.NewTLS(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}), nil
 	}
-	return credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
+	if environment == "development" {
+		return insecure.NewCredentials(), nil
+	}
+	return credentials.NewTLS(&tls.Config{RootCAs: systemCertPool(), MinVersion: tls.VersionTLS12}), nil
+}
+
+// loadAuthCA reads the per-install CA bundle. The error names the variable and
+// includes the path from the underlying *PathError; the path is not secret and
+// the error is only returned at startup, never per request.
+func loadAuthCA(path string) (*x509.CertPool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("IBEX_AUTH_GRPC_CA_FILE: cannot read CA bundle: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(raw) {
+		return nil, fmt.Errorf("IBEX_AUTH_GRPC_CA_FILE contains no parseable PEM certificate")
+	}
+	return pool, nil
+}
+
+// systemCertPool returns the host trust store. A minimal container without
+// ca-certificates has no system pool; an empty pool is used in that case so the
+// dial fails closed at the handshake rather than panicking. Operators in that
+// situation must configure IBEX_AUTH_GRPC_CA_FILE.
+func systemCertPool() *x509.CertPool {
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		return x509.NewCertPool()
+	}
+	return pool
+}
+
+// contextTransportCredentials selects the transport for the context hop.
+// ADR-0097 §4 permits plaintext only on loopback inside one network namespace:
+// when the profile declares the context process co-located (network_mode
+// "service:proxy", binding a loopback literal), the hop is plaintext by design.
+// Every other environment keeps the auth client's environment-derived
+// behaviour, so a non-co-located staging/production proxy still dials TLS rather
+// than silently sending a cleartext service token. The auth dial is never
+// affected by this decision, and the context hop never uses the auth CA.
+func contextTransportCredentials(cfg config.Config) (credentials.TransportCredentials, error) {
+	if cfg.ContextColocated {
+		return insecure.NewCredentials(), nil
+	}
+	return authTransportCredentials(cfg.Environment, "")
+}
+
+// contextTransportName reports the transport contextTransportCredentials
+// selects, derived from the credential itself so the label cannot drift from
+// the dial. It exists because a co-located production hop is plaintext, and
+// logging "tls" for it would be false.
+func contextTransportName(cfg config.Config) string {
+	if cfg.ContextColocated {
+		return "plaintext-loopback-colocated"
+	}
+	creds, err := contextTransportCredentials(cfg)
+	if err == nil && creds.Info().SecurityProtocol == "insecure" {
+		return "plaintext-development"
+	}
+	return "tls"
 }
 
 // authCacheDeps groups logger, metrics, and Redis for auth-cache wrap gating.

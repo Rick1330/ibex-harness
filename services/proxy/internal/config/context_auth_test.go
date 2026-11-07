@@ -13,11 +13,17 @@ var testContextServiceToken = strings.Repeat("0123456789abcdef", 2)
 // server would refuse (ADR-0096: 32-512 characters from [A-Za-z0-9_-]).
 const contextTokenShapeErr = "must be 32-512 characters from [A-Za-z0-9_-]"
 
-// contextAuthCase is one row of the ADR-0096 caller-auth config matrix.
+// contextColocationErr is the ADR-0097 §4 rejection for enabling plaintext
+// context outside development without declaring co-location.
+const contextColocationErr = "IBEX_CONTEXT_COLOCATED"
+
+// contextAuthCase is one row of the ADR-0096 caller-auth / ADR-0097 §4
+// co-location config matrix.
 type contextAuthCase struct {
 	name        string
 	environment string
 	enabled     bool
+	colocated   bool
 	target      string
 	token       string
 	wantErr     string // substring; empty means the config must validate
@@ -27,6 +33,7 @@ func contextAuthConfig(tc contextAuthCase) Config {
 	return Config{
 		Environment:             tc.environment,
 		ContextEnabled:          tc.enabled,
+		ContextColocated:        tc.colocated,
 		ContextGRPCTarget:       tc.target,
 		ContextGRPCServiceToken: tc.token,
 		ContextAssembleTimeout:  defaultContextAssembleTimeout,
@@ -142,7 +149,9 @@ func contextTargetCases() []contextAuthCase {
 	}
 }
 
-// contextEnvironmentCases covers the deployable profiles that refuse context.
+// contextEnvironmentCases covers the ADR-0097 §4 plaintext boundary: development
+// may dial plaintext; every other profile needs the explicit co-location opt-in,
+// and the opt-in never relaxes the loopback-target rule.
 func contextEnvironmentCases() []contextAuthCase {
 	return []contextAuthCase{
 		{
@@ -150,12 +159,38 @@ func contextEnvironmentCases() []contextAuthCase {
 			target: "127.0.0.1:9092", token: testContextServiceToken, wantErr: "IBEX_ENV=test",
 		},
 		{
-			name: "enabled rejects staging", environment: envStaging, enabled: true,
-			target: "127.0.0.1:9092", token: testContextServiceToken, wantErr: "IBEX_ENV=staging",
+			name: "staging without co-location opt-in is rejected", environment: envStaging, enabled: true,
+			target: "127.0.0.1:9092", token: testContextServiceToken, wantErr: contextColocationErr,
 		},
 		{
-			name: "enabled rejects production", environment: envProduction, enabled: true,
-			target: "127.0.0.1:9092", token: testContextServiceToken, wantErr: "IBEX_ENV=production",
+			name: "production without co-location opt-in is rejected", environment: envProduction, enabled: true,
+			target: "127.0.0.1:9092", token: testContextServiceToken, wantErr: contextColocationErr,
+		},
+		{
+			name: "production with co-location opt-in on loopback validates", environment: envProduction, enabled: true,
+			colocated: true, target: "127.0.0.1:9092", token: testContextServiceToken,
+		},
+		{
+			// The opt-in is not a bypass: a non-loopback target still carries the
+			// cleartext service token off the host, so isolation wins.
+			name: "production co-location opt-in cannot bypass loopback isolation", environment: envProduction, enabled: true,
+			colocated: true, target: "10.1.2.3:9092", token: testContextServiceToken, wantErr: "is 10.1.2.3",
+		},
+		{
+			// Loopback is checked before the environment rule, so a missing opt-in
+			// never turns a non-loopback target into an environment-only error.
+			name: "production without opt-in on a non-loopback target is still a loopback rejection", environment: envProduction, enabled: true,
+			target: "10.1.2.3:9092", token: testContextServiceToken, wantErr: "is 10.1.2.3",
+		},
+		{
+			name: "development without co-location opt-in still validates", environment: envDevelopment, enabled: true,
+			target: "127.0.0.1:9092", token: testContextServiceToken,
+		},
+		{
+			// The gate only applies when context can run; a disabled client never
+			// carries the token, so it needs no opt-in.
+			name: "disabled context outside development needs no opt-in", environment: envProduction, enabled: false,
+			target: "127.0.0.1:9092", token: testContextServiceToken,
 		},
 	}
 }
@@ -209,18 +244,25 @@ func TestUnit_ValidateContextServiceToken_NamesVarShapeAndHidesValue(t *testing.
 	}
 }
 
-// TestUnit_ValidateContextEnvironment_NamesEnvAndReason pins the operator-facing
-// message: it must name the environment and the missing-TLS reason.
-func TestUnit_ValidateContextEnvironment_NamesEnvAndReason(t *testing.T) {
+// TestUnit_ValidateContextEnvironment_NamesVarAndBoundary pins the operator-facing
+// ADR-0097 §4 message: it must name the environment and the missing co-location
+// opt-in, and state the plaintext boundary it stands for.
+func TestUnit_ValidateContextEnvironment_NamesVarAndBoundary(t *testing.T) {
 	t.Parallel()
-	err := validateContextEnvironment(envStaging)
+	err := validateContextEnvironment(envStaging, false)
 	if err == nil {
-		t.Fatal("want error for staging")
+		t.Fatal("want error for staging without the co-location opt-in")
 	}
-	for _, want := range []string{"IBEX_ENV=staging", "TLS"} {
+	for _, want := range []string{"IBEX_ENV=staging", "IBEX_CONTEXT_COLOCATED", "network namespace", "loopback"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error=%v must contain %q", err, want)
 		}
+	}
+	if err := validateContextEnvironment(envStaging, true); err != nil {
+		t.Fatalf("co-located staging error=%v, want accept", err)
+	}
+	if err := validateContextEnvironment(envDevelopment, false); err != nil {
+		t.Fatalf("development error=%v, want accept", err)
 	}
 }
 
@@ -234,7 +276,7 @@ func TestValidate_AcceptsEnabledContextInDevelopment(t *testing.T) {
 	}
 }
 
-func TestValidate_RejectsEnabledContextOutsideDevelopment(t *testing.T) {
+func TestValidate_RejectsEnabledContextOutsideDevelopmentWithoutColocation(t *testing.T) {
 	t.Parallel()
 	for _, environment := range []string{envStaging, envProduction} {
 		environment := environment
@@ -246,9 +288,27 @@ func TestValidate_RejectsEnabledContextOutsideDevelopment(t *testing.T) {
 			cfg.ContextEnabled = true
 			cfg.ContextGRPCServiceToken = testContextServiceToken
 			err := cfg.Validate()
-			if err == nil || !strings.Contains(err.Error(), "IBEX_CONTEXT_ENABLED=true is not supported") {
-				t.Fatalf("Validate() error=%v, want context environment rejection", err)
+			if err == nil || !strings.Contains(err.Error(), contextColocationErr) {
+				t.Fatalf("Validate() error=%v, want rejection naming %s", err, contextColocationErr)
 			}
 		})
+	}
+}
+
+// TestValidate_AcceptsColocatedContextOutsideDevelopment pins the profile the
+// ADR-0097 §4 opt-in exists for: production, loopback literal, explicit
+// co-location, valid token.
+func TestValidate_AcceptsColocatedContextOutsideDevelopment(t *testing.T) {
+	t.Parallel()
+	cfg := validProxyConfig()
+	cfg.Environment = envProduction
+	cfg.RedisURL = "redis://redis.internal:6379/0"
+	cfg.ContextEnabled = true
+	cfg.ContextColocated = true
+	cfg.ContextGRPCServiceToken = testContextServiceToken
+	cfg.LLMMode = envLLMModeLive
+	cfg.OpenAI.APIKey = "sk-test-not-a-real-credential"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error=%v, want accept", err)
 	}
 }

@@ -194,6 +194,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("IBEX_AUTH_GRPC_ADDR", "IBEX_MEMORY_AUTH_GRPC_ADDR"),
         description="Auth service gRPC target for ValidateToken",
     )
+    auth_grpc_ca_file: str | None = Field(
+        default=None,
+        validation_alias="IBEX_AUTH_GRPC_CA_FILE",
+        description="CA bundle PEM used to verify AuthService gRPC TLS (ADR-0097 §4); "
+        "unset keeps the trust-gated plaintext dial",
+    )
     auth_timeout_ms: int = Field(default=50, ge=1)
 
     memory_cache_ttl_seconds: int = Field(default=3600, ge=60)

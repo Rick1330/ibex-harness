@@ -43,6 +43,7 @@ def build_stdio_runtime(settings: Settings) -> _StdioRuntime:
     verifier: AgentVerifier = GRPCAgentVerifier(
         settings.auth_grpc_addr,
         timeout_seconds=settings.auth_timeout_ms / 1000.0,
+        ca_file=settings.auth_grpc_ca_file,
     )
     mcp = build_mcp_server(
         McpServerWiring(

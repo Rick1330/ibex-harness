@@ -36,6 +36,45 @@ def test_not_ready_lifespan_still_flushes_tracing() -> None:
     shutdown.assert_called_once_with()
 
 
+async def test_memory_lifespan_forwards_the_ca_file_to_the_validator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleting ``ca_file=`` from the memory lifespan would downgrade the dial."""
+    from app.main import MemoryAppState, _memory_service_lifespan
+
+    captured: dict[str, object] = {}
+
+    class _RecordingValidator:
+        def __init__(
+            self, target: str, timeout_seconds: float, ca_file: str | None = None
+        ) -> None:
+            captured.update(
+                target=target,
+                timeout_seconds=timeout_seconds,
+                ca_file=ca_file,
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr("app.main.GRPCTokenValidator", _RecordingValidator)
+    monkeypatch.setattr("app.main.configure_tracing", lambda *_a, **_k: None)
+    monkeypatch.setattr("app.main.shutdown_tracing", lambda *_a, **_k: None)
+
+    settings = Settings(
+        database_url="",
+        auth_grpc_addr="auth.example.com:9091",
+        auth_grpc_ca_file="/tmp/ca.pem",
+    )
+    state = MemoryAppState(settings=settings)
+
+    async with _memory_service_lifespan(state, settings, None):
+        assert state.validator is not None
+
+    assert captured["target"] == "auth.example.com:9091"
+    assert captured["ca_file"] == "/tmp/ca.pem"
+
+
 @pytest.mark.asyncio
 async def test_build_embed_no_token_raises() -> None:
     from app.main import _build_embed

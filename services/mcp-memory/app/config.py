@@ -42,6 +42,12 @@ class Settings(BaseSettings):
         default="127.0.0.1:9091",
         validation_alias=AliasChoices("IBEX_AUTH_GRPC_ADDR", "IBEX_MCP_AUTH_GRPC_ADDR"),
     )
+    auth_grpc_ca_file: str | None = Field(
+        default=None,
+        validation_alias="IBEX_AUTH_GRPC_CA_FILE",
+        description="CA bundle PEM used to verify AuthService gRPC TLS (ADR-0097 §4); "
+        "unset keeps the trust-gated plaintext dial",
+    )
     auth_timeout_ms: int = Field(default=50, ge=1, le=5000)
     clickhouse_url: str = Field(default="")
     audit_queue_size: int = Field(default=1024, ge=1, le=100_000)

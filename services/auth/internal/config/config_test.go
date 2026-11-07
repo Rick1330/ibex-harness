@@ -2,8 +2,12 @@ package config
 
 import (
 	"log/slog"
+	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/Rick1330/ibex-harness/infra/testing/tlscert"
 )
 
 func validAuthConfig() Config {
@@ -71,6 +75,7 @@ func TestValidate_rejectsInvalidConfig(t *testing.T) {
 }
 
 func TestLoadRejectsNonPositiveValidateTokenRPM(t *testing.T) {
+	t.Setenv("IBEX_ENV", "development")
 	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
 	t.Setenv("IBEX_AUTH_VALIDATE_RPM", "0")
 	if _, err := Load(); err == nil {
@@ -79,10 +84,31 @@ func TestLoadRejectsNonPositiveValidateTokenRPM(t *testing.T) {
 }
 
 func TestLoadRejectsNonPositiveShutdownTimeout(t *testing.T) {
+	t.Setenv("IBEX_ENV", "development")
 	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
 	t.Setenv("IBEX_SHUTDOWN_TIMEOUT", "0s")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for zero shutdown timeout")
+	}
+}
+
+// TestLoad_RequiresExplicitEnvironment pins the fail-closed startup rule: an
+// unset or empty IBEX_ENV must not fall back to development, because
+// validateGRPCTLS treats development as permission to serve plaintext.
+func TestLoad_RequiresExplicitEnvironment(t *testing.T) {
+	t.Setenv("IBEX_ENV", "")
+	for _, state := range []string{"empty", "unset"} {
+		t.Run(state, func(t *testing.T) {
+			if state == "unset" {
+				if err := os.Unsetenv("IBEX_ENV"); err != nil {
+					t.Fatalf("Unsetenv: %v", err)
+				}
+			}
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), "IBEX_ENV must be set explicitly") {
+				t.Fatalf("Load() error=%v, want explicit environment error", err)
+			}
+		})
 	}
 }
 
@@ -268,6 +294,9 @@ func TestValidate_AuthServiceTokenRequiredOutsideDevelopment(t *testing.T) {
 			}
 			cfg.AuthServiceToken = "service-secret"
 			cfg.PolicySigningKeyPEM = policySigningPEM(t)
+			pair := tlscert.Generate(t, t.TempDir(), tlscert.Options{})
+			cfg.GRPCTLSCertFile = pair.CertFile
+			cfg.GRPCTLSKeyFile = pair.KeyFile
 			if err := cfg.Validate(); err != nil {
 				t.Fatalf("configured service token should validate: %v", err)
 			}
@@ -338,6 +367,7 @@ func TestLoad_TOTPEnabledRequiresJWTFields(t *testing.T) {
 }
 
 func TestParseLogLevelViaLoad(t *testing.T) {
+	t.Setenv("IBEX_ENV", "development")
 	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
 	for _, level := range []string{"INFO", "WARN", "WARNING", "ERROR", "debug"} {
 		t.Setenv("IBEX_LOG_LEVEL", level)

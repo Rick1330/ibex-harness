@@ -20,6 +20,13 @@ source = { directory = "../authclient" }
 requires-dist = [{ name = "grpcio", marker = "extra == 'grpc'", specifier = ">=1.60,<2" }]
 provides-extras = ["grpc"]
 
+[package.metadata.requires-dev]
+dev = [
+    { name = "grpcio", specifier = ">=1.60,<2" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff", specifier = ">=0.6" },
+]
+
 [[package]]
 name = "colorama"
 version = "0.4.6"

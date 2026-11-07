@@ -57,10 +57,12 @@ See [.env.example](.env.example).
 | `IBEX_PORT` | `8080` | HTTP listen port |
 | `REDIS_URL` | (empty in development) | Required outside development for shared rate limiting; Redis operation failure returns `503 SERVICE_DEGRADED` before provider work. Development may omit it and use the explicit Noop limiter. |
 | `IBEX_AUTH_GRPC_ADDR` | `127.0.0.1:9091` | Auth gRPC target |
+| `IBEX_AUTH_GRPC_CA_FILE` | (empty) | PEM CA bundle used to verify AuthService TLS (ADR-0097 §4); when set, the dial uses TLS 1.2+ in every environment |
 | `IBEX_AUTH_VALIDATE_TIMEOUT` | `50ms` | Per-request validate budget (also bounds `IssuePolicySnapshot`) |
 | `IBEX_PROXY_POLICY_PUBLIC_KEYS` | (empty; stage disabled) | JSON `key_id` → PEM RSA public keys for `policy-snapshot.v1` verification (GAP-002); required outside development when protected routes are mounted |
 | `IBEX_PROXY_POLICY_MIN_EPOCH` | `0` | Minimum accepted policy-signing epoch |
-| `IBEX_CONTEXT_ENABLED` | `false` | Master switch for Assemble on chat path; `false` = Phase 2 directive-only. With a target set, rejected outside `IBEX_ENV=development` (the context server has no TLS) |
+| `IBEX_CONTEXT_ENABLED` | `false` | Master switch for Assemble on chat path; `false` = Phase 2 directive-only. With a target set, rejected outside `IBEX_ENV=development` unless `IBEX_CONTEXT_COLOCATED=true` (the context server has no TLS) |
+| `IBEX_CONTEXT_COLOCATED` | `false` | Fail-closed opt-in (ADR-0097 §4): the context process shares the proxy's network namespace and binds a loopback IP literal. It never relaxes the loopback-target rule |
 | `IBEX_CONTEXT_EMBED_METADATA` | `false` | Embed top-level `ibex` JSON in non-streaming responses (3.5.D.3) |
 | `IBEX_CONTEXT_GRPC_TARGET` | `127.0.0.1:9092` | Context assembly gRPC dial target (empty skips dial); must resolve to loopback when context is enabled |
 | `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` | (empty) | Shared caller token sent as exactly one `x-ibex-context-service-token` metadata entry ([ADR-0096](../../engineering/adr/0096-context-grpc-caller-authentication.md)); required when enabled and the target is set. Secret; never logged |
@@ -133,8 +135,9 @@ non-fatal because per-request assembly is fail-open.
 Config validation requires the token when `IBEX_CONTEXT_ENABLED=true` and
 `IBEX_CONTEXT_GRPC_TARGET` is non-empty, requires that target to resolve exclusively to
 loopback (the token is cleartext metadata), and rejects context enabled outside
-`IBEX_ENV=development` while the context server serves plaintext only. There is no bypass
-flag.
+`IBEX_ENV=development` unless `IBEX_CONTEXT_COLOCATED=true` declares that the context
+process shares the proxy's network namespace and binds a loopback IP literal (ADR-0097 §4).
+The opt-in never relaxes the loopback rule: a non-loopback target is still rejected.
 
 This authenticates the caller, not the user: the token is a shared secret and the asserted
 `PrincipalContext` is unsigned, so a token holder can still assert any principal, and tenant
@@ -161,14 +164,14 @@ Terminal 1 — auth:
 
 ```bash
 make compose-dev-up && make db-migrate
-POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable \
+IBEX_ENV=development POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable \
   IBEX_GRPC_PORT=9091 go run ./services/auth/cmd/auth
 ```
 
 Terminal 2 — proxy:
 
 ```bash
-IBEX_AUTH_GRPC_ADDR=127.0.0.1:9091 REDIS_URL=redis://localhost:6379/0 \
+IBEX_ENV=development IBEX_AUTH_GRPC_ADDR=127.0.0.1:9091 REDIS_URL=redis://localhost:6379/0 \
   POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable \
   go run ./services/proxy/cmd/proxy
 ```
@@ -184,6 +187,7 @@ $RepoRoot = 'C:\path\to\ibex-harness'   # set to your clone
 Set-Location $RepoRoot
 make compose-dev-up
 make db-migrate
+$env:IBEX_ENV = "development"
 $env:POSTGRES_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"
 $env:IBEX_GRPC_PORT = "9091"
 go run ./services/auth/cmd/auth
@@ -194,6 +198,7 @@ Terminal 2 — proxy (new window; auth must stay running):
 ```powershell
 $RepoRoot = 'C:\path\to\ibex-harness'   # set to your clone
 Set-Location $RepoRoot
+$env:IBEX_ENV = "development"
 $env:IBEX_AUTH_GRPC_ADDR = "127.0.0.1:9091"
 $env:REDIS_URL = "redis://localhost:6379/0"
 $env:POSTGRES_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"

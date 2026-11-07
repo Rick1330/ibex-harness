@@ -285,3 +285,56 @@ func TestUnit_CollectGRPCConns(t *testing.T) {
 		t.Fatalf("len=%d, want 0", len(got))
 	}
 }
+
+// TestUnit_ContextTransportCredentials pins the ADR-0097 §4 decision: a co-located
+// context hop is plaintext even in production, development stays plaintext as
+// before, and a non-co-located production proxy still dials TLS. SecurityProtocol
+// is the observable the gRPC insecure credential reports ("insecure"); the TLS
+// credential reports ("tls"). The log name must match the same decision so the
+// startup line cannot claim TLS for a plaintext hop.
+func TestUnit_ContextTransportCredentials(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		environment string
+		colocated   bool
+		wantProto   string
+		wantLogged  string
+	}{
+		{
+			name: "colocated production is plaintext", environment: "production", colocated: true,
+			wantProto: "insecure", wantLogged: "plaintext-loopback-colocated",
+		},
+		{
+			name: "development is plaintext", environment: "development", colocated: false,
+			wantProto: "insecure", wantLogged: "plaintext-development",
+		},
+		{
+			name: "production without colocation is TLS", environment: "production", colocated: false,
+			wantProto: "tls", wantLogged: "tls",
+		},
+		{
+			// An environment that was never resolved must not fall back to
+			// plaintext: only development may skip TLS.
+			name: "empty environment without colocation is TLS", environment: "", colocated: false,
+			wantProto: "tls", wantLogged: "tls",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := config.Config{Environment: tc.environment, ContextColocated: tc.colocated}
+			creds, err := contextTransportCredentials(cfg)
+			if err != nil {
+				t.Fatalf("contextTransportCredentials: %v", err)
+			}
+			if got := creds.Info().SecurityProtocol; got != tc.wantProto {
+				t.Fatalf("SecurityProtocol=%q, want %q", got, tc.wantProto)
+			}
+			if got := contextTransportName(cfg); got != tc.wantLogged {
+				t.Fatalf("contextTransportName=%q, want %q", got, tc.wantLogged)
+			}
+		})
+	}
+}

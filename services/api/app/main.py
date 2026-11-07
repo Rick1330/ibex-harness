@@ -246,16 +246,24 @@ def _wire_auth_clients(state: ApiAppState, cfg: Settings) -> None:
     if state.token_revoker is None:
         from authclient.revoke import GRPCTokenRevoker
 
-        state.token_revoker = GRPCTokenRevoker(cfg.auth_grpc_addr, timeout_seconds=timeout)
+        state.token_revoker = GRPCTokenRevoker(
+            cfg.auth_grpc_addr,
+            timeout_seconds=timeout,
+            ca_file=cfg.auth_grpc_ca_file,
+        )
     if state.token_manager is None:
         from authclient.tokens import GRPCTokenManager
 
-        state.token_manager = GRPCTokenManager(cfg.auth_grpc_addr, timeout_seconds=timeout)
+        state.token_manager = GRPCTokenManager(
+            cfg.auth_grpc_addr,
+            timeout_seconds=timeout,
+            ca_file=cfg.auth_grpc_ca_file,
+        )
     if state.provider_credential_manager is None:
         from authclient.provider_credentials import GRPCProviderCredentialManager
 
         state.provider_credential_manager = GRPCProviderCredentialManager(
-            cfg.auth_grpc_addr, timeout_seconds=timeout
+            cfg.auth_grpc_addr, timeout_seconds=timeout, ca_file=cfg.auth_grpc_ca_file
         )
 
 
@@ -371,6 +379,7 @@ async def _api_service_lifespan(
     auth = validator or GRPCTokenValidator(
         cfg.auth_grpc_addr,
         timeout_seconds=cfg.auth_timeout_ms / 1000.0,
+        ca_file=cfg.auth_grpc_ca_file,
     )
     state.validator = auth
     _wire_runtime_defaults(state, cfg)

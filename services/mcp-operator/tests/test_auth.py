@@ -66,7 +66,11 @@ async def test_grpc_validator_maps_shared_errors(monkeypatch: pytest.MonkeyPatch
     from app import auth as auth_mod
 
     class _FakeInner:
-        def __init__(self, target: str, timeout_seconds: float) -> None:
+        def __init__(
+            self, target: str, timeout_seconds: float, ca_file: str | None = None
+        ) -> None:
+            self.target = target
+            self.ca_file = ca_file
             self.result: object = ValidateResult(org_id=ORG, permissions=3)
             self.error: Exception | None = None
             self.ready_value = True
@@ -84,7 +88,8 @@ async def test_grpc_validator_maps_shared_errors(monkeypatch: pytest.MonkeyPatch
             self.closed = True
 
     monkeypatch.setattr(auth_mod.shared, "GRPCTokenValidator", _FakeInner)
-    validator = auth_mod.GRPCTokenValidator("127.0.0.1:1", 0.05)
+    validator = auth_mod.GRPCTokenValidator("127.0.0.1:1", 0.05, "/etc/ibex/auth-ca.pem")
+    assert validator._inner.ca_file == "/etc/ibex/auth-ca.pem"
 
     principal = await validator.validate("tok")
     assert principal.org_id == ORG
