@@ -120,7 +120,9 @@ class Settings(BaseSettings):
 
 def _require_auth_ca_outside_development(environment: str, ca_file: str | None) -> None:
     """Outside development the AuthService CA is mandatory (ADR-0097 §4)."""
-    if environment != "development" and not (ca_file or "").strip():
+    if environment == "development":
+        return
+    if not (ca_file or "").strip():
         raise ValueError(
             "IBEX_AUTH_GRPC_CA_FILE is required outside development; "
             "plaintext AuthService connections are not allowed"
