@@ -103,4 +103,6 @@ def test_enabled_protected_profile_requires_auth_ca() -> None:
     }
     with pytest.raises(ValueError, match="IBEX_AUTH_GRPC_CA_FILE"):
         Settings(**kwargs)
+    with pytest.raises(ValueError, match="IBEX_AUTH_GRPC_CA_FILE"):
+        Settings(**kwargs, auth_grpc_ca_file="   ")
     Settings(**kwargs, auth_grpc_ca_file="/etc/ibex/auth-grpc-ca.pem")
