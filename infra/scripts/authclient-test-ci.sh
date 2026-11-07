@@ -18,6 +18,6 @@ fi
 cd "$PKG_DIR"
 # The dev dependency group pins grpcio, so the channel tests run without an
 # undeclared ad-hoc `--extra grpc --with pytest` invocation.
-uv sync --frozen
+uv sync --frozen  # NOSONAR shell:S8541 — local path package; only first-party authclient is built
 .venv/bin/ruff check src tests
 .venv/bin/pytest -q tests

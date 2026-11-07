@@ -61,20 +61,23 @@ def test_read_auth_ca_unreadable_path_names_the_env_var(tmp_path: Path) -> None:
 
 
 def test_read_auth_ca_rejects_blank_bundle(tmp_path: Path) -> None:
+    path = _write_ca(tmp_path, b"  \n\t\n")
     with pytest.raises(ValueError, match="IBEX_AUTH_GRPC_CA_FILE"):
-        read_auth_ca(_write_ca(tmp_path, b"  \n\t\n"))
+        read_auth_ca(path)
 
 
 def test_read_auth_ca_rejects_a_non_certificate_bundle(tmp_path: Path) -> None:
     # These bytes are non-empty and ASCII, but no PEM certificate is parseable.
     garbage = b"-----BEGIN CERTIFICATE-----\nnot-a-certificate\n-----END CERTIFICATE-----\n"
+    path = _write_ca(tmp_path, garbage)
     with pytest.raises(ValueError, match="IBEX_AUTH_GRPC_CA_FILE"):
-        read_auth_ca(_write_ca(tmp_path, garbage))
+        read_auth_ca(path)
 
 
 def test_read_auth_ca_rejects_non_ascii_bytes(tmp_path: Path) -> None:
+    path = _write_ca(tmp_path, b"\xff\xfe\x00garbage")
     with pytest.raises(ValueError, match="IBEX_AUTH_GRPC_CA_FILE"):
-        read_auth_ca(_write_ca(tmp_path, b"\xff\xfe\x00garbage"))
+        read_auth_ca(path)
 
 
 # The markers are assembled at runtime rather than written as one literal so a
@@ -99,8 +102,9 @@ def test_read_auth_ca_rejects_a_combined_certificate_and_private_key(
     tmp_path: Path,
 ) -> None:
     payload = _PEM_BUNDLE + _PRIVATE_KEY_BLOCK
+    path = _write_ca(tmp_path, payload)
     with pytest.raises(ValueError, match="certificates only") as excinfo:
-        read_auth_ca(_write_ca(tmp_path, payload))
+        read_auth_ca(path)
     message = str(excinfo.value)
     assert "IBEX_AUTH_GRPC_CA_FILE" in message
     # The rejection must never echo key material.
@@ -109,8 +113,9 @@ def test_read_auth_ca_rejects_a_combined_certificate_and_private_key(
 
 def test_read_auth_ca_rejects_an_encrypted_private_key(tmp_path: Path) -> None:
     payload = _PEM_BUNDLE + _ENCRYPTED_PRIVATE_KEY_BLOCK
+    path = _write_ca(tmp_path, payload)
     with pytest.raises(ValueError, match="certificates only") as excinfo:
-        read_auth_ca(_write_ca(tmp_path, payload))
+        read_auth_ca(path)
     assert "IBEX_AUTH_GRPC_CA_FILE" in str(excinfo.value)
     assert "MIIBVQIBADAN" not in str(excinfo.value)
 
