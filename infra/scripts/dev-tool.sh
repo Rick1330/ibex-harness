@@ -73,9 +73,17 @@ compose() {
       read -r -a podman_bin <<<"$(podman_engine)"
       "${podman_bin[@]}" compose "$@" ;;
     podman-compose)
+      # podman-compose selects its engine with --podman-path, a single
+      # executable; it has no lever for `sudo -n podman`. Refuse the rootful
+      # combination instead of running Compose in the rootless store while the
+      # health check inspects the rootful one.
       local -a podman_bin
       read -r -a podman_bin <<<"$(podman_engine)"
-      PODMAN="${podman_bin[*]}" podman-compose "$@" ;;
+      if (( ${#podman_bin[@]} > 1 )); then
+        echo 'podman-compose cannot target the rootful podman store; install the podman compose provider or run as the store owner' >&2
+        return 2
+      fi
+      podman-compose "$@" ;;
     *) echo "unsupported container runtime: $(runtime)" >&2; return 2 ;;
   esac
 }
@@ -409,9 +417,9 @@ case "${1:-help}" in
   e2e-phase25) bash "$ROOT_DIR/infra/scripts/e2e_phase25.sh" ;;
   e2e-smoke-p3-memory) bash "$ROOT_DIR/infra/scripts/verify_phase3_memory_e2e.sh" ;;
   mcp-conformance) bash "$ROOT_DIR/infra/scripts/mcp-conformance.sh" ;;
-  v1-up) v1_up ;;
-  v1-down) compose_with_mode v1 down ;;
-  v1-migrate) v1_migrate ;;
+  v1-up) v1_up "$@" ;;
+  v1-down) v1_down "$@" ;;
+  v1-migrate) v1_migrate "$@" ;;
   v1-logs) compose_with_mode v1 logs -f ;;
   v1-ps) compose_with_mode v1 ps ;;
   v1-secrets) bash "$ROOT_DIR/infra/scripts/gen-v1-secrets.sh" ;;
@@ -422,6 +430,7 @@ case "${1:-help}" in
       build) compose_with_mode v1 build "$@" ;;
       up) v1_up "$@" ;;
       down) v1_down "$@" ;;
+      stop) compose_with_mode v1 stop "$@" ;;
       wait) v1_wait_healthy ;;
       url) v1_url ;;
       secrets) bash "$ROOT_DIR/infra/scripts/gen-v1-secrets.sh" ;;
@@ -429,7 +438,7 @@ case "${1:-help}" in
       migrate) v1_migrate "$@" ;;
       logs) compose_with_mode v1 logs -f "$@" ;;
       ps) compose_with_mode v1 ps "$@" ;;
-      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-logs|v1-ps|v1-bootstrap-pat or v1 build|up|down|wait|url|secrets|bootstrap-pat|migrate|logs|ps' >&2; exit 2 ;;
+      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-logs|v1-ps|v1-bootstrap-pat or v1 build|up|down|stop|wait|url|secrets|bootstrap-pat|migrate|logs|ps' >&2; exit 2 ;;
     esac ;;
   *) echo "unknown command: $1" >&2; echo 'run: make help' >&2; exit 2 ;;
 esac

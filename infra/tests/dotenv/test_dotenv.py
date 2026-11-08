@@ -106,6 +106,26 @@ class InterpolationTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual(read("A=${MISSING:+ready}\n", "A"), "")
 
+    def test_escaped_quote_inside_double_quotes(self):
+        self.assertEqual(read('A="say \\"hi\\""\n', "A"), 'say "hi"')
+
+    def test_escaped_quote_does_not_end_the_value(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read('A="8443${MISSING:+\\"x\\"}"\n', "A"), "8443")
+
+    def test_required_empty_raises(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(dotenv.DotenvError):
+                read("PORT=\nA=${PORT:?set PORT}\n", "A")
+
+    def test_required_unset_raises(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(dotenv.DotenvError):
+                read("A=${MISSING?set it}\n", "A")
+
+    def test_required_returns_value_when_set(self):
+        self.assertEqual(read("PORT=8443\nA=${PORT:?set PORT}\n", "A"), "8443")
+
     def test_double_dollar_is_literal(self):
         self.assertEqual(read("A=pa$$word\n", "A"), "pa$word")
 

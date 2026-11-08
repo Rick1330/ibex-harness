@@ -224,7 +224,12 @@ func writeRestrictedFile(path, value string) error {
 	}
 	defer func() { _ = dirHandle.Close() }()
 	if err := dirHandle.Sync(); err != nil {
-		return err
+		// The rename already published the file. Remove it so a failed delivery
+		// cannot leave a credential the rolled-back transaction never issued.
+		_ = os.Remove(path)
+		return fmt.Errorf(
+			"sync the PAT directory %q: %w (the filesystem must support directory fsync)", dir, err,
+		)
 	}
 	return nil
 }

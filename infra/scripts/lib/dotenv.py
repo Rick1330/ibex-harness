@@ -22,6 +22,10 @@ import os
 import string
 import sys
 
+
+class DotenvError(ValueError):
+    """A Compose-style required-variable substitution failed."""
+
 NAME_CHARS = frozenset(string.ascii_letters + string.digits + "_")
 
 
@@ -36,13 +40,47 @@ def _comment_start(value: str) -> int:
         index += 1
 
 
+def _closing_quote(value: str, quote: str) -> int:
+    index = 1
+    while index < len(value):
+        if value[index] == "\\":
+            index += 2
+            continue
+        if value[index] == quote:
+            return index
+        index += 1
+    return -1
+
+
+def _unescape(value: str) -> str:
+    out: list[str] = []
+    index = 0
+    while index < len(value):
+        if value[index] == "\\" and index + 1 < len(value):
+            out.append(value[index + 1])
+            index += 2
+            continue
+        out.append(value[index])
+        index += 1
+    return "".join(out)
+
+
 def _parse(raw: str) -> tuple[str, str | None]:
+    """Return the value and its quote style, if any.
+
+    Single quotes are literal: Compose neither strips comments nor interpolates
+    inside them. Double quotes are taken between matching quotes, honour escaped
+    quotes, and are still interpolated.
+    """
     value = raw.strip()
-    if value[:1] in ("'", '"'):
-        end = value.find(value[0], 1)
-        return (value[1:end] if end != -1 else value[1:], value[0])
+    if value.startswith("'"):
+        end = _closing_quote(value, "'")
+        return (value[1:end] if end != -1 else value[1:]), "'"
+    if value.startswith('"'):
+        end = _closing_quote(value, '"')
+        return _unescape(value[1:end] if end != -1 else value[1:]), '"'
     comment = _comment_start(value)
-    return (value[:comment].strip() if comment != -1 else value, None)
+    return (value[:comment].strip() if comment != -1 else value), None
 
 
 def _default_if_empty(value, operand: str) -> str:
@@ -54,11 +92,15 @@ def _default_if_unset(value, operand: str) -> str:
 
 
 def _required_if_empty(value, operand: str) -> str:
-    return value if value else ""
+    if not value:
+        raise DotenvError(operand or "required variable is empty or unset")
+    return value
 
 
 def _required_if_unset(value, operand: str) -> str:
-    return value if value is not None else ""
+    if value is None:
+        raise DotenvError(operand or "required variable is unset")
+    return value
 
 
 def _alternate_if_empty(value, operand: str) -> str:
@@ -173,7 +215,11 @@ def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("usage: dotenv.py <key> < .env", file=sys.stderr)
         return 2
-    print(read_value(sys.stdin, argv[1]))
+    try:
+        print(read_value(sys.stdin, argv[1]))
+    except DotenvError as error:
+        print(f"dotenv: {error}", file=sys.stderr)
+        return 1
     return 0
 
 
