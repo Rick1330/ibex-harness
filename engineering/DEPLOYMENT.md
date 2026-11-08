@@ -78,18 +78,20 @@ Staging promotion is an authenticated browser promotion gate for the IBEX Consol
 ADR-0097 selects **one** v1.0 deployment profile: a single-node, self-hosted Docker Compose project. It is the only
 profile a 1.0 claim may cite. Kubernetes, Helm and HA are outside the profile (§10 of the ADR).
 
-**One operator entry point.** `make v1-secrets` generates `infra/compose/v1-single-node/.env` (mode `0600`) and the
+**One operator entry point.** `make v1-secrets` generates `infra/compose/v1-single-node/.env` (mode `0600`), the
 files under `infra/compose/v1-single-node/secrets/` (directory `0700`; the container copies are `0444` so uid 10001 can
-read them). `make v1-up` starts the profile, waits for the edge health endpoint, and prints the URL plus the one-time
-bootstrap hint. `make v1-down` stops it without deleting volumes; `make v1-migrate` re-runs the one-shot migration
+read them), and the `bootstrap/` directory (`0700`) that receives the one-time admin PAT. `make v1-up` rebuilds the
+application images, starts the profile, waits until every required service reports healthy, and prints the URL plus
+the PAT hint. `make v1-down` stops it without deleting volumes; `make v1-migrate` re-runs the one-shot migration
 service; `make v1-logs` and `make v1-ps` are the operator inspection commands.
 
 **One published port.** The Compose project publishes only the edge HTTPS port (`${IBEX_EDGE_PORT:-443}:8443`; rootless
 runtimes should set `IBEX_EDGE_PORT=8443`). Datastores, AuthService, context, memory, worker and MCP ports stay on the
-internal bridge. The edge returns `404` for `/health`, `/ready` and `/metrics`; the service-specific `/ready` endpoints
+internal bridge. The edge returns `404` for `/health`, `/ready` and `/metrics`; the service-specific readiness checks
 (auth: Postgres+gRPC; proxy: AuthService+Redis; API: AuthService+Postgres; memory; embedder/TEI; worker ledger, broker
-and consumer; console API health; context gRPC health) are reachable only inside the project. The profile's service
-table in the deployment guide lists each check.
+and consumer; console API health; context gRPC health) are reachable only inside the project. Context has no HTTP
+`/ready` endpoint — its readiness signal is the gRPC health service. The profile's service table in the deployment
+guide lists each check.
 
 **Component matrix and pins.** `services/{auth,proxy,api,memory,context,embedder,worker,console}` plus the one-shot
 `migrate` and `bootstrap` services, `pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d…`, `redis:7.4.2@sha256:fbdbaea4…`,
@@ -108,11 +110,13 @@ production refuse to mount protected routes without a verifier. Internal shared-
 the host-local bridge are recorded limitations, not a public interface.
 
 **Identity bootstrap.** The one-shot `bootstrap` service creates the organization, owner user, default agent, allow-all
-model policy and the memory service token in one transaction, then writes the admin PAT to
-`/run/ibex/bootstrap.pat` (mode `0600`) inside the one-shot container. Retrieve it with `make v1-bootstrap-pat`; it is
-written once, never to the logs, stored only as an Argon2id hash, and is not recoverable. Remove the bootstrap
-container after capture. The memory token is a separate scoped `service_token` (`MemoryRead|MemoryWrite`) used by
-context and worker. The committed `seed_dev.sql` token is **not** used.
+model policy and the memory service token in one transaction, then writes the admin PAT to the host bind mount
+`infra/compose/v1-single-node/bootstrap/` (directory `0700`, file `0600`; inside the container `/run/ibex/bootstrap.pat`).
+Retrieve it with `make v1-bootstrap-pat`, store it, then delete the file. It is written once, never to the logs or to
+the process output, stored only as an Argon2id hash, and is not recoverable. `IBEX_BOOTSTRAP_PAT_FILE` is required
+for a first install, so the command cannot fall back to printing the credential. The memory token is a separate
+scoped `service_token` (`MemoryRead|MemoryWrite`) used by context and worker; reconciliation binds it to an active
+owner and agent and fails closed when either is missing. The committed `seed_dev.sql` token is **not** used.
 
 **Posture.** The tracked `infra/compose/v1-single-node/.env.example` defaults to `IBEX_ENV=staging` + `IBEX_LLM_MODE=mock` so the
 profile starts on a clean host without an external LLM. The supported deployment posture is `IBEX_ENV=production` +

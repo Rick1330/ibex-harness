@@ -88,11 +88,15 @@ services:
       IBEX_BOOTSTRAP_AGENT_SLUG: ${IBEX_BOOTSTRAP_AGENT_SLUG:-default}
       IBEX_BOOTSTRAP_PAT_NAME: ${IBEX_BOOTSTRAP_PAT_NAME:-Bootstrap PAT}
       IBEX_MEMORY_API_TOKEN: ${IBEX_MEMORY_API_TOKEN:?IBEX_MEMORY_API_TOKEN is required; run make v1-secrets}
-      # The admin PAT is written to a 0600 file in the container, never to the
-      # logs. Retrieve it with `make v1-bootstrap-pat` while the container exists.
+      # The PAT is written to a host bind mount (0700) so it survives the
+      # one-shot's exit; a tmpfs would be discarded with the container and the
+      # credential could never be recovered. The bootstrap never prints it.
       IBEX_BOOTSTRAP_PAT_FILE: /run/ibex/bootstrap.pat
-    tmpfs:
-      - /run/ibex:mode=1777
+    # Write as container root so a rootless runtime maps the write to the
+    # operator's own UID inside the 0700 directory.
+    user: "0:0"
+    volumes:
+      - ./bootstrap:/run/ibex
     depends_on:
       migrate:
         condition: service_completed_successfully

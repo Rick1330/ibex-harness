@@ -162,17 +162,22 @@ v1-up: ## Start the v1-single-node supported profile and wait for every service
 	@# overwrites a non-empty value without --force. Images are rebuilt so an
 	@# upgrade cannot run the previous checkout's binaries or embedded migrations.
 	@"$(BASH)" infra/scripts/gen-v1-secrets.sh
-	@if [ -f infra/compose/v1-single-node/certs/.certificates-changed ]; then \
-		echo 'certificate material changed; restarting the profile'; \
-		"$(BASH)" "$(DEV_TOOL)" v1 down; \
-		rm -f infra/compose/v1-single-node/certs/.certificates-changed; \
-	fi
+	@# The marker lives under the configured certificate directory, and a failed
+	@# teardown must stop the recipe: otherwise the marker is cleared while the
+	@# old certificate is still served and no later run retries the restart.
+	@set -e; \
+		certs="$${IBEX_V1_CERTS_DIR:-infra/compose/v1-single-node/certs}"; \
+		if [ -f "$$certs/.certificates-changed" ]; then \
+			echo 'certificate material changed; restarting the profile'; \
+			"$(BASH)" "$(DEV_TOOL)" v1 down; \
+			rm -f "$$certs/.certificates-changed"; \
+		fi
 	@"$(BASH)" "$(DEV_TOOL)" v1 build
 	@"$(BASH)" "$(DEV_TOOL)" v1 up -d
 	@"$(BASH)" "$(DEV_TOOL)" v1 wait
 	@"$(BASH)" "$(DEV_TOOL)" v1 url
 
-v1-bootstrap-pat: ## Print the one-time bootstrap PAT from the stopped bootstrap container
+v1-bootstrap-pat: ## Print the one-time bootstrap PAT from the host bind mount
 	@"$(BASH)" "$(DEV_TOOL)" v1 bootstrap-pat
 
 v1-down: ## Stop the v1-single-node profile (volumes are preserved)

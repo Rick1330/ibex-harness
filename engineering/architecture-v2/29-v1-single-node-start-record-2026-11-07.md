@@ -79,17 +79,27 @@ edge network namespace. The host listener check (`ss`) is the authoritative surf
 
 - The tracked profile template moved to `infra/compose/v1-single-node/.env.example` so the repository layout guard
   accepts it.
-- The admin PAT is written to `/run/ibex/bootstrap.pat` (0600) and retrieved with `make v1-bootstrap-pat`; it no longer
-  appears in container logs. `make v1-up` prints the retrieval hint. `make v1-up` rebuilds the images, waits for every
-  required service, and performs a full stop/start when the certificate fingerprint changes (Compose cannot replace
-  the edge while the co-located containers exist); `make v1-migrate` rebuilds the migration image. `make v1-down`
-  retries once after a rootless-netns cleanup error.
+- The admin PAT is written through a host bind mount (`infra/compose/v1-single-node/bootstrap/`, directory `0700`,
+  file `0600`) instead of a container tmpfs, so it survives the one-shot's exit; `make v1-bootstrap-pat` reads the host
+  file rather than `cp`-ing from a container (which streams a tar archive and depends on the same rootful/rootless
+  store). The write is atomic (temp file plus rename), so a pre-existing permissive file is replaced rather than
+  reused, and a symlink at the destination is replaced rather than followed. `IBEX_BOOTSTRAP_PAT_FILE` is required, so
+  the command can no longer print the credential to stdout.
+- `make v1-up` rebuilds the images, waits for every required service through the runtime's health state (portable
+  across Docker Compose and podman-compose), and performs a full stop/start when the certificate fingerprint changes
+  under `IBEX_V1_CERTS_DIR` (Compose cannot replace the edge while the co-located containers exist). A failed teardown
+  aborts the recipe instead of clearing the marker. `make v1-migrate` rebuilds the migration image. `make v1-down`
+  retries once after a rootless-netns cleanup error. `infra/scripts/lib/dotenv.py` is the single reader for Compose
+  `.env` semantics in both scripts (quotes, `KEY = value`, inline comments, last assignment wins).
 - The API binds loopback inside the edge namespace; organization deletion is wired to the worker broker and the
   `postgres,redis` store set; the worker healthcheck also pings the Celery consumer.
 - The bootstrap implementation moved to `services/auth/internal/bootstrap`; the token reconcile filters by `org_id`,
-  refreshes the subject, clears an expired row, serializes per organization, and revokes duplicate managed rows. The
-  integration test covers cross-tenant isolation and PAT re-verification.
-- The operator guide verifies the edge certificate with `--cacert`, records image references before an upgrade, and
+  binds only an **active** owner and agent, refuses to write an unbound token, refreshes the subject, clears an
+  expired row, serializes per organization, and revokes duplicate managed rows. Tests cover cross-tenant isolation,
+  PAT re-verification, duplicate revocation, the missing-subject refusals, the real `Run` entrypoint (including its
+  failure paths), and every SQL error return through a stdlib fault-injection driver.
+- The operator guide verifies the edge certificate with `--cacert` and the printed edge URL, rotates certificates under
+  `certs/`, checks out the target release before rebuilding, drains pending extraction work before the snapshot, and
   documents the Redis reconciliation step for rollback.
 
 ## Limitations and residuals

@@ -3,10 +3,12 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -493,6 +495,7 @@ func cleanupBootstrapOrg(t *testing.T, db *sql.DB, slug string) {
 	}
 
 	var orgID uuid.UUID
+	// The statement is a constant and the slug is a bound parameter.
 	err = tx.QueryRowContext(ctx,
 		`SELECT id FROM ibex_core.organizations WHERE slug = $1`, slug,
 	).Scan(&orgID)
@@ -542,4 +545,357 @@ func deleteOrgRows(t *testing.T, ctx context.Context, tx *sql.Tx, orgID string) 
 		return false
 	}
 	return true
+}
+
+// TestBootstrapIntegrationRunEntrypoint drives the shipped command entrypoint,
+// not the inner helper: exit code, summary, and PAT file are the contract the
+// one-shot container depends on.
+func TestBootstrapIntegrationRunEntrypoint(t *testing.T) {
+	if os.Getenv("POSTGRES_TEST_DSN") == "" {
+		t.Skip("POSTGRES_TEST_DSN not set")
+	}
+	dsn, cleanup := testutil.SetupPostgres(t)
+	t.Cleanup(cleanup)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	slug := "bootstrap-it-run-" + uuid.NewString()
+	t.Cleanup(func() { cleanupBootstrapOrg(t, db, slug) })
+
+	patFile := filepath.Join(t.TempDir(), "bootstrap.pat")
+	env := map[string]string{
+		"POSTGRES_DSN":              dsn,
+		"IBEX_BOOTSTRAP_PAT_FILE":   patFile,
+		"IBEX_BOOTSTRAP_ORG_NAME":   "Bootstrap Entrypoint",
+		"IBEX_BOOTSTRAP_ORG_SLUG":   slug,
+		"IBEX_BOOTSTRAP_USER_EMAIL": "run-owner@example.com",
+		"IBEX_BOOTSTRAP_USER_NAME":  "Owner",
+		"IBEX_BOOTSTRAP_AGENT_NAME": "Default Agent",
+		"IBEX_BOOTSTRAP_AGENT_SLUG": "default",
+		"IBEX_BOOTSTRAP_PAT_NAME":   "Bootstrap PAT",
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := Run(&stdout, &stderr, mapGetenv(env)); code != 0 {
+		t.Fatalf("first Run exit = %d, stderr = %s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "ibex_pat_") {
+		t.Fatalf("summary printed the PAT: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "IBEX_BOOTSTRAP_PAT_FILE="+patFile) {
+		t.Fatalf("summary did not name the PAT file: %s", stdout.String())
+	}
+	t.Chdir(filepath.Dir(patFile))
+	data, err := os.ReadFile("bootstrap.pat")
+	if err != nil {
+		t.Fatalf("read PAT file: %v", err)
+	}
+	if _, err := token.ParsePAT(strings.TrimSpace(string(data))); err != nil {
+		t.Fatalf("PAT file does not contain a PAT: %v", err)
+	}
+	info, err := os.Stat("bootstrap.pat")
+	if err != nil {
+		t.Fatalf("stat PAT file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("PAT file mode = %o, want 600", info.Mode().Perm())
+	}
+
+	var rerunOut, rerunErr bytes.Buffer
+	if code := Run(&rerunOut, &rerunErr, mapGetenv(env)); code != 0 {
+		t.Fatalf("second Run exit = %d, stderr = %s", code, rerunErr.String())
+	}
+	if strings.Contains(rerunOut.String(), "IBEX_BOOTSTRAP_PAT_FILE=") {
+		t.Fatalf("rerun touched the PAT: %s", rerunOut.String())
+	}
+	if !strings.Contains(rerunOut.String(), "already bootstrapped") {
+		t.Fatalf("rerun summary = %s", rerunOut.String())
+	}
+}
+
+// TestBootstrapIntegrationRejectsMissingActiveAgent proves reconciliation fails
+// closed instead of writing a token that no agent scopes.
+func TestBootstrapIntegrationRejectsMissingActiveAgent(t *testing.T) {
+	f := newBootstrapFixture(t)
+	first := f.run()
+
+	f.execServiceTx(func(ctx context.Context, tx *sql.Tx) {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE ibex_core.agents SET status = 'archived' WHERE org_id = $1`,
+			first.OrgID.String(),
+		); err != nil {
+			t.Fatalf("archive agents: %v", err)
+		}
+	})
+
+	f.cfg.MemoryToken = generatePAT(t)
+	_, err := bootstrap(context.Background(), f.db, f.cfg)
+	if err == nil || !strings.Contains(err.Error(), "no active agent") {
+		t.Fatalf("bootstrap without an active agent error = %v, want a no-active-agent refusal", err)
+	}
+}
+
+// TestBootstrapIntegrationRevokesDuplicateMemoryTokens covers the duplicate
+// cleanup: one managed row stays active, the extra one is revoked.
+func TestBootstrapIntegrationRevokesDuplicateMemoryTokens(t *testing.T) {
+	f := newBootstrapFixture(t)
+	first := f.run()
+
+	duplicate := generatePAT(t)
+	parsed, err := token.ParsePAT(duplicate)
+	if err != nil {
+		t.Fatalf("parse duplicate token: %v", err)
+	}
+	hash, err := crypto.HashToken(duplicate, crypto.ProductionParams())
+	if err != nil {
+		t.Fatalf("hash duplicate token: %v", err)
+	}
+	f.execServiceTx(func(ctx context.Context, tx *sql.Tx) {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO ibex_core.tokens
+				(id, org_id, user_id, agent_id, type, hash, prefix, name,
+				 permissions, is_revoked, expires_at)
+			VALUES ($1, $2, $3, $4, 'service_token', $5, $6, 'memory-service', $7, false, NULL)`,
+			uuid.New().String(), first.OrgID.String(), first.UserID.String(),
+			first.AgentID.String(), hash, parsed.Prefix,
+			permissions.MemoryRead|permissions.MemoryWrite,
+		); err != nil {
+			t.Fatalf("insert duplicate memory token: %v", err)
+		}
+	})
+
+	rotated := generatePAT(t)
+	f.cfg.MemoryToken = rotated
+	f.run()
+
+	ctx, tx := f.begin()
+	var active, revoked int
+	mustScan(t, tx.QueryRowContext(ctx, `
+		SELECT count(*) FILTER (WHERE NOT is_revoked), count(*) FILTER (WHERE is_revoked)
+		FROM ibex_core.tokens
+		WHERE org_id = $1 AND type = 'service_token' AND name = 'memory-service'`,
+		first.OrgID.String()), &active, &revoked)
+	if active != 1 || revoked != 1 {
+		t.Fatalf("memory tokens active=%d revoked=%d, want 1/1", active, revoked)
+	}
+}
+
+// TestBootstrapIntegrationErrorPaths exercises every failure return of the SQL
+// helpers with a rolled-back transaction, so the error contract is tested
+// without a mock driver.
+func TestBootstrapIntegrationErrorPaths(t *testing.T) {
+	f := newBootstrapFixture(t)
+	first := f.run()
+	ctx := context.Background()
+
+	closed, err := sql.Open("postgres", f.cfg.PostgresDSN)
+	if err != nil {
+		t.Fatalf("open second handle: %v", err)
+	}
+	if err := closed.Close(); err != nil {
+		t.Fatalf("close second handle: %v", err)
+	}
+	if _, err := bootstrap(ctx, closed, f.cfg); err == nil ||
+		!strings.Contains(err.Error(), "begin bootstrap transaction") {
+		t.Fatalf("bootstrap on a closed handle error = %v", err)
+	}
+
+	_, tx := f.begin()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	orgID := first.OrgID
+	in := serviceTokenInput{orgID: orgID, bearer: generatePAT(t)}
+	row := serviceTokenRow{id: uuid.New(), orgID: orgID}
+
+	checks := []struct {
+		name string
+		err  error
+	}{
+		{"insertOrganization", func() error {
+			_, err := insertOrganization(ctx, tx, orgInput{id: uuid.New(), cfg: f.cfg})
+			return err
+		}()},
+		{"insertIdentity", func() error {
+			_, _, err := insertIdentity(ctx, tx, identityInput{orgID: orgID, cfg: f.cfg})
+			return err
+		}()},
+		{"insertModelPolicy", insertModelPolicy(ctx, tx, orgID)},
+		{"insertToken", func() error {
+			_, err := insertToken(ctx, tx, tokenInput{
+				orgID: orgID, userID: first.UserID, agentID: first.AgentID, name: f.cfg.PATName,
+			})
+			return err
+		}()},
+		{"lookupOwner", func() error {
+			_, err := lookupOwner(ctx, tx, orgID)
+			return err
+		}()},
+		{"lookupAgent", func() error {
+			_, err := lookupAgent(ctx, tx, orgID)
+			return err
+		}()},
+		{"lockOrganization", lockOrganization(ctx, tx, orgID)},
+		{"findServiceTokens", func() error {
+			_, err := findServiceTokens(ctx, tx, orgID)
+			return err
+		}()},
+		{"writeServiceToken", writeServiceToken(ctx, tx, in)},
+		{"updateServiceToken", updateServiceToken(ctx, tx, row)},
+		{"insertServiceToken", insertServiceToken(ctx, tx, in, row)},
+		{"revokeDuplicateServiceTokens", revokeDuplicateServiceTokens(
+			ctx, tx, orgID, []serviceTokenRow{row},
+		)},
+	}
+	for _, check := range checks {
+		if check.err == nil {
+			t.Fatalf("%s on a rolled-back transaction returned no error", check.name)
+		}
+	}
+
+	verifyCtx, verifyTx := f.begin()
+	missing, err := scanNullableID(verifyTx.QueryRowContext(verifyCtx,
+		`SELECT id FROM ibex_core.users WHERE org_id = $1`, uuid.New().String()))
+	if err != nil {
+		t.Fatalf("scanNullableID on no rows: %v", err)
+	}
+	if missing.Valid {
+		t.Fatal("scanNullableID reported a value for no rows")
+	}
+	present, err := scanNullableID(verifyTx.QueryRowContext(verifyCtx,
+		`SELECT id FROM ibex_core.users WHERE id = $1`, first.UserID.String()))
+	if err != nil {
+		t.Fatalf("scanNullableID on a row: %v", err)
+	}
+	if !present.Valid || present.UUID != first.UserID {
+		t.Fatalf("scanNullableID = %v, want %s", present, first.UserID)
+	}
+}
+
+// failingWriter reports an error after the summary exceeds the buffer, so Run's
+// summary-error branch is exercised.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("summary stream closed")
+}
+
+// TestBootstrapIntegrationRunFailsWhenPATCannotBeWritten proves a PAT that
+// cannot be delivered fails the one-shot instead of succeeding silently.
+func TestBootstrapIntegrationRunFailsWhenPATCannotBeWritten(t *testing.T) {
+	if os.Getenv("POSTGRES_TEST_DSN") == "" {
+		t.Skip("POSTGRES_TEST_DSN not set")
+	}
+	dsn, cleanup := testutil.SetupPostgres(t)
+	t.Cleanup(cleanup)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	slug := "bootstrap-it-patfail-" + uuid.NewString()
+	t.Cleanup(func() { cleanupBootstrapOrg(t, db, slug) })
+
+	// A directory at the destination path passes the parent-directory check and
+	// fails at rename time, after the transaction commits.
+	patPath := filepath.Join(t.TempDir(), "bootstrap.pat")
+	if err := os.Mkdir(patPath, 0o700); err != nil {
+		t.Fatalf("seed destination directory: %v", err)
+	}
+	env := map[string]string{
+		"POSTGRES_DSN":              dsn,
+		"IBEX_BOOTSTRAP_PAT_FILE":   patPath,
+		"IBEX_BOOTSTRAP_ORG_NAME":   "Bootstrap PAT Failure",
+		"IBEX_BOOTSTRAP_ORG_SLUG":   slug,
+		"IBEX_BOOTSTRAP_USER_EMAIL": "fail-owner@example.com",
+		"IBEX_BOOTSTRAP_USER_NAME":  "Owner",
+		"IBEX_BOOTSTRAP_AGENT_NAME": "Default Agent",
+		"IBEX_BOOTSTRAP_AGENT_SLUG": "default",
+		"IBEX_BOOTSTRAP_PAT_NAME":   "Bootstrap PAT",
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := Run(&stdout, &stderr, mapGetenv(env)); code != 1 {
+		t.Fatalf("Run exit = %d, want 1; stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "could not write the PAT file") {
+		t.Fatalf("stderr = %q, want a PAT delivery error", stderr.String())
+	}
+}
+
+// TestBootstrapIntegrationRunFailsWhenSummaryCannotBeWritten covers the last
+// Run branch: the identity is committed, but the summary stream fails.
+func TestBootstrapIntegrationRunFailsWhenSummaryCannotBeWritten(t *testing.T) {
+	if os.Getenv("POSTGRES_TEST_DSN") == "" {
+		t.Skip("POSTGRES_TEST_DSN not set")
+	}
+	dsn, cleanup := testutil.SetupPostgres(t)
+	t.Cleanup(cleanup)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	slug := "bootstrap-it-outfail-" + uuid.NewString()
+	t.Cleanup(func() { cleanupBootstrapOrg(t, db, slug) })
+
+	env := map[string]string{
+		"POSTGRES_DSN":              dsn,
+		"IBEX_BOOTSTRAP_PAT_FILE":   filepath.Join(t.TempDir(), "bootstrap.pat"),
+		"IBEX_BOOTSTRAP_ORG_NAME":   "Bootstrap Summary Failure",
+		"IBEX_BOOTSTRAP_ORG_SLUG":   slug,
+		"IBEX_BOOTSTRAP_USER_EMAIL": "out-owner@example.com",
+		"IBEX_BOOTSTRAP_USER_NAME":  "Owner",
+		"IBEX_BOOTSTRAP_AGENT_NAME": "Default Agent",
+		"IBEX_BOOTSTRAP_AGENT_SLUG": "default",
+		"IBEX_BOOTSTRAP_PAT_NAME":   "Bootstrap PAT",
+	}
+
+	var stderr bytes.Buffer
+	if code := Run(failingWriter{}, &stderr, mapGetenv(env)); code != 1 {
+		t.Fatalf("Run exit = %d, want 1; stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "write summary") {
+		t.Fatalf("stderr = %q, want a summary-write error", stderr.String())
+	}
+}
+
+// TestBootstrapIntegrationRunReportsRevokedToken covers Run's bootstrap-error
+// branch: the database is reachable, but the identity write is refused.
+func TestBootstrapIntegrationRunReportsRevokedToken(t *testing.T) {
+	f := newBootstrapFixture(t)
+	first := f.run()
+	f.revoke(first)
+
+	env := map[string]string{
+		"POSTGRES_DSN":              f.cfg.PostgresDSN,
+		"IBEX_BOOTSTRAP_PAT_FILE":   filepath.Join(t.TempDir(), "bootstrap.pat"),
+		"IBEX_BOOTSTRAP_ORG_NAME":   f.cfg.OrgName,
+		"IBEX_BOOTSTRAP_ORG_SLUG":   f.cfg.OrgSlug,
+		"IBEX_BOOTSTRAP_USER_EMAIL": f.cfg.UserEmail,
+		"IBEX_BOOTSTRAP_USER_NAME":  f.cfg.UserName,
+		"IBEX_BOOTSTRAP_AGENT_NAME": f.cfg.AgentName,
+		"IBEX_BOOTSTRAP_AGENT_SLUG": f.cfg.AgentSlug,
+		"IBEX_BOOTSTRAP_PAT_NAME":   f.cfg.PATName,
+		"IBEX_MEMORY_API_TOKEN":     f.cfg.MemoryToken,
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := Run(&stdout, &stderr, mapGetenv(env)); code != 1 {
+		t.Fatalf("Run exit = %d, want 1; stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "revoked") {
+		t.Fatalf("stderr = %q, want a revoked-token refusal", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want no summary", stdout.String())
+	}
 }

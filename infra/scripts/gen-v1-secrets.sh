@@ -31,6 +31,10 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ENV_FILE="${IBEX_V1_ENV_FILE:-$ROOT_DIR/infra/compose/v1-single-node/.env}"
 SECRETS_DIR="${IBEX_V1_SECRETS_DIR:-$ROOT_DIR/infra/compose/v1-single-node/secrets}"
 CERTS_DIR="${IBEX_V1_CERTS_DIR:-$ROOT_DIR/infra/compose/v1-single-node/certs}"
+# The bootstrap PAT must survive the one-shot container's exit. It is written to
+# a host bind mount (0700) rather than a container tmpfs, so a first install
+# cannot lose its only admin credential.
+BOOTSTRAP_DIR="${IBEX_V1_BOOTSTRAP_DIR:-$ROOT_DIR/infra/compose/v1-single-node/bootstrap}"
 EXAMPLE_ENV="$ROOT_DIR/infra/compose/v1-single-node/.env.example"
 TLS_SCRIPT="$ROOT_DIR/infra/scripts/gen-v1-tls.sh"
 
@@ -76,7 +80,7 @@ resolve_path() {
   python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
 }
 root_real="$(resolve_path "$ROOT_DIR")"
-for dir in "$SECRETS_DIR" "$CERTS_DIR"; do
+for dir in "$SECRETS_DIR" "$CERTS_DIR" "$BOOTSTRAP_DIR"; do
   real="$(resolve_path "$dir")"
   case "$real" in
     / | "$root_real" | "$root_real/.git" | "$root_real"/.git/*)
@@ -92,29 +96,7 @@ done
 umask 077
 
 env_value() {
-  local key="$1"
-  KEY="$key" python3 - "$ENV_FILE" <<'PY'
-import os
-import re
-import sys
-
-path = sys.argv[1]
-key = os.environ["KEY"]
-pattern = re.compile(r"^\s*" + re.escape(key) + r"\s*=\s*(.*)$")
-value = ""
-try:
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            match = pattern.match(line.rstrip("\n"))
-            if not match:
-                continue
-            value = match.group(1).strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-except FileNotFoundError:
-    pass
-print(value)
-PY
+  python3 "$ROOT_DIR/infra/scripts/lib/dotenv.py" "$ENV_FILE" "$1"
 }
 
 env_set() {
@@ -324,6 +306,8 @@ fi
 
 mkdir -p "$SECRETS_DIR"
 chmod 0700 "$SECRETS_DIR"
+mkdir -p "$BOOTSTRAP_DIR"
+chmod 0700 "$BOOTSTRAP_DIR"
 
 if [[ "$SECRETS_DIR" -ef "$CERTS_DIR" ]]; then
   echo "gen-v1-secrets.sh: secrets dir and certs dir are the same; canonical TLS keys will become container copies (0444)" >&2
@@ -371,6 +355,7 @@ echo
 echo "summary (values not shown):"
 printf '  %-24s %s\n' ".env" "$ENV_FILE (mode $(stat -c %a "$ENV_FILE"))"
 printf '  %-24s %s\n' "secrets dir" "$SECRETS_DIR (mode $(stat -c %a "$SECRETS_DIR"))"
+printf '  %-24s %s\n' "bootstrap dir" "$BOOTSTRAP_DIR (mode $(stat -c %a "$BOOTSTRAP_DIR"); PAT file 0600)"
 printf '  %-24s %s\n' "tls certs" "$CERTS_DIR"
 printf '  %-24s %s\n' "ca sha256" "$(openssl x509 -in "$CERTS_DIR/ca.crt" -noout -fingerprint -sha256 | sed 's/^.*=//')"
 echo

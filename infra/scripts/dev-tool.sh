@@ -89,6 +89,14 @@ compose_with_mode() {
     echo "missing $V1_ENV; run: make v1-secrets" >&2
     exit 1
   fi
+  if [[ "$kind" == v1 ]]; then
+    # The bootstrap PAT bind mount must exist and be operator-owned before the
+    # runtime creates it; otherwise a root-owned directory blocks the one-shot.
+    local bootstrap_dir="$ROOT_DIR/infra/compose/v1-single-node/bootstrap"
+    if [[ ! -d "$bootstrap_dir" ]]; then
+      mkdir -p "$bootstrap_dir" && chmod 0700 "$bootstrap_dir"
+    fi
+  fi
   if [[ "${IBEX_NETWORK:-bridge}" == host ]]; then
     local overlay="$ROOT_DIR/infra/compose/overlays/host/${kind}.yml"
     [[ -f "$overlay" ]] || { echo "missing host-network overlay: $overlay" >&2; exit 1; }
@@ -102,35 +110,46 @@ compose_with_mode() {
 }
 
 v1_wait_healthy() {
-  local attempts="${IBEX_V1_HEALTH_ATTEMPTS:-180}" i json
+  local attempts="${IBEX_V1_HEALTH_ATTEMPTS:-180}" i ids statuses rt
   local required="postgres redis auth proxy api memory embedder worker context console edge tei"
+  rt="$(runtime)"
   for ((i = 1; i <= attempts; i++)); do
-    json="$(compose_with_mode v1 ps --format json 2>/dev/null || true)"
-    if V1_JSON="$json" V1_REQUIRED="$required" python3 - <<'PY'
-import json
+    ids="$(compose_with_mode v1 ps -q 2>/dev/null || true)"
+    if [[ -n "$ids" ]]; then
+      # `ps --format json` differs between Docker Compose and podman-compose,
+      # and podman-compose omits health from it entirely. Asking the runtime
+      # keeps one code path for both providers.
+      # shellcheck disable=SC2086
+      statuses="$("$rt" inspect --format '{{.Name}}|{{index .Config.Labels "com.docker.compose.service"}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' $ids 2>/dev/null || true)"
+      if V1_STATUSES="$statuses" V1_REQUIRED="$required" python3 - <<'PY'
 import os
 import sys
 
-raw = os.environ.get("V1_JSON", "").strip()
-required = set(os.environ.get("V1_REQUIRED", "").split())
-if not raw:
+required = os.environ.get("V1_REQUIRED", "").split()
+lines = [line for line in os.environ.get("V1_STATUSES", "").splitlines() if line.strip()]
+if not lines:
     sys.exit(1)
-try:
-    data = json.loads(raw)
-    if isinstance(data, dict):
-        data = [data]
-except json.JSONDecodeError:
-    data = [json.loads(line) for line in raw.splitlines() if line.strip()]
+
+
+def service_name(container: str) -> str:
+    parts = container.lstrip("/").split("-")
+    if parts and parts[-1].isdigit():
+        parts = parts[:-1]
+    return parts[-1] if parts else container
+
+
 seen = {}
-for item in data:
-    service = item.get("Service") or item.get("Name") or ""
-    seen[service] = str(item.get("Health") or "").lower()
-if any(seen.get(name) != "healthy" for name in required):
+for line in lines:
+    name, _, rest = line.partition("|")
+    label, _, health = rest.partition("|")
+    seen[label.strip() or service_name(name)] = health.strip().lower()
+if any(seen.get(service) != "healthy" for service in required):
     sys.exit(1)
 PY
-    then
-      echo 'v1-single-node services are healthy'
-      return 0
+      then
+        echo 'v1-single-node services are healthy'
+        return 0
+      fi
     fi
     sleep 2
   done
@@ -140,16 +159,21 @@ PY
 }
 
 v1_bootstrap_pat() {
-  local container_id
-  container_id="$(compose_with_mode v1 ps -a -q bootstrap 2>/dev/null || true)"
-  if [[ -z "$container_id" ]]; then
-    echo 'bootstrap container not found; run make v1-up first' >&2
+  # The PAT is written by the one-shot into a host bind mount, so it outlives
+  # the container. Reading the host file avoids `cp` (which streams a tar
+  # archive) and any rootful/rootless container-store mismatch.
+  local path="$ROOT_DIR/infra/compose/v1-single-node/bootstrap/bootstrap.pat" mode
+  if [[ ! -f "$path" ]]; then
+    echo "no bootstrap PAT at $path; a first install writes it once during make v1-up" >&2
     return 1
   fi
-  case "$(runtime)" in
-    docker) docker cp "$container_id:/run/ibex/bootstrap.pat" - ;;
-    *) podman cp "$container_id:/run/ibex/bootstrap.pat" - ;;
-  esac
+  mode="$(stat -c %a "$path")"
+  if [[ "$mode" != "600" ]]; then
+    echo "refusing to print $path: mode $mode, expected 600" >&2
+    return 1
+  fi
+  echo "bootstrap PAT (store it in your secret manager, then delete $path):" >&2
+  cat "$path"
 }
 
 v1_down() {
@@ -160,29 +184,7 @@ v1_down() {
 }
 
 v1_env_value() {
-  local key="$1"
-  KEY="$key" python3 - "$V1_ENV" <<'PY'
-import os
-import re
-import sys
-
-path = sys.argv[1]
-key = os.environ["KEY"]
-pattern = re.compile(r"^\s*" + re.escape(key) + r"\s*=\s*(.*)$")
-value = ""
-try:
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            match = pattern.match(line.rstrip("\n"))
-            if not match:
-                continue
-            value = match.group(1).strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-except FileNotFoundError:
-    pass
-print(value)
-PY
+  python3 "$ROOT_DIR/infra/scripts/lib/dotenv.py" "$V1_ENV" "$1"
 }
 
 v1_url() {
@@ -192,7 +194,7 @@ v1_url() {
   fi
   port="${port:-443}"
   ca="$ROOT_DIR/infra/compose/v1-single-node/secrets/ca.crt"
-  for attempt in $(seq 1 30); do
+  for _ in $(seq 1 30); do
     if curl -fsS --cacert "$ca" "https://localhost:${port}/_edge/health" >/dev/null 2>&1; then
       printf 'v1-single-node is up: https://localhost:%s\n' "$port"
       printf '%s\n' 'bootstrap PAT (first install only): make v1-bootstrap-pat'
@@ -350,7 +352,7 @@ case "${1:-help}" in
       migrate) compose_with_mode v1 build migrate && compose_with_mode v1 run --rm migrate "$@" ;;
       logs) compose_with_mode v1 logs -f "$@" ;;
       ps) compose_with_mode v1 ps "$@" ;;
-      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-logs|v1-ps or v1 build|up|down|wait|secrets|bootstrap-pat|migrate|logs|ps' >&2; exit 2 ;;
+      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-logs|v1-ps|v1-bootstrap-pat or v1 build|up|down|wait|url|secrets|bootstrap-pat|migrate|logs|ps' >&2; exit 2 ;;
     esac ;;
   *) echo "unknown command: $1" >&2; echo 'run: make help' >&2; exit 2 ;;
 esac

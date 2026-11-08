@@ -14,6 +14,7 @@ infra/compose/v1-single-node/certs/
 
 # --- v1-single-node generated file secrets (infra/scripts/gen-v1-secrets.sh) ---
 infra/compose/v1-single-node/secrets/
+infra/compose/v1-single-node/bootstrap/
 infra/compose/v1-single-node/.env
 
 # --- Local go build artifacts (build entrypoints with -o instead) ---

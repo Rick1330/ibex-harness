@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
+
 	// Register the PostgreSQL driver for database/sql.
 	_ "github.com/lib/pq"
 )
@@ -57,6 +59,10 @@ type bootstrapConfig struct {
 	AgentName   string
 	AgentSlug   string
 	PATName     string
+	// PATFile is where the one-time admin PAT is written. It is required: the
+	// command never prints the credential, because a container or CI log would
+	// retain it.
+	PATFile string
 	// MemoryToken is an optional PAT-shaped service token the memory service
 	// accepts for internal context/worker calls. It is inserted as a
 	// type=service_token row with MemoryRead|MemoryWrite.
@@ -114,9 +120,11 @@ type serviceTokenRow struct {
 const (
 	ownerLookupSQL = `SELECT id FROM ibex_core.users
 		WHERE org_id = $1 AND role = 'owner'
+		  AND status = 'active' AND deleted_at IS NULL
 		ORDER BY created_at LIMIT 1`
 	agentLookupSQL = `SELECT id FROM ibex_core.agents
 		WHERE org_id = $1
+		  AND status = 'active' AND deleted_at IS NULL
 		ORDER BY created_at LIMIT 1`
 	serviceTokensLookupSQL = `SELECT id, is_revoked, user_id, agent_id, expires_at
 		FROM ibex_core.tokens
@@ -154,7 +162,7 @@ func Run(stdout, stderr io.Writer, getenv func(string) string) int {
 		writef(stderr, bootstrapErrorFormat, err)
 		return 1
 	}
-	result, err = deliverBootstrapPAT(getenv, result)
+	result, err = deliverBootstrapPAT(cfg, result)
 	if err != nil {
 		writef(stderr, bootstrapErrorFormat, err)
 		return 1
@@ -166,28 +174,58 @@ func Run(stdout, stderr io.Writer, getenv func(string) string) int {
 	return 0
 }
 
-// deliverBootstrapPAT writes the one-time PAT to a restricted file when the
-// profile configures IBEX_BOOTSTRAP_PAT_FILE, so the credential never reaches
-// container logs. The committed transaction is not rolled back on failure: the
-// caller reports the recovery path instead.
-func deliverBootstrapPAT(getenv func(string) string, result bootstrapResult) (bootstrapResult, error) {
+// deliverBootstrapPAT writes the one-time PAT to the configured file. The
+// committed transaction is not rolled back when the write fails: the error
+// names the recovery path instead, and returning non-zero keeps the failure
+// visible in the one-shot's exit status.
+func deliverBootstrapPAT(cfg bootstrapConfig, result bootstrapResult) (bootstrapResult, error) {
 	if result.PAT == "" {
 		return result, nil
 	}
-	path := strings.TrimSpace(getenv("IBEX_BOOTSTRAP_PAT_FILE"))
-	if path == "" {
-		return result, nil
-	}
-	if err := os.WriteFile(path, []byte(result.PAT+"\n"), 0o600); err != nil {
+	if err := writeRestrictedFile(cfg.PATFile, result.PAT); err != nil {
 		return result, fmt.Errorf(
 			"bootstrap committed organization %s but could not write the PAT file %q: %w; "+
 				"delete the organization's tokens (or the organization) and re-run bootstrap",
-			result.OrgID, path, err,
+			result.OrgID, cfg.PATFile, err,
 		)
 	}
-	result.PATPath = path
+	result.PATPath = cfg.PATFile
 	result.PAT = ""
 	return result, nil
+}
+
+// writeRestrictedFile creates the destination atomically with mode 0600.
+//
+// Writing a temporary file in the destination directory and renaming it means
+// the final mode never depends on a pre-existing file (os.WriteFile would keep
+// a 0644 file's permissions), and a symlink at the destination is replaced
+// rather than followed.
+func writeRestrictedFile(path, value string) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".ibex-secret-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+
+	// os.CreateTemp creates the file with mode 0600. Writing here and renaming
+	// below means a pre-existing 0644 destination is replaced, not reused.
+	if _, err := tmp.WriteString(value + "\n"); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	return nil
 }
 
 // loadBootstrapConfig reads and validates the bootstrap inputs.
@@ -201,6 +239,7 @@ func loadBootstrapConfig(getenv func(string) string) (bootstrapConfig, error) {
 		AgentName:   envOrDefault(getenv, "IBEX_BOOTSTRAP_AGENT_NAME", defaultAgentName),
 		AgentSlug:   envOrDefault(getenv, "IBEX_BOOTSTRAP_AGENT_SLUG", defaultAgentSlug),
 		PATName:     envOrDefault(getenv, "IBEX_BOOTSTRAP_PAT_NAME", defaultPATName),
+		PATFile:     strings.TrimSpace(getenv("IBEX_BOOTSTRAP_PAT_FILE")),
 		MemoryToken: strings.TrimSpace(getenv("IBEX_MEMORY_API_TOKEN")),
 	}
 	if err := cfg.validate(); err != nil {
@@ -219,6 +258,14 @@ func envOrDefault(getenv func(string) string, key, fallback string) string {
 func (c bootstrapConfig) validate() error {
 	if c.PostgresDSN == "" {
 		return errors.New("POSTGRES_DSN is required")
+	}
+	if c.PATFile == "" {
+		return errors.New(
+			"IBEX_BOOTSTRAP_PAT_FILE is required: the admin PAT is written to a file, never to stdout",
+		)
+	}
+	if info, err := os.Stat(filepath.Dir(c.PATFile)); err != nil || !info.IsDir() {
+		return fmt.Errorf("IBEX_BOOTSTRAP_PAT_FILE %q must name a file in an existing directory", c.PATFile)
 	}
 	if !slugPattern.MatchString(c.OrgSlug) {
 		return fmt.Errorf("IBEX_BOOTSTRAP_ORG_SLUG %q must match %s", c.OrgSlug, slugPattern)
@@ -352,9 +399,22 @@ func reconcileServiceToken(ctx context.Context, tx *sql.Tx, orgID uuid.UUID, bea
 	if err != nil {
 		return fmt.Errorf("look up owner for memory token: %w", err)
 	}
+	if !userID.Valid {
+		return fmt.Errorf(
+			"organization %s has no active owner; cannot bind the memory service token to a subject",
+			orgID,
+		)
+	}
 	agentID, err := lookupAgent(ctx, tx, orgID)
 	if err != nil {
 		return fmt.Errorf("look up agent for memory token: %w", err)
+	}
+	if !agentID.Valid {
+		return fmt.Errorf(
+			"organization %s has no active agent; create one before starting the profile, "+
+				"otherwise the memory service token would be accepted for any agent",
+			orgID,
+		)
 	}
 	in := serviceTokenInput{orgID: orgID, userID: userID, agentID: agentID, bearer: bearer}
 	return writeServiceToken(ctx, tx, in)
@@ -662,23 +722,18 @@ func writeBootstrapComplete(b *strings.Builder, result bootstrapResult) {
 	writef(b, "\n")
 }
 
-// writePATSection writes the PAT or its retrieval path.
+// writePATSection writes the PAT file path. The value itself is never printed:
+// a container or CI log would retain it.
 func writePATSection(b *strings.Builder, result bootstrapResult) {
 	if result.PATPath != "" {
 		writef(b, " IBEX_BOOTSTRAP_PAT_FILE=%s\n", result.PATPath)
-		return
-	}
-	if result.PAT != "" {
-		writef(b, " IBEX_BOOTSTRAP_PAT=%s\n", result.PAT)
 	}
 }
 
-// writeRecoveryNote explains how to retrieve or reset the PAT.
+// writeRecoveryNote explains how to retrieve the PAT from its file.
 func writeRecoveryNote(b *strings.Builder, result bootstrapResult) {
 	if result.PATPath != "" {
-		writef(b, " Retrieve it with make v1-bootstrap-pat while this container exists.\n")
-	} else {
-		writef(b, " WARNING: this PAT is shown once and cannot be recovered.\n")
+		writef(b, " Retrieve it with make v1-bootstrap-pat, then delete the file.\n")
 	}
 	writef(b, " Store it in your secret manager now. Only its Argon2id hash is stored.\n")
 }
