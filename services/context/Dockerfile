@@ -118,10 +118,13 @@ USER 10001:10001
 
 EXPOSE 9092
 
-# Honest liveness check: the gRPC listener accepts a TCP connection. This is
-# not a readiness claim — no grpc_health_v1 service is registered (separate
-# slice). Resolve the host/port from IBEX_CONTEXT_GRPC_ADDR so a ::1 bind is
-# probed on the address that was actually opened.
+# Readiness surface: the standard grpc.health.v1.Health service is registered
+# and the server reports SERVING only after it has started, so the health
+# surface is now real readiness rather than only a TCP listener. Health RPCs
+# stay unauthenticated like the standard protocol. The HEALTHCHECK below stays
+# a cheap TCP liveness probe. Resolve the host/port from
+# IBEX_CONTEXT_GRPC_ADDR so a ::1 bind is probed on the address that was
+# actually opened.
 HEALTHCHECK --interval=15s --timeout=3s --start-period=15s --retries=3 \
     CMD ["python", "-c", "import os, socket; addr = os.environ.get('IBEX_CONTEXT_GRPC_ADDR', '127.0.0.1:9092'); host, _, port = addr.rpartition(':'); host = host.strip('[]') or '127.0.0.1'; s = socket.create_connection((host, int(port)), timeout=2); s.close()"]
 

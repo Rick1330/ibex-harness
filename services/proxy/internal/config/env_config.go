@@ -24,6 +24,7 @@ type envConfig struct {
 	// logging it, so the resolved-config debug dump redacts it too.
 	AuthGRPCCACertFile        string            `env:"IBEX_AUTH_GRPC_CA_FILE" secret:"true"`
 	PolicyPublicKeysJSON      string            `env:"IBEX_PROXY_POLICY_PUBLIC_KEYS"`
+	PolicyPublicKeysFile      string            `env:"IBEX_PROXY_POLICY_PUBLIC_KEYS_FILE"`
 	PolicyMinEpoch            int64             `env:"IBEX_PROXY_POLICY_MIN_EPOCH"`
 	ContextGRPCTarget         string            `env:"IBEX_CONTEXT_GRPC_TARGET"`
 	ContextAssembleTimeout    time.Duration     `env:"IBEX_CONTEXT_ASSEMBLE_TIMEOUT"`
@@ -95,6 +96,9 @@ type envConfig struct {
 func loadFromEnv() (Config, error) {
 	envCfg, err := loadEnvConfig()
 	if err != nil {
+		return Config{}, err
+	}
+	if err := applyPolicyPublicKeysFile(&envCfg); err != nil {
 		return Config{}, err
 	}
 	return buildProxyConfig(envCfg)

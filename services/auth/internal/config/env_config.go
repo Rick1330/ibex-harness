@@ -31,6 +31,7 @@ type envConfig struct {
 	CredentialsMasterKeyID string            `env:"IBEX_CREDENTIALS_MASTER_KEY_ID" envDefault:"v1"`
 	TOTPEnabled            bool              `env:"IBEX_AUTH_TOTP_ENABLED" envDefault:"false"`
 	JWTPrivateKeyPEM       ibexconfig.Secret `env:"JWT_PRIVATE_KEY_PEM" secret:"true"`
+	JWTPrivateKeyFile      string            `env:"JWT_PRIVATE_KEY_FILE" secret:"true"`
 	JWTIssuer              string            `env:"JWT_ISSUER" envDefault:"ibex-harness"`
 	JWTAudience            string            `env:"JWT_AUDIENCE" envDefault:"ibex-dashboard"`
 	JWTAccessTTLRaw        string            `env:"JWT_ACCESS_TOKEN_TTL"`
@@ -38,6 +39,7 @@ type envConfig struct {
 	JWTStepUpTTLRaw        string            `env:"JWT_STEP_UP_TOKEN_TTL"`
 	AuthServiceToken       ibexconfig.Secret `env:"IBEX_AUTH_SERVICE_TOKEN" secret:"true"`
 	PolicySigningKeyPEM    ibexconfig.Secret `env:"IBEX_AUTH_POLICY_SIGNING_KEY_PEM" secret:"true"`
+	PolicySigningKeyFile   string            `env:"IBEX_AUTH_POLICY_SIGNING_KEY_FILE" secret:"true"`
 	PolicySigningKeyID     string            `env:"IBEX_AUTH_POLICY_SIGNING_KEY_ID" envDefault:"v1"`
 	PolicyEpoch            int64             `env:"IBEX_AUTH_POLICY_EPOCH" envDefault:"1"`
 	ShutdownTimeoutRaw     string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
@@ -52,6 +54,9 @@ func loadFromEnv() (Config, error) {
 	}
 	envCfg, err := ibexconfig.Load[envConfig]()
 	if err != nil {
+		return Config{}, err
+	}
+	if err := applyPEMFileEnv(&envCfg); err != nil {
 		return Config{}, err
 	}
 

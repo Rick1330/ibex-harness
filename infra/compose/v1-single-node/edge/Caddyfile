@@ -1,0 +1,63 @@
+# IBEX Harness v1-single-node edge TLS terminator (ADR-0097 §4/§5).
+#
+# One origin, one published HTTPS port, explicit path ownership. The proxy and
+# the API both own /v1 routes, so routing is exact/prefix per ADR-0097 §4 — never
+# a blanket /v1. /health, /ready and /metrics are not published at the edge, and
+# the proxy's internal auth probe is never reachable from outside the network.
+#
+# Caddy flushes SSE automatically. Do not set `flush_interval -1`: it disables
+# response buffering in a way that breaks upstream cancellation on long streams.
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8443 {
+	tls /run/secrets/edge.crt /run/secrets/edge.key
+
+	@edge_health path /_edge/health
+	handle @edge_health {
+		respond "ok" 200
+	}
+
+	@unpublished path /health /ready /metrics
+	handle @unpublished {
+		respond 404
+	}
+
+	# Internal-only proxy routes must not be reachable through the edge.
+	@internal path_regexp ibex_internal ^/v1/internal(/.*)?$
+	handle @internal {
+		respond 404
+	}
+
+	# Proxy-owned public paths: exact route shapes from the router.
+	@proxy_paths path_regexp ibex_proxy ^/v1/(chat/completions|responses|sessions/[^/]+/terminate|orgs/[^/]+/auth-probe)$
+	handle @proxy_paths {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# API-owned operator and management paths.
+	@api_paths path_regexp ibex_api ^/v1/(operator(/.*)?|organizations(/.*)?|tokens(/.*)?|users(/.*)?|agents(/.*)?|tenant(/.*)?)$
+	handle @api_paths {
+		reverse_proxy 127.0.0.1:8010
+	}
+
+	# Everything else is the Console (Nuxt SSR + Nitro BFF).
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	# Caddy redacts Cookie, Set-Cookie, Authorization and Proxy-Authorization
+	# in access logs by default (log_credentials is not enabled). Delete the
+	# remaining credential-shaped header the console/API stack uses.
+	log {
+		output stdout
+		format filter {
+			request>headers>X-Csrf-Token delete
+			request>headers>X-Ibex-Context-Service-Token delete
+			wrap json
+		}
+	}
+}

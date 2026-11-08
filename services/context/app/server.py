@@ -23,6 +23,8 @@ from uuid import UUID
 
 import grpc
 from grpc import aio as grpc_aio
+from grpc_health.v1 import health as grpc_health
+from grpc_health.v1 import health_pb2, health_pb2_grpc
 from pydantic import SecretStr
 
 from app.assemble import (
@@ -340,11 +342,18 @@ def build_server(
     *,
     listen_addr: str | None = None,
     settings: ContextSettings | None = None,
+    health_servicer: grpc_health.HealthServicer | None = None,
 ) -> tuple[grpc_aio.Server, int]:
-    """Create an aio server with ContextAssemblyService registered.
+    """Create an aio server with ContextAssemblyService + health registered.
 
     Returns ``(server, bound_port)``. Raises ``ValueError`` when the caller
     token is missing/invalid or the bind address is not a loopback IP literal.
+
+    The standard ``grpc.health.v1.Health`` service is registered separately
+    from the token-guarded assembly RPCs, so health checks stay
+    unauthenticated like the standard protocol (ADR-0096 applies only to the
+    assembly surface). The caller may pass a servicer to drive its
+    ``set(service, status)`` readiness across the server lifecycle.
     """
     pb2 = _load_pb2()
     cfg = settings or ContextSettings()
@@ -354,6 +363,12 @@ def build_server(
     servicer = ContextAssemblyServicer(assembler, service_token=token)
     server = grpc_aio.server(options=_SERVER_OPTIONS)
     server.add_generic_rpc_handlers((_generic_handler(servicer, pb2, token),))
+    if health_servicer is None:
+        health_servicer = grpc_health.HealthServicer()
+        # The servicer defaults the overall service to SERVING at construction;
+        # readiness must only be advertised after ``start()``.
+        health_servicer.set("", health_pb2.HealthCheckResponse.NOT_SERVING)
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
     port = server.add_insecure_port(addr)
     if not port:
         msg = f"failed to bind IBEX_CONTEXT_GRPC_ADDR={addr!r}"
@@ -482,35 +497,49 @@ async def serve_forever(settings: ContextSettings | None = None) -> None:
     loop = asyncio.get_running_loop()
     shutdown = asyncio.Event()
     server: grpc_aio.Server | None = None
+    health_servicer: grpc_health.HealthServicer | None = None
     try:
-        server = await _start_listening(runtime, cfg)
+        server, _port, health_servicer = await _start_listening(runtime, cfg)
         _install_shutdown_signals(loop, shutdown)
         await _run_until_shutdown(server, shutdown)
     finally:
-        await _shutdown_runtime(loop, server, runtime)
+        await _shutdown_runtime(loop, server, runtime, health_servicer)
 
 
 async def _start_listening(
     runtime: AssemblyRuntime,
     cfg: ContextSettings,
-) -> grpc_aio.Server:
-    server, port = build_server(runtime.assembler, settings=cfg)
+) -> tuple[grpc_aio.Server, int, grpc_health.HealthServicer]:
+    health_servicer = grpc_health.HealthServicer()
+    health_servicer.set("", health_pb2.HealthCheckResponse.NOT_SERVING)
+    server, port = build_server(
+        runtime.assembler,
+        settings=cfg,
+        health_servicer=health_servicer,
+    )
     await server.start()
+    # Readiness only after the server accepts connections. grpc-health-checking
+    # exposes ``set(service, status)`` rather than a ``set_serving()`` helper.
+    health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
     logger.info(
         "context_assembly_grpc_listening addr=%s port=%s retrieval_wall_ms=%s",
         cfg.grpc_addr,
         port,
         cfg.retrieval_wall_ms,
     )
-    return server
+    return server, port, health_servicer
 
 
 async def _shutdown_runtime(
     loop: asyncio.AbstractEventLoop,
     server: grpc_aio.Server | None,
     runtime: AssemblyRuntime,
+    health_servicer: grpc_health.HealthServicer | None = None,
 ) -> None:
     _clear_shutdown_signals(loop)
+    # Report NOT_SERVING before draining so callers stop routing to this node.
+    if health_servicer is not None:
+        health_servicer.set("", health_pb2.HealthCheckResponse.NOT_SERVING)
     if server is not None:
         await server.stop(grace=_SHUTDOWN_GRACE_S)
     await runtime.aclose()

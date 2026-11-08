@@ -22,6 +22,9 @@ export default defineNuxtConfig({
   },
   runtimeConfig: {
     operatorApiOrigin: "",
+    // Server-only readiness probe target. Never copied into `public`, never
+    // returned in a response. Empty keeps `/ready` at "console is serving".
+    operatorApiInternalOrigin: "",
     operatorSessionCookieName: "ibex_session",
     consoleReadOnly: "1",
     public: {

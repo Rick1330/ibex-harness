@@ -74,9 +74,10 @@ install are not this profile and cannot supply its evidence.
 
 The operator entry point is `make v1-up`, `make v1-down` and `make v1-migrate`. **None of these targets exists yet**
 (`Makefile` has `compose-dev-up`, `compose-test-up`, `stack-init` and `readiness`); they are W2 acceptance items, and no
-document claims them before they run. The profile will also ship a tracked `env/v1-single-node.example` copied to
-`.env` (mode `0600`) — W2 work, and not claimed to exist today. The root `.env.example` that the quickstart tells readers to copy does not exist: `.gitignore` would allow
-it (`.env.*` is ignored, `!.env.example` re-includes it), but no such file is committed, so `cp .env.example .env` fails
+document claims them before they run. The profile also ships a tracked
+`infra/compose/v1-single-node/.env.example` copied to `infra/compose/v1-single-node/.env` (mode `0600`). That path is
+separate from the repository's development `.env`; the root `.env.example` the quickstart tells readers to copy does
+not exist.
 on a clean clone.
 
 **3. "Required" means startup-gating; "optional" means visibly degraded.** The profile does not start if a required
@@ -129,6 +130,20 @@ reachable by more than one peer carries TLS.
 - **Internal HTTP APIs** carry the existing shared bearer tokens (`IBEX_MEMORY_API_TOKEN`, the worker enqueue token,
   the embedding token) over the Compose bridge, with the port unpublished. This is a host-local bridge, not a public
   interface; it is documented as a limitation, not as a security boundary.
+
+> **Amendment 2026-11-07 — edge-anchored application plane.** Implementing W2.4 showed that the original
+> `service:proxy` anchor would leave the edge → proxy/API/console hops carrying browser credentials (PAT, session
+> cookie) as plaintext on the shared Compose bridge. That contradicts this section's rule: plaintext is permitted only
+> on loopback inside a single network namespace. The profile therefore anchors the application plane on the edge:
+> `proxy`, `api`, `console`, and `context` all use `network_mode: "service:edge"`, and the edge is the only service with
+> a published port. The property above is preserved and strengthened: context still binds `127.0.0.1` only, the proxy
+> still dials the loopback literal, and the browser-credential hops are now loopback as well. `IBEX_EDGE_PORT` is the
+> host-side mapping; inside the namespace the edge listens on `8443`, so the console BFF dials
+> `https://localhost:8443` while the browser uses `https://localhost:${IBEX_EDGE_PORT}`. Operational consequence:
+> replacing the edge requires a full profile restart (`make v1-down` then `make v1-up`); Compose cannot recreate the
+> edge while the co-located proxy, API, console, and context containers exist, and it does not restart them
+> automatically. `make v1-up` performs the restart itself when the certificate fingerprint changes. No other decision
+> changes.
 
 **5. Only two ports are published:** the edge HTTPS port, and nothing else. Datastores, AuthService, context, memory,
 worker and the MCP services are reachable only inside the Compose network.

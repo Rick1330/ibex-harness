@@ -207,7 +207,7 @@ if [[ "$FORCE" -eq 0 ]] &&
   leaf_pair_usable "$AUTH_CRT" "$AUTH_KEY" &&
   leaf_names_ok "$AUTH_CRT" "DNS:auth" "IP Address:127.0.0.1" &&
   leaf_pair_usable "$EDGE_CRT" "$EDGE_KEY" &&
-  leaf_names_ok "$EDGE_CRT" "DNS:localhost"; then
+  leaf_names_ok "$EDGE_CRT" "DNS:localhost" "DNS:edge"; then
   echo "CA SHA-256 fingerprint: $(ca_fingerprint)"
   echo "reusing existing CA in $TARGET_DIR"
   echo "TLS material already present in $TARGET_DIR (use --force to regenerate)"
@@ -278,7 +278,7 @@ else
     issue_auth=1
   fi
   if ! leaf_pair_usable "$EDGE_CRT" "$EDGE_KEY" ||
-    ! leaf_names_ok "$EDGE_CRT" "DNS:localhost"; then
+    ! leaf_names_ok "$EDGE_CRT" "DNS:localhost" "DNS:edge"; then
     issue_edge=1
   fi
 fi
@@ -287,7 +287,7 @@ if [[ "$issue_auth" -eq 1 ]]; then
   issue_leaf auth "DNS:auth,DNS:localhost,IP:127.0.0.1,IP:::1" "$AUTH_CRT" "$AUTH_KEY"
 fi
 if [[ "$issue_edge" -eq 1 ]]; then
-  issue_leaf edge "DNS:localhost,DNS:console,IP:127.0.0.1" "$EDGE_CRT" "$EDGE_KEY"
+  issue_leaf edge "DNS:localhost,DNS:console,DNS:edge,IP:127.0.0.1" "$EDGE_CRT" "$EDGE_KEY"
 fi
 
 chmod 0600 "$CA_KEY" "$AUTH_KEY" "$EDGE_KEY"
@@ -308,8 +308,8 @@ if ! leaf_names_ok "$AUTH_CRT" "DNS:auth" "DNS:localhost" "IP Address:127.0.0.1"
   exit 1
 fi
 
-if ! leaf_names_ok "$EDGE_CRT" "DNS:localhost"; then
-  echo "gen-v1-tls.sh: edge.crt is missing the DNS:localhost SAN" >&2
+if ! leaf_names_ok "$EDGE_CRT" "DNS:localhost" "DNS:edge"; then
+  echo "gen-v1-tls.sh: edge.crt is missing a required SAN (DNS:localhost, DNS:edge)" >&2
   exit 1
 fi
 

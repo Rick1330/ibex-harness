@@ -204,10 +204,11 @@ async def issue_operator_session(rpc: AuthRPC, *, pat: str) -> RefreshedSession:
             raw = await asyncio.wait_for(
                 stub(
                     b"",
-                    metadata=(
-                        ("authorization", f"Bearer {pat}"),
-                        ("x-ibex-service-token", rpc.service_token),
-                    ),
+                    # Login authenticates as the PAT. Sending the service token
+                    # too would take the auth interceptor's service path and
+                    # leave the caller context unset. Refresh (below) is the
+                    # service-token path.
+                    metadata=(("authorization", f"Bearer {pat}"),),
                 ),
                 timeout=rpc.timeout_seconds,
             )

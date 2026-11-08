@@ -11,6 +11,10 @@ TEST_COMPOSE="$ROOT_DIR/infra/compose/test/docker-compose.yml"
 TEST_ENV="$ROOT_DIR/infra/compose/test/.env.example"
 OBS_COMPOSE="$ROOT_DIR/infra/compose/observability/docker-compose.yml"
 OBS_ENV="$ROOT_DIR/infra/compose/observability/.env.example"
+V1_COMPOSE="$ROOT_DIR/infra/compose/v1-single-node/compose.yml"
+# The supported profile uses its own operator-owned .env (0600) under
+# infra/compose/v1-single-node so development credentials cannot leak in.
+V1_ENV="$ROOT_DIR/infra/compose/v1-single-node/.env"
 MANIFEST="$ROOT_DIR/infra/tool-versions.conf"
 PROTO_BREAKING_AGAINST="${PROTO_BREAKING_AGAINST:-https://github.com/Rick1330/ibex-harness.git#branch=main,subdir=packages/proto}"
 
@@ -38,7 +42,7 @@ runtime() {
       elif command -v podman-compose >/dev/null 2>&1; then echo podman-compose
       else echo 'Podman Compose is missing. Install podman-compose.' >&2; exit 1; fi ;;
     auto)
-      if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then echo docker
+      if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1; then echo docker
       elif command -v podman >/dev/null 2>&1 && (podman compose version >/dev/null 2>&1 || command -v podman-compose >/dev/null 2>&1); then
         if podman compose version >/dev/null 2>&1; then echo podman; else echo podman-compose; fi
       else echo 'No supported container runtime found. Install Docker Compose v2 or Podman + podman-compose.' >&2; exit 1; fi ;;
@@ -46,19 +50,40 @@ runtime() {
   esac
 }
 
+# podman_engine prints the podman invocation that owns the containers: plain
+# podman for a rootless install, `sudo -n podman` when the rootful store is in
+# use. Every engine call (compose, inspect, run) must use the same choice, or it
+# looks in the wrong store.
+podman_engine() {
+  if [[ "${IBEX_PODMAN_SUDO:-0}" == 1 ]] || {
+    [[ "$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null || true)" == true ]] &&
+    sudo -n podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null | grep -qx false
+  }; then
+    echo 'sudo -n podman'
+  else
+    echo podman
+  fi
+}
+
 compose() {
   case "$(runtime)" in
     docker) docker compose "$@" ;;
     podman)
-      local podman_bin=(podman)
-      if [[ "${IBEX_PODMAN_SUDO:-0}" == 1 ]] || {
-        [[ "$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null || true)" == true ]] &&
-        sudo -n podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null | grep -qx false
-      }; then
-        podman_bin=(sudo -n podman)
-      fi
+      local -a podman_bin
+      read -r -a podman_bin <<<"$(podman_engine)"
       "${podman_bin[@]}" compose "$@" ;;
-    podman-compose) podman-compose "$@" ;;
+    podman-compose)
+      # podman-compose selects its engine with --podman-path, a single
+      # executable; it has no lever for `sudo -n podman`. Refuse the rootful
+      # combination instead of running Compose in the rootless store while the
+      # health check inspects the rootful one.
+      local -a podman_bin
+      read -r -a podman_bin <<<"$(podman_engine)"
+      if (( ${#podman_bin[@]} > 1 )); then
+        echo 'podman-compose cannot target the rootful podman store; install the podman compose provider or run as the store owner' >&2
+        return 2
+      fi
+      podman-compose "$@" ;;
     *) echo "unsupported container runtime: $(runtime)" >&2; return 2 ;;
   esac
 }
@@ -69,6 +94,7 @@ compose_files() {
     dev) printf '%s\n' -f "$DEV_COMPOSE" --env-file "$DEV_ENV" ;;
     test) printf '%s\n' -f "$TEST_COMPOSE" --env-file "$TEST_ENV" ;;
     observability) printf '%s\n' -f "$OBS_COMPOSE" --env-file "$OBS_ENV" ;;
+    v1) printf '%s\n' -f "$V1_COMPOSE" --env-file "$V1_ENV" ;;
     *) echo "unknown compose stack: $kind" >&2; return 2 ;;
   esac
 }
@@ -76,6 +102,22 @@ compose_files() {
 compose_with_mode() {
   local kind="$1"; shift
   local args=()
+  if [[ "$kind" == v1 && "${IBEX_NETWORK:-bridge}" == host ]]; then
+    echo 'IBEX_NETWORK=host is not supported for v1-single-node: the profile publishes only the edge HTTPS port' >&2
+    exit 2
+  fi
+  if [[ "$kind" == v1 && ! -f "$V1_ENV" ]]; then
+    echo "missing $V1_ENV; run: make v1-secrets" >&2
+    exit 1
+  fi
+  if [[ "$kind" == v1 ]]; then
+    # The bootstrap PAT bind mount must exist and be operator-owned before the
+    # runtime creates it; otherwise a root-owned directory blocks the one-shot.
+    local bootstrap_dir="$ROOT_DIR/infra/compose/v1-single-node/bootstrap"
+    if [[ ! -d "$bootstrap_dir" ]]; then
+      mkdir -p "$bootstrap_dir" && chmod 0700 "$bootstrap_dir"
+    fi
+  fi
   if [[ "${IBEX_NETWORK:-bridge}" == host ]]; then
     local overlay="$ROOT_DIR/infra/compose/overlays/host/${kind}.yml"
     [[ -f "$overlay" ]] || { echo "missing host-network overlay: $overlay" >&2; exit 1; }
@@ -86,6 +128,169 @@ compose_with_mode() {
     while IFS= read -r arg; do args+=("$arg"); done < <(compose_files "$kind")
   fi
   compose "${args[@]}" "$@"
+}
+
+# container_runtime_bin maps the compose front-end to the engine binary.
+# `runtime()` may return `podman-compose`, which is a front-end and has no
+# `inspect`/`run` of its own; the engine is always `podman`.
+container_runtime_bin() {
+  case "$(runtime)" in
+    docker) echo docker ;;
+    *) podman_engine ;;
+  esac
+}
+
+v1_wait_healthy() {
+  # The default budget covers TEI's two-hour first-start window (compose sets
+  # start_period: 7200s); a warm start returns on the first pass.
+  local attempts="${IBEX_V1_HEALTH_ATTEMPTS:-3600}" i ids statuses
+  local required="postgres redis auth proxy api memory embedder worker context console edge tei"
+  local -a engine
+  read -r -a engine <<<"$(container_runtime_bin)"
+  for ((i = 1; i <= attempts; i++)); do
+    if (( i % 60 == 0 )); then
+      echo "v1-single-node still starting (${i} of ${attempts} checks); set IBEX_V1_HEALTH_ATTEMPTS to shorten the wait" >&2
+    fi
+    ids="$(compose_with_mode v1 ps -q 2>/dev/null || true)"
+    if [[ -n "$ids" ]]; then
+      # `ps --format json` differs between Docker Compose and podman-compose,
+      # and podman-compose omits health from it entirely. Asking the runtime
+      # keeps one code path for both providers.
+      # shellcheck disable=SC2086
+      statuses="$("${engine[@]}" inspect --format '{{.Name}}|{{index .Config.Labels "com.docker.compose.service"}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' $ids 2>/dev/null || true)"
+      if V1_STATUSES="$statuses" V1_REQUIRED="$required" python3 - <<'PY'
+import os
+import sys
+
+required = os.environ.get("V1_REQUIRED", "").split()
+lines = [line for line in os.environ.get("V1_STATUSES", "").splitlines() if line.strip()]
+if not lines:
+    sys.exit(1)
+
+
+def service_name(container: str) -> str:
+    parts = container.lstrip("/").split("-")
+    if parts and parts[-1].isdigit():
+        parts = parts[:-1]
+    return parts[-1] if parts else container
+
+
+seen = {}
+for line in lines:
+    name, _, rest = line.partition("|")
+    label, _, health = rest.partition("|")
+    seen[label.strip() or service_name(name)] = health.strip().lower()
+if any(seen.get(service) != "healthy" for service in required):
+    sys.exit(1)
+PY
+      then
+        echo 'v1-single-node services are healthy'
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  echo 'v1-single-node services did not all become healthy' >&2
+  compose_with_mode v1 ps >&2 || true
+  return 1
+}
+
+v1_bootstrap_pat() {
+  # The PAT is written by the one-shot into a host bind mount, so it outlives
+  # the container. Reading the host file avoids `cp` (which streams a tar
+  # archive) and any rootful/rootless container-store mismatch.
+  local dir="$ROOT_DIR/infra/compose/v1-single-node/bootstrap"
+  local path="$dir/bootstrap.pat" mode
+  local -a engine
+  if [[ ! -f "$path" ]]; then
+    echo "no bootstrap PAT at $path; a first install writes it once during make v1-up" >&2
+    return 1
+  fi
+  mode="$(stat -c %a "$path")"
+  if [[ "$mode" != "600" ]]; then
+    echo "refusing to print $path: mode $mode, expected 600" >&2
+    return 1
+  fi
+  echo "bootstrap PAT (store it in your secret manager, then delete $path):" >&2
+  if [[ -r "$path" ]]; then
+    cat "$path"
+    return 0
+  fi
+  # A rootful runtime writes the file as root, so the operator cannot read it
+  # directly. Read it through the image that created it: the image runs as uid
+  # 10001 by default, so the read needs an explicit root user, and the mount is
+  # read-only.
+  local -a run_args
+  read -r -a engine <<<"$(container_runtime_bin)"
+  run_args=("${engine[@]}" run --rm --user 0:0 --entrypoint cat)
+  run_args+=(--security-opt label=disable)
+  run_args+=(-v "$dir:/run/ibex:ro" ibex-v1-auth:local /run/ibex/bootstrap.pat)
+  "${run_args[@]}"
+}
+
+v1_up() {
+  local do_build=1
+  if [[ "${IBEX_V1_SKIP_BUILD:-0}" == 1 ]]; then
+    do_build=0
+  fi
+  if [[ "${1:-}" == "--no-build" ]]; then
+    do_build=0
+    shift
+  fi
+  if (( do_build )); then
+    compose_with_mode v1 build
+  fi
+  if (( do_build )); then
+    compose_with_mode v1 up -d "$@"
+    return
+  fi
+  compose_with_mode v1 up -d --no-build "$@"
+}
+
+v1_migrate() {
+  local do_build=1
+  if [[ "${IBEX_V1_SKIP_BUILD:-0}" == 1 ]]; then
+    do_build=0
+  fi
+  if [[ "${1:-}" == "--no-build" ]]; then
+    do_build=0
+    shift
+  fi
+  if (( do_build )); then
+    compose_with_mode v1 build migrate
+  fi
+  compose_with_mode v1 run --rm migrate "$@"
+}
+
+v1_down() {
+  compose_with_mode v1 down "$@" || {
+    echo 'v1 down reported a runtime cleanup error; retrying' >&2
+    compose_with_mode v1 down "$@"
+  }
+}
+
+v1_env_value() {
+  local key="$1"
+  python3 "$ROOT_DIR/infra/scripts/lib/dotenv.py" "$key" <"$V1_ENV"
+}
+
+v1_url() {
+  local port="${IBEX_EDGE_PORT:-}" ca
+  if [[ -z "$port" ]]; then
+    port="$(v1_env_value IBEX_EDGE_PORT)"
+  fi
+  port="${port:-443}"
+  ca="$ROOT_DIR/infra/compose/v1-single-node/secrets/ca.crt"
+  for _ in $(seq 1 30); do
+    if curl -fsS --cacert "$ca" "https://localhost:${port}/_edge/health" >/dev/null 2>&1; then
+      printf 'v1-single-node is up: https://localhost:%s\n' "$port"
+      printf '%s\n' 'bootstrap PAT (first install only): make v1-bootstrap-pat'
+      return 0
+    fi
+    sleep 2
+  done
+  echo 'v1-single-node edge did not answer over the profile CA; run: make v1-logs' >&2
+  return 1
 }
 
 version_ok() {
@@ -152,6 +357,8 @@ case "${1:-help}" in
       '  test-integration-auth   Run AuthService-backed proxy integration tests' \
       '  compose-dev-up/down/reset/logs/ps  Manage development stack' \
       '  compose-test-up/down   Manage test stack' '  observability-up/down/smoke  Manage observability' \
+      '  v1-secrets             Generate the v1-single-node .env and file secrets' \
+      '  v1-up/down/migrate/logs/ps  Manage the v1-single-node profile (use --no-build for rollback image reuse)' \
       '  db-migrate/down/version/seed  Manage Postgres migrations' \
       '  clickhouse-migrate/down/version  Manage ClickHouse migrations' \
       '  test-embedder/test-memory/test-memory-integration/test-worker/test-worker-integration/test-mcp-memory' \
@@ -212,5 +419,28 @@ case "${1:-help}" in
   e2e-phase25) bash "$ROOT_DIR/infra/scripts/e2e_phase25.sh" ;;
   e2e-smoke-p3-memory) bash "$ROOT_DIR/infra/scripts/verify_phase3_memory_e2e.sh" ;;
   mcp-conformance) bash "$ROOT_DIR/infra/scripts/mcp-conformance.sh" ;;
+  v1-up) shift; v1_up "$@" ;;
+  v1-down) shift; v1_down "$@" ;;
+  v1-migrate) shift; v1_migrate "$@" ;;
+  v1-logs) compose_with_mode v1 logs -f ;;
+  v1-ps) compose_with_mode v1 ps ;;
+  v1-secrets) bash "$ROOT_DIR/infra/scripts/gen-v1-secrets.sh" ;;
+  v1)
+    sub="${2:-}"
+    if [[ -n "$sub" ]]; then shift 2; fi
+    case "$sub" in
+      build) compose_with_mode v1 build "$@" ;;
+      up) v1_up "$@" ;;
+      down) v1_down "$@" ;;
+      stop) compose_with_mode v1 stop "$@" ;;
+      wait) v1_wait_healthy ;;
+      url) v1_url ;;
+      secrets) bash "$ROOT_DIR/infra/scripts/gen-v1-secrets.sh" ;;
+      bootstrap-pat) v1_bootstrap_pat ;;
+      migrate) v1_migrate "$@" ;;
+      logs) compose_with_mode v1 logs -f "$@" ;;
+      ps) compose_with_mode v1 ps "$@" ;;
+      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-logs|v1-ps|v1-bootstrap-pat or v1 build|up|down|stop|wait|url|secrets|bootstrap-pat|migrate|logs|ps' >&2; exit 2 ;;
+    esac ;;
   *) echo "unknown command: $1" >&2; echo 'run: make help' >&2; exit 2 ;;
 esac

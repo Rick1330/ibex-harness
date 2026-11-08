@@ -11,6 +11,7 @@
 # browser as a public runtime config value):
 #   podman run --rm -p 3000:3000 \
 #     -e IBEX_OPERATOR_API_ORIGIN=https://<edge-origin> \
+#     -e IBEX_OPERATOR_API_INTERNAL_ORIGIN=http://<internal-api-origin> \
 #     -e IBEX_OPERATOR_SESSION_COOKIE_NAME=ibex_session \
 #     ibex-console:local
 #
@@ -19,8 +20,13 @@
 # ADR-0097 §4), so an `http://` upstream value here would authenticate and then
 # fail to persist the session.
 #
+# The internal origin is a separate, server-only probe target for `/ready`. It
+# is never exposed to the browser and the probe is credential-free. Unset keeps
+# `/ready` at "console is serving" without checking upstream health.
+#
 # Runtime env read by the Nitro BFF / server:
-#   IBEX_OPERATOR_API_ORIGIN          upstream operator API base URL
+#   IBEX_OPERATOR_API_ORIGIN          upstream operator API base URL (edge HTTPS)
+#   IBEX_OPERATOR_API_INTERNAL_ORIGIN server-only `/ready` upstream probe origin
 #   IBEX_OPERATOR_SESSION_COOKIE_NAME session cookie name (default ibex_session)
 #   NUXT_PUBLIC_IBEX_ENV              public environment label (no secrets)
 #   HOST / PORT                       Nitro listen address (0.0.0.0:3000 here)

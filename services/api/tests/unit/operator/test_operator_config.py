@@ -2,11 +2,33 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
 from tests.unit.operator.conftest import HMAC_SECRET, operator_settings
+
+_PEM = "-----BEGIN PUBLIC KEY-----\nconfigured-key-material\n-----END PUBLIC KEY-----\n"
+
+
+def test_redis_url_accepts_shared_env_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REDIS_URL", "redis://:pw@redis:6379/0")
+    monkeypatch.delenv("IBEX_API_REDIS_URL", raising=False)
+    assert Settings().redis_url == "redis://:pw@redis:6379/0"
+
+
+def test_redis_url_accepts_prefixed_env_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.setenv("IBEX_API_REDIS_URL", "redis://:pw@redis:6379/1")
+    assert Settings().redis_url == "redis://:pw@redis:6379/1"
+
+
+def test_redis_url_prefers_api_specific_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REDIS_URL", "redis://:pw@shared:6379/0")
+    monkeypatch.setenv("IBEX_API_REDIS_URL", "redis://:pw@api:6379/0")
+    assert Settings().redis_url == "redis://:pw@api:6379/0"
 
 
 def test_shutdown_timeout_accepts_go_duration() -> None:
@@ -135,3 +157,71 @@ def test_non_development_operator_profile_requires_rs256_browser_config() -> Non
             jwt_hmac_secret=None,
             operator_cursor_secret="cursor-secret-for-staging-32-bytes",
         )
+
+
+def test_jwt_public_keys_file_loads_into_effective_value(tmp_path: Path) -> None:
+    pem_file = tmp_path / "public-keys.pem"
+    pem_file.write_text(_PEM, encoding="utf-8")
+
+    settings = operator_settings(jwt_public_keys_file=str(pem_file))
+
+    assert settings.jwt_public_keys_pem == _PEM
+
+
+def test_missing_jwt_public_keys_file_fails_naming_the_variable(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="DASHBOARD_JWT_PUBLIC_KEYS_FILE"):
+        operator_settings(jwt_public_keys_file=str(tmp_path / "missing.pem"))
+
+
+def test_empty_jwt_public_keys_file_fails_naming_the_variable(tmp_path: Path) -> None:
+    pem_file = tmp_path / "empty.pem"
+    pem_file.write_text("  \n", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="DASHBOARD_JWT_PUBLIC_KEYS_FILE"):
+        operator_settings(jwt_public_keys_file=str(pem_file))
+
+
+def test_inline_pem_wins_over_configured_file(tmp_path: Path) -> None:
+    """A set PEM short-circuits the file read, so a broken path must not matter."""
+    settings = operator_settings(
+        jwt_public_keys_pem=_PEM,
+        jwt_public_keys_file=str(tmp_path / "missing.pem"),
+    )
+
+    assert settings.jwt_public_keys_pem == _PEM
+
+
+def test_development_without_pem_material_is_unchanged() -> None:
+    settings = operator_settings()
+
+    assert settings.jwt_public_keys_pem is None
+    assert settings.jwt_public_keys_file is None
+
+
+def test_jwt_public_keys_file_alias_is_read_from_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pem_file = tmp_path / "public-keys.pem"
+    pem_file.write_text(_PEM, encoding="utf-8")
+    monkeypatch.setenv("DASHBOARD_JWT_PUBLIC_KEYS_FILE", str(pem_file))
+
+    settings = operator_settings()
+
+    assert settings.jwt_public_keys_pem == _PEM
+
+
+def test_non_development_profile_accepts_the_loaded_file(tmp_path: Path) -> None:
+    """The file load must run before the non-development material check."""
+    pem_file = tmp_path / "public-keys.pem"
+    pem_file.write_text(_PEM, encoding="utf-8")
+
+    settings = operator_settings(
+        environment="staging",
+        jwt_hmac_secret=None,
+        jwt_public_keys_pem=None,
+        jwt_public_keys_file=str(pem_file),
+        redis_url="redis://127.0.0.1:6379/0",
+        cookie_secure=True,
+    )
+
+    assert settings.jwt_public_keys_pem == _PEM

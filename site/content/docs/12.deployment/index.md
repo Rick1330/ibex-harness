@@ -4,18 +4,21 @@ description: Local Compose, environment configuration, Kubernetes scaffolding, a
 audience: operator
 status: PROVISIONAL
 scope: provisional
-verifiedDate: "2026-10-21"
+verifiedDate: "2026-11-07"
 sourceOfTruth: infra/compose/dev; infra/helm; engineering/architecture-v2/00-status-and-evidence.md
 ---
 
-IBEX Harness supports a local development topology today. It does **not** ship a production-ready deployment. This section explains exactly what exists and what must be supplied before promotion.
+IBEX Harness ships one supported single-node profile, `v1-single-node`, and a separate development dependency stack. It
+does **not** ship a hosted or highly available deployment. This section explains exactly what exists and what must be
+supplied before promotion.
 
-::page-status{status="PROVISIONAL" verified="2026-10-21" note="Local Compose is supported; production deployment remains incomplete"}
+::page-status{status="PROVISIONAL" verified="2026-11-07" note="v1-single-node is the supported deployment profile; hosted, HA, and production evidence remain open"}
 ::
 
 ## Pages
 
-- [Docker Compose](/docs/deployment/docker-compose) — supported local dependency stack.
+- [v1-single-node profile](/docs/deployment/v1-single-node) — the supported single-node deployment profile.
+- [Docker Compose](/docs/deployment/docker-compose) — the development dependency stack.
 - [Environment variables](/docs/deployment/environment-variables) — configuration registry and fail-closed rules.
 - [Kubernetes](/docs/deployment/kubernetes) — render/lint scaffolding, sentinel digests, and missing data-plane templates.
 - [Production readiness](/docs/deployment/production-readiness) — the promotion checklist and open gates.
@@ -24,9 +27,10 @@ IBEX Harness supports a local development topology today. It does **not** ship a
 
 | Profile | What works | What is missing |
 | --- | --- | --- |
-| Local | Compose data stores; host-run Go/Python services | Nothing claimed beyond local evidence |
-| Staging | Helm overlays render; external Secrets expected | Real digests, data-plane provisioning, migration execution, deployment workflow |
-| Production | Chart scaffolding exists | Deployable defaults, data-plane templates, recovery evidence, SLO proof |
+| `v1-single-node` (supported) | One Compose project: edge TLS, all required services, one-shot migrate and bootstrap, recorded readiness | Hosted/HA operation, multi-user auth, measured p99 SLO, cross-tenant acceptance, recovery drill |
+| Local (development) | Compose data stores; host-run Go/Python services | Nothing claimed beyond local evidence |
+| Staging (Kubernetes) | Helm overlays render; external Secrets expected | Real digests, data-plane provisioning, migration execution, deployment workflow |
+| Production (Kubernetes) | Chart scaffolding exists | Deployable defaults, data-plane templates, recovery evidence, SLO proof |
 
 ## Deployment rules
 
