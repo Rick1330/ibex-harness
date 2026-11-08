@@ -47,6 +47,9 @@ class TeiClientConfig:
     read_timeout: float = 30.0
     api_key: str | None = None
     max_retries: int = 2
+    # TEI rejects a request with more inputs than its --max-client-batch-size
+    # (32 by default). Larger caller batches are split and reassembled in order.
+    max_batch_size: int = 32
 
 
 def _jittered_backoff(attempt: int) -> float:
@@ -80,6 +83,7 @@ class TeiClient:
             raise ValueError("TeiClient: base_url must not be empty")
         self._base_url = base_url.rstrip("/")
         self._max_retries = max(0, client_config.max_retries)
+        self._max_batch_size = max(1, client_config.max_batch_size)
 
         default_headers: dict[str, str] = {"Accept": "application/json"}
         if client_config.api_key:
@@ -144,11 +148,25 @@ class TeiClient:
     async def embed(self, texts: list[str]) -> NDArray[np.float32]:
         """POST /embed (native TEI format); retries on transient errors.
 
+        Inputs larger than the server's client batch limit are sent in order as
+        several requests and concatenated, so the public limit (MAX_BATCH_TEXTS)
+        is not constrained by TEI's per-request cap.
+
         Key invariants:
           - truncate is always False (truncation silently mutates vectors).
           - normalize is always True (defense-in-depth for L2 property).
           - Never logs text content or returned vectors.
         """
+        if len(texts) <= self._max_batch_size:
+            return await self._embed_once(texts)
+        chunks = [
+            texts[start : start + self._max_batch_size]
+            for start in range(0, len(texts), self._max_batch_size)
+        ]
+        parts = [await self._embed_once(chunk) for chunk in chunks]
+        return np.concatenate(parts, axis=0)
+
+    async def _embed_once(self, texts: list[str]) -> NDArray[np.float32]:
         payload: dict[str, Any] = {
             "inputs": texts,
             "normalize": True,

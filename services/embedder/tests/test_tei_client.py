@@ -288,3 +288,31 @@ class TestJitteredBackoff:
         for attempt in range(12):
             delay = _jittered_backoff(attempt)
             assert 0.0 <= delay <= 8.0
+
+
+class TestEmbedChunking:
+    """The public batch limit must not be constrained by TEI's per-request cap."""
+
+    @respx.mock
+    async def test_splits_at_the_limit_and_preserves_order(self) -> None:
+        client = TeiClient(_BASE_URL, config=TeiClientConfig(max_retries=0, max_batch_size=2))
+        route = respx.post(f"{_BASE_URL}/embed").mock(
+            side_effect=[
+                Response(200, json=[_VEC_A, _VEC_B]),
+                Response(200, json=[_VEC_A]),
+            ]
+        )
+        result = await client.embed(["a", "b", "c"])
+        assert result.shape == (3, 1024)
+        assert route.call_count == 2
+        assert json.loads(route.calls[0].request.content)["inputs"] == ["a", "b"]
+        assert json.loads(route.calls[1].request.content)["inputs"] == ["c"]
+        assert np.allclose(result[0], _VEC_A)
+        assert np.allclose(result[1], _VEC_B)
+        assert np.allclose(result[2], _VEC_A)
+
+    @respx.mock
+    async def test_single_chunk_is_one_request(self, client: TeiClient) -> None:
+        route = respx.post(f"{_BASE_URL}/embed").mock(return_value=Response(200, json=[_VEC_A]))
+        await client.embed(["a"])
+        assert route.call_count == 1

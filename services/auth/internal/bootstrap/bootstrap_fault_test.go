@@ -242,7 +242,7 @@ func TestCreateIdentityErrorPaths(t *testing.T) {
 		{"policy insert", faultConfig{exec: errInjected, execAfter: 2}, "insert allow-all model policy"},
 		{"policy epoch insert", faultConfig{exec: errInjected, execAfter: 3}, "insert model policy epoch"},
 		{"bootstrap PAT insert", faultConfig{exec: errInjected, execAfter: 4}, "insert bootstrap PAT"},
-		{"memory token insert", faultConfig{exec: errInjected, execAfter: 5}, "insert memory service token"},
+		{"memory token insert", faultConfig{exec: errInjected, execAfter: 6}, "insert memory service token"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

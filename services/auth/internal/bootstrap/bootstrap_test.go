@@ -190,6 +190,7 @@ func TestPrintBootstrapResultFirstRunNamesPATFileOnly(t *testing.T) {
 	const path = "/run/ibex/bootstrap.pat"
 	if err := printBootstrapResult(&out, bootstrapResult{
 		OrgID:   uuid.New(),
+		PAT:     "ibex_pat_test_value",
 		PATPath: path,
 	}); err != nil {
 		t.Fatalf("printBootstrapResult: %v", err)

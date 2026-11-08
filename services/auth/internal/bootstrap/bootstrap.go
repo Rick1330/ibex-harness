@@ -529,6 +529,15 @@ func writeServiceToken(ctx context.Context, tx *sql.Tx, in serviceTokenInput) er
 // organization. The validator resolves a bearer by prefix alone, so a reused
 // value would make two organizations indistinguishable at authentication time.
 func ensurePrefixUnused(ctx context.Context, tx *sql.Tx, orgID uuid.UUID, prefix string) error {
+	// Serialize on the prefix for the rest of the transaction. Two concurrent
+	// bootstraps with the same bearer would otherwise both pass the check
+	// before either inserts. READ COMMITTED takes a fresh snapshot after the
+	// lock is granted, so the second transaction sees the committed row.
+	if _, err := tx.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1))`, prefix,
+	); err != nil {
+		return fmt.Errorf("check memory token prefix: %w", err)
+	}
 	var owner uuid.UUID
 	err := tx.QueryRowContext(ctx,
 		`SELECT org_id FROM ibex_core.tokens WHERE prefix = $1 LIMIT 1`, prefix,

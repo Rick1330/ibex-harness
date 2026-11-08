@@ -561,9 +561,16 @@ type entrypointRun struct {
 	stderr string
 }
 
+type entrypointFixture struct {
+	env     map[string]string
+	patFile string
+	db      *sql.DB
+	slug    string
+}
+
 // newEntrypointFixture provisions a database and the environment the shipped
 // command expects, with a PAT path inside the test's own directory.
-func newEntrypointFixture(t *testing.T, orgName string) (map[string]string, string) {
+func newEntrypointFixture(t *testing.T, orgName string) entrypointFixture {
 	t.Helper()
 	if os.Getenv("POSTGRES_TEST_DSN") == "" {
 		t.Skip("POSTGRES_TEST_DSN not set")
@@ -592,7 +599,7 @@ func newEntrypointFixture(t *testing.T, orgName string) (map[string]string, stri
 		"IBEX_BOOTSTRAP_AGENT_SLUG": "default",
 		"IBEX_BOOTSTRAP_PAT_NAME":   "Bootstrap PAT",
 	}
-	return env, patFile
+	return entrypointFixture{env: env, patFile: patFile, db: db, slug: slug}
 }
 
 func runEntrypoint(t *testing.T, env map[string]string) entrypointRun {
@@ -619,13 +626,19 @@ func assertSummaryNamesPATFile(t *testing.T, stdout, patFile string) {
 	}
 }
 
-func assertPATFileValid(t *testing.T, patFile string) {
+func readPATFile(t *testing.T, patFile string) []byte {
 	t.Helper()
 	t.Chdir(filepath.Dir(patFile))
 	data, err := os.ReadFile("bootstrap.pat")
 	if err != nil {
 		t.Fatalf("read PAT file: %v", err)
 	}
+	return data
+}
+
+func assertPATFileValid(t *testing.T, patFile string) []byte {
+	t.Helper()
+	data := readPATFile(t, patFile)
 	if _, err := token.ParsePAT(strings.TrimSpace(string(data))); err != nil {
 		t.Fatalf("PAT file does not contain a PAT: %v", err)
 	}
@@ -636,34 +649,65 @@ func assertPATFileValid(t *testing.T, patFile string) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("PAT file mode = %o, want 600", info.Mode().Perm())
 	}
+	return data
+}
+
+// assertPATMatchesStoredHash verifies the delivered bearer against the committed
+// admin-token hash, not just its shape.
+func assertPATMatchesStoredHash(t *testing.T, db *sql.DB, slug, bearer string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), verifyTimeout)
+	defer cancel()
+	var hash string
+	if err := db.QueryRowContext(ctx, `
+		SELECT t.hash FROM ibex_core.tokens t
+		INNER JOIN ibex_core.organizations o ON o.id = t.org_id
+		WHERE o.slug = $1 AND t.type = 'pat' AND t.is_revoked = false`,
+		slug,
+	).Scan(&hash); err != nil {
+		t.Fatalf("read stored PAT hash: %v", err)
+	}
+	ok, err := crypto.VerifyToken(bearer, hash, crypto.ProductionParams())
+	if err != nil {
+		t.Fatalf("verify delivered PAT: %v", err)
+	}
+	if !ok {
+		t.Fatal("delivered PAT does not match the stored hash")
+	}
 }
 
 // TestBootstrapIntegrationRunEntrypoint drives the shipped command entrypoint,
 // not the inner helper: exit code, summary, and PAT file are the contract the
 // one-shot container depends on.
 func TestBootstrapIntegrationRunEntrypoint(t *testing.T) {
-	env, patFile := newEntrypointFixture(t, "Bootstrap Entrypoint")
+	f := newEntrypointFixture(t, "Bootstrap Entrypoint")
 
-	run := runEntrypoint(t, env)
+	run := runEntrypoint(t, f.env)
 	requireRunSucceeded(t, run)
-	assertSummaryNamesPATFile(t, run.stdout, patFile)
-	assertPATFileValid(t, patFile)
+	assertSummaryNamesPATFile(t, run.stdout, f.patFile)
+	data := assertPATFileValid(t, f.patFile)
+	assertPATMatchesStoredHash(t, f.db, f.slug, strings.TrimSpace(string(data)))
 }
 
 // TestBootstrapIntegrationRunEntrypointRerun proves a second run reconciles
 // without issuing or touching a PAT.
 func TestBootstrapIntegrationRunEntrypointRerun(t *testing.T) {
-	env, _ := newEntrypointFixture(t, "Bootstrap Entrypoint Rerun")
+	f := newEntrypointFixture(t, "Bootstrap Entrypoint Rerun")
 
-	requireRunSucceeded(t, runEntrypoint(t, env))
+	requireRunSucceeded(t, runEntrypoint(t, f.env))
+	before := readPATFile(t, f.patFile)
 
-	rerun := runEntrypoint(t, env)
+	rerun := runEntrypoint(t, f.env)
 	requireRunSucceeded(t, rerun)
 	if strings.Contains(rerun.stdout, "IBEX_BOOTSTRAP_PAT_FILE=") {
 		t.Fatalf("rerun touched the PAT: %s", rerun.stdout)
 	}
 	if !strings.Contains(rerun.stdout, "already bootstrapped") {
 		t.Fatalf("rerun summary = %s", rerun.stdout)
+	}
+	after := readPATFile(t, f.patFile)
+	if !bytes.Equal(before, after) {
+		t.Fatal("rerun changed the delivered PAT file")
 	}
 }
 

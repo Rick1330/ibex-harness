@@ -67,9 +67,10 @@ services:
       - internal
 
   # One-shot identity bootstrap: creates the org/user/agent, the memory service
-  # token, and prints one PAT. Same image as auth, entrypoint overridden.
-  # Context and worker gate on it so the memory token row exists before their
-  # first call; nothing else waits for the printed PAT.
+  # token, and writes one admin PAT to the host bind mount (never to stdout).
+  # Same image as auth, entrypoint overridden. Context and worker gate on it so
+  # the memory token row exists before their first call; nothing waits for the
+  # PAT file.
   bootstrap:
     image: ibex-v1-auth:local
     build:
