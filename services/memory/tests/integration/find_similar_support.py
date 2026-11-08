@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import random
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -221,6 +223,21 @@ async def seed_composite_ranking_pair(
         episodic_id=episodic_id,
         query_vec=query_vec,
     )
+
+
+def dense_embedding(seed: int, dim: int = 1024) -> list[float]:
+    """A deterministic dense unit vector, like a real embedding.
+
+    One-hot fixtures put whole groups of rows at identical cosine distance from a query, and
+    pgvector's HNSW graph degrades under massed ties: a row inserted last can end up
+    unreachable from the entry point, so an *index* scan returns nothing while an exact scan
+    finds it. Dense vectors give every row a distinct distance, which is what production
+    embeddings look like.
+    """
+    rng = random.Random(seed)
+    vec = [rng.uniform(-1.0, 1.0) for _ in range(dim)]
+    norm = math.sqrt(sum(value * value for value in vec))
+    return [value / norm for value in vec]
 
 
 async def upsert_embedding(

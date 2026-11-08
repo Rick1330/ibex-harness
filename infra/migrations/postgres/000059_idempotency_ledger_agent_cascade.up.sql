@@ -1,20 +1,14 @@
--- W3 tenancy and erasure: let the idempotency ledger follow its agent instead
--- of aborting the organization-deletion saga.
+-- W3 tenancy and erasure: index the cascading FK's lookup column.
 --
--- `idempotency_ledger.agent_id` was NO ACTION, so `DELETE FROM agents` raised a
--- foreign-key violation and the job could never reach `succeeded` (P0-07). The
--- sibling agent tables (tokens, sessions, rate_limit_overrides,
--- budget_reservations) already cascade.
+-- The cascade's RI trigger looks rows up by agent_id, and no existing index has
+-- it as a leading column (000043 creates only the lease index and the
+-- (organization_id, agent_id, dedupe_key) unique index), so deleting an agent
+-- would sequentially scan the whole ledger.
 --
--- The cascade's RI trigger scans by agent_id, so index it; validate the
--- constraint separately to avoid holding a blocking lock for the whole table.
-CREATE INDEX IF NOT EXISTS idx_idempotency_ledger_agent_id
+-- Single statement on purpose: golang-migrate sends one file through one
+-- ExecContext, and a multi-statement string is an implicit transaction, in
+-- which CREATE INDEX CONCURRENTLY is illegal. It is CONCURRENTLY so the build
+-- does not block ledger writes; a failed build leaves an INVALID index — drop
+-- and retry.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_idempotency_ledger_agent_id
     ON ibex_core.idempotency_ledger (agent_id);
-
-ALTER TABLE ibex_core.idempotency_ledger
-    DROP CONSTRAINT IF EXISTS idempotency_ledger_agent_id_fkey;
-ALTER TABLE ibex_core.idempotency_ledger
-    ADD CONSTRAINT idempotency_ledger_agent_id_fkey
-    FOREIGN KEY (agent_id) REFERENCES ibex_core.agents(id) ON DELETE CASCADE NOT VALID;
-ALTER TABLE ibex_core.idempotency_ledger
-    VALIDATE CONSTRAINT idempotency_ledger_agent_id_fkey;

@@ -100,7 +100,9 @@ class _FakeLedger:
     async def claim(self, *, org_id, agent_id, key, request_hash):
         return self.claim_outcome
 
-    async def finalize(self, claim, *, status, response):
+    async def finalize(self, claim, *, status, response, prepare=None):
+        if prepare is not None:
+            response = await prepare(self)
         self.finalized.append((claim, status, response))
 
     async def release(self, claim):
@@ -248,7 +250,7 @@ def test_create_memory_finalize_failure_fails_closed(client) -> None:
     http, mock_orch = client
 
     class _FailingFinalizeLedger(_FakeLedger):
-        async def finalize(self, claim, *, status, response):
+        async def finalize(self, claim, *, status, response, prepare=None):
             raise LedgerError("down")
 
     ledger = _FailingFinalizeLedger(_owned_outcome())

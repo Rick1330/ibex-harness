@@ -19,6 +19,7 @@ The org-scoped session scope is injectable so tests can pin the real
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -142,7 +143,7 @@ class PostgresIdempotencyLedger:
                 probe = result.mappings().one()
                 if not all(probe.values()):
                     raise LedgerError("idempotency ledger is not ready")
-        except (SQLAlchemyError, OSError, TimeoutError) as exc:
+        except (SQLAlchemyError, OSError) as exc:
             raise _unavailable_error(exc) from exc
 
     async def claim(
@@ -166,7 +167,7 @@ class PostgresIdempotencyLedger:
                 return await self._resolve_row(row, fresh=fresh, context=context)
         except IntegrityError as exc:
             raise _as_ledger_error(exc) from exc
-        except (SQLAlchemyError, OSError, TimeoutError) as exc:
+        except (SQLAlchemyError, OSError) as exc:
             raise _unavailable_error(exc) from exc
 
     async def _insert_or_load(self, context: _ResolveContext) -> tuple[Any, bool]:
@@ -295,12 +296,34 @@ class PostgresIdempotencyLedger:
             ),
         )
 
-    async def finalize(self, claim: ClaimToken, *, status: int, response: bytes) -> None:
-        await self._mutate_claim(
-            claim,
-            _FINALIZE_CLAIM_SQL,
-            _claim_params(claim) | {"status": status, "response": response},
-        )
+    async def finalize(
+        self,
+        claim: ClaimToken,
+        *,
+        status: int,
+        response: bytes,
+        prepare: Callable[[AsyncSession], Awaitable[bytes]] | None = None,
+    ) -> None:
+        """Store the terminal response for replay.
+
+        ``prepare`` runs inside the same transaction as the ledger write and
+        returns the bytes to store. The memory service uses it to serialize a
+        create's finalization against a concurrent forget: it locks the created
+        row ``FOR SHARE`` (which conflicts with forget's tombstone ``UPDATE``)
+        and returns a content-free marker when the row is already erased.
+        """
+        params = _claim_params(claim) | {"status": status, "response": response}
+        if prepare is None:
+            await self._mutate_claim(claim, _FINALIZE_CLAIM_SQL, params)
+            return
+        try:
+            async with self._session_scope(str(claim.org_id)) as session:
+                params["response"] = await prepare(session)
+                result = await session.execute(_FINALIZE_CLAIM_SQL, params)
+                if result.rowcount != 1:
+                    raise LedgerConflictError("claim is no longer owned")
+        except (SQLAlchemyError, OSError) as exc:
+            raise _unavailable_error(exc) from exc
 
     async def release(self, claim: ClaimToken) -> None:
         await self._mutate_claim(claim, _RELEASE_CLAIM_SQL, _claim_params(claim))
@@ -313,7 +336,7 @@ class PostgresIdempotencyLedger:
                 result = await session.execute(statement, params)
                 if result.rowcount != 1:
                     raise LedgerConflictError("claim is no longer owned")
-        except (SQLAlchemyError, OSError, TimeoutError) as exc:
+        except (SQLAlchemyError, OSError) as exc:
             raise _unavailable_error(exc) from exc
 
     def _lease_interval(self) -> timedelta:

@@ -1,23 +1,27 @@
 """RLS is real only when the transaction pins a non-superuser role (P0-06).
 
-The reference DSN connects as a role that owns the tables, and a table owner or
-superuser bypasses row-level security regardless of ``FORCE``. These tests pin
-``ibex_app`` through the production helper and assert that even an unfiltered
-``SELECT`` returns one tenant's rows only.
+``FORCE ROW LEVEL SECURITY`` makes a table owner subject to the table's own
+policies; a superuser, or any role with ``BYPASSRLS``, still bypasses RLS before
+the policy is consulted. The reference DSN connects as the bootstrap superuser,
+so these tests pin ``ibex_app`` through the production helper and assert that
+even an unfiltered ``SELECT`` returns one tenant's rows only.
 """
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import event, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.db import session_with_org
 from app.exceptions import MemoryNotFoundError
-from app.org_context import set_service_org
 from app.lifecycle import ForgetMemory, forget_memory_session
+from app.org_context import set_service_org
+from app.vectorstore.base import SearchRequest, UpsertRequest
+from app.vectorstore.pgvector_store import PgVectorStore
+from tests.integration.conftest import zero_embedding
 
 pytestmark = pytest.mark.integration
 
@@ -65,8 +69,10 @@ async def _seed_two_tenants(
     return {
         "org_a": org_a,
         "org_b": org_b,
+        "agent_a": agent_a,
         "agent_b": agent_b,
         "memory_a": memory_a,
+        "memory_b": memory_b,
     }
 
 
@@ -116,6 +122,133 @@ async def test_set_service_org_pins_the_role_for_the_vector_path(
     assert other == 0
 
 
+@pytest.fixture
+def statement_log(engine: AsyncEngine):
+    """Record every SQL statement the engine sends, in order."""
+    recorded: list[str] = []
+
+    def _record(conn, cursor, statement, params, context, executemany) -> None:
+        del conn, cursor, params, context, executemany
+        recorded.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", _record)
+    try:
+        yield recorded
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", _record)
+
+
+def _pins_role(statements: list[str]) -> bool:
+    return any("SET LOCAL ROLE ibex_app" in line for line in statements)
+
+
+def _sets_bypass(statements: list[str]) -> bool:
+    return any("set_config('app.is_service_account', 'true'" in line for line in statements)
+
+
+@pytest.mark.asyncio
+async def test_vector_store_operations_pin_the_tenant_role(
+    store: PgVectorStore,
+    session_factory: async_sessionmaker[AsyncSession],
+    statement_log: list[str],
+) -> None:
+    """PgVectorStore upsert/search/delete must pin ibex_app and never set the bypass."""
+    seed = await _seed_two_tenants(session_factory)
+    org_a, org_b = UUID(seed["org_a"]), UUID(seed["org_b"])
+    agent_a = UUID(seed["agent_a"])
+    memory_a, memory_b = UUID(seed["memory_a"]), UUID(seed["memory_b"])
+    vector = zero_embedding(hotspot=3)
+    for org, memory in ((org_a, memory_a), (org_b, memory_b)):
+        await store.upsert(
+            UpsertRequest(
+                memory_id=memory,
+                org_id=org,
+                embedding=vector,
+                embedding_model="test",
+                expected_revision=1,
+            )
+        )
+
+    statement_log.clear()
+    hits = await store.search(
+        SearchRequest(
+            org_id=org_a,
+            agent_id=agent_a,
+            query_embedding=vector,
+            limit=10,
+            min_similarity=0.0,
+        )
+    )
+    assert _pins_role(statement_log), "search must pin the tenant role"
+    assert not _sets_bypass(statement_log), "search must not set the service bypass"
+    assert [hit.memory_id for hit in hits] == [memory_a], "search leaked another tenant"
+
+    statement_log.clear()
+    await store.upsert(
+        UpsertRequest(
+            memory_id=memory_a,
+            org_id=org_a,
+            embedding=vector,
+            embedding_model="test",
+            expected_revision=1,
+        )
+    )
+    assert _pins_role(statement_log), "upsert must pin the tenant role"
+    assert not _sets_bypass(statement_log), "upsert must not set the service bypass"
+
+    statement_log.clear()
+    await store.delete(memory_id=memory_a, org_id=org_a, expected_revision=1)
+    assert _pins_role(statement_log), "delete must pin the tenant role"
+    assert not _sets_bypass(statement_log), "delete must not set the service bypass"
+
+    # The tenant-owned row survived the other tenant's operations.
+    async with session_with_org(session_factory, seed["org_b"]) as session:
+        remaining = (
+            await session.execute(text("SELECT count(*) FROM ibex_core.memories"))
+        ).scalar_one()
+    assert remaining == 1
+
+
+@pytest.mark.asyncio
+async def test_pinned_transaction_discards_an_inherited_bypass(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A session that already set the bypass must not keep it past the pin."""
+    seed = await _seed_two_tenants(session_factory)
+    org_a, org_b = seed["org_a"], seed["org_b"]
+
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            text("SELECT set_config('app.is_service_account', 'true', true)")
+        )
+        await set_service_org(session, UUID(org_a))
+        visible = (
+            await session.execute(text("SELECT count(*) FROM ibex_core.memories"))
+        ).scalar_one()
+        other = (
+            await session.execute(
+                text("SELECT count(*) FROM ibex_core.memories WHERE org_id = :org"),
+                {"org": org_b},
+            )
+        ).scalar_one()
+
+    assert visible == 1, "the inherited bypass must be cleared by the pin"
+    assert other == 0
+
+
+async def _forget_as_tenant(factory, *, org_id, agent_id, memory_id) -> None:
+    async with session_with_org(factory, org_id) as session:
+        await forget_memory_session(
+            session,
+            ForgetMemory(
+                org_id=org_id,
+                agent_id=agent_id,
+                memory_id=memory_id,
+                expected_revision=1,
+            ),
+        )
+
+
 @pytest.mark.asyncio
 async def test_forget_cannot_touch_another_tenant(
     session_factory: async_sessionmaker[AsyncSession],
@@ -123,17 +256,14 @@ async def test_forget_cannot_touch_another_tenant(
     seed = await _seed_two_tenants(session_factory)
     org_a, memory_a = seed["org_a"], seed["memory_a"]
 
+    refusal = _forget_as_tenant(
+        session_factory,
+        org_id=seed["org_b"],
+        agent_id=seed["agent_b"],
+        memory_id=seed["memory_a"],
+    )
     with pytest.raises(MemoryNotFoundError):
-        async with session_with_org(session_factory, seed["org_b"]) as session:
-            await forget_memory_session(
-                session,
-                ForgetMemory(
-                    org_id=seed["org_b"],
-                    agent_id=seed["agent_b"],
-                    memory_id=seed["memory_a"],
-                    expected_revision=1,
-                ),
-            )
+        await refusal
 
     async with session_with_org(session_factory, seed["org_b"]) as session:
         visible_to_b = (

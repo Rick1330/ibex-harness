@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.erased_response import ERASED_MARKER_TEXT
 from app.exceptions import (
     LegalHoldActiveError,
     MemoryNotFoundError,
@@ -163,7 +164,7 @@ _ERASE_MEMORY_CHILDREN_SQL: tuple[str, ...] = (
     # re-creating the erased memory.
     (
         "UPDATE ibex_core.idempotency_ledger"
-        " SET response_payload = convert_to(jsonb_build_object('erased', true)::text, 'UTF8')"
+        " SET response_payload = convert_to(CAST(:erased_marker AS text), 'UTF8')"
         " WHERE organization_id = :org_id"
         " AND response_payload IS NOT NULL"
         " AND pg_input_is_valid(convert_from(response_payload, 'UTF8'), 'jsonb')"
@@ -287,10 +288,13 @@ async def forget_memory_session(session: AsyncSession, request: ForgetMemory) ->
         raise StaleLifecycleError("expected memory lifecycle revision must be positive")
     await lock_organization_for_memory_write(session, request.org_id)
 
-    await _require_no_active_hold(session, request.org_id)
-
+    # Resolve and lock the target first: a 404 for an unknown or out-of-scope
+    # memory, then the hold refusal. The reverse order would let any
+    # `memory:write` token probe the organization's legal-hold state with an id
+    # it cannot read.
     source_session_id = await _resolve_source_session(session, request)
     await _require_forget_target(session, request)
+    await _require_no_active_hold(session, request.org_id)
     new_revision = await _tombstone_memory(session, request)
     await _erase_memory_children(session, request)
     if source_session_id is not None:
@@ -325,6 +329,7 @@ async def _erase_memory_children(session: AsyncSession, request: ForgetMemory) -
         "org_id": request.org_id,
         "memory_id": request.memory_id,
         "memory_id_text": str(request.memory_id),
+        "erased_marker": ERASED_MARKER_TEXT,
     }
     for statement in _ERASE_MEMORY_CHILDREN_SQL:
         await session.execute(

@@ -20,6 +20,7 @@ from ibex_idempotency import (
     LedgerValidationError,
 )
 
+from app.erased_response import ERASED_MARKER_BODY
 from app.exceptions import DuplicateMemoryError, StaleLifecycleError, ValidationError
 from app.routers.memory_write_support import (
     _FINALIZE_ATTEMPTS,
@@ -27,6 +28,7 @@ from app.routers.memory_write_support import (
     begin_idempotency,
     commit_idempotency,
     commit_idempotency_fail_closed,
+    erased_create_prepare,
     http_error_for_write,
     release_idempotency,
 )
@@ -71,6 +73,52 @@ async def test_begin_idempotency_replay_returns_json() -> None:
     assert isinstance(result, JSONResponse)
     assert result.status_code == 201
     assert result.headers["x-idempotency-replayed"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_begin_idempotency_replay_of_an_erased_create_is_409() -> None:
+    """A forgotten memory's key must not replay a 201 for content that is gone."""
+    ledger = AsyncMock()
+    ledger.claim = AsyncMock(
+        return_value=ClaimOutcome(kind=KIND_REPLAY, status=201, response=ERASED_MARKER_BODY)
+    )
+    with pytest.raises(HTTPException) as exc:
+        await _begin(ledger)
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "IDEMPOTENCY_KEY_ERASED"
+
+
+class _FakeExecuteResult:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self) -> object:
+        return self._value
+
+
+class _FakePrepareSession:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    async def execute(self, statement: object, params: object = None) -> _FakeExecuteResult:
+        del statement, params
+        return _FakeExecuteResult(self._value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tombstoned", "expected"),
+    [(True, ERASED_MARKER_BODY), (None, ERASED_MARKER_BODY), (False, b'{"data":{}}')],
+    ids=["tombstoned", "missing", "live"],
+)
+async def test_erased_create_prepare_returns_the_marker_only_for_a_dead_row(
+    tombstoned: object, expected: bytes
+) -> None:
+    prepare = erased_create_prepare(
+        memory_id=uuid4(), org_id=uuid4(), body=b'{"data":{}}'
+    )
+    stored = await prepare(_FakePrepareSession(tombstoned))
+    assert stored == expected
 
 
 @pytest.mark.asyncio

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from uuid import UUID
 
 from ibex_async_db import normalize_async_database_url, parse_async_database_url
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.config import Settings
+from app.org_context import set_service_org
 
 
 def create_engine(settings: Settings) -> AsyncEngine:
@@ -41,24 +42,18 @@ async def session_with_org(
     factory: async_sessionmaker[AsyncSession],
     org_id: str,
 ) -> AsyncIterator[AsyncSession]:
-    """Open a transaction, set RLS org GUC, yield session, commit/rollback."""
+    """Open a transaction, pin the tenant role and org, yield, commit/rollback.
+
+    Delegates to :func:`app.org_context.set_service_org`, so this helper and the
+    production path share one definition: pin ``ibex_app`` (the login role is a
+    superuser, and a superuser bypasses RLS before the policy is consulted —
+    ``FORCE ROW LEVEL SECURITY`` covers owners, not superusers) and clear any
+    inherited service-account bypass.
+    """
     async with factory() as session:
         try:
             async with session.begin():
-                # Pin the tenant role so RLS applies at all: the login role is a
-                # superuser, and a superuser bypasses RLS before the policy is
-                # consulted. FORCE ROW LEVEL SECURITY covers owners, not superusers.
-                await session.execute(
-                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                        "SET LOCAL ROLE ibex_app"
-                    )
-                )
-                await session.execute(
-                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                        "SELECT set_config('app.current_org_id', :org_id, true)"
-                    ),
-                    {"org_id": org_id},
-                )
+                await set_service_org(session, UUID(org_id))
                 yield session
         except Exception:
             await session.rollback()

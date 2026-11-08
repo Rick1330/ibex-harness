@@ -34,7 +34,14 @@ owner role; their pinning is the next slice.
   conflict-escalation rows, and scrubs the finalized idempotent create response (matched on `data.id`, never on a
   substring) in the same transaction. The `forgotten` outbox event is the receipt. Proven by
   `test_forget_erases_content_and_child_labels` (sentinel absent from the row and the ledger, a near-duplicate
-  create's row untouched, child rows 0, receipt present).
+  create's row untouched, the other endpoint's rows gone, content hash changed, child rows 0, receipt present).
+- **Finalize/forget coordination** — a create that is still finalizing when forget commits cannot resurrect the
+  content: the ledger finalize takes the created row `FOR SHARE` in its own transaction, which conflicts with the
+  tombstone `UPDATE`, so whichever runs second observes the other's committed state and stores the erased marker.
+  Proven by `test_finalize_after_forget_stores_the_erased_marker`.
+- **Erased-key replay** — the ledger row is kept (replaying the key cannot re-create the memory) and holds the erased
+  marker; a replay answers `409 IDEMPOTENCY_KEY_ERASED` instead of a 201 whose body no longer matches the contract.
+  Proven by `test_begin_idempotency_replay_of_an_erased_create_is_409`.
 - **P0-07** — migration `000059_idempotency_ledger_agent_cascade` makes `agent_id` cascade with its agent.
   `test_org_postgres_purge_clears_idempotency_ledger` runs the real purge stage and asserts zero rows; it fails with
   `IntegrityError` when the migration is reverted.
@@ -103,7 +110,9 @@ Options considered, ranked by fit for a single-node self-hosted profile:
    (GDPR Art. 17(3)). Clearing the hold re-enables forget.
 3. **Backups are out of scope for this profile and stated as such.** The guide records that backup copies are not
    erased by forget and that a restore must re-apply the deletion markers before serving traffic (recovery wave).
-4. **Org deletion meeting an active hold stays `hold_blocked`** until the hold is cleared.
+4. **Org deletion meeting an active hold stays `hold_blocked`.** Clearing the hold does not resume the job; the
+   organization is already `cancelled` and a new deletion request for it is rejected, so resuming is an explicit
+   operator action. A hold created after the request's hold check can also leave the job blocked.
 5. **“Zero rows” means tenant content tables.** Receipts (`org_deletion_jobs`, `deletion_store_receipts`,
    `memory_lifecycle_outbox`), billing history (`ibex_billing.*`) and `failed_tasks` are retained by design and listed
    in the guide; the claim never compresses them into “all tenant data”.

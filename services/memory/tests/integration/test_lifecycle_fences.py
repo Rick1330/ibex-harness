@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import text
+from ibex_idempotency import PostgresIdempotencyLedger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -24,36 +24,22 @@ from app.lifecycle import (
 )
 from app.pipeline.context import WriteContext
 from app.pipeline.write import WritePipeline
+from app.routers.memory_write_support import erased_create_prepare
 from app.schemas.memories import ForgetMemoryRequest
 from app.vectorstore.base import SearchMode, SearchRequest, UpsertRequest
 from app.vectorstore.pgvector_store import PgVectorStore
 from app.write.models import CreateMemoryCommand
 from app.write.orchestrator import MemoryWriteOrchestrator
-from tests.integration.conftest import seed_org_agent_memory, with_service_org, zero_embedding
+from tests.integration import lifecycle_erasure_support
+from tests.integration.conftest import seed_org_agent_memory, zero_embedding
 
 pytestmark = pytest.mark.integration
 
 
-@asynccontextmanager
-async def _service_session(factory, org_id):
-    async with factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        yield session
-
-
-async def _execute_sql(factory, org_id, statement: str, params: dict) -> None:
-    async with _service_session(factory, org_id) as session:
-        await session.execute(text(statement), params)
-
-
-async def _scalar(factory, org_id, statement: str, params: dict):
-    async with _service_session(factory, org_id) as session:
-        return await session.scalar(text(statement), params)
-
-
-async def _rows(factory, org_id, statement: str, params: dict) -> list:
-    async with _service_session(factory, org_id) as session:
-        return (await session.execute(text(statement), params)).all()
+_service_session = lifecycle_erasure_support.service_session
+_execute_sql = lifecycle_erasure_support.execute_sql
+_scalar = lifecycle_erasure_support.fetch_scalar
+_rows = lifecycle_erasure_support.fetch_rows
 
 
 async def _read_lifecycle(
@@ -330,48 +316,11 @@ async def test_expires_at_hides_normal_retrieval_but_tombstone_wins_historical_m
     )
 
 
-async def _forget_after(
-    barrier: asyncio.Barrier,
-    factory: async_sessionmaker[AsyncSession],
-    *,
-    org_id,
-    agent_id,
-    memory_id,
-):
+async def _after_barrier(barrier: asyncio.Barrier, factory, action):
+    """Run ``action(session)`` in its own transaction once both racers arrive."""
     await barrier.wait()
     async with factory() as session, session.begin():
-        return await forget_memory_session(
-            session,
-            ForgetMemory(
-                org_id=org_id,
-                agent_id=agent_id,
-                memory_id=memory_id,
-                expected_revision=1,
-            ),
-        )
-
-
-async def _supersede_after(
-    barrier: asyncio.Barrier,
-    factory: async_sessionmaker[AsyncSession],
-    *,
-    org_id,
-    agent_id,
-    new_memory_id,
-    target_id,
-) -> None:
-    await barrier.wait()
-    async with factory() as session, session.begin():
-        await apply_supersession_session(
-            session,
-            SupersedeApply(
-                org_id=org_id,
-                agent_id=agent_id,
-                new_memory_id=new_memory_id,
-                target_memory_id=target_id,
-                expected_revision=1,
-            ),
-        )
+        return await action(session)
 
 
 async def test_concurrent_supersede_vs_forget_has_one_typed_loser(
@@ -398,18 +347,34 @@ async def test_concurrent_supersede_vs_forget_has_one_typed_loser(
 
     barrier = asyncio.Barrier(3)
     forget_task = asyncio.create_task(
-        _forget_after(
-            barrier, session_factory, org_id=org_id, agent_id=agent_id, memory_id=target_id
+        _after_barrier(
+            barrier,
+            session_factory,
+            lambda session: forget_memory_session(
+                session,
+                ForgetMemory(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    memory_id=target_id,
+                    expected_revision=1,
+                ),
+            ),
         )
     )
     supersede_task = asyncio.create_task(
-        _supersede_after(
+        _after_barrier(
             barrier,
             session_factory,
-            org_id=org_id,
-            agent_id=agent_id,
-            new_memory_id=new_memory_id,
-            target_id=target_id,
+            lambda session: apply_supersession_session(
+                session,
+                SupersedeApply(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    new_memory_id=new_memory_id,
+                    target_memory_id=target_id,
+                    expected_revision=1,
+                ),
+            ),
         )
     )
     await barrier.wait()
@@ -429,97 +394,6 @@ async def test_concurrent_supersede_vs_forget_has_one_typed_loser(
     ]
 
 
-async def _seed_finalized_create(
-    factory, *, org_id, agent_id, created: tuple[str, str]
-) -> None:
-    """Store a finalized idempotent create response that carries the content."""
-    memory_id, content = created
-    await _execute_sql(
-        factory,
-        org_id,
-        """INSERT INTO ibex_core.idempotency_ledger
-           (organization_id, agent_id, dedupe_key, request_hash, state,
-            status_code, response_payload)
-           VALUES (:org, :agent, 'forget-erasure', repeat('a', 64), 'finalized',
-                   201, convert_to(:payload, 'UTF8'))""",
-        {
-            "org": org_id,
-            "agent": agent_id,
-            "payload": '{"data":{"id":"%s","content":"%s"}}' % (memory_id, content),
-        },
-    )
-
-
-async def _seed_near_duplicate(factory, *, org_id, agent_id, forgotten_id: str) -> None:
-    """Another create's response lists the forgotten id; it must survive the scrub."""
-    await _execute_sql(
-        factory,
-        org_id,
-        """INSERT INTO ibex_core.idempotency_ledger
-           (organization_id, agent_id, dedupe_key, request_hash, state,
-            status_code, response_payload)
-           VALUES (:org, :agent, 'other-create', repeat('b', 64), 'finalized', 201,
-                   convert_to(:payload, 'UTF8'))""",
-        {
-            "org": org_id,
-            "agent": agent_id,
-            "payload": (
-                '{"data":{"id":"%s","content":"other create content"},'
-                '"meta":{"deduplication":{"similar_memories":["%s"]}}}'
-                % ("11111111-1111-1111-1111-111111111111", forgotten_id)
-            ),
-        },
-    )
-
-
-async def _assert_content_erased(factory, *, org_id, memory_id, content: str) -> None:
-    rows = await _rows(
-        factory,
-        org_id,
-        """SELECT content, content_tokens, metadata::text AS metadata_text,
-                  pii_detected, pii_redacted
-           FROM ibex_core.memories WHERE id=:id AND org_id=:org""",
-        {"id": memory_id, "org": org_id},
-    )
-    row = rows[0]
-    assert content not in row.content
-    assert row.content == "[forgotten]"
-    assert int(row.content_tokens) == 0
-    assert row.metadata_text == "{}"
-    assert row.pii_detected is False
-    assert row.pii_redacted is False
-
-    labels = await _scalar(
-        factory,
-        org_id,
-        "SELECT count(*) FROM ibex_core.memory_labels WHERE memory_id=:id AND org_id=:org",
-        {"id": memory_id, "org": org_id},
-    )
-    assert labels == 0
-    ledger = await _rows(
-        factory,
-        org_id,
-        "SELECT dedupe_key, encode(response_payload, 'escape') AS payload"
-        " FROM ibex_core.idempotency_ledger"
-        " WHERE organization_id = :org AND dedupe_key = 'forget-erasure'",
-        {"org": org_id},
-    )
-    assert len(ledger) == 1, "the create's idempotency row must survive the scrub"
-    assert content not in ledger[0].payload, "the idempotent response still holds the content"
-    assert '"erased":true' in ledger[0].payload.replace(" ", "")
-
-    untouched = await _rows(
-        factory,
-        org_id,
-        "SELECT encode(response_payload, 'escape') AS payload"
-        " FROM ibex_core.idempotency_ledger"
-        " WHERE organization_id = :org AND dedupe_key = 'other-create'",
-        {"org": org_id},
-    )
-    assert len(untouched) == 1, "another create's ledger row must not be scrubbed"
-    assert "other create content" in untouched[0].payload
-
-
 @pytest.mark.asyncio
 async def test_forget_erases_content_and_child_labels(
     session_factory: async_sessionmaker[AsyncSession], settings: Settings
@@ -529,43 +403,110 @@ async def test_forget_erases_content_and_child_labels(
     org_id, agent_id, memory_id, _query, _store = await _seed_memory_with_embedding(
         session_factory, settings, content=content, hotspot=12
     )
-    await _execute_sql(
-        session_factory,
-        org_id,
-        "INSERT INTO ibex_core.memory_labels (memory_id, org_id, label)"
-        " VALUES (:id, :org, 'factual')",
-        {"id": memory_id, "org": org_id},
-    )
-    await _seed_finalized_create(
-        session_factory,
+    fixture = lifecycle_erasure_support.ForgetFixture(
         org_id=org_id,
         agent_id=agent_id,
-        created=(memory_id, content),
+        memory_id=memory_id,
+        other_id=await lifecycle_erasure_support.seed_related_memory(
+            session_factory, org_id=org_id, agent_id=agent_id
+        ),
+        content=content,
+        original_hash=await lifecycle_erasure_support.read_content_hash(
+            session_factory, org_id=org_id, memory_id=memory_id
+        ),
     )
-    await _seed_near_duplicate(
-        session_factory, org_id=org_id, agent_id=agent_id, forgotten_id=memory_id
-    )
+    await lifecycle_erasure_support.seed_forget_state(session_factory, fixture)
 
     from app.routers.memories import forget_memory
 
+    # Seeding the retention state moves the lifecycle revision on its own.
+    revision, _tombstoned, _status, _embedding = await _read_lifecycle(
+        session_factory, org_id=org_id, memory_id=memory_id
+    )
     token = SimpleNamespace(org_id=org_id, agent_id=agent_id)
     await forget_memory(
         memory_id,
-        ForgetMemoryRequest(expected_revision=1),
+        ForgetMemoryRequest(expected_revision=revision),
         token,
         session_factory,
         None,
     )
 
-    await _assert_content_erased(
-        session_factory, org_id=org_id, memory_id=memory_id, content=content
-    )
+    await lifecycle_erasure_support.assert_erased(session_factory, fixture)
     assert await _read_outbox(
         session_factory, org_id=org_id, memory_id=memory_id
-    ) == [(2, "forgotten")]
+    ) == [(revision + 1, "forgotten")]
 
 
 @pytest.mark.asyncio
+async def test_finalize_after_forget_stores_the_erased_marker(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    """A create that loses the race to forget must not resurrect its content."""
+    content = "raced create sentinel 91b2"
+    org_id, agent_id, memory_id, _query, _store = await _seed_memory_with_embedding(
+        session_factory, settings, content=content, hotspot=17
+    )
+    ledger = PostgresIdempotencyLedger(session_factory)
+    claim = (
+        await ledger.claim(
+            org_id=org_id,
+            agent_id=agent_id,
+            key="raced-create",
+            request_hash="c" * 64,
+        )
+    ).claim
+    assert claim is not None
+
+    async with session_factory() as session, session.begin():
+        await forget_memory_session(
+            session,
+            ForgetMemory(
+                org_id=org_id,
+                agent_id=agent_id,
+                memory_id=memory_id,
+                expected_revision=1,
+            ),
+        )
+
+    body = json.dumps({"data": {"id": str(memory_id), "content": content}}).encode()
+    await ledger.finalize(
+        claim,
+        status=201,
+        response=body,
+        prepare=erased_create_prepare(
+            memory_id=memory_id, org_id=org_id, body=body
+        ),
+    )
+
+    rows = await _rows(
+        session_factory,
+        org_id,
+        "SELECT encode(response_payload, 'escape') AS payload"
+        " FROM ibex_core.idempotency_ledger"
+        " WHERE organization_id = :org AND dedupe_key = 'raced-create'",
+        {"org": org_id},
+    )
+    assert len(rows) == 1
+    assert content not in rows[0].payload, "the finalize resurrected erased content"
+    assert '"erased":true' in rows[0].payload.replace(" ", "")
+
+
+@pytest.mark.asyncio
+async def _forget_in_plain_transaction(factory, *, org_id, agent_id, memory_id) -> None:
+    """Forget as a tenant transaction, with no service-account bypass set."""
+    async with factory() as session, session.begin():
+        await forget_memory_session(
+            session,
+            ForgetMemory(
+                org_id=org_id,
+                agent_id=agent_id,
+                memory_id=memory_id,
+                expected_revision=1,
+            ),
+        )
+
+
 async def test_forget_is_refused_while_a_legal_hold_is_active(
     session_factory: async_sessionmaker[AsyncSession], settings: Settings
 ) -> None:
@@ -582,17 +523,11 @@ async def test_forget_is_refused_while_a_legal_hold_is_active(
         {"org": org_id, "actor": str(agent_id)},
     )
 
+    refusal = _forget_in_plain_transaction(
+        session_factory, org_id=org_id, agent_id=agent_id, memory_id=memory_id
+    )
     with pytest.raises(LegalHoldActiveError):
-        async with session_factory() as session, session.begin():
-            await forget_memory_session(
-                session,
-                ForgetMemory(
-                    org_id=org_id,
-                    agent_id=agent_id,
-                    memory_id=memory_id,
-                    expected_revision=1,
-                ),
-            )
+        await refusal
 
     rows = await _rows(
         session_factory,
