@@ -206,10 +206,12 @@ v1_bootstrap_pat() {
     return 0
   fi
   # A rootful runtime writes the file as root, so the operator cannot read it
-  # directly. Read it through the image that created it; the container runs as
-  # root inside its own namespace and the mount is read-only.
+  # directly. Read it through the image that created it: the image runs as uid
+  # 10001 by default, so the read needs an explicit root user, and the mount is
+  # read-only.
   read -r -a engine <<<"$(container_runtime_bin)"
-  "${engine[@]}" run --rm --entrypoint cat -v "$dir:/run/ibex:ro" ibex-v1-auth:local /run/ibex/bootstrap.pat
+  "${engine[@]}" run --rm --user 0:0 --entrypoint cat -v "$dir:/run/ibex:ro" \
+    ibex-v1-auth:local /run/ibex/bootstrap.pat
 }
 
 v1_down() {
