@@ -50,20 +50,22 @@ def _factory_for(session: _FakeSession):
 
 @pytest.mark.asyncio
 async def test_find_active_by_content_hash_miss() -> None:
-    # set_config x2 + SELECT → three executes; only SELECT returns a row payload.
-    session = _FakeSession([None, None, None])
+    # clear bypass + SET ROLE + set_config + SELECT; only SELECT returns a row.
+    session = _FakeSession([None, None, None, None])
     found = await find_active_by_content_hash(
         _factory_for(session),  # type: ignore[arg-type]
         ExactHashLookup(org_id=uuid4(), agent_id=uuid4(), content_hash="abc"),
     )
     assert found is None
-    assert len(session.executed) == 3
+    assert len(session.executed) == 4
 
 
 @pytest.mark.asyncio
 async def test_find_active_by_content_hash_hit() -> None:
     memory_id = uuid4()
-    session = _FakeSession([None, None, SimpleNamespace(id=str(memory_id))])
+    session = _FakeSession(
+        [None, None, None, SimpleNamespace(id=str(memory_id))]
+    )
     found = await find_active_by_content_hash(
         _factory_for(session),  # type: ignore[arg-type]
         ExactHashLookup(org_id=uuid4(), agent_id=uuid4(), content_hash="abc"),
@@ -73,7 +75,7 @@ async def test_find_active_by_content_hash_hit() -> None:
 
 @pytest.mark.asyncio
 async def test_increment_retrieval_count_success() -> None:
-    session = _FakeSession([None, None, SimpleNamespace(retrieval_count=4)])
+    session = _FakeSession([None, None, None, SimpleNamespace(retrieval_count=4)])
     count = await increment_retrieval_count(
         _factory_for(session),  # type: ignore[arg-type]
         RetrievalBump(org_id=uuid4(), memory_id=uuid4()),
@@ -83,7 +85,7 @@ async def test_increment_retrieval_count_success() -> None:
 
 @pytest.mark.asyncio
 async def test_increment_retrieval_count_missing_row() -> None:
-    session = _FakeSession([None, None, None])
+    session = _FakeSession([None, None, None, None])
     factory = _factory_for(session)  # type: ignore[arg-type]
     bump = RetrievalBump(org_id=uuid4(), memory_id=uuid4())
     with pytest.raises(RuntimeError, match="expected 1 row"):

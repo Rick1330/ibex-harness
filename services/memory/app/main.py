@@ -24,6 +24,7 @@ from app.db import create_engine, create_session_factory
 from app.feedback.service import MemoryFeedbackService
 from app.http_metrics import HTTPMetricsMiddleware
 from app.http_validation import request_validation_error_handler
+from app.ledger_scope import tenant_scope
 from app.pii.service import PiiService
 from app.probes import probe_router
 from app.read.hot_cache import MemoryHotCacheReader
@@ -141,7 +142,9 @@ async def _memory_service_lifespan(
     state.session_factory = session_factory
     state.store = store
     state.pii = pii
-    state.idempotency_ledger = PostgresIdempotencyLedger(session_factory)
+    state.idempotency_ledger = PostgresIdempotencyLedger(
+        session_factory, session_scope=tenant_scope(session_factory)
+    )
 
     redis = _configure_redis(cfg, state)
     embedding_holder: dict[str, EmbeddingClient | None] = {"client": None}

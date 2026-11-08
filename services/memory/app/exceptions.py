@@ -67,6 +67,15 @@ class MemoryOrganizationUnavailableError(ConflictError):
         super().__init__(message)
 
 
+class LegalHoldActiveError(ConflictError):
+    """A legal hold preserves the organization's data; destruction is refused."""
+
+    code = "LEGAL_HOLD_ACTIVE"
+
+    def __init__(self, message: str = "A legal hold is active for this organization") -> None:
+        super().__init__(message)
+
+
 class ExternalServiceError(IBEXError):
     code = "UPSTREAM_ERROR"
     http_status = 503

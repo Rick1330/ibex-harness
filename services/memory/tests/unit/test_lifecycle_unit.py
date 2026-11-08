@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.exceptions import (
+    LegalHoldActiveError,
     MemoryNotFoundError,
     MemoryOrganizationUnavailableError,
     StaleLifecycleError,
@@ -82,15 +83,30 @@ def _forget(*, expected_revision: int = 1) -> ForgetMemory:
     )
 
 
+def _with_hold_check(results: list[_FakeResult]) -> list[_FakeResult]:
+    """Insert the (not-held) hold lookup where forget performs it.
+
+    Forget resolves and locks the target first — a 404 must not reveal the
+    organization's hold state for an id the caller cannot read — so the hold
+    lookup follows the target's ``tombstoned`` row.
+    """
+    out: list[_FakeResult] = []
+    for result in results:
+        out.append(result)
+        if isinstance(result._mapping, dict) and "tombstoned" in result._mapping:
+            out.append(_FakeResult(scalar=None))
+    return out
+
+
 async def _forget_success(results: list[_FakeResult]) -> tuple[int, int]:
-    session = _ScriptedSession(list(results))
+    session = _ScriptedSession(_with_hold_check(results))
     with patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()):
         revision = await forget_memory_session(session, _forget())
     return revision, session.executed
 
 
 async def _forget_raises(results: list[_FakeResult], exc, match) -> None:
-    session = _ScriptedSession(list(results))
+    session = _ScriptedSession(_with_hold_check(results))
     with (
         patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()),
         pytest.raises(exc, match=match),
@@ -240,9 +256,15 @@ async def test_forget_full_path_advances_source_session() -> None:
             _FakeResult(mapping={"lifecycle_revision": 2}),
             _FakeResult(),
             _FakeResult(),
+            # forget erases labels, feedback, relationships, escalations, ledger
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
         ]
     )
-    assert (revision, executed) == (2, 6)
+    assert (revision, executed) == (2, 12)
 
 
 @pytest.mark.asyncio
@@ -253,9 +275,14 @@ async def test_forget_without_source_session_skips_session_lock() -> None:
             _FakeResult(mapping={"lifecycle_revision": 1, "tombstoned": False}),
             _FakeResult(mapping={"lifecycle_revision": 2}),
             _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
         ]
     )
-    assert (revision, executed) == (2, 4)
+    assert (revision, executed) == (2, 10)
 
 
 @pytest.mark.asyncio
@@ -267,9 +294,44 @@ async def test_forget_missing_source_session_lock_skips_advance() -> None:
             _FakeResult(mapping={"lifecycle_revision": 1, "tombstoned": False}),
             _FakeResult(mapping={"lifecycle_revision": 2}),
             _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
         ]
     )
-    assert (revision, executed) == (2, 5)
+    assert (revision, executed) == (2, 11)
+
+
+@pytest.mark.asyncio
+async def test_forget_missing_target_raises_before_consulting_the_hold() -> None:
+    """An unknown id is a 404 even when the organization is under legal hold."""
+    session = _ScriptedSession([_FakeResult(scalar=None), _FakeResult(mapping=None)])
+    with (
+        patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()),
+        pytest.raises(MemoryNotFoundError),
+    ):
+        await forget_memory_session(session, _forget())
+    assert session.executed == 2, "the hold must not be consulted for an unknown target"
+
+
+@pytest.mark.asyncio
+async def test_forget_active_hold_refuses_after_resolving_the_target() -> None:
+    """A held organization is refused only after the target resolves."""
+    session = _ScriptedSession(
+        [
+            _FakeResult(scalar=None),
+            _FakeResult(mapping={"lifecycle_revision": 1, "tombstoned": False}),
+            _FakeResult(scalar=1),
+        ]
+    )
+    with (
+        patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()),
+        pytest.raises(LegalHoldActiveError),
+    ):
+        await forget_memory_session(session, _forget())
+    assert session.executed == 3
 
 
 @pytest.mark.asyncio

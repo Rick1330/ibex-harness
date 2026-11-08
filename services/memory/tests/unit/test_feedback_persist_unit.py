@@ -76,9 +76,10 @@ async def test_apply_feedback_session_happy_path() -> None:
     updated = mapping_row(
         id=memory_id, org_id=org_id, agent_id=agent_id, usefulness_score=0.67
     )
-    # set_config x2 + load + upsert + counts + update returning
+    # clear bypass + SET ROLE + set_config + load + upsert + counts + update
     session = _FakeSession(
         [
+            None,
             None,
             None,
             load_row,
@@ -94,12 +95,12 @@ async def test_apply_feedback_session_happy_path() -> None:
     assert result.total_positive_feedback == 1
     assert result.new_usefulness_score == pytest.approx(0.67)
     assert memory.usefulness_score == pytest.approx(0.67)
-    assert len(session.executed) == 6
+    assert len(session.executed) == 7
 
 
 @pytest.mark.asyncio
 async def test_apply_feedback_session_missing_memory() -> None:
-    session = _FakeSession([None, None, None])
+    session = _FakeSession([None, None, None, None])
     factory = _factory_for(session)  # type: ignore[arg-type]
     command = _command()
     with pytest.raises(MemoryNotFoundError):
@@ -114,6 +115,7 @@ async def test_apply_feedback_session_update_missing_row() -> None:
     load_row = mapping_row(id=memory_id, org_id=org_id, agent_id=agent_id)
     session = _FakeSession(
         [
+            None,
             None,
             None,
             load_row,
@@ -139,6 +141,7 @@ async def test_service_apply_refreshes_hot_cache() -> None:
     )
     session = _FakeSession(
         [
+            None,
             None,
             None,
             load_row,

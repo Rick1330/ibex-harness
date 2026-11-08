@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import random
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -30,7 +31,10 @@ from ibex_idempotency import (
     LedgerValidationError,
     PostgresIdempotencyLedger,
 )
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.erased_response import ERASED_MARKER_BODY, is_erased_marker
 from app.exceptions import (
     DuplicateMemoryError,
     EmbeddingServiceError,
@@ -52,6 +56,16 @@ from app.write.labels import MemoryLabelInput, resolve_write_labels
 from app.write.models import CreateMemoryCommand, WriteOutcome
 
 logger = logging.getLogger(__name__)
+
+# ``prepare`` returns the bytes the ledger must store for a replayed create.
+PrepareResponse = Callable[[AsyncSession], Awaitable[bytes]]
+
+_TOMBSTONE_STATE_SQL = """
+    SELECT tombstoned
+    FROM ibex_core.memories
+    WHERE id = :memory_id AND org_id = :org_id
+    FOR SHARE
+"""
 
 # Recoverable finalization: a committed keyed write must not be reported as
 # completed while its ledger claim is still open, so retry transient ledger
@@ -138,9 +152,48 @@ def parse_idempotency_key(raw: str | None) -> str | None:
     return key
 
 
+def erased_replay_error() -> HTTPException:
+    """The create under this key was erased; the key is terminal and unreplayable."""
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "IDEMPOTENCY_KEY_ERASED",
+            "message": "The memory created under this idempotency key was erased",
+        },
+    )
+
+
+def erased_create_prepare(*, memory_id: UUID, org_id: UUID, body: bytes) -> PrepareResponse:
+    """Serialize a create's finalization against a concurrent forget.
+
+    The lock conflicts with forget's tombstone ``UPDATE``, so the two cannot
+    interleave: whichever runs second waits, then observes the other's committed
+    row. Taking it in the ledger transaction is what makes the check binding — a
+    check outside that transaction could still be overwritten by a finalize that
+    commits later.
+
+    Returns the erased marker when the memory is tombstoned or gone, so a replay
+    answers 409 instead of serving a 201 for content that no longer exists.
+    """
+
+    async def prepare(session: AsyncSession) -> bytes:
+        result = await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                _TOMBSTONE_STATE_SQL
+            ),
+            {"memory_id": str(memory_id), "org_id": str(org_id)},
+        )
+        tombstoned = result.scalar_one_or_none()
+        return body if tombstoned is False else ERASED_MARKER_BODY
+
+    return prepare
+
+
 def _replay_cached_response(outcome: ClaimOutcome) -> JSONResponse | None:
     """Return stored response body when this idempotency key already completed."""
     if outcome.kind == KIND_REPLAY and outcome.response is not None:
+        if is_erased_marker(outcome.response):
+            raise erased_replay_error()
         return JSONResponse(
             status_code=outcome.status or 200,
             content=json.loads(outcome.response.decode("utf-8")),
@@ -246,13 +299,26 @@ async def release_idempotency(handle: IdempotencyHandle) -> None:
         logger.warning("idempotency release failed error_class=%s", type(exc).__name__)
 
 
-async def commit_idempotency(handle: IdempotencyHandle, *, status: int, body: bytes) -> None:
+async def commit_idempotency(
+    handle: IdempotencyHandle,
+    *,
+    status: int,
+    body: bytes,
+    prepare: PrepareResponse | None = None,
+) -> None:
+    """Store the terminal response for an active claim (a no-op without one)."""
     if handle.active:
-        await handle.ledger.finalize(handle.claim, status=status, response=body)
+        await handle.ledger.finalize(
+            handle.claim, status=status, response=body, prepare=prepare
+        )
 
 
 async def commit_idempotency_fail_closed(
-    handle: IdempotencyHandle, *, status: int, body: bytes
+    handle: IdempotencyHandle,
+    *,
+    status: int,
+    body: bytes,
+    prepare: PrepareResponse | None = None,
 ) -> None:
     """Finalize a keyed write, retrying transient outages, then fail closed.
 
@@ -268,7 +334,7 @@ async def commit_idempotency_fail_closed(
     last: LedgerError | None = None
     for attempt in range(_FINALIZE_ATTEMPTS):
         try:
-            await commit_idempotency(handle, status=status, body=body)
+            await commit_idempotency(handle, status=status, body=body, prepare=prepare)
             return
         except LedgerConflictError as exc:
             last = exc
@@ -394,6 +460,7 @@ async def finalize_quarantine_response(
     idem: IdempotencyHandle,
     response: Response,
 ) -> QuarantineMemoryResponse:
+    """Record the 202 and store it as the replayed response for the key."""
     response.status_code = 202
     payload = QuarantineMemoryResponse(
         data=QuarantineMemoryData(
@@ -403,8 +470,16 @@ async def finalize_quarantine_response(
         ),
         meta={"message": "Memory quarantined for review due to PII detection"},
     )
+    body = payload.model_dump_json().encode("utf-8")
     await commit_idempotency_fail_closed(
-        idem, status=202, body=payload.model_dump_json().encode("utf-8")
+        idem,
+        status=202,
+        body=body,
+        # A quarantine response finalized after a forget must not replay a
+        # stale 202; the same lock-and-marker path applies.
+        prepare=erased_create_prepare(
+            memory_id=outcome.memory.id, org_id=outcome.memory.org_id, body=body
+        ),
     )
     return payload
 
@@ -423,7 +498,13 @@ async def finalize_created_response(
             processing_time_ms=ctx.elapsed_ms,
         ),
     )
+    body = payload.model_dump_json().encode("utf-8")
     await commit_idempotency_fail_closed(
-        ctx.idem, status=201, body=payload.model_dump_json().encode("utf-8")
+        ctx.idem,
+        status=201,
+        body=body,
+        prepare=erased_create_prepare(
+            memory_id=ctx.outcome.memory.id, org_id=ctx.org_id, body=body
+        ),
     )
     return payload

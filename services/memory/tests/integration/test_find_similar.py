@@ -19,6 +19,7 @@ from tests.integration.find_similar_support import (
     InsertActiveMemoryParams,
     SeedAgentMemoriesParams,
     build_read_repository,
+    dense_embedding,
     insert_active_memory,
     search_http_client,
     seed_agent_with_memories,
@@ -316,7 +317,13 @@ async def test_find_similar_punctuation_query_degrades_gracefully(
     org_id, agent_id, mem_id = await seed_org_agent_memory(
         session_factory, content="preference content"
     )
-    query_vec = await upsert_embedding(store, session_factory, org_id=org_id, memory_id=mem_id, hotspot=6)
+    query_vec = await upsert_embedding(
+        store,
+        session_factory,
+        org_id=org_id,
+        memory_id=mem_id,
+        embedding=dense_embedding(seed=61),
+    )
 
     repo = build_read_repository(session_factory, store, settings)
     results = await repo.find_similar(

@@ -26,6 +26,7 @@ from app.deps import (
     get_write_orchestrator,
     require_memory_write,
 )
+from app.erased_response import ERASED_MARKER_BODY
 from app.exceptions import (
     DuplicateMemoryError,
     EmbeddingServiceError,
@@ -91,16 +92,36 @@ def client() -> TestClient:
     return TestClient(app), mock_orch
 
 
+class _FakeScalarResult:
+    """Result of the ``FOR SHARE`` tombstone-state read used by ``prepare``."""
+
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self) -> object:
+        return self._value
+
+
 class _FakeLedger:
-    def __init__(self, claim_outcome) -> None:
+    """Ledger double that also answers the tombstone-state read ``prepare`` makes."""
+
+    def __init__(self, claim_outcome, *, tombstoned: bool | None = False) -> None:
         self.claim_outcome = claim_outcome
+        self.tombstoned = tombstoned
         self.finalized: list[tuple] = []
         self.released: list[object] = []
+
+    async def execute(self, statement, params=None):
+        """Return the tombstone state the finalize guard asks for."""
+        del statement, params
+        return _FakeScalarResult(self.tombstoned)
 
     async def claim(self, *, org_id, agent_id, key, request_hash):
         return self.claim_outcome
 
-    async def finalize(self, claim, *, status, response):
+    async def finalize(self, claim, *, status, response, prepare=None):
+        if prepare is not None:
+            response = await prepare(self)
         self.finalized.append((claim, status, response))
 
     async def release(self, claim):
@@ -248,7 +269,7 @@ def test_create_memory_finalize_failure_fails_closed(client) -> None:
     http, mock_orch = client
 
     class _FailingFinalizeLedger(_FakeLedger):
-        async def finalize(self, claim, *, status, response):
+        async def finalize(self, claim, *, status, response, prepare=None):
             raise LedgerError("down")
 
     ledger = _FailingFinalizeLedger(_owned_outcome())
@@ -334,6 +355,22 @@ def test_create_memory_unexpected_error_releases_idempotency(client) -> None:
     assert detail["code"] == "INTERNAL_ERROR"
     assert detail["message"] == "Memory write failed"
     assert len(ledger.released) == 1
+
+
+def test_create_memory_quarantine_after_forget_stores_the_marker(client) -> None:
+    """A 202 finalized after the memory was forgotten must not replay its body."""
+    http, mock_orch = client
+    ledger = _FakeLedger(_owned_outcome(), tombstoned=True)
+    _with_idempotency_ledger(http, ledger)
+    row = replace(_memory_row(), status="quarantined", pii_detected=True)
+    mock_orch.create = AsyncMock(
+        return_value=WriteOutcome(kind=WriteOutcomeKind.QUARANTINED, memory=row)
+    )
+    with http:
+        resp = _post_memory(http, content="Contact Jordan", idempotency_key="key-1")
+    assert resp.status_code == 202
+    assert ledger.finalized[0][1] == 202
+    assert ledger.finalized[0][2] == ERASED_MARKER_BODY
 
 
 def test_create_memory_quarantine_commits_idempotency(client) -> None:

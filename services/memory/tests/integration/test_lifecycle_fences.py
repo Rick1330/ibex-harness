@@ -3,57 +3,44 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import text
+from ibex_idempotency import PostgresIdempotencyLedger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
 from app.conflict.persist import apply_supersession_session
 from app.conflict.types import SupersedeApply
-from app.exceptions import StaleLifecycleError
+from app.exceptions import LegalHoldActiveError, StaleLifecycleError
+from app.ledger_scope import tenant_ledger_session, tenant_scope
 from app.lifecycle import (
     ForgetMemory,
     forget_memory_session,
 )
 from app.pipeline.context import WriteContext
 from app.pipeline.write import WritePipeline
+from app.routers.memory_write_support import erased_create_prepare
 from app.schemas.memories import ForgetMemoryRequest
 from app.vectorstore.base import SearchMode, SearchRequest, UpsertRequest
 from app.vectorstore.pgvector_store import PgVectorStore
 from app.write.models import CreateMemoryCommand
 from app.write.orchestrator import MemoryWriteOrchestrator
-from tests.integration.conftest import seed_org_agent_memory, with_service_org, zero_embedding
+from tests.integration import lifecycle_erasure_support
+from tests.integration.conftest import seed_org_agent_memory, zero_embedding
 
 pytestmark = pytest.mark.integration
 
 
-@asynccontextmanager
-async def _service_session(factory, org_id):
-    async with factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        yield session
-
-
-async def _execute_sql(factory, org_id, statement: str, params: dict) -> None:
-    async with _service_session(factory, org_id) as session:
-        await session.execute(text(statement), params)
-
-
-async def _scalar(factory, org_id, statement: str, params: dict):
-    async with _service_session(factory, org_id) as session:
-        return await session.scalar(text(statement), params)
-
-
-async def _rows(factory, org_id, statement: str, params: dict) -> list:
-    async with _service_session(factory, org_id) as session:
-        return (await session.execute(text(statement), params)).all()
+_service_session = lifecycle_erasure_support.service_session
+_execute_sql = lifecycle_erasure_support.execute_sql
+_scalar = lifecycle_erasure_support.fetch_scalar
+_rows = lifecycle_erasure_support.fetch_rows
 
 
 async def _read_lifecycle(
@@ -330,48 +317,11 @@ async def test_expires_at_hides_normal_retrieval_but_tombstone_wins_historical_m
     )
 
 
-async def _forget_after(
-    barrier: asyncio.Barrier,
-    factory: async_sessionmaker[AsyncSession],
-    *,
-    org_id,
-    agent_id,
-    memory_id,
-):
+async def _after_barrier(barrier: asyncio.Barrier, factory, action):
+    """Run ``action(session)`` in its own transaction once both racers arrive."""
     await barrier.wait()
     async with factory() as session, session.begin():
-        return await forget_memory_session(
-            session,
-            ForgetMemory(
-                org_id=org_id,
-                agent_id=agent_id,
-                memory_id=memory_id,
-                expected_revision=1,
-            ),
-        )
-
-
-async def _supersede_after(
-    barrier: asyncio.Barrier,
-    factory: async_sessionmaker[AsyncSession],
-    *,
-    org_id,
-    agent_id,
-    new_memory_id,
-    target_id,
-) -> None:
-    await barrier.wait()
-    async with factory() as session, session.begin():
-        await apply_supersession_session(
-            session,
-            SupersedeApply(
-                org_id=org_id,
-                agent_id=agent_id,
-                new_memory_id=new_memory_id,
-                target_memory_id=target_id,
-                expected_revision=1,
-            ),
-        )
+        return await action(session)
 
 
 async def test_concurrent_supersede_vs_forget_has_one_typed_loser(
@@ -398,18 +348,34 @@ async def test_concurrent_supersede_vs_forget_has_one_typed_loser(
 
     barrier = asyncio.Barrier(3)
     forget_task = asyncio.create_task(
-        _forget_after(
-            barrier, session_factory, org_id=org_id, agent_id=agent_id, memory_id=target_id
+        _after_barrier(
+            barrier,
+            session_factory,
+            lambda session: forget_memory_session(
+                session,
+                ForgetMemory(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    memory_id=target_id,
+                    expected_revision=1,
+                ),
+            ),
         )
     )
     supersede_task = asyncio.create_task(
-        _supersede_after(
+        _after_barrier(
             barrier,
             session_factory,
-            org_id=org_id,
-            agent_id=agent_id,
-            new_memory_id=new_memory_id,
-            target_id=target_id,
+            lambda session: apply_supersession_session(
+                session,
+                SupersedeApply(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    new_memory_id=new_memory_id,
+                    target_memory_id=target_id,
+                    expected_revision=1,
+                ),
+            ),
         )
     )
     await barrier.wait()
@@ -427,3 +393,220 @@ async def test_concurrent_supersede_vs_forget_has_one_typed_loser(
     assert await _read_outbox(session_factory, org_id=org_id, memory_id=target_id) == [
         (2, "forgotten" if tombstoned else "superseded")
     ]
+
+
+@pytest.mark.asyncio
+async def test_forget_erases_content_and_child_labels(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    """P0-08: forget is erasure, not only a visibility tombstone."""
+    content = "sentinel-erasure-7f3a91 unforgettable"
+    org_id, agent_id, memory_id, _query, _store = await _seed_memory_with_embedding(
+        session_factory, settings, content=content, hotspot=12
+    )
+    fixture = lifecycle_erasure_support.ForgetFixture(
+        org_id=org_id,
+        agent_id=agent_id,
+        memory_id=memory_id,
+        other_id=await lifecycle_erasure_support.seed_related_memory(
+            session_factory, org_id=org_id, agent_id=agent_id
+        ),
+        content=content,
+        original_hash=await lifecycle_erasure_support.read_content_hash(
+            session_factory, org_id=org_id, memory_id=memory_id
+        ),
+    )
+    await lifecycle_erasure_support.seed_forget_state(session_factory, fixture)
+
+    from app.routers.memories import forget_memory
+
+    # Seeding the retention state moves the lifecycle revision on its own.
+    revision, _tombstoned, _status, _embedding = await _read_lifecycle(
+        session_factory, org_id=org_id, memory_id=memory_id
+    )
+    token = SimpleNamespace(org_id=org_id, agent_id=agent_id)
+    await forget_memory(
+        memory_id,
+        ForgetMemoryRequest(expected_revision=revision),
+        token,
+        session_factory,
+        None,
+    )
+
+    await lifecycle_erasure_support.assert_erased(session_factory, fixture)
+    assert await _read_outbox(
+        session_factory, org_id=org_id, memory_id=memory_id
+    ) == [(revision + 1, "forgotten")]
+
+
+@pytest.mark.asyncio
+async def test_finalize_after_forget_stores_the_erased_marker(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    """A create that loses the race to forget must not resurrect its content."""
+    content = "raced create sentinel 91b2"
+    org_id, agent_id, memory_id, _query, _store = await _seed_memory_with_embedding(
+        session_factory, settings, content=content, hotspot=17
+    )
+    ledger = PostgresIdempotencyLedger(
+        session_factory, session_scope=tenant_scope(session_factory)
+    )
+    claim = (
+        await ledger.claim(
+            org_id=org_id,
+            agent_id=agent_id,
+            key="raced-create",
+            request_hash="c" * 64,
+        )
+    ).claim
+    assert claim is not None
+
+    async with session_factory() as session, session.begin():
+        await forget_memory_session(
+            session,
+            ForgetMemory(
+                org_id=org_id,
+                agent_id=agent_id,
+                memory_id=memory_id,
+                expected_revision=1,
+            ),
+        )
+
+    body = json.dumps({"data": {"id": str(memory_id), "content": content}}).encode()
+    await ledger.finalize(
+        claim,
+        status=201,
+        response=body,
+        prepare=erased_create_prepare(
+            memory_id=memory_id, org_id=org_id, body=body
+        ),
+    )
+
+    rows = await _rows(
+        session_factory,
+        org_id,
+        "SELECT encode(response_payload, 'escape') AS payload"
+        " FROM ibex_core.idempotency_ledger"
+        " WHERE organization_id = :org AND dedupe_key = 'raced-create'",
+        {"org": org_id},
+    )
+    assert len(rows) == 1
+    assert content not in rows[0].payload, "the finalize resurrected erased content"
+    assert '"erased":true' in rows[0].payload.replace(" ", "")
+
+
+async def _forget_in_plain_transaction(factory, *, org_id, agent_id, memory_id) -> None:
+    """Forget as a tenant transaction, with no service-account bypass set."""
+    async with factory() as session, session.begin():
+        await forget_memory_session(
+            session,
+            ForgetMemory(
+                org_id=org_id,
+                agent_id=agent_id,
+                memory_id=memory_id,
+                expected_revision=1,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_forget_waits_for_a_finalization_holding_the_sharing_lock(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    """Forget blocks while finalization holds the row, and the key ends erased.
+
+    This is the overlap the ``FOR SHARE`` exists for: without it, forget would
+    commit while the finalize transaction is still open, and the finalize could
+    then write the body back to the ledger.
+    """
+    content = "overlap sentinel 5c1f"
+    org_id, agent_id, memory_id, _query, _store = await _seed_memory_with_embedding(
+        session_factory, settings, content=content, hotspot=19
+    )
+    ledger = PostgresIdempotencyLedger(
+        session_factory, session_scope=tenant_scope(session_factory)
+    )
+    claim = (
+        await ledger.claim(
+            org_id=org_id,
+            agent_id=agent_id,
+            key="overlap-create",
+            request_hash="d" * 64,
+        )
+    ).claim
+    assert claim is not None
+    body = json.dumps({"data": {"id": str(memory_id), "content": content}}).encode()
+    prepare = erased_create_prepare(memory_id=memory_id, org_id=org_id, body=body)
+
+    locked = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _hold_the_lock() -> None:
+        async with tenant_ledger_session(session_factory, str(org_id)) as session:
+            await prepare(session)
+            locked.set()
+            await release.wait()
+
+    holder = asyncio.create_task(_hold_the_lock())
+    try:
+        await asyncio.wait_for(locked.wait(), timeout=5.0)
+        forget_task = asyncio.create_task(
+            _forget_in_plain_transaction(
+                session_factory, org_id=org_id, agent_id=agent_id, memory_id=memory_id
+            )
+        )
+        guarded = asyncio.shield(forget_task)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(guarded, timeout=1.0)
+        release.set()
+        await asyncio.wait_for(holder, timeout=5.0)
+        await asyncio.wait_for(forget_task, timeout=10.0)
+    finally:
+        release.set()
+        if not holder.done():
+            await holder
+
+    await ledger.finalize(claim, status=201, response=body, prepare=prepare)
+    stored = await _rows(
+        session_factory,
+        org_id,
+        "SELECT encode(response_payload, 'escape') AS payload"
+        " FROM ibex_core.idempotency_ledger"
+        " WHERE organization_id = :org AND dedupe_key = 'overlap-create'",
+        {"org": org_id},
+    )
+    assert len(stored) == 1
+    assert content not in stored[0].payload
+    assert '"erased":true' in stored[0].payload.replace(" ", "")
+
+
+async def test_forget_is_refused_while_a_legal_hold_is_active(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    """A legal hold preserves the organization's data: destruction is refused."""
+    content = "held-tenant sentinel"
+    org_id, agent_id, memory_id, _query, _store = await _seed_memory_with_embedding(
+        session_factory, settings, content=content, hotspot=13
+    )
+    await _execute_sql(
+        session_factory,
+        org_id,
+        "INSERT INTO ibex_core.legal_holds (org_id, reason, set_by)"
+        " VALUES (:org, 'integration hold', :actor)",
+        {"org": org_id, "actor": str(agent_id)},
+    )
+
+    refusal = _forget_in_plain_transaction(
+        session_factory, org_id=org_id, agent_id=agent_id, memory_id=memory_id
+    )
+    with pytest.raises(LegalHoldActiveError):
+        await refusal
+
+    rows = await _rows(
+        session_factory,
+        org_id,
+        "SELECT content, tombstoned FROM ibex_core.memories WHERE id=:id AND org_id=:org",
+        {"id": memory_id, "org": org_id},
+    )
+    assert rows[0].content == content
+    assert rows[0].tombstoned is False

@@ -109,8 +109,10 @@ async def test_load_candidate_memories_maps_rows() -> None:
         confidence=0.9,
         lifecycle_revision=7,
     )
-    # set_config x2 + SELECT
-    session = _FakeSession([_FakeResult(), _FakeResult(), _FakeResult(rows=[row])])
+    # clear bypass + SET ROLE + set_config + SELECT
+    session = _FakeSession(
+        [_FakeResult(), _FakeResult(), _FakeResult(), _FakeResult(rows=[row])]
+    )
     loaded = await load_candidate_memories(
         _factory_for(session),  # type: ignore[arg-type]
         CandidateLoad(
@@ -141,7 +143,9 @@ async def test_load_candidate_aware_until() -> None:
         confidence=0.8,
         lifecycle_revision=2,
     )
-    session = _FakeSession([_FakeResult(), _FakeResult(), _FakeResult(rows=[row])])
+    session = _FakeSession(
+        [_FakeResult(), _FakeResult(), _FakeResult(), _FakeResult(rows=[row])]
+    )
     loaded = await load_candidate_memories(
         _factory_for(session),  # type: ignore[arg-type]
         CandidateLoad(

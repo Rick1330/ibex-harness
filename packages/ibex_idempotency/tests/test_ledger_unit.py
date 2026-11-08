@@ -167,6 +167,34 @@ async def test_claim_rejects_invalid_claim() -> None:
 
 
 @pytest.mark.asyncio
+async def test_finalize_prepare_replaces_the_stored_response() -> None:
+    """``prepare`` runs before the ledger write and its bytes are what is stored."""
+    session = _FakeSession([_Result(_row("finalized", _HASH), rowcount=1)])
+    ledger = _ledger(session)
+    claim = ClaimToken(uuid4(), uuid4(), uuid4(), "k", _HASH, version=1)
+
+    async def prepare(s: _FakeSession) -> bytes:
+        assert s is session, "prepare must run inside the ledger transaction"
+        return b'{"erased": true}'
+
+    await ledger.finalize(claim, status=201, response=b'{"data":{}}', prepare=prepare)
+    assert session.calls[-1][1]["response"] == b'{"erased": true}'
+
+
+@pytest.mark.asyncio
+async def test_finalize_prepare_maps_a_driver_failure_to_ledger_error() -> None:
+    ledger = _ledger(_FailingSession(OperationalError("stmt", None, Exception("down"))))
+    claim = ClaimToken(uuid4(), uuid4(), uuid4(), "k", _HASH, version=1)
+
+    async def prepare(session) -> bytes:  # type: ignore[no-untyped-def]
+        del session
+        return b"{}"
+
+    with pytest.raises(LedgerError):
+        await ledger.finalize(claim, status=201, response=b"{}", prepare=prepare)
+
+
+@pytest.mark.asyncio
 async def test_finalize_raises_conflict_when_not_owned() -> None:
     ledger = _ledger(_FakeSession([_Result(None, rowcount=0)]))
     claim = ClaimToken(uuid4(), uuid4(), uuid4(), "k", _HASH, version=1)
