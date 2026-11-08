@@ -30,16 +30,19 @@ async def service_session(factory, org_id):
 
 
 async def execute_sql(factory, org_id, statement: str, params: dict) -> None:
+    """Run one statement in a service-account transaction for ``org_id``."""
     async with service_session(factory, org_id) as session:
         await session.execute(text(statement), params)
 
 
 async def fetch_scalar(factory, org_id, statement: str, params: dict):
+    """Return the first column of the first row, or None."""
     async with service_session(factory, org_id) as session:
         return await session.scalar(text(statement), params)
 
 
 async def fetch_rows(factory, org_id, statement: str, params: dict) -> list:
+    """Return every row of the statement."""
     async with service_session(factory, org_id) as session:
         return (await session.execute(text(statement), params)).all()
 
@@ -57,6 +60,7 @@ class ForgetFixture:
 
 
 async def read_content_hash(factory, *, org_id, memory_id) -> str:
+    """Read the memory's content hash so the assertion can prove it changed."""
     return await fetch_scalar(
         factory,
         org_id,
@@ -128,6 +132,7 @@ _LEDGER_INSERT_SQL = """INSERT INTO ibex_core.idempotency_ledger
 
 
 def _fixture_params(fixture: ForgetFixture) -> dict:
+    """Bind every id the seed statements share."""
     return {
         "id": fixture.memory_id,
         "org": fixture.org_id,
@@ -226,6 +231,7 @@ async def assert_erased(factory, fixture: ForgetFixture) -> None:
 
 
 async def _assert_ledger_scrubbed(factory, fixture: ForgetFixture) -> None:
+    """The create's ledger copy is the marker; another create's copy survives."""
     scrubbed = await fetch_rows(
         factory,
         fixture.org_id,

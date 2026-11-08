@@ -306,6 +306,7 @@ async def commit_idempotency(
     body: bytes,
     prepare: PrepareResponse | None = None,
 ) -> None:
+    """Store the terminal response for an active claim (a no-op without one)."""
     if handle.active:
         await handle.ledger.finalize(
             handle.claim, status=status, response=body, prepare=prepare
@@ -459,6 +460,7 @@ async def finalize_quarantine_response(
     idem: IdempotencyHandle,
     response: Response,
 ) -> QuarantineMemoryResponse:
+    """Record the 202 and store it as the replayed response for the key."""
     response.status_code = 202
     payload = QuarantineMemoryResponse(
         data=QuarantineMemoryData(
@@ -468,8 +470,16 @@ async def finalize_quarantine_response(
         ),
         meta={"message": "Memory quarantined for review due to PII detection"},
     )
+    body = payload.model_dump_json().encode("utf-8")
     await commit_idempotency_fail_closed(
-        idem, status=202, body=payload.model_dump_json().encode("utf-8")
+        idem,
+        status=202,
+        body=body,
+        # A quarantine response finalized after a forget must not replay a
+        # stale 202; the same lock-and-marker path applies.
+        prepare=erased_create_prepare(
+            memory_id=outcome.memory.id, org_id=outcome.memory.org_id, body=body
+        ),
     )
     return payload
 

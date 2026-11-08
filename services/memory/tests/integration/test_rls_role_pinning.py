@@ -139,10 +139,12 @@ def statement_log(engine: AsyncEngine):
 
 
 def _pins_role(statements: list[str]) -> bool:
+    """Return True when the statement stream pins the tenant role."""
     return any("SET LOCAL ROLE ibex_app" in line for line in statements)
 
 
 def _sets_bypass(statements: list[str]) -> bool:
+    """Return True when the statement stream turns the service bypass on."""
     return any("set_config('app.is_service_account', 'true'" in line for line in statements)
 
 
@@ -237,6 +239,7 @@ async def test_pinned_transaction_discards_an_inherited_bypass(
 
 
 async def _forget_as_tenant(factory, *, org_id, agent_id, memory_id) -> None:
+    """Forget through the tenant-pinned helper, as tenant B would."""
     async with session_with_org(factory, org_id) as session:
         await forget_memory_session(
             session,

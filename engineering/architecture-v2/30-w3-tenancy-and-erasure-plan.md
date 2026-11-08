@@ -48,8 +48,9 @@ owner role; their pinning is the next slice.
 - **P1-20** — `usage_facts` and `evidence_events` added to the ClickHouse purge and count queries.
 
 **P0-06 (memory only) is in this slice:** memory transactions pin `ibex_app` and no longer set
-`app.is_service_account`; the vector store pins through the same helper; an unfiltered `SELECT` test and a
-cross-tenant forget test prove it. The worker, auth, proxy and the shared Go stores are **not** pinned yet. Two
+`app.is_service_account`; the vector store and the **idempotency ledger** pin through the same helper (the ledger's
+session scope is tenant-scoped, not the platform actor); an unfiltered `SELECT` test, a vector-store
+upsert/search/delete test and a cross-tenant forget test prove it. The worker, auth, proxy and the shared Go stores are **not** pinned yet. Two
 invariants shaped the split:
 
 1. `directive_versions` is **append-only for `ibex_app`** — the migration test enforces it. The deletion saga cannot

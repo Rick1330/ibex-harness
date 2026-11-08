@@ -318,6 +318,7 @@ async def test_forget_missing_target_raises_before_consulting_the_hold() -> None
 
 @pytest.mark.asyncio
 async def test_forget_active_hold_refuses_after_resolving_the_target() -> None:
+    """A held organization is refused only after the target resolves."""
     session = _ScriptedSession(
         [
             _FakeResult(scalar=None),

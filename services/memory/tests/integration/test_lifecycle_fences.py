@@ -18,6 +18,7 @@ from app.config import Settings
 from app.conflict.persist import apply_supersession_session
 from app.conflict.types import SupersedeApply
 from app.exceptions import LegalHoldActiveError, StaleLifecycleError
+from app.ledger_scope import tenant_ledger_session, tenant_scope
 from app.lifecycle import (
     ForgetMemory,
     forget_memory_session,
@@ -447,7 +448,9 @@ async def test_finalize_after_forget_stores_the_erased_marker(
     org_id, agent_id, memory_id, _query, _store = await _seed_memory_with_embedding(
         session_factory, settings, content=content, hotspot=17
     )
-    ledger = PostgresIdempotencyLedger(session_factory)
+    ledger = PostgresIdempotencyLedger(
+        session_factory, session_scope=tenant_scope(session_factory)
+    )
     claim = (
         await ledger.claim(
             org_id=org_id,
@@ -492,7 +495,6 @@ async def test_finalize_after_forget_stores_the_erased_marker(
     assert '"erased":true' in rows[0].payload.replace(" ", "")
 
 
-@pytest.mark.asyncio
 async def _forget_in_plain_transaction(factory, *, org_id, agent_id, memory_id) -> None:
     """Forget as a tenant transaction, with no service-account bypass set."""
     async with factory() as session, session.begin():
@@ -505,6 +507,77 @@ async def _forget_in_plain_transaction(factory, *, org_id, agent_id, memory_id) 
                 expected_revision=1,
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_forget_waits_for_a_finalization_holding_the_sharing_lock(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    """Forget blocks while finalization holds the row, and the key ends erased.
+
+    This is the overlap the ``FOR SHARE`` exists for: without it, forget would
+    commit while the finalize transaction is still open, and the finalize could
+    then write the body back to the ledger.
+    """
+    content = "overlap sentinel 5c1f"
+    org_id, agent_id, memory_id, _query, _store = await _seed_memory_with_embedding(
+        session_factory, settings, content=content, hotspot=19
+    )
+    ledger = PostgresIdempotencyLedger(
+        session_factory, session_scope=tenant_scope(session_factory)
+    )
+    claim = (
+        await ledger.claim(
+            org_id=org_id,
+            agent_id=agent_id,
+            key="overlap-create",
+            request_hash="d" * 64,
+        )
+    ).claim
+    assert claim is not None
+    body = json.dumps({"data": {"id": str(memory_id), "content": content}}).encode()
+    prepare = erased_create_prepare(memory_id=memory_id, org_id=org_id, body=body)
+
+    locked = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _hold_the_lock() -> None:
+        async with tenant_ledger_session(session_factory, str(org_id)) as session:
+            await prepare(session)
+            locked.set()
+            await release.wait()
+
+    holder = asyncio.create_task(_hold_the_lock())
+    try:
+        await asyncio.wait_for(locked.wait(), timeout=5.0)
+        forget_task = asyncio.create_task(
+            _forget_in_plain_transaction(
+                session_factory, org_id=org_id, agent_id=agent_id, memory_id=memory_id
+            )
+        )
+        guarded = asyncio.shield(forget_task)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(guarded, timeout=1.0)
+        release.set()
+        await asyncio.wait_for(holder, timeout=5.0)
+        await asyncio.wait_for(forget_task, timeout=10.0)
+    finally:
+        release.set()
+        if not holder.done():
+            await holder
+
+    await ledger.finalize(claim, status=201, response=body, prepare=prepare)
+    stored = await _rows(
+        session_factory,
+        org_id,
+        "SELECT encode(response_payload, 'escape') AS payload"
+        " FROM ibex_core.idempotency_ledger"
+        " WHERE organization_id = :org AND dedupe_key = 'overlap-create'",
+        {"org": org_id},
+    )
+    assert len(stored) == 1
+    assert content not in stored[0].payload
+    assert '"erased":true' in stored[0].payload.replace(" ", "")
 
 
 async def test_forget_is_refused_while_a_legal_hold_is_active(

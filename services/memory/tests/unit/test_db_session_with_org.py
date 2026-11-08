@@ -12,6 +12,7 @@ from app.db import session_with_org
 
 
 class _FakeTransaction:
+    """Minimal async context manager for ``session.begin()``."""
     async def __aenter__(self) -> Self:
         return self
 
@@ -20,6 +21,7 @@ class _FakeTransaction:
 
 
 class _FakeSession:
+    """Records the statements a transaction issues."""
     def __init__(self) -> None:
         self.statements: list[str] = []
         self.rolled_back = False
@@ -36,6 +38,7 @@ class _FakeSession:
 
 
 def _factory_for(session: _FakeSession):
+    """Return a session factory that always yields ``session``."""
     @asynccontextmanager
     async def _factory():
         yield session
@@ -45,6 +48,7 @@ def _factory_for(session: _FakeSession):
 
 @pytest.mark.asyncio
 async def test_session_with_org_pins_the_tenant_role_and_org() -> None:
+    """The helper clears the bypass, pins ibex_app, and sets the org GUC."""
     session = _FakeSession()
 
     async with session_with_org(_factory_for(session), str(uuid4())) as opened:
@@ -57,19 +61,24 @@ async def test_session_with_org_pins_the_tenant_role_and_org() -> None:
 
 
 class _FailingSession(_FakeSession):
+    """Session whose every statement fails, to exercise the rollback path."""
+
     async def execute(self, statement: object, params: object = None) -> None:
         del statement, params
         raise RuntimeError("database unavailable")
 
 
 async def _open(factory) -> None:
+    """Enter and leave the helper so a failure surfaces from the pin itself."""
     async with session_with_org(factory, str(uuid4())):
         pass
 
 
 @pytest.mark.asyncio
 async def test_session_with_org_rolls_back_when_pinning_fails() -> None:
+    """A failing pin rolls the transaction back and propagates."""
     session = _FailingSession()
+    factory = _factory_for(session)
     with pytest.raises(RuntimeError, match="database unavailable"):
-        await _open(_factory_for(session))
+        await _open(factory)
     assert session.rolled_back
