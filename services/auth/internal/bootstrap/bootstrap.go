@@ -256,16 +256,16 @@ func envOrDefault(getenv func(string) string, key, fallback string) string {
 }
 
 func (c bootstrapConfig) validate() error {
+	if err := c.validateIdentity(); err != nil {
+		return err
+	}
+	return c.validateOutput()
+}
+
+// validateIdentity checks the values that become database rows.
+func (c bootstrapConfig) validateIdentity() error {
 	if c.PostgresDSN == "" {
 		return errors.New("POSTGRES_DSN is required")
-	}
-	if c.PATFile == "" {
-		return errors.New(
-			"IBEX_BOOTSTRAP_PAT_FILE is required: the admin PAT is written to a file, never to stdout",
-		)
-	}
-	if info, err := os.Stat(filepath.Dir(c.PATFile)); err != nil || !info.IsDir() {
-		return fmt.Errorf("IBEX_BOOTSTRAP_PAT_FILE %q must name a file in an existing directory", c.PATFile)
 	}
 	if !slugPattern.MatchString(c.OrgSlug) {
 		return fmt.Errorf("IBEX_BOOTSTRAP_ORG_SLUG %q must match %s", c.OrgSlug, slugPattern)
@@ -276,13 +276,29 @@ func (c bootstrapConfig) validate() error {
 	if !emailPattern.MatchString(c.UserEmail) {
 		return fmt.Errorf("IBEX_BOOTSTRAP_USER_EMAIL %q must match %s", c.UserEmail, emailPattern)
 	}
-	if c.MemoryToken != "" {
-		if _, err := token.ParsePAT(c.MemoryToken); err != nil {
-			return fmt.Errorf(
-				"IBEX_MEMORY_API_TOKEN must be a PAT-shaped ibex_pat_<uuid>_<secret> value: %w",
-				err,
-			)
-		}
+	if c.MemoryToken == "" {
+		return nil
+	}
+	if _, err := token.ParsePAT(c.MemoryToken); err != nil {
+		return fmt.Errorf(
+			"IBEX_MEMORY_API_TOKEN must be a PAT-shaped ibex_pat_<uuid>_<secret> value: %w",
+			err,
+		)
+	}
+	return nil
+}
+
+// validateOutput checks that the credential can be delivered before any row is
+// committed.
+func (c bootstrapConfig) validateOutput() error {
+	if c.PATFile == "" {
+		return errors.New(
+			"IBEX_BOOTSTRAP_PAT_FILE is required: the admin PAT is written to a file, never to stdout",
+		)
+	}
+	info, err := os.Stat(filepath.Dir(c.PATFile))
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("IBEX_BOOTSTRAP_PAT_FILE %q must name a file in an existing directory", c.PATFile)
 	}
 	return nil
 }
@@ -600,10 +616,18 @@ func insertOrganization(
 	}
 
 	var existing uuid.UUID
+	var deletedAt sql.NullTime
 	if err := tx.QueryRowContext(ctx,
-		`SELECT id FROM ibex_core.organizations WHERE slug = $1`, in.cfg.OrgSlug,
-	).Scan(&existing); err != nil {
+		`SELECT id, deleted_at FROM ibex_core.organizations WHERE slug = $1`, in.cfg.OrgSlug,
+	).Scan(&existing, &deletedAt); err != nil {
 		return bootstrapResult{}, fmt.Errorf("look up existing organization: %w", err)
+	}
+	if deletedAt.Valid {
+		return bootstrapResult{}, fmt.Errorf(
+			"organization slug %q belongs to a soft-deleted organization (%s); "+
+				"hard-delete it or choose another IBEX_BOOTSTRAP_ORG_SLUG",
+			in.cfg.OrgSlug, existing,
+		)
 	}
 	return bootstrapResult{AlreadyBootstrapped: true, OrgID: existing}, nil
 }

@@ -1,4 +1,4 @@
-"""Read one value from a Docker Compose ``.env`` file.
+"""Read one value from a Docker Compose ``.env`` stream.
 
 Compose has specific rules, and a naive "split on the first `=`" reader gets
 them wrong in ways that break the profile:
@@ -8,48 +8,63 @@ them wrong in ways that break the profile:
 * a quoted value is taken between matching quotes, so ``#`` inside it is data;
 * surrounding whitespace is ignored.
 
-Usage: ``python3 dotenv.py <path> <key>`` prints the value (empty when absent).
+Usage: ``python3 dotenv.py <key> < .env`` prints the value (empty when absent).
+Reading standard input keeps this helper free of path handling: the caller
+already owns the file descriptor.
 """
 
 from __future__ import annotations
 
-import re
 import sys
+
+
+def _comment_start(value: str) -> int:
+    index = 0
+    while True:
+        index = value.find("#", index)
+        if index == -1:
+            return -1
+        if index > 0 and value[index - 1].isspace():
+            return index
+        index += 1
 
 
 def _parse(raw: str) -> str:
     value = raw.strip()
     if value[:1] in ("'", '"'):
-        quote = value[0]
-        end = value.find(quote, 1)
-        if end != -1:
-            return value[1:end]
-        return value[1:]
-    comment = re.search(r"\s+#", value)
-    if comment:
-        value = value[: comment.start()]
-    return value.strip()
+        end = value.find(value[0], 1)
+        return value[1:end] if end != -1 else value[1:]
+    comment = _comment_start(value)
+    return value[:comment].strip() if comment != -1 else value
 
 
-def read_value(path: str, key: str) -> str:
-    pattern = re.compile(r"^\s*" + re.escape(key) + r"\s*=\s*(.*)$")
+def _assignment(raw: str):
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        return None
+    name, separator, rest = line.partition("=")
+    if not separator:
+        return None
+    return name.strip(), rest
+
+
+def read_value(lines, key: str) -> str:
     value = ""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            for line in handle:
-                match = pattern.match(line.rstrip("\n"))
-                if match:
-                    value = _parse(match.group(1))
-    except FileNotFoundError:
-        return ""
+    for raw in lines:
+        assignment = _assignment(raw)
+        if assignment is None:
+            continue
+        name, rest = assignment
+        if name == key:
+            value = _parse(rest)
     return value
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3:
-        print("usage: dotenv.py <path> <key>", file=sys.stderr)
+    if len(argv) != 2:
+        print("usage: dotenv.py <key> < .env", file=sys.stderr)
         return 2
-    print(read_value(argv[1], argv[2]))
+    print(read_value(sys.stdin, argv[1]))
     return 0
 
 

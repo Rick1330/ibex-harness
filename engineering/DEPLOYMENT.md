@@ -81,8 +81,8 @@ profile a 1.0 claim may cite. Kubernetes, Helm and HA are outside the profile (Â
 **One operator entry point.** `make v1-secrets` generates `infra/compose/v1-single-node/.env` (mode `0600`), the
 files under `infra/compose/v1-single-node/secrets/` (directory `0700`; the container copies are `0444` so uid 10001 can
 read them), and the `bootstrap/` directory (`0700`) that receives the one-time admin PAT. `make v1-up` rebuilds the
-application images, starts the profile, waits until every required service reports healthy, and prints the URL plus
-the PAT hint. `make v1-down` stops it without deleting volumes; `make v1-migrate` re-runs the one-shot migration
+application images, starts the profile, waits until every required service reports healthy (up to TEI's two-hour
+first-start window; override with `IBEX_V1_HEALTH_ATTEMPTS`), and prints the URL plus the PAT hint. `make v1-down` stops it without deleting volumes; `make v1-migrate` re-runs the one-shot migration
 service; `make v1-logs` and `make v1-ps` are the operator inspection commands.
 
 **One published port.** The Compose project publishes only the edge HTTPS port (`${IBEX_EDGE_PORT:-443}:8443`; rootless

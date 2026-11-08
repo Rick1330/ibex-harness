@@ -77,18 +77,16 @@ command -v openssl >/dev/null 2>&1 || {
 # A mistaken override must never chmod the repository root or the filesystem
 # root: the final step sets every file in the secrets directory to 0444.
 resolve_path() {
-  python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
+  local target="$1"
+  python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$target"
 }
 root_real="$(resolve_path "$ROOT_DIR")"
 for dir in "$SECRETS_DIR" "$CERTS_DIR" "$BOOTSTRAP_DIR"; do
   real="$(resolve_path "$dir")"
-  case "$real" in
-    / | "$root_real" | "$root_real/.git" | "$root_real"/.git/*)
-      echo "gen-v1-secrets.sh: refusing unsafe directory override: $dir (resolved $real)" >&2
-      exit 1
-      ;;
-    *) ;;
-  esac
+  if [[ "$real" == "/" || "$real" == "$root_real" || "$real" == "$root_real/.git" || "$real" == "$root_real"/.git/* ]]; then
+    echo "gen-v1-secrets.sh: refusing unsafe directory override: $dir (resolved $real)" >&2
+    exit 1
+  fi
 done
 
 # Never let a permissive ambient umask leak secret files, and never let a
@@ -96,7 +94,8 @@ done
 umask 077
 
 env_value() {
-  python3 "$ROOT_DIR/infra/scripts/lib/dotenv.py" "$ENV_FILE" "$1"
+  local key="$1"
+  python3 "$ROOT_DIR/infra/scripts/lib/dotenv.py" "$key" <"$ENV_FILE"
 }
 
 env_set() {
@@ -155,6 +154,10 @@ ensure_env_file() {
 
 log_item() {
   printf '  %-40s %s\n' "$1" "$2"
+}
+
+summary_item() {
+  printf '  %-24s %s\n' "$1" "$2"
 }
 
 # set_secret fills an empty value; --force replaces a non-empty one.
@@ -353,10 +356,10 @@ chmod 0600 "$ENV_FILE"
 
 echo
 echo "summary (values not shown):"
-printf '  %-24s %s\n' ".env" "$ENV_FILE (mode $(stat -c %a "$ENV_FILE"))"
-printf '  %-24s %s\n' "secrets dir" "$SECRETS_DIR (mode $(stat -c %a "$SECRETS_DIR"))"
-printf '  %-24s %s\n' "bootstrap dir" "$BOOTSTRAP_DIR (mode $(stat -c %a "$BOOTSTRAP_DIR"); PAT file 0600)"
-printf '  %-24s %s\n' "tls certs" "$CERTS_DIR"
-printf '  %-24s %s\n' "ca sha256" "$(openssl x509 -in "$CERTS_DIR/ca.crt" -noout -fingerprint -sha256 | sed 's/^.*=//')"
+summary_item ".env" "$ENV_FILE (mode $(stat -c %a "$ENV_FILE"))"
+summary_item "secrets dir" "$SECRETS_DIR (mode $(stat -c %a "$SECRETS_DIR"))"
+summary_item "bootstrap dir" "$BOOTSTRAP_DIR (mode $(stat -c %a "$BOOTSTRAP_DIR"); PAT file 0600)"
+summary_item "tls certs" "$CERTS_DIR"
+summary_item "ca sha256" "$(openssl x509 -in "$CERTS_DIR/ca.crt" -noout -fingerprint -sha256 | sed 's/^.*=//')"
 echo
 echo "Next: make v1-up"

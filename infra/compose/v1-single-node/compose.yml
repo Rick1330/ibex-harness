@@ -93,7 +93,9 @@ services:
       # credential could never be recovered. The bootstrap never prints it.
       IBEX_BOOTSTRAP_PAT_FILE: /run/ibex/bootstrap.pat
     # Write as container root so a rootless runtime maps the write to the
-    # operator's own UID inside the 0700 directory.
+    # operator's own UID inside the 0700 directory. A rootful runtime writes as
+    # root instead; `make v1-bootstrap-pat` then reads the file through this
+    # image, so the operator does not need sudo.
     user: "0:0"
     volumes:
       - ./bootstrap:/run/ibex

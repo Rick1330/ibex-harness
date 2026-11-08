@@ -71,7 +71,7 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 	cfg := bootstrapConfig{
 		PostgresDSN: dsn,
 		OrgName:     "Bootstrap Integration",
-		OrgSlug:     "bootstrap-it-" + uuid.NewString(),
+		OrgSlug:     uuid.NewString(),
 		UserEmail:   "owner@example.com",
 		UserName:    "Owner",
 		AgentName:   "Default Agent",
@@ -123,7 +123,7 @@ func (f *bootstrapFixture) verifyPAT(result bootstrapResult) {
 func (f *bootstrapFixture) verifyCrossTenant() {
 	f.t.Helper()
 	other := f.cfg
-	other.OrgSlug = "bootstrap-it-other-" + uuid.NewString()
+	other.OrgSlug = uuid.NewString()
 	other.UserEmail = "other-owner@example.com"
 	other.MemoryToken = generatePAT(f.t)
 	f.t.Cleanup(func() { cleanupBootstrapOrg(f.t, f.db, other.OrgSlug) })
@@ -563,7 +563,7 @@ func TestBootstrapIntegrationRunEntrypoint(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	slug := "bootstrap-it-run-" + uuid.NewString()
+	slug := uuid.NewString()
 	t.Cleanup(func() { cleanupBootstrapOrg(t, db, slug) })
 
 	patFile := filepath.Join(t.TempDir(), "bootstrap.pat")
@@ -684,13 +684,30 @@ func TestBootstrapIntegrationRevokesDuplicateMemoryTokens(t *testing.T) {
 	}
 }
 
-// TestBootstrapIntegrationErrorPaths exercises every failure return of the SQL
-// helpers with a rolled-back transaction, so the error contract is tested
-// without a mock driver.
-func TestBootstrapIntegrationErrorPaths(t *testing.T) {
+// TestBootstrapIntegrationRejectsSoftDeletedSlug proves a soft-deleted
+// organization is reported by name instead of surfacing a bare no-rows error.
+func TestBootstrapIntegrationRejectsSoftDeletedSlug(t *testing.T) {
 	f := newBootstrapFixture(t)
 	first := f.run()
-	ctx := context.Background()
+
+	f.execServiceTx(func(ctx context.Context, tx *sql.Tx) {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE ibex_core.organizations SET deleted_at = NOW() WHERE id = $1`,
+			first.OrgID.String(),
+		); err != nil {
+			t.Fatalf("soft-delete organization: %v", err)
+		}
+	})
+
+	_, err := bootstrap(context.Background(), f.db, f.cfg)
+	if err == nil || !strings.Contains(err.Error(), "soft-deleted") {
+		t.Fatalf("bootstrap on a soft-deleted slug error = %v, want a soft-deleted refusal", err)
+	}
+}
+
+// TestBootstrapIntegrationClosedDatabase covers the transaction-start failure.
+func TestBootstrapIntegrationClosedDatabase(t *testing.T) {
+	f := newBootstrapFixture(t)
 
 	closed, err := sql.Open("postgres", f.cfg.PostgresDSN)
 	if err != nil {
@@ -699,10 +716,19 @@ func TestBootstrapIntegrationErrorPaths(t *testing.T) {
 	if err := closed.Close(); err != nil {
 		t.Fatalf("close second handle: %v", err)
 	}
-	if _, err := bootstrap(ctx, closed, f.cfg); err == nil ||
-		!strings.Contains(err.Error(), "begin bootstrap transaction") {
+	_, err = bootstrap(context.Background(), closed, f.cfg)
+	if err == nil || !strings.Contains(err.Error(), "begin bootstrap transaction") {
 		t.Fatalf("bootstrap on a closed handle error = %v", err)
 	}
+}
+
+// TestBootstrapIntegrationHelperErrorContract exercises every failure return of
+// the SQL helpers with a rolled-back transaction, so the error contract is
+// tested without a mock driver.
+func TestBootstrapIntegrationHelperErrorContract(t *testing.T) {
+	f := newBootstrapFixture(t)
+	first := f.run()
+	ctx := context.Background()
 
 	_, tx := f.begin()
 	if err := tx.Rollback(); err != nil {
@@ -756,6 +782,13 @@ func TestBootstrapIntegrationErrorPaths(t *testing.T) {
 			t.Fatalf("%s on a rolled-back transaction returned no error", check.name)
 		}
 	}
+}
+
+// TestBootstrapIntegrationScanNullableID covers both branches of the nullable
+// scan: no rows, and one row.
+func TestBootstrapIntegrationScanNullableID(t *testing.T) {
+	f := newBootstrapFixture(t)
+	first := f.run()
 
 	verifyCtx, verifyTx := f.begin()
 	missing, err := scanNullableID(verifyTx.QueryRowContext(verifyCtx,
@@ -799,7 +832,7 @@ func TestBootstrapIntegrationRunFailsWhenPATCannotBeWritten(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	slug := "bootstrap-it-patfail-" + uuid.NewString()
+	slug := uuid.NewString()
 	t.Cleanup(func() { cleanupBootstrapOrg(t, db, slug) })
 
 	// A directory at the destination path passes the parent-directory check and
@@ -844,7 +877,7 @@ func TestBootstrapIntegrationRunFailsWhenSummaryCannotBeWritten(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	slug := "bootstrap-it-outfail-" + uuid.NewString()
+	slug := uuid.NewString()
 	t.Cleanup(func() { cleanupBootstrapOrg(t, db, slug) })
 
 	env := map[string]string{

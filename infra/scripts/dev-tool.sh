@@ -109,11 +109,26 @@ compose_with_mode() {
   compose "${args[@]}" "$@"
 }
 
+# container_runtime_bin maps the compose front-end to the engine binary.
+# `runtime()` may return `podman-compose`, which is a front-end and has no
+# `inspect`/`run` of its own; the engine is always `podman`.
+container_runtime_bin() {
+  case "$(runtime)" in
+    docker) echo docker ;;
+    *) echo podman ;;
+  esac
+}
+
 v1_wait_healthy() {
-  local attempts="${IBEX_V1_HEALTH_ATTEMPTS:-180}" i ids statuses rt
+  # The default budget covers TEI's two-hour first-start window (compose sets
+  # start_period: 7200s); a warm start returns on the first pass.
+  local attempts="${IBEX_V1_HEALTH_ATTEMPTS:-3600}" i ids statuses rt
   local required="postgres redis auth proxy api memory embedder worker context console edge tei"
-  rt="$(runtime)"
+  rt="$(container_runtime_bin)"
   for ((i = 1; i <= attempts; i++)); do
+    if (( i % 60 == 0 )); then
+      echo "v1-single-node still starting (${i} of ${attempts} checks); set IBEX_V1_HEALTH_ATTEMPTS to shorten the wait" >&2
+    fi
     ids="$(compose_with_mode v1 ps -q 2>/dev/null || true)"
     if [[ -n "$ids" ]]; then
       # `ps --format json` differs between Docker Compose and podman-compose,
@@ -162,7 +177,8 @@ v1_bootstrap_pat() {
   # The PAT is written by the one-shot into a host bind mount, so it outlives
   # the container. Reading the host file avoids `cp` (which streams a tar
   # archive) and any rootful/rootless container-store mismatch.
-  local path="$ROOT_DIR/infra/compose/v1-single-node/bootstrap/bootstrap.pat" mode
+  local dir="$ROOT_DIR/infra/compose/v1-single-node/bootstrap"
+  local path="$dir/bootstrap.pat" mode rt
   if [[ ! -f "$path" ]]; then
     echo "no bootstrap PAT at $path; a first install writes it once during make v1-up" >&2
     return 1
@@ -173,7 +189,15 @@ v1_bootstrap_pat() {
     return 1
   fi
   echo "bootstrap PAT (store it in your secret manager, then delete $path):" >&2
-  cat "$path"
+  if [[ -r "$path" ]]; then
+    cat "$path"
+    return 0
+  fi
+  # A rootful runtime writes the file as root, so the operator cannot read it
+  # directly. Read it through the image that created it; the container runs as
+  # root inside its own namespace and the mount is read-only.
+  rt="$(container_runtime_bin)"
+  "$rt" run --rm --entrypoint cat -v "$dir:/run/ibex:ro" ibex-v1-auth:local /run/ibex/bootstrap.pat
 }
 
 v1_down() {
@@ -184,11 +208,12 @@ v1_down() {
 }
 
 v1_env_value() {
-  python3 "$ROOT_DIR/infra/scripts/lib/dotenv.py" "$V1_ENV" "$1"
+  local key="$1"
+  python3 "$ROOT_DIR/infra/scripts/lib/dotenv.py" "$key" <"$V1_ENV"
 }
 
 v1_url() {
-  local port="${IBEX_EDGE_PORT:-}" ca attempt
+  local port="${IBEX_EDGE_PORT:-}" ca
   if [[ -z "$port" ]]; then
     port="$(v1_env_value IBEX_EDGE_PORT)"
   fi
