@@ -82,15 +82,20 @@ def _forget(*, expected_revision: int = 1) -> ForgetMemory:
     )
 
 
+def _with_hold_check(results: list[_FakeResult]) -> list[_FakeResult]:
+    """Forget checks for an active legal hold before touching the memory."""
+    return [_FakeResult(scalar=None), *results]
+
+
 async def _forget_success(results: list[_FakeResult]) -> tuple[int, int]:
-    session = _ScriptedSession(list(results))
+    session = _ScriptedSession(_with_hold_check(results))
     with patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()):
         revision = await forget_memory_session(session, _forget())
     return revision, session.executed
 
 
 async def _forget_raises(results: list[_FakeResult], exc, match) -> None:
-    session = _ScriptedSession(list(results))
+    session = _ScriptedSession(_with_hold_check(results))
     with (
         patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()),
         pytest.raises(exc, match=match),
@@ -240,14 +245,15 @@ async def test_forget_full_path_advances_source_session() -> None:
             _FakeResult(mapping={"lifecycle_revision": 2}),
             _FakeResult(),
             _FakeResult(),
-            # forget erases labels, feedback, relationships, escalations
+            # forget erases labels, feedback, relationships, escalations, ledger
+            _FakeResult(),
             _FakeResult(),
             _FakeResult(),
             _FakeResult(),
             _FakeResult(),
         ]
     )
-    assert (revision, executed) == (2, 10)
+    assert (revision, executed) == (2, 12)
 
 
 @pytest.mark.asyncio
@@ -262,9 +268,10 @@ async def test_forget_without_source_session_skips_session_lock() -> None:
             _FakeResult(),
             _FakeResult(),
             _FakeResult(),
+            _FakeResult(),
         ]
     )
-    assert (revision, executed) == (2, 8)
+    assert (revision, executed) == (2, 10)
 
 
 @pytest.mark.asyncio
@@ -280,9 +287,10 @@ async def test_forget_missing_source_session_lock_skips_advance() -> None:
             _FakeResult(),
             _FakeResult(),
             _FakeResult(),
+            _FakeResult(),
         ]
     )
-    assert (revision, executed) == (2, 9)
+    assert (revision, executed) == (2, 11)
 
 
 @pytest.mark.asyncio

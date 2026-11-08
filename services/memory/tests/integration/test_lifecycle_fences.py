@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config import Settings
 from app.conflict.persist import apply_supersession_session
 from app.conflict.types import SupersedeApply
-from app.exceptions import StaleLifecycleError
+from app.exceptions import LegalHoldActiveError, StaleLifecycleError
 from app.lifecycle import (
     ForgetMemory,
     forget_memory_session,
@@ -429,6 +429,97 @@ async def test_concurrent_supersede_vs_forget_has_one_typed_loser(
     ]
 
 
+async def _seed_finalized_create(
+    factory, *, org_id, agent_id, created: tuple[str, str]
+) -> None:
+    """Store a finalized idempotent create response that carries the content."""
+    memory_id, content = created
+    await _execute_sql(
+        factory,
+        org_id,
+        """INSERT INTO ibex_core.idempotency_ledger
+           (organization_id, agent_id, dedupe_key, request_hash, state,
+            status_code, response_payload)
+           VALUES (:org, :agent, 'forget-erasure', repeat('a', 64), 'finalized',
+                   201, convert_to(:payload, 'UTF8'))""",
+        {
+            "org": org_id,
+            "agent": agent_id,
+            "payload": '{"data":{"id":"%s","content":"%s"}}' % (memory_id, content),
+        },
+    )
+
+
+async def _seed_near_duplicate(factory, *, org_id, agent_id, forgotten_id: str) -> None:
+    """Another create's response lists the forgotten id; it must survive the scrub."""
+    await _execute_sql(
+        factory,
+        org_id,
+        """INSERT INTO ibex_core.idempotency_ledger
+           (organization_id, agent_id, dedupe_key, request_hash, state,
+            status_code, response_payload)
+           VALUES (:org, :agent, 'other-create', repeat('b', 64), 'finalized', 201,
+                   convert_to(:payload, 'UTF8'))""",
+        {
+            "org": org_id,
+            "agent": agent_id,
+            "payload": (
+                '{"data":{"id":"%s","content":"other create content"},'
+                '"meta":{"deduplication":{"similar_memories":["%s"]}}}'
+                % ("11111111-1111-1111-1111-111111111111", forgotten_id)
+            ),
+        },
+    )
+
+
+async def _assert_content_erased(factory, *, org_id, memory_id, content: str) -> None:
+    rows = await _rows(
+        factory,
+        org_id,
+        """SELECT content, content_tokens, metadata::text AS metadata_text,
+                  pii_detected, pii_redacted
+           FROM ibex_core.memories WHERE id=:id AND org_id=:org""",
+        {"id": memory_id, "org": org_id},
+    )
+    row = rows[0]
+    assert content not in row.content
+    assert row.content == "[forgotten]"
+    assert int(row.content_tokens) == 0
+    assert row.metadata_text == "{}"
+    assert row.pii_detected is False
+    assert row.pii_redacted is False
+
+    labels = await _scalar(
+        factory,
+        org_id,
+        "SELECT count(*) FROM ibex_core.memory_labels WHERE memory_id=:id AND org_id=:org",
+        {"id": memory_id, "org": org_id},
+    )
+    assert labels == 0
+    ledger = await _rows(
+        factory,
+        org_id,
+        "SELECT dedupe_key, encode(response_payload, 'escape') AS payload"
+        " FROM ibex_core.idempotency_ledger"
+        " WHERE organization_id = :org AND dedupe_key = 'forget-erasure'",
+        {"org": org_id},
+    )
+    assert len(ledger) == 1, "the create's idempotency row must survive the scrub"
+    assert content not in ledger[0].payload, "the idempotent response still holds the content"
+    assert '"erased":true' in ledger[0].payload.replace(" ", "")
+
+    untouched = await _rows(
+        factory,
+        org_id,
+        "SELECT encode(response_payload, 'escape') AS payload"
+        " FROM ibex_core.idempotency_ledger"
+        " WHERE organization_id = :org AND dedupe_key = 'other-create'",
+        {"org": org_id},
+    )
+    assert len(untouched) == 1, "another create's ledger row must not be scrubbed"
+    assert "other create content" in untouched[0].payload
+
+
 @pytest.mark.asyncio
 async def test_forget_erases_content_and_child_labels(
     session_factory: async_sessionmaker[AsyncSession], settings: Settings
@@ -445,6 +536,15 @@ async def test_forget_erases_content_and_child_labels(
         " VALUES (:id, :org, 'factual')",
         {"id": memory_id, "org": org_id},
     )
+    await _seed_finalized_create(
+        session_factory,
+        org_id=org_id,
+        agent_id=agent_id,
+        created=(memory_id, content),
+    )
+    await _seed_near_duplicate(
+        session_factory, org_id=org_id, agent_id=agent_id, forgotten_id=memory_id
+    )
 
     from app.routers.memories import forget_memory
 
@@ -457,29 +557,48 @@ async def test_forget_erases_content_and_child_labels(
         None,
     )
 
-    rows = await _rows(
-        session_factory,
-        org_id,
-        """SELECT content, content_tokens, metadata::text AS metadata_text,
-                  pii_detected, pii_redacted
-           FROM ibex_core.memories WHERE id=:id AND org_id=:org""",
-        {"id": memory_id, "org": org_id},
+    await _assert_content_erased(
+        session_factory, org_id=org_id, memory_id=memory_id, content=content
     )
-    row = rows[0]
-    assert content not in row.content
-    assert row.content == "[forgotten]"
-    assert int(row.content_tokens) == 0
-    assert row.metadata_text == "{}"
-    assert row.pii_detected is False
-    assert row.pii_redacted is False
-
-    labels = await _scalar(
-        session_factory,
-        org_id,
-        "SELECT count(*) FROM ibex_core.memory_labels WHERE memory_id=:id AND org_id=:org",
-        {"id": memory_id, "org": org_id},
-    )
-    assert labels == 0
     assert await _read_outbox(
         session_factory, org_id=org_id, memory_id=memory_id
     ) == [(2, "forgotten")]
+
+
+@pytest.mark.asyncio
+async def test_forget_is_refused_while_a_legal_hold_is_active(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    """A legal hold preserves the organization's data: destruction is refused."""
+    content = "held-tenant sentinel"
+    org_id, agent_id, memory_id, _query, _store = await _seed_memory_with_embedding(
+        session_factory, settings, content=content, hotspot=13
+    )
+    await _execute_sql(
+        session_factory,
+        org_id,
+        "INSERT INTO ibex_core.legal_holds (org_id, reason, set_by)"
+        " VALUES (:org, 'integration hold', :actor)",
+        {"org": org_id, "actor": str(agent_id)},
+    )
+
+    with pytest.raises(LegalHoldActiveError):
+        async with session_factory() as session, session.begin():
+            await forget_memory_session(
+                session,
+                ForgetMemory(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    memory_id=memory_id,
+                    expected_revision=1,
+                ),
+            )
+
+    rows = await _rows(
+        session_factory,
+        org_id,
+        "SELECT content, tombstoned FROM ibex_core.memories WHERE id=:id AND org_id=:org",
+        {"id": memory_id, "org": org_id},
+    )
+    assert rows[0].content == content
+    assert rows[0].tombstoned is False

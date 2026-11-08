@@ -1,7 +1,8 @@
 # W3 — Tenancy and Erasure: plan and current state
 
-**Status:** planning record. Slice 1 is implemented on `feat/w3-tenancy-erasure` (local, unpushed). P0-06 is
-designed here and not implemented.
+**Status:** planning record. Slice 1 is implemented on `feat/w3-tenancy-erasure`: erasure, the deletion cascade, the
+six-table purge, and the **memory-service** P0-06 pin. The worker, auth, proxy and shared Go stores still connect as the
+owner role; their pinning is the next slice.
 
 **Owner:** Elshaday Mengesha (@Rick1330). **Date:** 2026-11-08.
 
@@ -29,22 +30,26 @@ designed here and not implemented.
 ## 3. Implemented in this slice (branch `feat/w3-tenancy-erasure`)
 
 - **P0-08** — forget overwrites `content` with a placeholder, replaces `content_hash` with a random value, zeroes
-  `content_tokens`/`metadata`/PII flags, clears the lifecycle pointers, and deletes the label, feedback, relationship
-  and conflict-escalation rows in the same transaction. The `forgotten` outbox event is the receipt. Proven by
-  `test_forget_erases_content_and_child_labels` (sentinel absent, child rows 0, receipt present).
+  `content_tokens`/`metadata`/PII flags, clears the lifecycle pointers, deletes the label, feedback, relationship and
+  conflict-escalation rows, and scrubs the finalized idempotent create response (matched on `data.id`, never on a
+  substring) in the same transaction. The `forgotten` outbox event is the receipt. Proven by
+  `test_forget_erases_content_and_child_labels` (sentinel absent from the row and the ledger, a near-duplicate
+  create's row untouched, child rows 0, receipt present).
 - **P0-07** — migration `000059_idempotency_ledger_agent_cascade` makes `agent_id` cascade with its agent.
   `test_org_postgres_purge_clears_idempotency_ledger` runs the real purge stage and asserts zero rows; it fails with
   `IntegrityError` when the migration is reverted.
 - **P1-20** — `usage_facts` and `evidence_events` added to the ClickHouse purge and count queries.
 
-**Reverted, deliberately:** the first P0-06 attempt (pinning `ibex_app` in memory, dropping the bypass) broke two
-invariants and is not shipped half-built:
+**P0-06 (memory only) is in this slice:** memory transactions pin `ibex_app` and no longer set
+`app.is_service_account`; the vector store pins through the same helper; an unfiltered `SELECT` test and a
+cross-tenant forget test prove it. The worker, auth, proxy and the shared Go stores are **not** pinned yet. Two
+invariants shaped the split:
 
 1. `directive_versions` is **append-only for `ibex_app`** — the migration test enforces it. The deletion saga cannot
    delete it as `ibex_app`; the purge needs an admin role.
 2. The isolation suite is order-sensitive and started failing in a combined run; the fixtures seed with the bypass.
 
-## 4. P0-06 design (not implemented)
+## 4. P0-06 design (memory landed; the rest is the next slice)
 
 **Role model.**
 
@@ -78,17 +83,30 @@ accepts an exact prefix only, or to a login granted `ibex_service`. Do not widen
 memory get/search (vector + FTS), directive read, session read, operator routes, proxy chat; plus the forget negative
 and the deletion negative.
 
-## 5. D9 — owner decisions
+## 5. D9 — decision (2026-11-08)
 
-Recommended: **narrowed soft delete + window + receipted purge.**
+Options considered, ranked by fit for a single-node self-hosted profile:
 
-1. Retention window per data class (default 30 days) with an injectable clock, so CI proves both `window=0` (purge
-   happens) and `window=30` (suppression only). *Note: the forget change above erases immediately; adopting a window
-   moves the physical erase to the reaper.*
-2. A legal hold blocks **physical purge only** (today's behaviour). The guide must say the data is suppressed but not
-   erased.
-3. “Erased” means content overwritten and child rows gone; the row remains for referential integrity.
-4. Org deletion meeting an active hold stays `hold_blocked` until the hold is cleared.
+| Rank | Model | Why not chosen / chosen |
+|---|---|---|
+| 1 | **Immediate erasure + documented backup boundary + hold blocks destruction** | **Chosen.** Satisfies storage limitation directly; no reaper whose window cannot be evidenced without a clock harness; the EDPB/ICO position is that erasure must reach backups *or put them beyond use with re-deletion after restore*, which is a recovery-wave obligation, not a reason to keep live content. |
+| 2 | Soft delete + retention window + receipted purge | Honest for recoverability, but needs a reaper, an injectable clock, per-class windows, and a purge receipt per memory; none of it is required by the exit gate, and a window that is not enforced is a false claim. |
+| 3 | Per-store policy | The profile runs Postgres + Redis only; ClickHouse and object storage are default-off, so the policy surface would exceed the environment. |
+
+**Decisions:**
+
+1. **Forget erases immediately.** Content is overwritten and child rows deleted in the same transaction as the
+   tombstone; the row is retained with no content for referential integrity and as the deletion marker (EDPB/ICO
+   practice: a non-identifiable marker plus a date).
+2. **A legal hold blocks destruction.** Forget is refused with `LEGAL_HOLD_ACTIVE` (409) while a hold is active, not
+   only the org purge: a hold is a legal obligation to preserve, which is a recognised ground to refuse erasure
+   (GDPR Art. 17(3)). Clearing the hold re-enables forget.
+3. **Backups are out of scope for this profile and stated as such.** The guide records that backup copies are not
+   erased by forget and that a restore must re-apply the deletion markers before serving traffic (recovery wave).
+4. **Org deletion meeting an active hold stays `hold_blocked`** until the hold is cleared.
+5. **“Zero rows” means tenant content tables.** Receipts (`org_deletion_jobs`, `deletion_store_receipts`,
+   `memory_lifecycle_outbox`), billing history (`ibex_billing.*`) and `failed_tasks` are retained by design and listed
+   in the guide; the claim never compresses them into “all tenant data”.
 
 ## 6. Evidence boundary
 

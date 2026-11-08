@@ -30,6 +30,7 @@ from app.deps import (
 from app.exceptions import (
     DuplicateMemoryError,
     EmbeddingServiceError,
+    LegalHoldActiveError,
     MemoryNotFoundError,
     MemoryOrganizationUnavailableError,
     StaleLifecycleError,
@@ -185,6 +186,7 @@ async def forget_memory(
         MemoryNotFoundError,
         StaleLifecycleError,
         MemoryOrganizationUnavailableError,
+        LegalHoldActiveError,
     ) as exc:
         if isinstance(exc, MemoryNotFoundError):
             raise HTTPException(

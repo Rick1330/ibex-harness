@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
+from app.org_context import set_service_org
 from app.vectorstore.base import SearchHit, SearchMode, SearchRequest, UpsertRequest, VectorStore
 
 # Shared with benchmarks/memory/plan_assert.py — keep EXPLAIN SQL in sync.
@@ -163,12 +164,13 @@ class PgVectorStore(VectorStore):
 
 
 async def _set_org(session: AsyncSession, org_id: UUID) -> None:
-    await session.execute(
-        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            "SELECT set_config('app.current_org_id', :org_id, true)"
-        ),
-        {"org_id": str(org_id)},
-    )
+    """Pin the tenant role and org GUC for every vector operation.
+
+    Setting only ``app.current_org_id`` is decorative while the login role is a
+    superuser: RLS is bypassed before the policy is consulted. ``set_service_org``
+    runs ``SET LOCAL ROLE ibex_app`` first.
+    """
+    await set_service_org(session, org_id)
 
 
 def _vector_literal(values: Sequence[float]) -> str:

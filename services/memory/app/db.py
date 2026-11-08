@@ -45,6 +45,14 @@ async def session_with_org(
     async with factory() as session:
         try:
             async with session.begin():
+                # Pin the tenant role so RLS applies at all: the login role is a
+                # superuser, and a superuser bypasses RLS before the policy is
+                # consulted. FORCE ROW LEVEL SECURITY covers owners, not superusers.
+                await session.execute(
+                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                        "SET LOCAL ROLE ibex_app"
+                    )
+                )
                 await session.execute(
                     text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                         "SELECT set_config('app.current_org_id', :org_id, true)"

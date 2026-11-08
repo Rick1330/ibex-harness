@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import (
+    LegalHoldActiveError,
     MemoryNotFoundError,
     MemoryOrganizationUnavailableError,
     StaleLifecycleError,
@@ -61,6 +62,13 @@ _EVENT_TYPES = frozenset(
 )
 
 _ADVISORY_LOCK_SQL = "SELECT pg_advisory_xact_lock_shared(hashtext(CAST(:org_id AS text)))"
+
+_ACTIVE_LEGAL_HOLD_SQL = """
+    SELECT 1
+    FROM ibex_core.legal_holds
+    WHERE org_id = :org_id AND cleared_at IS NULL
+    LIMIT 1
+"""
 
 _ORG_STATUS_SQL = """
     SELECT status, deleted_at
@@ -147,6 +155,19 @@ _ERASE_MEMORY_CHILDREN_SQL: tuple[str, ...] = (
         "DELETE FROM ibex_core.memory_conflict_escalations"
         " WHERE org_id = :org_id"
         " AND (new_memory_id = :memory_id OR candidate_memory_id = :memory_id)"
+    ),
+    # The create response is stored idempotently and contains the memory's
+    # content. Scrub it in place, matched on the created memory's id — never on a
+    # substring of the body, because another create's response can list this id
+    # as a near-duplicate. A replay returns a content-free stub instead of
+    # re-creating the erased memory.
+    (
+        "UPDATE ibex_core.idempotency_ledger"
+        " SET response_payload = convert_to(jsonb_build_object('erased', true)::text, 'UTF8')"
+        " WHERE organization_id = :org_id"
+        " AND response_payload IS NOT NULL"
+        " AND pg_input_is_valid(convert_from(response_payload, 'UTF8'), 'jsonb')"
+        " AND (convert_from(response_payload, 'UTF8')::jsonb #>> '{data,id}') = :memory_id_text"
     ),
 )
 
@@ -266,6 +287,8 @@ async def forget_memory_session(session: AsyncSession, request: ForgetMemory) ->
         raise StaleLifecycleError("expected memory lifecycle revision must be positive")
     await lock_organization_for_memory_write(session, request.org_id)
 
+    await _require_no_active_hold(session, request.org_id)
+
     source_session_id = await _resolve_source_session(session, request)
     await _require_forget_target(session, request)
     new_revision = await _tombstone_memory(session, request)
@@ -284,9 +307,25 @@ async def forget_memory_session(session: AsyncSession, request: ForgetMemory) ->
     return new_revision
 
 
+async def _require_no_active_hold(session: AsyncSession, org_id: UUID) -> None:
+    """Refuse erasure while a legal hold preserves the organization's data."""
+    held = await session.execute(
+        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            _ACTIVE_LEGAL_HOLD_SQL
+        ),
+        {"org_id": org_id},
+    )
+    if held.scalar_one_or_none() is not None:
+        raise LegalHoldActiveError()
+
+
 async def _erase_memory_children(session: AsyncSession, request: ForgetMemory) -> None:
     """Remove every child row that can carry or point at the forgotten content."""
-    params = {"org_id": request.org_id, "memory_id": request.memory_id}
+    params = {
+        "org_id": request.org_id,
+        "memory_id": request.memory_id,
+        "memory_id_text": str(request.memory_id),
+    }
     for statement in _ERASE_MEMORY_CHILDREN_SQL:
         await session.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
