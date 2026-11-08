@@ -20,7 +20,7 @@ from ibex_idempotency import (
     LedgerValidationError,
 )
 
-from app.erased_response import ERASED_MARKER_BODY
+from app.erased_response import ERASED_MARKER_BODY, is_erased_marker
 from app.exceptions import DuplicateMemoryError, StaleLifecycleError, ValidationError
 from app.routers.memory_write_support import (
     _FINALIZE_ATTEMPTS,
@@ -86,6 +86,22 @@ async def test_begin_idempotency_replay_of_an_erased_create_is_409() -> None:
         await _begin(ledger)
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "IDEMPOTENCY_KEY_ERASED"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (None, False),
+        (b"", False),
+        (b"not-json", False),
+        (b'{"erased": false}', False),
+        (b'{"erased": true, "extra": 1}', False),
+        (ERASED_MARKER_BODY, True),
+    ],
+    ids=["none", "empty", "invalid", "false", "extra-keys", "marker"],
+)
+def test_is_erased_marker_only_accepts_the_marker(payload, expected: bool) -> None:
+    assert is_erased_marker(payload) is expected
 
 
 class _FakeExecuteResult:
