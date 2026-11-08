@@ -101,6 +101,109 @@ compose_with_mode() {
   compose "${args[@]}" "$@"
 }
 
+v1_wait_healthy() {
+  local attempts="${IBEX_V1_HEALTH_ATTEMPTS:-180}" i json
+  local required="postgres redis auth proxy api memory embedder worker context console edge tei"
+  for ((i = 1; i <= attempts; i++)); do
+    json="$(compose_with_mode v1 ps --format json 2>/dev/null || true)"
+    if V1_JSON="$json" V1_REQUIRED="$required" python3 - <<'PY'
+import json
+import os
+import sys
+
+raw = os.environ.get("V1_JSON", "").strip()
+required = set(os.environ.get("V1_REQUIRED", "").split())
+if not raw:
+    sys.exit(1)
+try:
+    data = json.loads(raw)
+    if isinstance(data, dict):
+        data = [data]
+except json.JSONDecodeError:
+    data = [json.loads(line) for line in raw.splitlines() if line.strip()]
+seen = {}
+for item in data:
+    service = item.get("Service") or item.get("Name") or ""
+    seen[service] = str(item.get("Health") or "").lower()
+if any(seen.get(name) != "healthy" for name in required):
+    sys.exit(1)
+PY
+    then
+      echo 'v1-single-node services are healthy'
+      return 0
+    fi
+    sleep 2
+  done
+  echo 'v1-single-node services did not all become healthy' >&2
+  compose_with_mode v1 ps >&2 || true
+  return 1
+}
+
+v1_bootstrap_pat() {
+  local container_id
+  container_id="$(compose_with_mode v1 ps -a -q bootstrap 2>/dev/null || true)"
+  if [[ -z "$container_id" ]]; then
+    echo 'bootstrap container not found; run make v1-up first' >&2
+    return 1
+  fi
+  case "$(runtime)" in
+    docker) docker cp "$container_id:/run/ibex/bootstrap.pat" - ;;
+    *) podman cp "$container_id:/run/ibex/bootstrap.pat" - ;;
+  esac
+}
+
+v1_down() {
+  compose_with_mode v1 down "$@" || {
+    echo 'v1 down reported a runtime cleanup error; retrying' >&2
+    compose_with_mode v1 down "$@"
+  }
+}
+
+v1_env_value() {
+  local key="$1"
+  KEY="$key" python3 - "$V1_ENV" <<'PY'
+import os
+import re
+import sys
+
+path = sys.argv[1]
+key = os.environ["KEY"]
+pattern = re.compile(r"^\s*" + re.escape(key) + r"\s*=\s*(.*)$")
+value = ""
+try:
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            match = pattern.match(line.rstrip("\n"))
+            if not match:
+                continue
+            value = match.group(1).strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+except FileNotFoundError:
+    pass
+print(value)
+PY
+}
+
+v1_url() {
+  local port="${IBEX_EDGE_PORT:-}" ca attempt
+  if [[ -z "$port" ]]; then
+    port="$(v1_env_value IBEX_EDGE_PORT)"
+  fi
+  port="${port:-443}"
+  ca="$ROOT_DIR/infra/compose/v1-single-node/secrets/ca.crt"
+  for attempt in $(seq 1 30); do
+    if curl -fsS --cacert "$ca" "https://localhost:${port}/_edge/health" >/dev/null 2>&1; then
+      printf 'v1-single-node is up: https://localhost:%s\n' "$port"
+      printf '%s\n' 'bootstrap PAT (first install only): make v1-bootstrap-pat'
+      return 0
+    fi
+    sleep 2
+  done
+  echo 'v1-single-node edge did not answer over the profile CA; run: make v1-logs' >&2
+  return 1
+}
+
 version_ok() {
   local label="$1" actual="$2" expected="$3"
   if [[ "$actual" == "$expected" || "$actual" == "$expected".* || "$actual" == "$expected"-* ]]; then
@@ -232,16 +335,22 @@ case "${1:-help}" in
   v1-migrate) compose_with_mode v1 run --rm migrate ;;
   v1-logs) compose_with_mode v1 logs -f ;;
   v1-ps) compose_with_mode v1 ps ;;
+  v1-secrets) bash "$ROOT_DIR/infra/scripts/gen-v1-secrets.sh" ;;
   v1)
     sub="${2:-}"
     if [[ -n "$sub" ]]; then shift 2; fi
     case "$sub" in
+      build) compose_with_mode v1 build "$@" ;;
       up) compose_with_mode v1 up "$@" ;;
-      down) compose_with_mode v1 down "$@" ;;
-      migrate) compose_with_mode v1 run --rm migrate "$@" ;;
+      down) v1_down "$@" ;;
+      wait) v1_wait_healthy ;;
+      url) v1_url ;;
+      secrets) bash "$ROOT_DIR/infra/scripts/gen-v1-secrets.sh" ;;
+      bootstrap-pat) v1_bootstrap_pat ;;
+      migrate) compose_with_mode v1 build migrate && compose_with_mode v1 run --rm migrate "$@" ;;
       logs) compose_with_mode v1 logs -f "$@" ;;
       ps) compose_with_mode v1 ps "$@" ;;
-      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-logs|v1-ps or v1 up|down|migrate|logs|ps' >&2; exit 2 ;;
+      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-logs|v1-ps or v1 build|up|down|wait|secrets|bootstrap-pat|migrate|logs|ps' >&2; exit 2 ;;
     esac ;;
   *) echo "unknown command: $1" >&2; echo 'run: make help' >&2; exit 2 ;;
 esac

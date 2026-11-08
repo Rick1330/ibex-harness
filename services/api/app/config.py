@@ -49,8 +49,9 @@ class Settings(BaseSettings):
 
     redis_url: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("REDIS_URL", "IBEX_API_REDIS_URL"),
-        description="Redis URL for org_suspend + rate-limit config pub/sub (optional; best-effort)",
+        validation_alias=AliasChoices("IBEX_API_REDIS_URL", "REDIS_URL"),
+        description="Redis URL for org_suspend + rate-limit config pub/sub (optional; best-effort). "
+        "IBEX_API_REDIS_URL is the API-specific name; REDIS_URL is the shared alias.",
     )
     rate_limit_default_rpm: int = Field(
         default=60,

@@ -1,6 +1,6 @@
 //go:build integration
 
-package main
+package bootstrap
 
 import (
 	"context"
@@ -32,11 +32,14 @@ func TestBootstrapIntegration(t *testing.T) {
 
 	second := f.run()
 	assertAlreadyBootstrapped(t, second, true)
+	f.verifyPAT(first)
+	f.verifyCrossTenant()
 
 	oldToken := f.cfg.MemoryToken
 	f.cfg.MemoryToken = generatePAT(t)
 	third := f.run()
 	assertAlreadyBootstrapped(t, third, true)
+	f.verifyPAT(first)
 	f.verifyMemoryToken(first, f.cfg.MemoryToken)
 	f.assertTokenInvalid(first, oldToken)
 
@@ -90,52 +93,97 @@ func (f *bootstrapFixture) run() bootstrapResult {
 func (f *bootstrapFixture) verify(result bootstrapResult, memoryToken string) {
 	f.t.Helper()
 	ctx, tx := f.begin()
-	v := bootstrapVerifier{t: f.t, ctx: ctx, tx: tx, result: result}
-	v.organization()
-	v.ownerAndAgent()
-	v.modelPolicy()
-	v.pat()
-	v.memoryToken(memoryToken)
+	v := bootstrapVerifier{t: f.t, tx: tx, result: result}
+	v.organization(ctx)
+	v.ownerAndAgent(ctx)
+	v.modelPolicy(ctx)
+	v.pat(ctx)
+	v.memoryToken(ctx, memoryToken)
 }
 
 func (f *bootstrapFixture) verifyMemoryToken(result bootstrapResult, bearer string) {
 	f.t.Helper()
 	ctx, tx := f.begin()
-	v := bootstrapVerifier{t: f.t, ctx: ctx, tx: tx, result: result}
-	v.memoryToken(bearer)
+	v := bootstrapVerifier{t: f.t, tx: tx, result: result}
+	v.memoryToken(ctx, bearer)
+}
+
+func (f *bootstrapFixture) verifyPAT(result bootstrapResult) {
+	f.t.Helper()
+	ctx, tx := f.begin()
+	v := bootstrapVerifier{t: f.t, tx: tx, result: result}
+	v.pat(ctx)
+}
+
+// verifyCrossTenant creates a second organization, rotates the first
+// organization's memory token, and proves the second organization's identity
+// and token are untouched.
+func (f *bootstrapFixture) verifyCrossTenant() {
+	f.t.Helper()
+	other := f.cfg
+	other.OrgSlug = "bootstrap-it-other-" + uuid.NewString()
+	other.UserEmail = "other-owner@example.com"
+	other.MemoryToken = generatePAT(f.t)
+	f.t.Cleanup(func() { cleanupBootstrapOrg(f.t, f.db, other.OrgSlug) })
+
+	otherResult, err := bootstrap(context.Background(), f.db, other)
+	if err != nil {
+		f.t.Fatalf("bootstrap other organization: %v", err)
+	}
+	if otherResult.AlreadyBootstrapped {
+		f.t.Fatal("other organization already bootstrapped")
+	}
+
+	f.cfg.MemoryToken = generatePAT(f.t)
+	f.run()
+
+	f.verifyMemoryToken(otherResult, other.MemoryToken)
 }
 
 func (f *bootstrapFixture) begin() (context.Context, *sql.Tx) {
-	f.t.Helper()
+	return openServiceTx(f.t, f.db)
+}
+
+func openServiceTx(t *testing.T, db *sql.DB) (context.Context, *sql.Tx) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), verifyTimeout)
-	f.t.Cleanup(cancel)
-	tx, err := f.db.BeginTx(ctx, nil)
+	t.Cleanup(cancel)
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		f.t.Fatalf("begin verification transaction: %v", err)
+		t.Fatalf("begin service transaction: %v", err)
 	}
-	f.t.Cleanup(func() { _ = tx.Rollback() })
+	t.Cleanup(func() { _ = tx.Rollback() })
 	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
-		f.t.Fatalf("set service-account session: %v", err)
+		t.Fatalf("set service-account session: %v", err)
 	}
 	return ctx, tx
 }
 
+func (f *bootstrapFixture) execServiceTx(fn func(context.Context, *sql.Tx)) {
+	ctx, tx := openServiceTx(f.t, f.db)
+	fn(ctx, tx)
+	if err := tx.Commit(); err != nil {
+		f.t.Fatalf("commit service transaction: %v", err)
+	}
+}
+
 func (f *bootstrapFixture) revoke(result bootstrapResult) {
 	f.t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), verifyTimeout)
-	defer cancel()
-	if _, err := f.db.ExecContext(ctx, `
-		UPDATE ibex_core.tokens
-		SET is_revoked = true, revoked_at = NOW(), revoke_reason = 'integration test'
-		WHERE agent_id = $1 AND type = 'service_token'`, result.AgentID.String()); err != nil {
-		f.t.Fatalf("revoke memory service token: %v", err)
-	}
+	f.execServiceTx(func(ctx context.Context, tx *sql.Tx) {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE ibex_core.tokens
+			SET is_revoked = true, revoked_at = NOW(), revoke_reason = 'integration test'
+			WHERE agent_id = $1 AND type = 'service_token'`, result.AgentID.String()); err != nil {
+			f.t.Fatalf("revoke memory service token: %v", err)
+		}
+	})
 }
 
 func (f *bootstrapFixture) assertTokenInvalid(result bootstrapResult, bearer string) {
 	f.t.Helper()
+	ctx, tx := f.begin()
 	var hash string
-	if err := f.db.QueryRowContext(context.Background(), `
+	if err := tx.QueryRowContext(ctx, `
 		SELECT hash FROM ibex_core.tokens
 		WHERE agent_id = $1 AND type = 'service_token'`,
 		result.AgentID.String(),
@@ -153,8 +201,9 @@ func (f *bootstrapFixture) assertTokenInvalid(result bootstrapResult, bearer str
 
 func (f *bootstrapFixture) assertTokenRevoked(result bootstrapResult) {
 	f.t.Helper()
+	ctx, tx := f.begin()
 	var revoked bool
-	if err := f.db.QueryRowContext(context.Background(), `
+	if err := tx.QueryRowContext(ctx, `
 		SELECT is_revoked FROM ibex_core.tokens
 		WHERE agent_id = $1 AND type = 'service_token'`,
 		result.AgentID.String(),
@@ -168,16 +217,15 @@ func (f *bootstrapFixture) assertTokenRevoked(result bootstrapResult) {
 
 type bootstrapVerifier struct {
 	t      *testing.T
-	ctx    context.Context
 	tx     *sql.Tx
 	result bootstrapResult
 }
 
-func (v bootstrapVerifier) organization() {
+func (v bootstrapVerifier) organization(ctx context.Context) {
 	v.t.Helper()
 	var profile, model string
 	var dim int
-	mustScan(v.t, v.tx.QueryRowContext(v.ctx, `
+	mustScan(v.t, v.tx.QueryRowContext(ctx, `
 		SELECT embedding_profile, embedding_dim, embedding_model_id
 		FROM ibex_core.organizations WHERE id = $1`, v.result.OrgID.String()),
 		&profile, &dim, &model)
@@ -192,10 +240,10 @@ func (v bootstrapVerifier) organization() {
 	}
 }
 
-func (v bootstrapVerifier) ownerAndAgent() {
+func (v bootstrapVerifier) ownerAndAgent(ctx context.Context) {
 	v.t.Helper()
 	var role, userStatus string
-	mustScan(v.t, v.tx.QueryRowContext(v.ctx,
+	mustScan(v.t, v.tx.QueryRowContext(ctx,
 		`SELECT role, status FROM ibex_core.users WHERE id = $1`, v.result.UserID.String()),
 		&role, &userStatus)
 	if role != "owner" || userStatus != "active" {
@@ -204,7 +252,7 @@ func (v bootstrapVerifier) ownerAndAgent() {
 
 	var agentStatus string
 	var createdBy uuid.UUID
-	mustScan(v.t, v.tx.QueryRowContext(v.ctx,
+	mustScan(v.t, v.tx.QueryRowContext(ctx,
 		`SELECT status, created_by FROM ibex_core.agents WHERE id = $1`, v.result.AgentID.String()),
 		&agentStatus, &createdBy)
 	if agentStatus != "active" || createdBy != v.result.UserID {
@@ -212,12 +260,12 @@ func (v bootstrapVerifier) ownerAndAgent() {
 	}
 }
 
-func (v bootstrapVerifier) modelPolicy() {
+func (v bootstrapVerifier) modelPolicy(ctx context.Context) {
 	v.t.Helper()
 	var pattern string
 	var allowed bool
 	var priority int
-	mustScan(v.t, v.tx.QueryRowContext(v.ctx, `
+	mustScan(v.t, v.tx.QueryRowContext(ctx, `
 		SELECT model_pattern, allowed, priority
 		FROM ibex_core.org_model_policies WHERE org_id = $1`, v.result.OrgID.String()),
 		&pattern, &allowed, &priority)
@@ -232,7 +280,7 @@ func (v bootstrapVerifier) modelPolicy() {
 	}
 
 	var epoch int64
-	mustScan(v.t, v.tx.QueryRowContext(v.ctx,
+	mustScan(v.t, v.tx.QueryRowContext(ctx,
 		`SELECT epoch FROM ibex_core.org_model_policy_meta WHERE org_id = $1`, v.result.OrgID.String()),
 		&epoch)
 	if epoch != 1 {
@@ -250,10 +298,10 @@ type tokenRow struct {
 	expires   sql.NullTime
 }
 
-func (v bootstrapVerifier) pat() {
+func (v bootstrapVerifier) pat(ctx context.Context) {
 	v.t.Helper()
 	var row tokenRow
-	mustScan(v.t, v.tx.QueryRowContext(v.ctx, `
+	mustScan(v.t, v.tx.QueryRowContext(ctx, `
 		SELECT type, hash, user_id, agent_id, permissions, is_revoked, expires_at
 		FROM ibex_core.tokens WHERE agent_id = $1 AND type = 'pat'`, v.result.AgentID.String()),
 		&row.tokenType, &row.hash, &row.userID, &row.agentID, &row.perms, &row.revoked, &row.expires)
@@ -303,12 +351,17 @@ func assertPATPermissions(t *testing.T, row tokenRow) {
 
 func assertPATHash(t *testing.T, row tokenRow, result bootstrapResult) {
 	t.Helper()
-	ok, err := crypto.VerifyToken(result.PAT, row.hash, crypto.ProductionParams())
+	assertHashValid(t, result.PAT, row.hash, "the bootstrap PAT")
+}
+
+func assertHashValid(t *testing.T, bearer, hash, label string) {
+	t.Helper()
+	ok, err := crypto.VerifyToken(bearer, hash, crypto.ProductionParams())
 	if err != nil {
-		t.Fatalf("verify bootstrap PAT hash: %v", err)
+		t.Fatalf("verify %s hash: %v", label, err)
 	}
 	if !ok {
-		t.Fatal("stored hash does not verify the printed PAT")
+		t.Fatalf("stored hash does not verify %s", label)
 	}
 }
 
@@ -321,10 +374,10 @@ type serviceTokenDBRow struct {
 	perms   int64
 }
 
-func (v bootstrapVerifier) memoryToken(bearer string) {
+func (v bootstrapVerifier) memoryToken(ctx context.Context, bearer string) {
 	v.t.Helper()
 	var row serviceTokenDBRow
-	mustScan(v.t, v.tx.QueryRowContext(v.ctx, `
+	mustScan(v.t, v.tx.QueryRowContext(ctx, `
 		SELECT hash, prefix, name, user_id, agent_id, permissions
 		FROM ibex_core.tokens WHERE agent_id = $1 AND type = 'service_token'`,
 		v.result.AgentID.String()),
@@ -374,13 +427,7 @@ func assertServiceTokenPermissions(t *testing.T, row serviceTokenDBRow) {
 
 func assertServiceTokenHash(t *testing.T, row serviceTokenDBRow, bearer string) {
 	t.Helper()
-	ok, err := crypto.VerifyToken(bearer, row.hash, crypto.ProductionParams())
-	if err != nil {
-		t.Fatalf("verify memory token hash: %v", err)
-	}
-	if !ok {
-		t.Fatal("stored hash does not verify the memory service token")
-	}
+	assertHashValid(t, bearer, row.hash, "the memory service token")
 }
 
 func mustScan(t *testing.T, row *sql.Row, dest ...any) {
@@ -457,20 +504,42 @@ func cleanupBootstrapOrg(t *testing.T, db *sql.DB, slug string) {
 		return
 	}
 
-	for _, query := range []string{
-		`DELETE FROM ibex_core.tokens WHERE org_id = $1`,
-		`DELETE FROM ibex_core.agents WHERE org_id = $1`,
-		`DELETE FROM ibex_core.users WHERE org_id = $1`,
-		`DELETE FROM ibex_core.org_model_policies WHERE org_id = $1`,
-		`DELETE FROM ibex_core.org_model_policy_meta WHERE org_id = $1`,
-		`DELETE FROM ibex_core.organizations WHERE id = $1`,
-	} {
-		if _, err := tx.ExecContext(ctx, query, orgID.String()); err != nil {
-			t.Logf("cleanup: %s: %v", query, err)
-			return
-		}
+	if !deleteOrgRows(t, ctx, tx, orgID.String()) {
+		return
 	}
 	if err := tx.Commit(); err != nil {
 		t.Logf("cleanup: commit: %v", err)
 	}
+}
+
+// deleteOrgRows removes the organization's rows in dependency order. Each
+// statement is a constant so the SQL-injection scanner does not have to reason
+// about a dynamic query.
+func deleteOrgRows(t *testing.T, ctx context.Context, tx *sql.Tx, orgID string) bool {
+	t.Helper()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ibex_core.tokens WHERE org_id = $1`, orgID); err != nil {
+		t.Logf("cleanup: tokens: %v", err)
+		return false
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ibex_core.agents WHERE org_id = $1`, orgID); err != nil {
+		t.Logf("cleanup: agents: %v", err)
+		return false
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ibex_core.users WHERE org_id = $1`, orgID); err != nil {
+		t.Logf("cleanup: users: %v", err)
+		return false
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ibex_core.org_model_policies WHERE org_id = $1`, orgID); err != nil {
+		t.Logf("cleanup: model policies: %v", err)
+		return false
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ibex_core.org_model_policy_meta WHERE org_id = $1`, orgID); err != nil {
+		t.Logf("cleanup: model policy meta: %v", err)
+		return false
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ibex_core.organizations WHERE id = $1`, orgID); err != nil {
+		t.Logf("cleanup: organization: %v", err)
+		return false
+	}
+	return true
 }

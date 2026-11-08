@@ -28,7 +28,8 @@ per-install CA plus auth/edge leaves.
   (`Admin | SecretUse | OperatorMetadataRead`), and the scoped memory `service_token` (`MemoryRead | MemoryWrite`).
 - All twelve long-running services reported `healthy`: auth, proxy, api, memory, context, embedder, worker, console,
   edge, postgres, redis, tei.
-- `ss -ltn` showed exactly one host listener: `*:8443`.
+- `ss -ltn` showed only the edge HTTPS listener `*:8443`; no datastore, AuthService, context, memory, or worker port
+  was published.
 
 ## Journey
 
@@ -74,6 +75,23 @@ edge network namespace. The host listener check (`ss`) is the authoritative surf
    two-hour TEI window, `HF_HUB_DISABLE_XET=1` (the Xet path was ~4× slower here), and a 2048-token/16-concurrent
    batch. The host needed roughly 10 GB free during the one-time TEI warmup; the reference sizing is a 16 GB host.
 
+## Review hardening (after the PR review)
+
+- The tracked profile template moved to `infra/compose/v1-single-node/.env.example` so the repository layout guard
+  accepts it.
+- The admin PAT is written to `/run/ibex/bootstrap.pat` (0600) and retrieved with `make v1-bootstrap-pat`; it no longer
+  appears in container logs. `make v1-up` prints the retrieval hint. `make v1-up` rebuilds the images, waits for every
+  required service, and performs a full stop/start when the certificate fingerprint changes (Compose cannot replace
+  the edge while the co-located containers exist); `make v1-migrate` rebuilds the migration image. `make v1-down`
+  retries once after a rootless-netns cleanup error.
+- The API binds loopback inside the edge namespace; organization deletion is wired to the worker broker and the
+  `postgres,redis` store set; the worker healthcheck also pings the Celery consumer.
+- The bootstrap implementation moved to `services/auth/internal/bootstrap`; the token reconcile filters by `org_id`,
+  refreshes the subject, clears an expired row, serializes per organization, and revokes duplicate managed rows. The
+  integration test covers cross-tenant isolation and PAT re-verification.
+- The operator guide verifies the edge certificate with `--cacert`, records image references before an upgrade, and
+  documents the Redis reconciliation step for rollback.
+
 ## Limitations and residuals
 
 - This record is `staging` + `mock` only. The supported production posture is `production` + `live` with an
@@ -94,7 +112,9 @@ make v1-up
 make v1-ps
 curl -fsSk https://localhost:8443/_edge/health
 curl -sk -o /dev/null -w '%{http_code}\n' https://localhost:8443/v1/internal/auth-probe
-ss -ltn | grep 8443
+ss -ltn
+# Confirm only the edge HTTPS port is published. No datastore, AuthService,
+# context, memory, or worker port may appear.
 ```
 
 The repository gates for this change were run locally: Go auth/proxy suites, the API suite (901 passed), console

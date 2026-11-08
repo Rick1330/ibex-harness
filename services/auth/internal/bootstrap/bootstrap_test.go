@@ -1,11 +1,14 @@
-package main
+package bootstrap
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/permissions"
+	"github.com/google/uuid"
 )
 
 func mapGetenv(values map[string]string) func(string) string {
@@ -176,5 +179,83 @@ func TestPrintBootstrapResultAlreadyBootstrapped(t *testing.T) {
 	}
 	if strings.Contains(printed, "IBEX_BOOTSTRAP_PAT") {
 		t.Fatalf("already-bootstrapped output must not contain a PAT block: %s", printed)
+	}
+}
+
+func TestDeliverBootstrapPATWritesRestrictedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bootstrap.pat")
+	result := bootstrapResult{OrgID: uuid.New(), PAT: "ibex_pat_test_value"}
+	got, err := deliverBootstrapPAT(func(key string) string {
+		if key == "IBEX_BOOTSTRAP_PAT_FILE" {
+			return path
+		}
+		return ""
+	}, result)
+	if err != nil {
+		t.Fatalf("deliverBootstrapPAT: %v", err)
+	}
+	if got.PAT != "" || got.PATPath != path {
+		t.Fatalf("result = PAT %q path %q", got.PAT, got.PATPath)
+	}
+	assertPATFile(t, path, "ibex_pat_test_value\n")
+}
+
+func assertPATFile(t *testing.T, path, want string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read PAT file: %v", err)
+	}
+	if string(data) != want {
+		t.Fatalf("PAT file = %q", string(data))
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat PAT file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("PAT file mode = %o", info.Mode().Perm())
+	}
+}
+
+func TestDeliverBootstrapPATWithoutPathKeepsPAT(t *testing.T) {
+	result := bootstrapResult{OrgID: uuid.New(), PAT: "ibex_pat_test_value"}
+	got, err := deliverBootstrapPAT(func(string) string { return "" }, result)
+	if err != nil {
+		t.Fatalf("deliverBootstrapPAT: %v", err)
+	}
+	if got.PAT != result.PAT || got.PATPath != "" {
+		t.Fatalf("result = PAT %q path %q", got.PAT, got.PATPath)
+	}
+}
+
+func TestDeliverBootstrapPATWriteFailureIsAnError(t *testing.T) {
+	result := bootstrapResult{OrgID: uuid.New(), PAT: "ibex_pat_test_value"}
+	_, err := deliverBootstrapPAT(func(key string) string {
+		if key == "IBEX_BOOTSTRAP_PAT_FILE" {
+			return filepath.Join(t.TempDir(), "missing", "bootstrap.pat")
+		}
+		return ""
+	}, result)
+	if err == nil {
+		t.Fatal("expected a PAT delivery error")
+	}
+}
+
+func TestPrintBootstrapResultUsesPATFile(t *testing.T) {
+	var buf bytes.Buffer
+	err := printBootstrapResult(&buf, bootstrapResult{
+		OrgID:   uuid.New(),
+		PATPath: "/run/ibex/bootstrap.pat",
+	})
+	if err != nil {
+		t.Fatalf("printBootstrapResult: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "ibex_pat_") {
+		t.Fatalf("summary leaked a PAT: %q", out)
+	}
+	if !strings.Contains(out, "IBEX_BOOTSTRAP_PAT_FILE=/run/ibex/bootstrap.pat") {
+		t.Fatalf("summary missing the PAT file path: %q", out)
 	}
 }

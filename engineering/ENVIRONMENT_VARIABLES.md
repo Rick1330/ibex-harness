@@ -337,6 +337,8 @@ Used by: **auth** (`services/auth`)
 | `IBEX_ENV` | Yes | (none; required explicitly) | `development` \| `staging` \| `production` | Missing/empty is rejected. Outside `development` the gRPC listener requires the TLS pair; clients must set `IBEX_AUTH_GRPC_CA_FILE` to trust the per-install CA |
 | `IBEX_SERVICE_NAME` | No | `auth` | Service name for logs/telemetry | |
 | `IBEX_LOG_LEVEL` | No | `INFO` | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` | |
+| `IBEX_BOOTSTRAP_PAT_FILE` | No | (empty; PAT printed when unset) | File path for the one-time admin PAT (mode `0600`). The profile sets `/run/ibex/bootstrap.pat`; retrieve it with `make v1-bootstrap-pat` | Secret-bearing file; never in logs |
+| `IBEX_BOOTSTRAP_ORG_NAME` / `_ORG_SLUG` / `_USER_EMAIL` / `_USER_NAME` / `_AGENT_NAME` / `_AGENT_SLUG` / `_PAT_NAME` | No | `IBEX Harness` / `ibex` / `owner@ibex.local` / `Owner` / `Default Agent` / `default` / `Bootstrap PAT` | First-run identity inputs for the one-shot `bootstrap` command | Non-secret; slug and email shapes are validated before SQL |
 
 ### gRPC (internal ValidateToken)
 
@@ -373,7 +375,7 @@ Auth stores ciphertext only. Management API validate-before-store then calls `Cr
 | `IBEX_API_DATABASE_URL` | for ready | (none) | Python Management API async Postgres DSN (`postgresql+asyncpg://...`) | Secret; do not substitute Go `POSTGRES_DSN` here |
 | `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | Yes | `127.0.0.1:9091` | Auth ValidateToken gRPC target | Internal; port 9091 is Auth gRPC (8081 is Auth HTTP) |
 | `IBEX_AUTH_GRPC_CA_FILE` | Outside development | (empty) | PEM CA bundle used to verify the AuthService gRPC certificate | Required outside development; every API AuthService channel uses TLS 1.2+ with that CA. Development may omit it for the trust-gated plaintext path |
-| `IBEX_API_REDIS_URL` | No | (empty) | Org suspend + `ratelimit_config_updates:{org_id}` + `model_policy_updates:{org_id}` publish; live RPM counter GET | Secret if password present |
+| `IBEX_API_REDIS_URL` | No | (empty) | Org suspend + `ratelimit_config_updates:{org_id}` + `model_policy_updates:{org_id}` publish; live RPM counter GET | Secret if password present. Alias: `REDIS_URL`; `IBEX_API_REDIS_URL` wins when both are set |
 | `IBEX_API_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Platform default when no `rate_limit_overrides` row | Matches proxy default |
 | `IBEX_API_CELERY_BROKER_URL` | for org DELETE | (none) | Celery broker for org deletion enqueue | |
 | `IBEX_API_HOST` / `IBEX_API_PORT` | No | `127.0.0.1` / `8010` | Bind address | |
@@ -556,6 +558,7 @@ worker unless explicitly aliased in a future milestone.
 | `IBEX_WORKER_EXTRACTION_OPENAI_MODEL` | No | `gpt-4o-mini` | OpenAI model id | |
 | `IBEX_WORKER_EXTRACTION_VLLM_MODEL` | No | `Qwen2.5-14B-Instruct` | vLLM served model id | Use `Qwen2.5-7B-Instruct` if 14B VRAM is too large |
 | `IBEX_WORKER_EXTRACTION_BASE_URL` | Conditional | (none) | vLLM OpenAI-compatible base URL | Required when provider=`vllm`. Aliases: `IBEX_WORKER_EXTRACTION_VLLM_BASE_URL`, `EXTRACTION_BASE_URL` |
+| `IBEX_ORG_DELETION_DEPLOYED_STORES` | No | (none) | Stores the org-deletion task may purge; the profile sets `postgres,redis` so deletion can remove both projections | Required for `DELETE /v1/organizations/{org_id}` to run fully |
 | `IBEX_WORKER_MEMORY_BASE_URL` | Conditional | (none) | Memory service origin for `POST /v1/memories` | Alias: `MEMORY_BASE_URL` |
 | `IBEX_WORKER_MEMORY_API_TOKEN` | Conditional | (none) | Bearer token with `memory:write` | Alias: `MEMORY_API_TOKEN` |
 | `CLICKHOUSE_DSN` | No | (none) | HTTP DSN for `ibex.llm_traces` | Empty → skip insert (fail-open) + metric. Alias: `IBEX_WORKER_CLICKHOUSE_DSN` |

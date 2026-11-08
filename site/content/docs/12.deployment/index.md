@@ -12,7 +12,7 @@ IBEX Harness ships one supported single-node profile, `v1-single-node`, and a se
 does **not** ship a hosted or highly available deployment. This section explains exactly what exists and what must be
 supplied before promotion.
 
-::page-status{status="PROVISIONAL" verified="2026-11-07" note="Two local profiles are supported; hosted, HA, and production evidence remain open"}
+::page-status{status="PROVISIONAL" verified="2026-11-07" note="v1-single-node is the supported deployment profile; hosted, HA, and production evidence remain open"}
 ::
 
 ## Pages

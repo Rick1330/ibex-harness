@@ -86,8 +86,10 @@ service; `make v1-logs` and `make v1-ps` are the operator inspection commands.
 
 **One published port.** The Compose project publishes only the edge HTTPS port (`${IBEX_EDGE_PORT:-443}:8443`; rootless
 runtimes should set `IBEX_EDGE_PORT=8443`). Datastores, AuthService, context, memory, worker and MCP ports stay on the
-internal bridge. The edge returns `404` for `/health`, `/ready` and `/metrics`; only the Console's internal `/ready`
-and the API's `/ready` are reachable inside the project.
+internal bridge. The edge returns `404` for `/health`, `/ready` and `/metrics`; the service-specific `/ready` endpoints
+(auth: Postgres+gRPC; proxy: AuthService+Redis; API: AuthService+Postgres; memory; embedder/TEI; worker ledger, broker
+and consumer; console API health; context gRPC health) are reachable only inside the project. The profile's service
+table in the deployment guide lists each check.
 
 **Component matrix and pins.** `services/{auth,proxy,api,memory,context,embedder,worker,console}` plus the one-shot
 `migrate` and `bootstrap` services, `pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d…`, `redis:7.4.2@sha256:fbdbaea4…`,
@@ -106,12 +108,13 @@ production refuse to mount protected routes without a verifier. Internal shared-
 the host-local bridge are recorded limitations, not a public interface.
 
 **Identity bootstrap.** The one-shot `bootstrap` service creates the organization, owner user, default agent, allow-all
-model policy and the memory service token in one transaction, then prints an admin PAT (`IBEX_BOOTSTRAP_PAT=…`)
-exactly once. The PAT is never stored in plaintext and is not recoverable; treat the bootstrap logs as a secret. The
-memory token is a separate scoped `service_token` (`MemoryRead|MemoryWrite`) used by context and worker. The committed
-`seed_dev.sql` token is **not** used.
+model policy and the memory service token in one transaction, then writes the admin PAT to
+`/run/ibex/bootstrap.pat` (mode `0600`) inside the one-shot container. Retrieve it with `make v1-bootstrap-pat`; it is
+written once, never to the logs, stored only as an Argon2id hash, and is not recoverable. Remove the bootstrap
+container after capture. The memory token is a separate scoped `service_token` (`MemoryRead|MemoryWrite`) used by
+context and worker. The committed `seed_dev.sql` token is **not** used.
 
-**Posture.** The tracked `env/v1-single-node.example` defaults to `IBEX_ENV=staging` + `IBEX_LLM_MODE=mock` so the
+**Posture.** The tracked `infra/compose/v1-single-node/.env.example` defaults to `IBEX_ENV=staging` + `IBEX_LLM_MODE=mock` so the
 profile starts on a clean host without an external LLM. The supported deployment posture is `IBEX_ENV=production` +
 `IBEX_LLM_MODE=live` with an operator-supplied provider key or self-hosted LLM; the example carries the commented
 production block. The mock LLM is a deterministic fixture, not a production provider.

@@ -16,7 +16,7 @@
 #   IBEX_V1_CERTS_DIR=/tmp/x/certs
 #
 # Idempotent: existing non-empty secret values and valid keypairs are kept.
-# --force rewrites .env from env/v1-single-node.example and regenerates every
+# --force rewrites .env from infra/compose/v1-single-node/.env.example and regenerates every
 # secret and keypair. It does NOT rotate the TLS CA; gen-v1-tls.sh reuses a valid
 # CA and only reissues missing or invalid leaves. Use gen-v1-tls.sh --force when
 # a CA rotation is actually intended.
@@ -31,7 +31,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ENV_FILE="${IBEX_V1_ENV_FILE:-$ROOT_DIR/infra/compose/v1-single-node/.env}"
 SECRETS_DIR="${IBEX_V1_SECRETS_DIR:-$ROOT_DIR/infra/compose/v1-single-node/secrets}"
 CERTS_DIR="${IBEX_V1_CERTS_DIR:-$ROOT_DIR/infra/compose/v1-single-node/certs}"
-EXAMPLE_ENV="$ROOT_DIR/env/v1-single-node.example"
+EXAMPLE_ENV="$ROOT_DIR/infra/compose/v1-single-node/.env.example"
 TLS_SCRIPT="$ROOT_DIR/infra/scripts/gen-v1-tls.sh"
 
 usage() {
@@ -39,7 +39,7 @@ usage() {
 Usage: gen-v1-secrets.sh [--force]
 
 Creates the v1-single-node .env and file secrets.
-  --force   rewrite .env from env/v1-single-node.example and regenerate all
+  --force   rewrite .env from infra/compose/v1-single-node/.env.example and regenerate all
             secrets and keypairs (the TLS CA is not rotated)
 EOF
 }
@@ -72,12 +72,18 @@ command -v openssl >/dev/null 2>&1 || {
 
 # A mistaken override must never chmod the repository root or the filesystem
 # root: the final step sets every file in the secrets directory to 0444.
+resolve_path() {
+  python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
+}
+root_real="$(resolve_path "$ROOT_DIR")"
 for dir in "$SECRETS_DIR" "$CERTS_DIR"; do
-  case "$dir" in
-    / | "$ROOT_DIR" | "$ROOT_DIR/")
-      echo "gen-v1-secrets.sh: refusing unsafe directory override: $dir" >&2
+  real="$(resolve_path "$dir")"
+  case "$real" in
+    / | "$root_real" | "$root_real/.git" | "$root_real"/.git/*)
+      echo "gen-v1-secrets.sh: refusing unsafe directory override: $dir (resolved $real)" >&2
       exit 1
       ;;
+    *) ;;
   esac
 done
 
@@ -87,25 +93,61 @@ umask 077
 
 env_value() {
   local key="$1"
-  KEY="$key" awk '
-    BEGIN { key = ENVIRON["KEY"] }
-    index($0, key "=") == 1 {
-      sub("^[^=]*=", "")
-      print
-      exit
-    }
-  ' "$ENV_FILE"
+  KEY="$key" python3 - "$ENV_FILE" <<'PY'
+import os
+import re
+import sys
+
+path = sys.argv[1]
+key = os.environ["KEY"]
+pattern = re.compile(r"^\s*" + re.escape(key) + r"\s*=\s*(.*)$")
+value = ""
+try:
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            match = pattern.match(line.rstrip("\n"))
+            if not match:
+                continue
+            value = match.group(1).strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+except FileNotFoundError:
+    pass
+print(value)
+PY
 }
 
 env_set() {
   local key="$1" value="$2" tmp
   tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
-  KEY="$key" VALUE="$value" awk '
-    BEGIN { key = ENVIRON["KEY"]; value = ENVIRON["VALUE"]; found = 0 }
-    index($0, key "=") == 1 { print key "=" value; found = 1; next }
-    { print }
-    END { if (!found) print key "=" value }
-  ' "$ENV_FILE" >"$tmp"
+  KEY="$key" VALUE="$value" python3 - "$ENV_FILE" >"$tmp" <<'PY'
+import os
+import re
+import sys
+
+path = sys.argv[1]
+key = os.environ["KEY"]
+value = os.environ["VALUE"]
+pattern = re.compile(r"^\s*" + re.escape(key) + r"\s*=")
+lines = []
+try:
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+except FileNotFoundError:
+    pass
+found = False
+out = []
+for line in lines:
+    if pattern.match(line):
+        if not found:
+            out.append(f"{key}={value}")
+            found = True
+        continue
+    out.append(line)
+if not found:
+    out.append(f"{key}={value}")
+sys.stdout.write("\n".join(out) + "\n")
+PY
   chmod 0600 "$tmp"
   mv "$tmp" "$ENV_FILE"
 }
@@ -129,15 +171,19 @@ ensure_env_file() {
   fi
 }
 
+log_item() {
+  printf '  %-40s %s\n' "$1" "$2"
+}
+
 # set_secret fills an empty value; --force replaces a non-empty one.
 set_secret() {
   local key="$1" value="$2" current
   current="$(env_value "$key")"
   if [[ "$FORCE" -eq 1 || -z "$current" ]]; then
     env_set "$key" "$value"
-    printf '  %-40s %s\n' "$key" "generated"
+    log_item "$key" "generated"
   else
-    printf '  %-40s %s\n' "$key" "kept"
+    log_item "$key" "kept"
   fi
 }
 
@@ -146,7 +192,7 @@ set_secret() {
 set_derived() {
   local key="$1" value="$2"
   env_set "$key" "$value"
-  printf '  %-40s %s\n' "$key" "$value"
+  log_item "$key" "$value"
 }
 
 gen_hex() {
@@ -176,7 +222,7 @@ gen_rsa_pair() {
       echo "gen-v1-secrets.sh: $label keypair does not match; rerun with --force" >&2
       exit 1
     fi
-    printf '  %-40s %s\n' "$label" "kept"
+    log_item "$label" "kept"
     return 0
   fi
   if [[ "$FORCE" -eq 0 && ( -f "$private" || -f "$public" ) ]]; then
@@ -196,7 +242,7 @@ gen_rsa_pair() {
     echo "gen-v1-secrets.sh: generated $label private key is unreadable" >&2
     exit 1
   fi
-  printf '  %-40s %s\n' "$label" "generated"
+  log_item "$label" "generated"
 }
 
 install_secret_copy() {
@@ -269,6 +315,7 @@ set_secret IBEX_OPERATOR_CURSOR_SECRET "$(gen_hex)"
 # that happens to bind 443.
 edge_port="$(env_value IBEX_EDGE_PORT)"
 edge_port="${edge_port:-443}"
+env_set IBEX_EDGE_PORT "$edge_port"
 if [[ "$edge_port" == "443" ]]; then
   set_derived IBEX_ALLOWED_ORIGINS "https://localhost"
 else
@@ -287,7 +334,7 @@ echo "keypairs:"
 gen_rsa_pair "$SECRETS_DIR/jwt_private.pem" "$SECRETS_DIR/jwt_public.pem" "jwt keypair"
 gen_rsa_pair "$SECRETS_DIR/policy_private.pem" "$SECRETS_DIR/policy_public.pem" "policy signing keypair"
 write_policy_key_set "$SECRETS_DIR/policy_public.pem" "$SECRETS_DIR/policy_public_keys.json"
-printf '  %-40s %s\n' "proxy policy key set" "written"
+log_item "proxy policy key set" "written"
 
 echo
 echo "TLS material:"
@@ -301,7 +348,18 @@ install_secret_copy "$CERTS_DIR/auth.crt" "$SECRETS_DIR/auth.crt"
 install_secret_copy "$CERTS_DIR/auth.key" "$SECRETS_DIR/auth.key"
 install_secret_copy "$CERTS_DIR/edge.crt" "$SECRETS_DIR/edge.crt"
 install_secret_copy "$CERTS_DIR/edge.key" "$SECRETS_DIR/edge.key"
-printf '  %-40s %s\n' "tls leaves + ca" "copied"
+log_item "tls leaves + ca" "copied"
+
+# Track the certificate material so a renewal can trigger a targeted container
+# recreation: the auth server must not keep serving a replaced certificate.
+fingerprint_file="$CERTS_DIR/.cert-fingerprint"
+current_fingerprint="$(cat "$SECRETS_DIR/ca.crt" "$SECRETS_DIR/auth.crt" "$SECRETS_DIR/edge.crt" | sha256sum | awk '{print $1}')"
+if [[ -f "$fingerprint_file" && "$(cat "$fingerprint_file")" != "$current_fingerprint" ]]; then
+  touch "$CERTS_DIR/.certificates-changed"
+  log_item "certificate change" "detected; v1-up will recreate the mounted services"
+fi
+printf '%s\n' "$current_fingerprint" >"$fingerprint_file"
+chmod 0600 "$fingerprint_file"
 
 # Container secret copies are readable by the non-root service UIDs. The 0700
 # directory is the real boundary; do not widen it.

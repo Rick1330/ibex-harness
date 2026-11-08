@@ -25,6 +25,12 @@ def test_redis_url_accepts_prefixed_env_name(monkeypatch: pytest.MonkeyPatch) ->
     assert Settings().redis_url == "redis://:pw@redis:6379/1"
 
 
+def test_redis_url_prefers_api_specific_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REDIS_URL", "redis://:pw@shared:6379/0")
+    monkeypatch.setenv("IBEX_API_REDIS_URL", "redis://:pw@api:6379/0")
+    assert Settings().redis_url == "redis://:pw@api:6379/0"
+
+
 def test_shutdown_timeout_accepts_go_duration() -> None:
     s = Settings(shutdown_timeout_seconds="45s")  # type: ignore[arg-type]
     assert s.shutdown_timeout_seconds == 45
