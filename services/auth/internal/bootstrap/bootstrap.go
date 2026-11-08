@@ -162,11 +162,6 @@ func Run(stdout, stderr io.Writer, getenv func(string) string) int {
 		writef(stderr, bootstrapErrorFormat, err)
 		return 1
 	}
-	result, err = deliverBootstrapPAT(cfg, result)
-	if err != nil {
-		writef(stderr, bootstrapErrorFormat, err)
-		return 1
-	}
 	if err := printBootstrapResult(stdout, result); err != nil {
 		writef(stderr, "ibex-bootstrap: write summary: %v\n", err)
 		return 1
@@ -174,23 +169,21 @@ func Run(stdout, stderr io.Writer, getenv func(string) string) int {
 	return 0
 }
 
-// deliverBootstrapPAT writes the one-time PAT to the configured file. The
-// committed transaction is not rolled back when the write fails: the error
-// names the recovery path instead, and returning non-zero keeps the failure
-// visible in the one-shot's exit status.
+// deliverBootstrapPAT writes the one-time PAT before the transaction commits.
+// A delivery failure therefore rolls back the whole identity, so a rerun issues
+// a fresh PAT instead of leaving an organization whose only credential was
+// lost. A commit failure after the write leaves an unusable file that the next
+// run overwrites.
 func deliverBootstrapPAT(cfg bootstrapConfig, result bootstrapResult) (bootstrapResult, error) {
 	if result.PAT == "" {
 		return result, nil
 	}
 	if err := writeRestrictedFile(cfg.PATFile, result.PAT); err != nil {
 		return result, fmt.Errorf(
-			"bootstrap committed organization %s but could not write the PAT file %q: %w; "+
-				"delete the organization's tokens (or the organization) and re-run bootstrap",
-			result.OrgID, cfg.PATFile, err,
+			"could not write the admin PAT to %q before commit: %w", cfg.PATFile, err,
 		)
 	}
 	result.PATPath = cfg.PATFile
-	result.PAT = ""
 	return result, nil
 }
 
@@ -325,6 +318,10 @@ func bootstrap(ctx context.Context, db *sql.DB, cfg bootstrapConfig) (bootstrapR
 	}
 
 	result, err := bootstrapInTx(ctx, tx, cfg)
+	if err != nil {
+		return bootstrapResult{}, err
+	}
+	result, err = deliverBootstrapPAT(cfg, result)
 	if err != nil {
 		return bootstrapResult{}, err
 	}

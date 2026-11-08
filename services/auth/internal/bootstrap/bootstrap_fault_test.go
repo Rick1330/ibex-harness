@@ -219,10 +219,11 @@ func TestBootstrapErrorPropagation(t *testing.T) {
 }
 
 func TestBootstrapInTxPropagatesOrganizationFailure(t *testing.T) {
-	db := openFaultDB(t, faultConfig{exec: errInjected, execAfter: 1})
+	db := openFaultDB(t, faultConfig{exec: errInjected})
 	tx := beginFaultTx(t, db)
-	if _, err := bootstrapInTx(context.Background(), tx, testConfig(t)); err == nil {
-		t.Fatal("bootstrapInTx returned no error when the organization insert failed")
+	_, err := bootstrapInTx(context.Background(), tx, testConfig(t))
+	if err == nil || !strings.Contains(err.Error(), "insert organization") {
+		t.Fatalf("bootstrapInTx error = %v, want an insert-organization failure", err)
 	}
 }
 

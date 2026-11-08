@@ -50,17 +50,27 @@ runtime() {
   esac
 }
 
+# podman_engine prints the podman invocation that owns the containers: plain
+# podman for a rootless install, `sudo -n podman` when the rootful store is in
+# use. Every engine call (compose, inspect, run) must use the same choice, or it
+# looks in the wrong store.
+podman_engine() {
+  if [[ "${IBEX_PODMAN_SUDO:-0}" == 1 ]] || {
+    [[ "$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null || true)" == true ]] &&
+    sudo -n podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null | grep -qx false
+  }; then
+    echo 'sudo -n podman'
+  else
+    echo podman
+  fi
+}
+
 compose() {
   case "$(runtime)" in
     docker) docker compose "$@" ;;
     podman)
-      local podman_bin=(podman)
-      if [[ "${IBEX_PODMAN_SUDO:-0}" == 1 ]] || {
-        [[ "$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null || true)" == true ]] &&
-        sudo -n podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null | grep -qx false
-      }; then
-        podman_bin=(sudo -n podman)
-      fi
+      local -a podman_bin
+      read -r -a podman_bin <<<"$(podman_engine)"
       "${podman_bin[@]}" compose "$@" ;;
     podman-compose) podman-compose "$@" ;;
     *) echo "unsupported container runtime: $(runtime)" >&2; return 2 ;;
@@ -115,16 +125,17 @@ compose_with_mode() {
 container_runtime_bin() {
   case "$(runtime)" in
     docker) echo docker ;;
-    *) echo podman ;;
+    *) podman_engine ;;
   esac
 }
 
 v1_wait_healthy() {
   # The default budget covers TEI's two-hour first-start window (compose sets
   # start_period: 7200s); a warm start returns on the first pass.
-  local attempts="${IBEX_V1_HEALTH_ATTEMPTS:-3600}" i ids statuses rt
+  local attempts="${IBEX_V1_HEALTH_ATTEMPTS:-3600}" i ids statuses
   local required="postgres redis auth proxy api memory embedder worker context console edge tei"
-  rt="$(container_runtime_bin)"
+  local -a engine
+  read -r -a engine <<<"$(container_runtime_bin)"
   for ((i = 1; i <= attempts; i++)); do
     if (( i % 60 == 0 )); then
       echo "v1-single-node still starting (${i} of ${attempts} checks); set IBEX_V1_HEALTH_ATTEMPTS to shorten the wait" >&2
@@ -135,7 +146,7 @@ v1_wait_healthy() {
       # and podman-compose omits health from it entirely. Asking the runtime
       # keeps one code path for both providers.
       # shellcheck disable=SC2086
-      statuses="$("$rt" inspect --format '{{.Name}}|{{index .Config.Labels "com.docker.compose.service"}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' $ids 2>/dev/null || true)"
+      statuses="$("${engine[@]}" inspect --format '{{.Name}}|{{index .Config.Labels "com.docker.compose.service"}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' $ids 2>/dev/null || true)"
       if V1_STATUSES="$statuses" V1_REQUIRED="$required" python3 - <<'PY'
 import os
 import sys
@@ -178,7 +189,8 @@ v1_bootstrap_pat() {
   # the container. Reading the host file avoids `cp` (which streams a tar
   # archive) and any rootful/rootless container-store mismatch.
   local dir="$ROOT_DIR/infra/compose/v1-single-node/bootstrap"
-  local path="$dir/bootstrap.pat" mode rt
+  local path="$dir/bootstrap.pat" mode
+  local -a engine
   if [[ ! -f "$path" ]]; then
     echo "no bootstrap PAT at $path; a first install writes it once during make v1-up" >&2
     return 1
@@ -196,8 +208,8 @@ v1_bootstrap_pat() {
   # A rootful runtime writes the file as root, so the operator cannot read it
   # directly. Read it through the image that created it; the container runs as
   # root inside its own namespace and the mount is read-only.
-  rt="$(container_runtime_bin)"
-  "$rt" run --rm --entrypoint cat -v "$dir:/run/ibex:ro" ibex-v1-auth:local /run/ibex/bootstrap.pat
+  read -r -a engine <<<"$(container_runtime_bin)"
+  "${engine[@]}" run --rm --entrypoint cat -v "$dir:/run/ibex:ro" ibex-v1-auth:local /run/ibex/bootstrap.pat
 }
 
 v1_down() {

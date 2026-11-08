@@ -77,6 +77,7 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 		AgentName:   "Default Agent",
 		AgentSlug:   "default",
 		PATName:     "Bootstrap PAT",
+		PATFile:     filepath.Join(t.TempDir(), "bootstrap.pat"),
 		MemoryToken: generatePAT(t),
 	}
 	t.Cleanup(func() { cleanupBootstrapOrg(t, db, cfg.OrgSlug) })
@@ -175,7 +176,8 @@ func (f *bootstrapFixture) revoke(result bootstrapResult) {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE ibex_core.tokens
 			SET is_revoked = true, revoked_at = NOW(), revoke_reason = 'integration test'
-			WHERE agent_id = $1 AND type = 'service_token'`, result.AgentID.String()); err != nil {
+			WHERE agent_id = $1 AND org_id = $2 AND type = 'service_token'`,
+			result.AgentID.String(), result.OrgID.String()); err != nil {
 			f.t.Fatalf("revoke memory service token: %v", err)
 		}
 	})
@@ -187,8 +189,8 @@ func (f *bootstrapFixture) assertTokenInvalid(result bootstrapResult, bearer str
 	var hash string
 	if err := tx.QueryRowContext(ctx, `
 		SELECT hash FROM ibex_core.tokens
-		WHERE agent_id = $1 AND type = 'service_token'`,
-		result.AgentID.String(),
+		WHERE agent_id = $1 AND org_id = $2 AND type = 'service_token'`,
+		result.AgentID.String(), result.OrgID.String(),
 	).Scan(&hash); err != nil {
 		f.t.Fatalf("read rotated memory token hash: %v", err)
 	}
@@ -207,8 +209,8 @@ func (f *bootstrapFixture) assertTokenRevoked(result bootstrapResult) {
 	var revoked bool
 	if err := tx.QueryRowContext(ctx, `
 		SELECT is_revoked FROM ibex_core.tokens
-		WHERE agent_id = $1 AND type = 'service_token'`,
-		result.AgentID.String(),
+		WHERE agent_id = $1 AND org_id = $2 AND type = 'service_token'`,
+		result.AgentID.String(), result.OrgID.String(),
 	).Scan(&revoked); err != nil {
 		f.t.Fatalf("read revoked memory service token: %v", err)
 	}
@@ -246,7 +248,8 @@ func (v bootstrapVerifier) ownerAndAgent(ctx context.Context) {
 	v.t.Helper()
 	var role, userStatus string
 	mustScan(v.t, v.tx.QueryRowContext(ctx,
-		`SELECT role, status FROM ibex_core.users WHERE id = $1`, v.result.UserID.String()),
+		`SELECT role, status FROM ibex_core.users WHERE id = $1 AND org_id = $2`,
+		v.result.UserID.String(), v.result.OrgID.String()),
 		&role, &userStatus)
 	if role != "owner" || userStatus != "active" {
 		v.t.Fatalf("owner user = %s/%s", role, userStatus)
@@ -255,7 +258,8 @@ func (v bootstrapVerifier) ownerAndAgent(ctx context.Context) {
 	var agentStatus string
 	var createdBy uuid.UUID
 	mustScan(v.t, v.tx.QueryRowContext(ctx,
-		`SELECT status, created_by FROM ibex_core.agents WHERE id = $1`, v.result.AgentID.String()),
+		`SELECT status, created_by FROM ibex_core.agents WHERE id = $1 AND org_id = $2`,
+		v.result.AgentID.String(), v.result.OrgID.String()),
 		&agentStatus, &createdBy)
 	if agentStatus != "active" || createdBy != v.result.UserID {
 		v.t.Fatalf("agent status/created_by = %s/%s", agentStatus, createdBy)
@@ -305,7 +309,8 @@ func (v bootstrapVerifier) pat(ctx context.Context) {
 	var row tokenRow
 	mustScan(v.t, v.tx.QueryRowContext(ctx, `
 		SELECT type, hash, user_id, agent_id, permissions, is_revoked, expires_at
-		FROM ibex_core.tokens WHERE agent_id = $1 AND type = 'pat'`, v.result.AgentID.String()),
+		FROM ibex_core.tokens WHERE agent_id = $1 AND org_id = $2 AND type = 'pat'`,
+		v.result.AgentID.String(), v.result.OrgID.String()),
 		&row.tokenType, &row.hash, &row.userID, &row.agentID, &row.perms, &row.revoked, &row.expires)
 	assertPAT(v.t, row, v.result)
 }
@@ -381,8 +386,8 @@ func (v bootstrapVerifier) memoryToken(ctx context.Context, bearer string) {
 	var row serviceTokenDBRow
 	mustScan(v.t, v.tx.QueryRowContext(ctx, `
 		SELECT hash, prefix, name, user_id, agent_id, permissions
-		FROM ibex_core.tokens WHERE agent_id = $1 AND type = 'service_token'`,
-		v.result.AgentID.String()),
+		FROM ibex_core.tokens WHERE agent_id = $1 AND org_id = $2 AND type = 'service_token'`,
+		v.result.AgentID.String(), v.result.OrgID.String()),
 		&row.hash, &row.prefix, &row.name, &row.userID, &row.agentID, &row.perms)
 	assertServiceToken(v.t, row, v.result, bearer)
 }
@@ -550,7 +555,16 @@ func deleteOrgRows(t *testing.T, ctx context.Context, tx *sql.Tx, orgID string) 
 // TestBootstrapIntegrationRunEntrypoint drives the shipped command entrypoint,
 // not the inner helper: exit code, summary, and PAT file are the contract the
 // one-shot container depends on.
-func TestBootstrapIntegrationRunEntrypoint(t *testing.T) {
+type entrypointRun struct {
+	code   int
+	stdout string
+	stderr string
+}
+
+// newEntrypointFixture provisions a database and the environment the shipped
+// command expects, with a PAT path inside the test's own directory.
+func newEntrypointFixture(t *testing.T, orgName string) (map[string]string, string) {
+	t.Helper()
 	if os.Getenv("POSTGRES_TEST_DSN") == "" {
 		t.Skip("POSTGRES_TEST_DSN not set")
 	}
@@ -570,7 +584,7 @@ func TestBootstrapIntegrationRunEntrypoint(t *testing.T) {
 	env := map[string]string{
 		"POSTGRES_DSN":              dsn,
 		"IBEX_BOOTSTRAP_PAT_FILE":   patFile,
-		"IBEX_BOOTSTRAP_ORG_NAME":   "Bootstrap Entrypoint",
+		"IBEX_BOOTSTRAP_ORG_NAME":   orgName,
 		"IBEX_BOOTSTRAP_ORG_SLUG":   slug,
 		"IBEX_BOOTSTRAP_USER_EMAIL": "run-owner@example.com",
 		"IBEX_BOOTSTRAP_USER_NAME":  "Owner",
@@ -578,17 +592,35 @@ func TestBootstrapIntegrationRunEntrypoint(t *testing.T) {
 		"IBEX_BOOTSTRAP_AGENT_SLUG": "default",
 		"IBEX_BOOTSTRAP_PAT_NAME":   "Bootstrap PAT",
 	}
+	return env, patFile
+}
 
+func runEntrypoint(t *testing.T, env map[string]string) entrypointRun {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
-	if code := Run(&stdout, &stderr, mapGetenv(env)); code != 0 {
-		t.Fatalf("first Run exit = %d, stderr = %s", code, stderr.String())
+	code := Run(&stdout, &stderr, mapGetenv(env))
+	return entrypointRun{code: code, stdout: stdout.String(), stderr: stderr.String()}
+}
+
+func requireRunSucceeded(t *testing.T, run entrypointRun) {
+	t.Helper()
+	if run.code != 0 {
+		t.Fatalf("Run exit = %d, stderr = %s", run.code, run.stderr)
 	}
-	if strings.Contains(stdout.String(), "ibex_pat_") {
-		t.Fatalf("summary printed the PAT: %s", stdout.String())
+}
+
+func assertSummaryNamesPATFile(t *testing.T, stdout, patFile string) {
+	t.Helper()
+	if strings.Contains(stdout, "ibex_pat_") {
+		t.Fatalf("summary printed the PAT: %s", stdout)
 	}
-	if !strings.Contains(stdout.String(), "IBEX_BOOTSTRAP_PAT_FILE="+patFile) {
-		t.Fatalf("summary did not name the PAT file: %s", stdout.String())
+	if !strings.Contains(stdout, "IBEX_BOOTSTRAP_PAT_FILE="+patFile) {
+		t.Fatalf("summary did not name the PAT file: %s", stdout)
 	}
+}
+
+func assertPATFileValid(t *testing.T, patFile string) {
+	t.Helper()
 	t.Chdir(filepath.Dir(patFile))
 	data, err := os.ReadFile("bootstrap.pat")
 	if err != nil {
@@ -604,16 +636,34 @@ func TestBootstrapIntegrationRunEntrypoint(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("PAT file mode = %o, want 600", info.Mode().Perm())
 	}
+}
 
-	var rerunOut, rerunErr bytes.Buffer
-	if code := Run(&rerunOut, &rerunErr, mapGetenv(env)); code != 0 {
-		t.Fatalf("second Run exit = %d, stderr = %s", code, rerunErr.String())
+// TestBootstrapIntegrationRunEntrypoint drives the shipped command entrypoint,
+// not the inner helper: exit code, summary, and PAT file are the contract the
+// one-shot container depends on.
+func TestBootstrapIntegrationRunEntrypoint(t *testing.T) {
+	env, patFile := newEntrypointFixture(t, "Bootstrap Entrypoint")
+
+	run := runEntrypoint(t, env)
+	requireRunSucceeded(t, run)
+	assertSummaryNamesPATFile(t, run.stdout, patFile)
+	assertPATFileValid(t, patFile)
+}
+
+// TestBootstrapIntegrationRunEntrypointRerun proves a second run reconciles
+// without issuing or touching a PAT.
+func TestBootstrapIntegrationRunEntrypointRerun(t *testing.T) {
+	env, _ := newEntrypointFixture(t, "Bootstrap Entrypoint Rerun")
+
+	requireRunSucceeded(t, runEntrypoint(t, env))
+
+	rerun := runEntrypoint(t, env)
+	requireRunSucceeded(t, rerun)
+	if strings.Contains(rerun.stdout, "IBEX_BOOTSTRAP_PAT_FILE=") {
+		t.Fatalf("rerun touched the PAT: %s", rerun.stdout)
 	}
-	if strings.Contains(rerunOut.String(), "IBEX_BOOTSTRAP_PAT_FILE=") {
-		t.Fatalf("rerun touched the PAT: %s", rerunOut.String())
-	}
-	if !strings.Contains(rerunOut.String(), "already bootstrapped") {
-		t.Fatalf("rerun summary = %s", rerunOut.String())
+	if !strings.Contains(rerun.stdout, "already bootstrapped") {
+		t.Fatalf("rerun summary = %s", rerun.stdout)
 	}
 }
 
@@ -800,7 +850,8 @@ func TestBootstrapIntegrationScanNullableID(t *testing.T) {
 		t.Fatal("scanNullableID reported a value for no rows")
 	}
 	present, err := scanNullableID(verifyTx.QueryRowContext(verifyCtx,
-		`SELECT id FROM ibex_core.users WHERE id = $1`, first.UserID.String()))
+		`SELECT id FROM ibex_core.users WHERE id = $1 AND org_id = $2`,
+		first.UserID.String(), first.OrgID.String()))
 	if err != nil {
 		t.Fatalf("scanNullableID on a row: %v", err)
 	}
@@ -818,7 +869,9 @@ func (failingWriter) Write([]byte) (int, error) {
 }
 
 // TestBootstrapIntegrationRunFailsWhenPATCannotBeWritten proves a PAT that
-// cannot be delivered fails the one-shot instead of succeeding silently.
+// cannot be delivered fails the one-shot and rolls the identity back, so a
+// rerun issues a fresh PAT instead of leaving an organization with no
+// recoverable credential.
 func TestBootstrapIntegrationRunFailsWhenPATCannotBeWritten(t *testing.T) {
 	if os.Getenv("POSTGRES_TEST_DSN") == "" {
 		t.Skip("POSTGRES_TEST_DSN not set")
@@ -836,7 +889,7 @@ func TestBootstrapIntegrationRunFailsWhenPATCannotBeWritten(t *testing.T) {
 	t.Cleanup(func() { cleanupBootstrapOrg(t, db, slug) })
 
 	// A directory at the destination path passes the parent-directory check and
-	// fails at rename time, after the transaction commits.
+	// fails at rename time, before the transaction commits.
 	patPath := filepath.Join(t.TempDir(), "bootstrap.pat")
 	if err := os.Mkdir(patPath, 0o700); err != nil {
 		t.Fatalf("seed destination directory: %v", err)
@@ -857,8 +910,18 @@ func TestBootstrapIntegrationRunFailsWhenPATCannotBeWritten(t *testing.T) {
 	if code := Run(&stdout, &stderr, mapGetenv(env)); code != 1 {
 		t.Fatalf("Run exit = %d, want 1; stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "could not write the PAT file") {
+	if !strings.Contains(stderr.String(), "could not write the admin PAT") {
 		t.Fatalf("stderr = %q, want a PAT delivery error", stderr.String())
+	}
+
+	var count int
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM ibex_core.organizations WHERE slug = $1`, slug,
+	).Scan(&count); err != nil {
+		t.Fatalf("count organizations: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("organizations with slug %q = %d, want 0 after a delivery failure", slug, count)
 	}
 }
 

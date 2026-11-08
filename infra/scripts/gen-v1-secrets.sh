@@ -33,8 +33,9 @@ SECRETS_DIR="${IBEX_V1_SECRETS_DIR:-$ROOT_DIR/infra/compose/v1-single-node/secre
 CERTS_DIR="${IBEX_V1_CERTS_DIR:-$ROOT_DIR/infra/compose/v1-single-node/certs}"
 # The bootstrap PAT must survive the one-shot container's exit. It is written to
 # a host bind mount (0700) rather than a container tmpfs, so a first install
-# cannot lose its only admin credential.
-BOOTSTRAP_DIR="${IBEX_V1_BOOTSTRAP_DIR:-$ROOT_DIR/infra/compose/v1-single-node/bootstrap}"
+# cannot lose its only admin credential. The path is fixed: the Compose mount
+# and `make v1-bootstrap-pat` must resolve the same directory.
+BOOTSTRAP_DIR="$ROOT_DIR/infra/compose/v1-single-node/bootstrap"
 EXAMPLE_ENV="$ROOT_DIR/infra/compose/v1-single-node/.env.example"
 TLS_SCRIPT="$ROOT_DIR/infra/scripts/gen-v1-tls.sh"
 

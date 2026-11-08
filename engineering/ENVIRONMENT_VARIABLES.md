@@ -337,7 +337,7 @@ Used by: **auth** (`services/auth`)
 | `IBEX_ENV` | Yes | (none; required explicitly) | `development` \| `staging` \| `production` | Missing/empty is rejected. Outside `development` the gRPC listener requires the TLS pair; clients must set `IBEX_AUTH_GRPC_CA_FILE` to trust the per-install CA |
 | `IBEX_SERVICE_NAME` | No | `auth` | Service name for logs/telemetry | |
 | `IBEX_LOG_LEVEL` | No | `INFO` | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` | |
-| `IBEX_BOOTSTRAP_PAT_FILE` | Yes (bootstrap command) | (none) | File path for the one-time admin PAT, created atomically with mode `0600`. The profile sets `/run/ibex/bootstrap.pat` on a host bind mount; retrieve it with `make v1-bootstrap-pat` | Secret-bearing file; never in logs, never printed to stdout. Required so the command cannot fall back to printing the credential |
+| `IBEX_BOOTSTRAP_PAT_FILE` | Yes (bootstrap command) | (none) | File path for the one-time admin PAT, created atomically with mode `0600` before the transaction commits. The profile sets `/run/ibex/bootstrap.pat` on a host bind mount; retrieve it with `make v1-bootstrap-pat` | Secret-bearing file; the bootstrap process never logs or prints it. Required so the command cannot fall back to stdout. `make v1-bootstrap-pat` prints it to the operator's terminal: do not capture that output in CI or a job log |
 | `IBEX_BOOTSTRAP_ORG_NAME` / `_ORG_SLUG` / `_USER_EMAIL` / `_USER_NAME` / `_AGENT_NAME` / `_AGENT_SLUG` / `_PAT_NAME` | No | `IBEX Harness` / `ibex` / `owner@ibex.local` / `Owner` / `Default Agent` / `default` / `Bootstrap PAT` | First-run identity inputs for the one-shot `bootstrap` command | Non-secret; slug and email shapes are validated before SQL |
 
 ### gRPC (internal ValidateToken)

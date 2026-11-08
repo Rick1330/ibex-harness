@@ -276,7 +276,7 @@ func TestDeliverBootstrapPATWritesRestrictedFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("deliverBootstrapPAT: %v", err)
 	}
-	if got.PAT != "" || got.PATPath != path {
+	if got.PAT != result.PAT || got.PATPath != path {
 		t.Fatalf("result = PAT %q path %q", got.PAT, got.PATPath)
 	}
 	assertPATFile(t, dir, "ibex_pat_test_value\n")

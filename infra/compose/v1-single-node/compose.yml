@@ -98,7 +98,9 @@ services:
     # image, so the operator does not need sudo.
     user: "0:0"
     volumes:
-      - ./bootstrap:/run/ibex
+      # :Z relabels the directory for container access on an SELinux host; it is
+      # ignored where SELinux is disabled.
+      - ./bootstrap:/run/ibex:Z
     depends_on:
       migrate:
         condition: service_completed_successfully
