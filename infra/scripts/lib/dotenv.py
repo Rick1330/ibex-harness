@@ -36,25 +36,56 @@ def _comment_start(value: str) -> int:
         index += 1
 
 
-def _parse(raw: str) -> str:
+def _parse(raw: str) -> tuple[str, str | None]:
     value = raw.strip()
     if value[:1] in ("'", '"'):
         end = value.find(value[0], 1)
-        return value[1:end] if end != -1 else value[1:]
+        return (value[1:end] if end != -1 else value[1:], value[0])
     comment = _comment_start(value)
-    return value[:comment].strip() if comment != -1 else value
+    return (value[:comment].strip() if comment != -1 else value, None)
 
 
 def _lookup(expression: str, seen: dict[str, str]) -> str:
-    name, separator, default = expression.partition(":-")
-    if not separator:
-        name, separator, default = expression.partition("-")
-    name = name.strip()
-    if name in seen:
-        return seen[name]
-    if name in os.environ:
-        return os.environ[name]
-    return default if separator else ""
+    expr = expression.strip()
+    end = _name_end(expr, 0)
+    if end == 0:
+        return ""
+    name = expr[:end]
+    rest = expr[end:]
+    if not rest:
+        operator, operand = None, ""
+    elif rest.startswith(":-"):
+        operator, operand = ":-", rest[2:]
+    elif rest.startswith(":?"):
+        operator, operand = ":?", rest[2:]
+    elif rest.startswith(":+"):
+        operator, operand = ":+", rest[2:]
+    elif rest.startswith("-"):
+        operator, operand = "-", rest[1:]
+    elif rest.startswith("?"):
+        operator, operand = "?", rest[1:]
+    elif rest.startswith("+"):
+        operator, operand = "+", rest[1:]
+    else:
+        return ""
+
+    value = os.environ[name] if name in os.environ else seen.get(name)
+    is_set = value is not None
+    is_non_empty = is_set and value != ""
+
+    if operator is None:
+        return value or ""
+    if operator == ":-":
+        return value if is_non_empty else (operand or "")
+    if operator == "-":
+        return value if is_set else (operand or "")
+    if operator == ":?":
+        return value if is_non_empty else ""
+    if operator == "?":
+        return value if is_set else ""
+    if operator == ":+":  # pragma: no branch
+        return (operand or "") if is_non_empty else ""
+    return (operand or "") if is_set else ""
 
 
 def _name_end(value: str, start: int) -> int:
@@ -119,7 +150,8 @@ def read_value(lines, key: str) -> str:
         if assignment is None:
             continue
         name, rest = assignment
-        values[name] = _interpolate(_parse(rest), values)
+        parsed, quote = _parse(rest)
+        values[name] = parsed if quote == "'" else _interpolate(parsed, values)
     return values.get(key, "")
 
 

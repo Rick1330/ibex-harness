@@ -218,6 +218,14 @@ func writeRestrictedFile(path, value string) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return err
 	}
+	dirHandle, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer dirHandle.Close()
+	if err := dirHandle.Sync(); err != nil {
+		return err
+	}
 	return nil
 }
 

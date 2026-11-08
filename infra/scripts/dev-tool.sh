@@ -72,7 +72,10 @@ compose() {
       local -a podman_bin
       read -r -a podman_bin <<<"$(podman_engine)"
       "${podman_bin[@]}" compose "$@" ;;
-    podman-compose) podman-compose "$@" ;;
+    podman-compose)
+      local -a podman_bin
+      read -r -a podman_bin <<<"$(podman_engine)"
+      PODMAN="${podman_bin[*]}" podman-compose "$@" ;;
     *) echo "unsupported container runtime: $(runtime)" >&2; return 2 ;;
   esac
 }
@@ -209,9 +212,44 @@ v1_bootstrap_pat() {
   # directly. Read it through the image that created it: the image runs as uid
   # 10001 by default, so the read needs an explicit root user, and the mount is
   # read-only.
+  local -a run_args
   read -r -a engine <<<"$(container_runtime_bin)"
-  "${engine[@]}" run --rm --user 0:0 --entrypoint cat -v "$dir:/run/ibex:ro" \
-    ibex-v1-auth:local /run/ibex/bootstrap.pat
+  run_args=("${engine[@]}" run --rm --user 0:0 --entrypoint cat)
+  if [[ "${engine[*]}" == *podman* ]]; then
+    run_args+=(--security-opt label=disable)
+  fi
+  run_args+=(-v "$dir:/run/ibex:ro" ibex-v1-auth:local /run/ibex/bootstrap.pat)
+  "${run_args[@]}"
+}
+
+v1_up() {
+  local do_build=1
+  if [[ "${IBEX_V1_SKIP_BUILD:-0}" == 1 ]]; then
+    do_build=0
+  fi
+  if [[ "${1:-}" == "--no-build" ]]; then
+    do_build=0
+    shift
+  fi
+  if (( do_build )); then
+    compose_with_mode v1 build
+  fi
+  compose_with_mode v1 up -d "$@"
+}
+
+v1_migrate() {
+  local do_build=1
+  if [[ "${IBEX_V1_SKIP_BUILD:-0}" == 1 ]]; then
+    do_build=0
+  fi
+  if [[ "${1:-}" == "--no-build" ]]; then
+    do_build=0
+    shift
+  fi
+  if (( do_build )); then
+    compose_with_mode v1 build migrate
+  fi
+  compose_with_mode v1 run --rm migrate "$@"
 }
 
 v1_down() {
@@ -310,7 +348,7 @@ case "${1:-help}" in
       '  compose-dev-up/down/reset/logs/ps  Manage development stack' \
       '  compose-test-up/down   Manage test stack' '  observability-up/down/smoke  Manage observability' \
       '  v1-secrets             Generate the v1-single-node .env and file secrets' \
-      '  v1-up/down/migrate/logs/ps  Manage the v1-single-node profile (infra/compose/v1-single-node/.env)' \
+      '  v1-up/down/migrate/logs/ps  Manage the v1-single-node profile (use --no-build for rollback image reuse)' \
       '  db-migrate/down/version/seed  Manage Postgres migrations' \
       '  clickhouse-migrate/down/version  Manage ClickHouse migrations' \
       '  test-embedder/test-memory/test-memory-integration/test-worker/test-worker-integration/test-mcp-memory' \
@@ -371,9 +409,9 @@ case "${1:-help}" in
   e2e-phase25) bash "$ROOT_DIR/infra/scripts/e2e_phase25.sh" ;;
   e2e-smoke-p3-memory) bash "$ROOT_DIR/infra/scripts/verify_phase3_memory_e2e.sh" ;;
   mcp-conformance) bash "$ROOT_DIR/infra/scripts/mcp-conformance.sh" ;;
-  v1-up) compose_with_mode v1 up -d ;;
+  v1-up) v1_up ;;
   v1-down) compose_with_mode v1 down ;;
-  v1-migrate) compose_with_mode v1 run --rm migrate ;;
+  v1-migrate) v1_migrate ;;
   v1-logs) compose_with_mode v1 logs -f ;;
   v1-ps) compose_with_mode v1 ps ;;
   v1-secrets) bash "$ROOT_DIR/infra/scripts/gen-v1-secrets.sh" ;;
@@ -382,13 +420,13 @@ case "${1:-help}" in
     if [[ -n "$sub" ]]; then shift 2; fi
     case "$sub" in
       build) compose_with_mode v1 build "$@" ;;
-      up) compose_with_mode v1 up "$@" ;;
+      up) v1_up "$@" ;;
       down) v1_down "$@" ;;
       wait) v1_wait_healthy ;;
       url) v1_url ;;
       secrets) bash "$ROOT_DIR/infra/scripts/gen-v1-secrets.sh" ;;
       bootstrap-pat) v1_bootstrap_pat ;;
-      migrate) compose_with_mode v1 build migrate && compose_with_mode v1 run --rm migrate "$@" ;;
+      migrate) v1_migrate "$@" ;;
       logs) compose_with_mode v1 logs -f "$@" ;;
       ps) compose_with_mode v1 ps "$@" ;;
       *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-logs|v1-ps|v1-bootstrap-pat or v1 build|up|down|wait|url|secrets|bootstrap-pat|migrate|logs|ps' >&2; exit 2 ;;

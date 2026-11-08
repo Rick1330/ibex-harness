@@ -80,9 +80,31 @@ class InterpolationTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual(read("A=${MISSING-443}\n", "A"), "443")
 
+    def test_colon_default_applies_when_value_is_empty(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("PORT=\nA=${PORT:-443}\n", "A"), "443")
+
+    def test_single_dash_keeps_empty_value(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("PORT=\nA=${PORT-443}\n", "A"), "")
+
     def test_environment_wins_over_default(self):
         with mock.patch.dict(os.environ, {"IBEX_TEST_PORT": "8443"}, clear=False):
             self.assertEqual(read("A=${IBEX_TEST_PORT:-443}\n", "A"), "8443")
+
+    def test_environment_wins_over_seen_value(self):
+        with mock.patch.dict(os.environ, {"PORT": "8443"}, clear=False):
+            self.assertEqual(read("PORT=443\nA=${PORT}\n", "A"), "8443")
+
+    def test_required_operator_returns_value_when_present(self):
+        self.assertEqual(read("PORT=8443\nA=${PORT:?missing}\n", "A"), "8443")
+
+    def test_alternate_operator_returns_fallback_when_present(self):
+        self.assertEqual(read("PORT=8443\nA=${PORT:+ready}\n", "A"), "ready")
+
+    def test_alternate_operator_is_empty_when_unset(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("A=${MISSING:+ready}\n", "A"), "")
 
     def test_double_dollar_is_literal(self):
         self.assertEqual(read("A=pa$$word\n", "A"), "pa$word")
@@ -93,6 +115,10 @@ class InterpolationTests(unittest.TestCase):
 
     def test_interpolation_applies_to_quoted_values(self):
         self.assertEqual(read('PORT=9443\nORIGIN="https://localhost:${PORT}"\n', "ORIGIN"), "https://localhost:9443")
+
+    def test_single_quotes_preserve_literal_dollar(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("A='$MISSING'\n", "A"), "$MISSING")
 
 
 if __name__ == "__main__":

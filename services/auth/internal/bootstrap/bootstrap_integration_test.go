@@ -914,8 +914,9 @@ func TestBootstrapIntegrationRunFailsWhenPATCannotBeWritten(t *testing.T) {
 		t.Fatalf("stderr = %q, want a PAT delivery error", stderr.String())
 	}
 
+	ctx, tx := openServiceTx(t, db)
 	var count int
-	if err := db.QueryRowContext(context.Background(),
+	if err := tx.QueryRowContext(ctx,
 		`SELECT count(*) FROM ibex_core.organizations WHERE slug = $1`, slug,
 	).Scan(&count); err != nil {
 		t.Fatalf("count organizations: %v", err)

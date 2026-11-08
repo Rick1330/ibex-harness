@@ -110,7 +110,7 @@ import sys
 path = sys.argv[1]
 key = os.environ["KEY"]
 value = os.environ["VALUE"]
-pattern = re.compile(r"^\s*" + re.escape(key) + r"\s*=")
+pattern = re.compile(r"^\s*(?:export\s+)?" + re.escape(key) + r"\s*=")
 lines = []
 try:
     with open(path, encoding="utf-8") as handle:
@@ -299,7 +299,10 @@ set_secret IBEX_OPERATOR_CURSOR_SECRET "$(gen_hex)"
 # CORS/CSRF trusts exactly the browser origin the edge serves. Trusting bare
 # https://localhost on a non-443 port would also trust a different local service
 # that happens to bind 443.
-edge_port="$(env_value IBEX_EDGE_PORT)"
+edge_port="${IBEX_EDGE_PORT:-}"
+if [[ -z "$edge_port" ]]; then
+  edge_port="$(env_value IBEX_EDGE_PORT)"
+fi
 edge_port="${edge_port:-443}"
 env_set IBEX_EDGE_PORT "$edge_port"
 if [[ "$edge_port" == "443" ]]; then
