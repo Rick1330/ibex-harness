@@ -240,9 +240,14 @@ async def test_forget_full_path_advances_source_session() -> None:
             _FakeResult(mapping={"lifecycle_revision": 2}),
             _FakeResult(),
             _FakeResult(),
+            # forget erases labels, feedback, relationships, escalations
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
         ]
     )
-    assert (revision, executed) == (2, 6)
+    assert (revision, executed) == (2, 10)
 
 
 @pytest.mark.asyncio
@@ -253,9 +258,13 @@ async def test_forget_without_source_session_skips_session_lock() -> None:
             _FakeResult(mapping={"lifecycle_revision": 1, "tombstoned": False}),
             _FakeResult(mapping={"lifecycle_revision": 2}),
             _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
         ]
     )
-    assert (revision, executed) == (2, 4)
+    assert (revision, executed) == (2, 8)
 
 
 @pytest.mark.asyncio
@@ -267,9 +276,13 @@ async def test_forget_missing_source_session_lock_skips_advance() -> None:
             _FakeResult(mapping={"lifecycle_revision": 1, "tombstoned": False}),
             _FakeResult(mapping={"lifecycle_revision": 2}),
             _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(),
         ]
     )
-    assert (revision, executed) == (2, 5)
+    assert (revision, executed) == (2, 9)
 
 
 @pytest.mark.asyncio

@@ -123,6 +123,8 @@ _CASCADE_STATEMENTS: tuple[str, ...] = (
     "DELETE FROM ibex_core.directive_versions WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.directives WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.tokens WHERE org_id = CAST(:org_id AS uuid)",
+    # idempotency_ledger.agent_id cascades from agents (000059); the saga does
+    # not delete the ledger explicitly.
     "DELETE FROM ibex_core.agents WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.organization_invites WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.users WHERE org_id = CAST(:org_id AS uuid)",

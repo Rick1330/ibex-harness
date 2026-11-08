@@ -140,3 +140,55 @@ async def test_active_legal_hold_defers_org_purge(
         assert event_count == 0
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_org_postgres_purge_clears_idempotency_ledger(
+    migrated_postgres: str,
+) -> None:
+    """P0-07: an idempotency_ledger row must not abort the purge.
+
+    The ledger's agent_id was NO ACTION, so the saga's `DELETE FROM agents`
+    raised a foreign-key violation and the job could never reach succeeded.
+    """
+    engine = create_engine(Settings(database_url=migrated_postgres))
+    factory = create_session_factory(engine)
+    try:
+        org_id, agent_id, _memory_id, _job_id = await _seed_org_memory(
+            factory, with_hold=False
+        )
+        async with factory() as session, session.begin():
+            await session.execute(
+                text(
+                    """INSERT INTO ibex_core.idempotency_ledger
+                       (organization_id, agent_id, dedupe_key, request_hash, state)
+                       VALUES (:org, :agent, 'w3-ledger', repeat('a', 64), 'claimed')"""
+                ),
+                {"org": org_id, "agent": agent_id},
+            )
+
+        async with factory() as session, session.begin():
+            await _service_scope(session, org_id)
+            await org_deletion._stage_postgres(session, org_id=org_id)
+
+        async with factory() as session, session.begin():
+            await _service_scope(session, org_id)
+            ledger = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM ibex_core.idempotency_ledger"
+                        " WHERE organization_id = :org"
+                    ),
+                    {"org": org_id},
+                )
+            ).scalar_one()
+            agents = (
+                await session.execute(
+                    text("SELECT count(*) FROM ibex_core.agents WHERE org_id = :org"),
+                    {"org": org_id},
+                )
+            ).scalar_one()
+        assert ledger == 0
+        assert agents == 0
+    finally:
+        await engine.dispose()

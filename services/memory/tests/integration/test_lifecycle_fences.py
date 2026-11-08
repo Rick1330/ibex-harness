@@ -427,3 +427,59 @@ async def test_concurrent_supersede_vs_forget_has_one_typed_loser(
     assert await _read_outbox(session_factory, org_id=org_id, memory_id=target_id) == [
         (2, "forgotten" if tombstoned else "superseded")
     ]
+
+
+@pytest.mark.asyncio
+async def test_forget_erases_content_and_child_labels(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    """P0-08: forget is erasure, not only a visibility tombstone."""
+    content = "sentinel-erasure-7f3a91 unforgettable"
+    org_id, agent_id, memory_id, _query, _store = await _seed_memory_with_embedding(
+        session_factory, settings, content=content, hotspot=12
+    )
+    await _execute_sql(
+        session_factory,
+        org_id,
+        "INSERT INTO ibex_core.memory_labels (memory_id, org_id, label)"
+        " VALUES (:id, :org, 'factual')",
+        {"id": memory_id, "org": org_id},
+    )
+
+    from app.routers.memories import forget_memory
+
+    token = SimpleNamespace(org_id=org_id, agent_id=agent_id)
+    await forget_memory(
+        memory_id,
+        ForgetMemoryRequest(expected_revision=1),
+        token,
+        session_factory,
+        None,
+    )
+
+    rows = await _rows(
+        session_factory,
+        org_id,
+        """SELECT content, content_tokens, metadata::text AS metadata_text,
+                  pii_detected, pii_redacted
+           FROM ibex_core.memories WHERE id=:id AND org_id=:org""",
+        {"id": memory_id, "org": org_id},
+    )
+    row = rows[0]
+    assert content not in row.content
+    assert row.content == "[forgotten]"
+    assert int(row.content_tokens) == 0
+    assert row.metadata_text == "{}"
+    assert row.pii_detected is False
+    assert row.pii_redacted is False
+
+    labels = await _scalar(
+        session_factory,
+        org_id,
+        "SELECT count(*) FROM ibex_core.memory_labels WHERE memory_id=:id AND org_id=:org",
+        {"id": memory_id, "org": org_id},
+    )
+    assert labels == 0
+    assert await _read_outbox(
+        session_factory, org_id=org_id, memory_id=memory_id
+    ) == [(2, "forgotten")]

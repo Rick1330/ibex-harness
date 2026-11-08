@@ -14,6 +14,8 @@ CH_TABLES = (
     "mcp_tool_calls",
     "evidence_spans",
     "evidence_assembly_metrics",
+    "usage_facts",
+    "evidence_events",
 )
 CH_DELETE_QUERIES: dict[str, str] = {
     "llm_traces": "ALTER TABLE ibex.llm_traces DELETE WHERE org_id = {org_id:UUID}",
@@ -22,6 +24,8 @@ CH_DELETE_QUERIES: dict[str, str] = {
     "evidence_assembly_metrics": (
         "ALTER TABLE ibex.evidence_assembly_metrics DELETE WHERE org_id = {org_id:UUID}"
     ),
+    "usage_facts": "ALTER TABLE ibex.usage_facts DELETE WHERE org_id = {org_id:UUID}",
+    "evidence_events": "ALTER TABLE ibex.evidence_events DELETE WHERE org_id = {org_id:UUID}",
 }
 CH_COUNT_QUERIES: dict[str, str] = {
     "llm_traces": "SELECT count() FROM ibex.llm_traces WHERE org_id = {org_id:UUID}",
@@ -30,6 +34,8 @@ CH_COUNT_QUERIES: dict[str, str] = {
     "evidence_assembly_metrics": (
         "SELECT count() FROM ibex.evidence_assembly_metrics WHERE org_id = {org_id:UUID}"
     ),
+    "usage_facts": "SELECT count() FROM ibex.usage_facts WHERE org_id = {org_id:UUID}",
+    "evidence_events": "SELECT count() FROM ibex.evidence_events WHERE org_id = {org_id:UUID}",
 }
 REDIS_PREFIX_TEMPLATES = (
     "{org_id}:directive:",

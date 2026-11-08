@@ -109,6 +109,18 @@ _TOMBSTONE_SQL = """
     SET status = 'deleted',
         deleted_at = COALESCE(deleted_at, NOW()),
         tombstoned = TRUE,
+        content = '[forgotten]',
+        content_hash = md5(random()::text) || md5(random()::text),
+        content_tokens = 0,
+        metadata = '{}'::jsonb,
+        pii_detected = FALSE,
+        pii_redacted = FALSE,
+        confidence = 0.80,
+        usefulness_score = 0.50,
+        retrieval_count = 0,
+        last_retrieved_at = NULL,
+        superseded_by = NULL,
+        merged_into = NULL,
         embedding = NULL,
         embedding_model = NULL,
         embedding_dim = NULL,
@@ -120,6 +132,23 @@ _TOMBSTONE_SQL = """
       AND tombstoned = FALSE
     RETURNING lifecycle_revision
 """
+
+# Forget is erasure, not only suppression: every child row that can carry or
+# point at the content goes in the same transaction as the tombstone.
+_ERASE_MEMORY_CHILDREN_SQL: tuple[str, ...] = (
+    "DELETE FROM ibex_core.memory_labels WHERE memory_id = :memory_id AND org_id = :org_id",
+    "DELETE FROM ibex_core.memory_feedback WHERE memory_id = :memory_id AND org_id = :org_id",
+    (
+        "DELETE FROM ibex_core.memory_relationships"
+        " WHERE org_id = :org_id"
+        " AND (source_memory_id = :memory_id OR target_memory_id = :memory_id)"
+    ),
+    (
+        "DELETE FROM ibex_core.memory_conflict_escalations"
+        " WHERE org_id = :org_id"
+        " AND (new_memory_id = :memory_id OR candidate_memory_id = :memory_id)"
+    ),
+)
 
 _ADVANCE_SESSION_SQL = """
     UPDATE ibex_core.sessions
@@ -240,6 +269,7 @@ async def forget_memory_session(session: AsyncSession, request: ForgetMemory) ->
     source_session_id = await _resolve_source_session(session, request)
     await _require_forget_target(session, request)
     new_revision = await _tombstone_memory(session, request)
+    await _erase_memory_children(session, request)
     if source_session_id is not None:
         await _advance_source_session_revision(session, request, source_session_id)
     await enqueue_memory_lifecycle_event(
@@ -252,6 +282,18 @@ async def forget_memory_session(session: AsyncSession, request: ForgetMemory) ->
         ),
     )
     return new_revision
+
+
+async def _erase_memory_children(session: AsyncSession, request: ForgetMemory) -> None:
+    """Remove every child row that can carry or point at the forgotten content."""
+    params = {"org_id": request.org_id, "memory_id": request.memory_id}
+    for statement in _ERASE_MEMORY_CHILDREN_SQL:
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                statement
+            ),
+            params,
+        )
 
 
 async def _resolve_source_session(
