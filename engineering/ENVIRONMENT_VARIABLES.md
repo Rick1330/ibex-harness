@@ -239,6 +239,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_TRACE_ID_HEADER` | No | `X-Trace-ID` | Trace ID response header | |
 | `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` (code); `2s` in `services/proxy/.env.example` for local dev | Per-request auth validate budget (`ValidateToken` / `ValidateAgent`); also bounds `IssuePolicySnapshot` (GAP-002) | Code default per [ADR-0011](../engineering/adr/0011-proxy-auth-client.md); use `2s` locally when Argon2 verify exceeds 50ms — see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.3 |
 | `IBEX_PROXY_POLICY_PUBLIC_KEYS` | Staging/production yes (when protected routes mounted, GAP-002); optional in development | (empty; stage disabled) | JSON object mapping policy-signing key ids to PEM RSA public keys from AuthService (`IBEX_AUTH_POLICY_SIGNING_KEY_PEM`); verified before mutating chat/responses/session-terminate and auth-probe requests | Public keys only; staging/production construction fails closed without fetcher+verifier. See [Errors](/docs/api-reference/errors) `SNAPSHOT_*` |
+| `IBEX_PROXY_POLICY_PUBLIC_KEYS_FILE` | No | (empty) | Path to the JSON policy key set, used when `IBEX_PROXY_POLICY_PUBLIC_KEYS` is empty | Inline JSON wins; a set-but-unreadable or invalid file fails startup. Exists because Compose `.env` cannot carry multi-line PEM JSON |
 | `IBEX_PROXY_POLICY_MIN_EPOCH` | No | `0` (accept any) | Minimum accepted signing-key epoch; snapshots below fail closed with `SNAPSHOT_EXPIRED` | Raise during key rotation; pair with the auth `IBEX_AUTH_POLICY_EPOCH` |
 | `IBEX_BUDGET_RESERVATION_LEASE` | No | `15m` | Lease TTL for hard-cap budget admission holds (`budget-reservation.v1`, GAP-006); an expired lease is reclaimable by the worker sweep after its grace window | Validated `1m`–`24h`; must cover the longest stream/retry window before a hold is reclaimed |
 | `IBEX_AUTH_CACHE_ENABLED` | No | `true` | Request bloom + LRU wrap for ValidateToken ([ADR-0028](adr/0028-auth-cache-design.md)). Wrap is **skipped** (WARN) when `REDIS_URL` is empty or Redis Ping fails — revoke must not rely on LRU TTL alone without the pub/sub channel ([ADR-0029](adr/0029-token-revocation-propagation.md)). | Set `false` to force every request through gRPC |
@@ -359,6 +360,7 @@ Used by: **auth** (`services/auth`)
 | `IBEX_CREDENTIALS_MASTER_KEY` | Conditional | (empty) | Base64-encoded 32-byte AES-256 KEK for sealing org provider API keys | **Secret.** Required when `IBEX_ENV=production`. Auth-only; never ship to API/proxy |
 | `IBEX_CREDENTIALS_MASTER_KEY_ID` | No | `v1` | Logical KEK version stored with each sealed blob | Rotation metadata only |
 | `IBEX_AUTH_POLICY_SIGNING_KEY_PEM` | Conditional | (empty; issuance fails closed with `FailedPrecondition`) | PEM RSA private key (PKCS#1 or PKCS#8, ≥2048 bits) minting `policy-snapshot.v1` envelopes for `IssuePolicySnapshot` (GAP-002). Required outside development; matching public key ships to the proxy as `IBEX_PROXY_POLICY_PUBLIC_KEYS` | **Secret.** Auth-only; never log or ship to proxy/console |
+| `IBEX_AUTH_POLICY_SIGNING_KEY_FILE` | Conditional | (empty) | Path to the policy-signing PEM, used when `IBEX_AUTH_POLICY_SIGNING_KEY_PEM` is empty | **Secret.** Inline PEM wins; a set-but-unreadable file fails startup. File mode 0600 |
 | `IBEX_AUTH_POLICY_SIGNING_KEY_ID` | No | `v1` | Policy-signing key id stamped into the envelope `key_id` for rotation | Public metadata |
 | `IBEX_AUTH_POLICY_EPOCH` | No | `1` | Effective policy epoch stamped into snapshots; consumers reject below `IBEX_PROXY_POLICY_MIN_EPOCH` | Raise on authority/policy-generation change |
 
@@ -386,6 +388,7 @@ Auth stores ciphertext only. Management API validate-before-store then calls `Cr
 | `JWT_ACCESS_TOKEN_TTL_SECONDS` | No | `3600` | 1 hour access tokens | Short-lived |
 | `JWT_REFRESH_TOKEN_TTL_SECONDS` | No | `2592000` | 30 days | Rotate refresh tokens |
 | `JWT_PRIVATE_KEY_PEM` | Yes (auth only) | (none) | RS256 signing key | Secret; only auth service |
+| `JWT_PRIVATE_KEY_FILE` | Yes (auth only; file form) | (empty) | Path to the RS256 signing PEM, used when `JWT_PRIVATE_KEY_PEM` is empty | **Secret.** Inline PEM wins; a set-but-unreadable file fails startup |
 | `JWT_PUBLIC_KEYS_PEM` | Yes (verifiers) | (none) | Keyset for verification | Public but protected |
 | `JWT_KEY_ID_CURRENT` | Yes | (none) | Current key ID | Needed for rotation |
 | `JWT_KEYSET_GRACE_SECONDS` | No | `3600` | Previous key grace window | Avoid token rejection |
@@ -755,7 +758,8 @@ The Console has one public, non-secret browser setting: `NUXT_PUBLIC_IBEX_ENV`, 
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `IBEX_OPERATOR_API_ORIGIN` | Yes | (none) | Server-only API origin used by the Console BFF; never exposed to the browser |
+| `IBEX_OPERATOR_API_ORIGIN` | Yes | (none) | Server-only API origin used by the Console BFF; never exposed to the browser | Must be HTTPS when the request carries a session cookie |
+| `IBEX_OPERATOR_API_INTERNAL_ORIGIN` | No | (empty) | Server-only internal API origin used only by the Console `/ready` probe | Never exposed to the browser. Empty means liveness only (`upstream:"unchecked"`); the probe is credential-free |
 | `IBEX_OPERATOR_SESSION_COOKIE_NAME` | No | `ibex_session` | Access cookie the BFF forwards to the API |
 | `CONSOLE_READ_ONLY` | No | unset | Reserved and ignored by the Console; read-only behavior is structural (ADR-0091) |
 
@@ -777,6 +781,7 @@ The Console has one public, non-secret browser setting: `NUXT_PUBLIC_IBEX_ENV`, 
 | `JWT_HMAC_SECRET` | Yes when feature on (HS256 path) | (none) | Provisional HS256 secret (≥32 bytes) | **No** `JWT_PRIVATE_KEY_PEM` alias; dual-verify logs `provisional_hs256_verify=1` |
 | `JWT_PRIVATE_KEY_PEM` | Yes (auth RS256) | (none) | Auth-only RS256 signing key | Never load on the API or Console |
 | `DASHBOARD_JWT_PUBLIC_KEYS_PEM` | Yes when verifying RS256 | (none) | API verifies Auth-issued RS256 session/step-up JWTs | Keep server-only |
+| `DASHBOARD_JWT_PUBLIC_KEYS_FILE` | Yes when verifying RS256 (file form) | (empty) | Path to the public-key PEM, used when the inline PEM is empty | Inline PEM wins; a set-but-unreadable/empty file fails startup. Keep server-only |
 | `IBEX_ENV` / `IBEX_API_ENV` | Yes when operator sessions are enabled | `development` only when feature is off | Explicit API profile: `development`, `staging`, or `production` | Missing explicit profile is rejected at startup when operator sessions are enabled; HMAC sessions are development-only |
 | `IBEX_OPERATOR_FEATURE_ENABLED` | No | `false` | Enables provisional `/v1/operator/session` + SSE | Default off until 4.P.1 |
 | `IBEX_OPERATOR_ALLOW_RAW_READ` | No | `false` | API per-action kill switch | See global table |

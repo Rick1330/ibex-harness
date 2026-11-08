@@ -11,6 +11,10 @@ TEST_COMPOSE="$ROOT_DIR/infra/compose/test/docker-compose.yml"
 TEST_ENV="$ROOT_DIR/infra/compose/test/.env.example"
 OBS_COMPOSE="$ROOT_DIR/infra/compose/observability/docker-compose.yml"
 OBS_ENV="$ROOT_DIR/infra/compose/observability/.env.example"
+V1_COMPOSE="$ROOT_DIR/infra/compose/v1-single-node/compose.yml"
+# The supported profile uses its own operator-owned .env (0600) under
+# infra/compose/v1-single-node so development credentials cannot leak in.
+V1_ENV="$ROOT_DIR/infra/compose/v1-single-node/.env"
 MANIFEST="$ROOT_DIR/infra/tool-versions.conf"
 PROTO_BREAKING_AGAINST="${PROTO_BREAKING_AGAINST:-https://github.com/Rick1330/ibex-harness.git#branch=main,subdir=packages/proto}"
 
@@ -38,7 +42,7 @@ runtime() {
       elif command -v podman-compose >/dev/null 2>&1; then echo podman-compose
       else echo 'Podman Compose is missing. Install podman-compose.' >&2; exit 1; fi ;;
     auto)
-      if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then echo docker
+      if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1; then echo docker
       elif command -v podman >/dev/null 2>&1 && (podman compose version >/dev/null 2>&1 || command -v podman-compose >/dev/null 2>&1); then
         if podman compose version >/dev/null 2>&1; then echo podman; else echo podman-compose; fi
       else echo 'No supported container runtime found. Install Docker Compose v2 or Podman + podman-compose.' >&2; exit 1; fi ;;
@@ -69,6 +73,7 @@ compose_files() {
     dev) printf '%s\n' -f "$DEV_COMPOSE" --env-file "$DEV_ENV" ;;
     test) printf '%s\n' -f "$TEST_COMPOSE" --env-file "$TEST_ENV" ;;
     observability) printf '%s\n' -f "$OBS_COMPOSE" --env-file "$OBS_ENV" ;;
+    v1) printf '%s\n' -f "$V1_COMPOSE" --env-file "$V1_ENV" ;;
     *) echo "unknown compose stack: $kind" >&2; return 2 ;;
   esac
 }
@@ -76,6 +81,14 @@ compose_files() {
 compose_with_mode() {
   local kind="$1"; shift
   local args=()
+  if [[ "$kind" == v1 && "${IBEX_NETWORK:-bridge}" == host ]]; then
+    echo 'IBEX_NETWORK=host is not supported for v1-single-node: the profile publishes only the edge HTTPS port' >&2
+    exit 2
+  fi
+  if [[ "$kind" == v1 && ! -f "$V1_ENV" ]]; then
+    echo "missing $V1_ENV; run: make v1-secrets" >&2
+    exit 1
+  fi
   if [[ "${IBEX_NETWORK:-bridge}" == host ]]; then
     local overlay="$ROOT_DIR/infra/compose/overlays/host/${kind}.yml"
     [[ -f "$overlay" ]] || { echo "missing host-network overlay: $overlay" >&2; exit 1; }
@@ -152,6 +165,8 @@ case "${1:-help}" in
       '  test-integration-auth   Run AuthService-backed proxy integration tests' \
       '  compose-dev-up/down/reset/logs/ps  Manage development stack' \
       '  compose-test-up/down   Manage test stack' '  observability-up/down/smoke  Manage observability' \
+      '  v1-secrets             Generate the v1-single-node .env and file secrets' \
+      '  v1-up/down/migrate/logs/ps  Manage the v1-single-node profile (infra/compose/v1-single-node/.env)' \
       '  db-migrate/down/version/seed  Manage Postgres migrations' \
       '  clickhouse-migrate/down/version  Manage ClickHouse migrations' \
       '  test-embedder/test-memory/test-memory-integration/test-worker/test-worker-integration/test-mcp-memory' \
@@ -212,5 +227,21 @@ case "${1:-help}" in
   e2e-phase25) bash "$ROOT_DIR/infra/scripts/e2e_phase25.sh" ;;
   e2e-smoke-p3-memory) bash "$ROOT_DIR/infra/scripts/verify_phase3_memory_e2e.sh" ;;
   mcp-conformance) bash "$ROOT_DIR/infra/scripts/mcp-conformance.sh" ;;
+  v1-up) compose_with_mode v1 up -d ;;
+  v1-down) compose_with_mode v1 down ;;
+  v1-migrate) compose_with_mode v1 run --rm migrate ;;
+  v1-logs) compose_with_mode v1 logs -f ;;
+  v1-ps) compose_with_mode v1 ps ;;
+  v1)
+    sub="${2:-}"
+    if [[ -n "$sub" ]]; then shift 2; fi
+    case "$sub" in
+      up) compose_with_mode v1 up "$@" ;;
+      down) compose_with_mode v1 down "$@" ;;
+      migrate) compose_with_mode v1 run --rm migrate "$@" ;;
+      logs) compose_with_mode v1 logs -f "$@" ;;
+      ps) compose_with_mode v1 ps "$@" ;;
+      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-logs|v1-ps or v1 up|down|migrate|logs|ps' >&2; exit 2 ;;
+    esac ;;
   *) echo "unknown command: $1" >&2; echo 'run: make help' >&2; exit 2 ;;
 esac

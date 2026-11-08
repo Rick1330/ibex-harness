@@ -127,6 +127,12 @@ export const capabilities: Capability[] = [
     href: '/docs/operations/console',
   },
   {
+    name: 'v1-single-node profile',
+    status: 'IMPLEMENTED',
+    detail: 'One Compose project starts every required service behind an edge TLS terminator with one published port, digest-pinned dependencies, a one-shot migration gate, and a safe one-time bootstrap. Evidenced by a local start on one host; hosted/HA operation, multi-user auth, a measured p99 SLO, cross-tenant acceptance, and a recovery drill remain open.',
+    href: '/docs/deployment/v1-single-node',
+  },
+  {
     name: 'Production operations and recovery',
     status: 'PROPOSED',
     detail: 'Helm, API ingress, restore drills, and release gates are partially prepared. No production origin, passing RPO target, or E1–E4 evidence.',

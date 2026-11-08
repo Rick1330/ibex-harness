@@ -130,6 +130,17 @@ reachable by more than one peer carries TLS.
   the embedding token) over the Compose bridge, with the port unpublished. This is a host-local bridge, not a public
   interface; it is documented as a limitation, not as a security boundary.
 
+> **Amendment 2026-11-07 — edge-anchored application plane.** Implementing W2.4 showed that the original
+> `service:proxy` anchor would leave the edge → proxy/API/console hops carrying browser credentials (PAT, session
+> cookie) as plaintext on the shared Compose bridge. That contradicts this section's rule: plaintext is permitted only
+> on loopback inside a single network namespace. The profile therefore anchors the application plane on the edge:
+> `proxy`, `api`, `console`, and `context` all use `network_mode: "service:edge"`, and the edge is the only service with
+> a published port. The property above is preserved and strengthened: context still binds `127.0.0.1` only, the proxy
+> still dials the loopback literal, and the browser-credential hops are now loopback as well. `IBEX_EDGE_PORT` is the
+> host-side mapping; inside the namespace the edge listens on `8443`, so the console BFF dials
+> `https://localhost:8443` while the browser uses `https://localhost:${IBEX_EDGE_PORT}`. Operational consequence:
+> recreating the edge recreates the namespace, so the co-located services restart with it. No other decision changes.
+
 **5. Only two ports are published:** the edge HTTPS port, and nothing else. Datastores, AuthService, context, memory,
 worker and the MCP services are reachable only inside the Compose network.
 

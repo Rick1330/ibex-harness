@@ -73,6 +73,58 @@ Staging promotion is an authenticated browser promotion gate for the IBEX Consol
 
 **Requirement:** Our charts must support both SaaS and self-hosted.
 
+### 3.3 `v1-single-node` supported profile
+
+ADR-0097 selects **one** v1.0 deployment profile: a single-node, self-hosted Docker Compose project. It is the only
+profile a 1.0 claim may cite. Kubernetes, Helm and HA are outside the profile (§10 of the ADR).
+
+**One operator entry point.** `make v1-secrets` generates `infra/compose/v1-single-node/.env` (mode `0600`) and the
+files under `infra/compose/v1-single-node/secrets/` (directory `0700`; the container copies are `0444` so uid 10001 can
+read them). `make v1-up` starts the profile, waits for the edge health endpoint, and prints the URL plus the one-time
+bootstrap hint. `make v1-down` stops it without deleting volumes; `make v1-migrate` re-runs the one-shot migration
+service; `make v1-logs` and `make v1-ps` are the operator inspection commands.
+
+**One published port.** The Compose project publishes only the edge HTTPS port (`${IBEX_EDGE_PORT:-443}:8443`; rootless
+runtimes should set `IBEX_EDGE_PORT=8443`). Datastores, AuthService, context, memory, worker and MCP ports stay on the
+internal bridge. The edge returns `404` for `/health`, `/ready` and `/metrics`; only the Console's internal `/ready`
+and the API's `/ready` are reachable inside the project.
+
+**Component matrix and pins.** `services/{auth,proxy,api,memory,context,embedder,worker,console}` plus the one-shot
+`migrate` and `bootstrap` services, `pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d…`, `redis:7.4.2@sha256:fbdbaea4…`,
+TEI `ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4@sha256:2538ea1c…` serving `BAAI/bge-m3` at revision
+`5617a9f61b028005a4858fdac845db406aefb181` (1024 dimensions), and the edge terminator
+`caddy:2.11.9-alpine@sha256:0bbb055b…`. The first start is gated on TEI: it downloads roughly 2.3 GB into the
+`tei-cache` volume and the health window is two hours, because a slow host must not be marked unhealthy mid-download.
+The volume persists a partial fetch, so re-running `make v1-up` resumes it; a warm volume is the recommended pre-seed
+for an offline or bandwidth-limited install. The reference sizing is a 16 GB host: TEI uses about 8 GB RSS with the
+2048-token batch and the application plane about 3 GB. The edge shares one network namespace with the proxy, API,
+console, and context, so the browser-credential hops are loopback plaintext and never cross the Compose bridge;
+AuthService gRPC carries TLS 1.2+ with the per-install CA. Context binds `127.0.0.1:9092` in that namespace and the
+profile bounds assembly at 2 s on both sides because CPU TEI query embedding cannot fit the 45 ms development default.
+The proxy verifies signed policy snapshots with the generated `policy_public_keys.json` (key id `v1`); staging and
+production refuse to mount protected routes without a verifier. Internal shared-token HTTP and the Redis password on
+the host-local bridge are recorded limitations, not a public interface.
+
+**Identity bootstrap.** The one-shot `bootstrap` service creates the organization, owner user, default agent, allow-all
+model policy and the memory service token in one transaction, then prints an admin PAT (`IBEX_BOOTSTRAP_PAT=…`)
+exactly once. The PAT is never stored in plaintext and is not recoverable; treat the bootstrap logs as a secret. The
+memory token is a separate scoped `service_token` (`MemoryRead|MemoryWrite`) used by context and worker. The committed
+`seed_dev.sql` token is **not** used.
+
+**Posture.** The tracked `env/v1-single-node.example` defaults to `IBEX_ENV=staging` + `IBEX_LLM_MODE=mock` so the
+profile starts on a clean host without an external LLM. The supported deployment posture is `IBEX_ENV=production` +
+`IBEX_LLM_MODE=live` with an operator-supplied provider key or self-hosted LLM; the example carries the commented
+production block. The mock LLM is a deterministic fixture, not a production provider.
+
+**Exclusions (verbatim from ADR-0097 §10).** Kubernetes, Helm and any HA topology; hosted or measured SLOs; response-bound
+evidence acknowledgement; the run envelope as a runtime artifact; `DecisionService`; MCP writes; the platform-tier
+Console surfaces; ClickHouse and MinIO/S3 projections, the reranker, and the observability stack (optional, default
+off); multi-user authentication.
+
+**Upgrade and rollback.** Upgrade is a stop-the-stack operation: stop the stack, take a database snapshot, run the
+one-shot migration service, then start the new images by digest. Rollback restores the snapshot and starts the previous
+digests. Migrations are forward-only: starting an older image against the migrated schema is not a supported rollback.
+
 ---
 
 ## 4) Source Control → Artifact → Deployment Flow (High-Level)

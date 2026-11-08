@@ -12,6 +12,8 @@ var ambientProxyEnvVars = []string{
 	"IBEX_CONTEXT_GRPC_SERVICE_TOKEN",
 	"IBEX_CONTEXT_COLOCATED",
 	"IBEX_AUTH_GRPC_CA_FILE",
+	"IBEX_PROXY_POLICY_PUBLIC_KEYS",
+	"IBEX_PROXY_POLICY_PUBLIC_KEYS_FILE",
 }
 
 // withProxyEnv applies the case environment after clearing ambient variables.

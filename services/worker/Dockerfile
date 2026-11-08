@@ -38,7 +38,7 @@ FROM python@sha256:da54eb86849fe19be7584d8b3f291fcf0c53c196760ab3d70dc6382f681ef
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/app/.venv/bin:$PATH" \
+    PATH="/app/services/worker/.venv/bin:$PATH" \
     IBEX_WORKER_BEAT_SCHEDULE_FILE=/var/lib/ibex/celerybeat/celerybeat-schedule
 
 RUN python -m pip uninstall --yes setuptools wheel || true \
@@ -56,7 +56,9 @@ RUN python -m pip uninstall --yes setuptools wheel || true \
 
 WORKDIR /app
 
-COPY --from=deps /app/services/worker/.venv ./.venv
+# Keep the venv at the same absolute path as the deps stage: uv console-script
+# shebangs are absolute, and the worker/beat commands use `celery` directly.
+COPY --from=deps /app/services/worker/.venv /app/services/worker/.venv
 COPY services/worker/app ./app
 COPY services/worker/scripts ./scripts
 

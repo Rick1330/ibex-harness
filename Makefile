@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help setup setup-check check check-tools env-doctor stack-init readiness lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-integration-auth test-embedder test-authclient test-mcp-memory test-memory test-memory-integration test-worker test-worker-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate coverage-worker-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory e2e-smoke-p3.5 verify-phase15 verify-phase25 mcp-conformance worker-dev worker-beat-dev worker-ping
+.PHONY: help setup setup-check check check-tools env-doctor stack-init readiness lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-integration-auth test-embedder test-authclient test-mcp-memory test-memory test-memory-integration test-worker test-worker-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate coverage-worker-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory e2e-smoke-p3.5 verify-phase15 verify-phase25 mcp-conformance worker-dev worker-beat-dev worker-ping v1-secrets v1-up v1-down v1-migrate v1-logs v1-ps
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -153,6 +153,42 @@ compose-test-up: ## Start minimal test dependencies
 
 compose-test-down: ## Stop minimal test dependencies
 	@"$(BASH)" "$(DEV_TOOL)" compose-test-down
+
+v1-secrets: ## Generate the v1-single-node .env and file secrets (never prints values)
+	@"$(BASH)" infra/scripts/gen-v1-secrets.sh
+
+v1-up: ## Start the v1-single-node supported profile and wait for the edge
+	@# Idempotent: creates .env when absent, fills missing secrets, and never
+	@# overwrites a non-empty value without --force.
+	@"$(BASH)" infra/scripts/gen-v1-secrets.sh
+	@"$(BASH)" "$(DEV_TOOL)" v1 up -d
+	@set -euo pipefail; \
+		env_file="infra/compose/v1-single-node/.env"; \
+		port=""; \
+		if [ -f "$$env_file" ]; then port="$$(sed -n 's/^IBEX_EDGE_PORT=//p' "$$env_file" | tail -n 1 | sed 's/[[:space:]]*#.*//; s/^[[:space:]]*//; s/[[:space:]]*$$//; s/^"//; s/"$$//')"; fi; \
+		port="$${port:-$${IBEX_EDGE_PORT:-443}}"; \
+		for _ in $$(seq 1 90); do \
+			if curl -fsSk "https://localhost:$$port/_edge/health" >/dev/null 2>&1; then \
+				printf 'v1-single-node is up: https://localhost:%s\n' "$$port"; \
+				printf '%s\n' 'bootstrap PAT: make v1-logs SERVICE=bootstrap (IBEX_BOOTSTRAP_PAT is printed once)'; \
+				exit 0; \
+			fi; \
+			sleep 2; \
+		done; \
+		echo 'v1-single-node edge did not become healthy; run: make v1-logs' >&2; \
+		exit 1
+
+v1-down: ## Stop the v1-single-node profile (volumes are preserved)
+	@"$(BASH)" "$(DEV_TOOL)" v1 down
+
+v1-migrate: ## Run the one-shot v1-single-node Postgres migration service
+	@"$(BASH)" "$(DEV_TOOL)" v1 migrate
+
+v1-logs: ## Tail v1-single-node logs (SERVICE=<name> for one service)
+	@"$(BASH)" "$(DEV_TOOL)" v1 logs $(if $(SERVICE),$(SERVICE),)
+
+v1-ps: ## Show v1-single-node service status
+	@"$(BASH)" "$(DEV_TOOL)" v1 ps
 
 observability-up: ## Start local LGTM observability stack (Prometheus/Grafana/Tempo/Loki)
 	@"$(BASH)" infra/scripts/observability-up.sh

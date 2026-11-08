@@ -1,0 +1,493 @@
+# IBEX Harness — v1-single-node supported profile (ADR-0097).
+#
+# One Compose project, one internal network, one published port: the edge HTTPS
+# terminator. Everything else is reachable only by service name on the bridge.
+# The one-shot `migrate` service gates every required application container;
+# a failed migration stops the profile rather than producing a partial start.
+#
+# Privileged inputs (never committed) are produced by `make v1-secrets`
+# (infra/scripts/gen-v1-secrets.sh) into infra/compose/v1-single-node/.env and
+# ./secrets/. The profile keeps its own env file so the repository's development
+# `.env` cannot leak unrelated values into this stack.
+#
+# Deliberate transport posture (ADR-0097 §4):
+#   - context shares the proxy network namespace and binds loopback plaintext only
+#   - AuthService gRPC carries TLS with the per-install CA (ca.crt)
+#   - internal HTTP service tokens stay on the Compose bridge; ports unpublished
+name: ibex-v1-single-node
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ibex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run make v1-secrets}
+      POSTGRES_DB: ${POSTGRES_DB:-ibex}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - internal
+
+  redis:
+    image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required; run make v1-secrets}
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - internal
+
+  migrate:
+    build:
+      context: ../../..
+      dockerfile: infra/migrations/Dockerfile
+    environment:
+      POSTGRES_MIGRATE_DSN: postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
+    command: ["up"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # One-shot identity bootstrap: creates the org/user/agent, the memory service
+  # token, and prints one PAT. Same image as auth, entrypoint overridden.
+  # Context and worker gate on it so the memory token row exists before their
+  # first call; nothing else waits for the printed PAT.
+  bootstrap:
+    image: ibex-v1-auth:local
+    build:
+      context: ../../..
+      dockerfile: services/auth/Dockerfile
+    entrypoint: ["/usr/local/bin/ibex-bootstrap"]
+    restart: "no"
+    environment:
+      IBEX_ENV: ${IBEX_ENV:-staging}
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
+      IBEX_BOOTSTRAP_ORG_NAME: ${IBEX_BOOTSTRAP_ORG_NAME:-IBEX Harness}
+      IBEX_BOOTSTRAP_ORG_SLUG: ${IBEX_BOOTSTRAP_ORG_SLUG:-ibex}
+      IBEX_BOOTSTRAP_USER_EMAIL: ${IBEX_BOOTSTRAP_USER_EMAIL:-owner@ibex.local}
+      IBEX_BOOTSTRAP_USER_NAME: ${IBEX_BOOTSTRAP_USER_NAME:-Owner}
+      IBEX_BOOTSTRAP_AGENT_NAME: ${IBEX_BOOTSTRAP_AGENT_NAME:-Default Agent}
+      IBEX_BOOTSTRAP_AGENT_SLUG: ${IBEX_BOOTSTRAP_AGENT_SLUG:-default}
+      IBEX_BOOTSTRAP_PAT_NAME: ${IBEX_BOOTSTRAP_PAT_NAME:-Bootstrap PAT}
+      IBEX_MEMORY_API_TOKEN: ${IBEX_MEMORY_API_TOKEN:?IBEX_MEMORY_API_TOKEN is required; run make v1-secrets}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - internal
+
+  auth:
+    image: ibex-v1-auth:local
+    build:
+      context: ../../..
+      dockerfile: services/auth/Dockerfile
+    restart: unless-stopped
+    environment:
+      IBEX_ENV: ${IBEX_ENV:-staging}
+      IBEX_PORT: "8081"
+      IBEX_GRPC_PORT: "9091"
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+      IBEX_CREDENTIALS_MASTER_KEY: ${IBEX_CREDENTIALS_MASTER_KEY:?IBEX_CREDENTIALS_MASTER_KEY is required; run make v1-secrets}
+      IBEX_AUTH_SERVICE_TOKEN: ${IBEX_AUTH_SERVICE_TOKEN:?IBEX_AUTH_SERVICE_TOKEN is required; run make v1-secrets}
+      JWT_ISSUER: ibex-harness
+      JWT_AUDIENCE: ibex-dashboard
+      JWT_PRIVATE_KEY_FILE: /run/secrets/jwt_private.pem
+      IBEX_AUTH_POLICY_SIGNING_KEY_FILE: /run/secrets/policy_private.pem
+      IBEX_AUTH_POLICY_SIGNING_KEY_ID: v1
+      IBEX_AUTH_POLICY_EPOCH: "1"
+      IBEX_AUTH_GRPC_TLS_CERT_FILE: /run/secrets/auth.crt
+      IBEX_AUTH_GRPC_TLS_KEY_FILE: /run/secrets/auth.key
+    secrets:
+      - auth.crt
+      - auth.key
+      - jwt_private.pem
+      - policy_private.pem
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8081/ready >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  proxy:
+    build:
+      context: ../../..
+      dockerfile: services/proxy/Dockerfile
+    restart: unless-stopped
+    # Shares the edge network namespace so browser credentials travel only over
+    # loopback (ADR-0097 §4). The edge dials 127.0.0.1:8080.
+    network_mode: "service:edge"
+    environment:
+      IBEX_ENV: ${IBEX_ENV:-staging}
+      IBEX_PORT: "8080"
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+      IBEX_AUTH_GRPC_ADDR: auth:9091
+      IBEX_AUTH_GRPC_CA_FILE: /run/secrets/ca.crt
+      IBEX_AUTH_VALIDATE_TIMEOUT: 2s
+      # Staging/production require a policy-snapshot verifier when protected
+      # routes are mounted. The key set is generated from AuthService's signing
+      # public key (key id "v1").
+      IBEX_PROXY_POLICY_PUBLIC_KEYS_FILE: /run/secrets/policy_public_keys.json
+      IBEX_PROXY_POLICY_MIN_EPOCH: "1"
+      IBEX_CONTEXT_ENABLED: "true"
+      IBEX_CONTEXT_COLOCATED: "true"
+      IBEX_CONTEXT_GRPC_TARGET: 127.0.0.1:9092
+      IBEX_CONTEXT_GRPC_SERVICE_TOKEN: ${IBEX_CONTEXT_GRPC_SERVICE_TOKEN:?IBEX_CONTEXT_GRPC_SERVICE_TOKEN is required; run make v1-secrets}
+      # CPU TEI query embedding cannot fit the 45 ms development budget. The
+      # profile bounds assembly at 2 s; the chat path stays fail-open.
+      IBEX_CONTEXT_ASSEMBLE_TIMEOUT: 2s
+      IBEX_CONTEXT_EMBED_METADATA: "false"
+      IBEX_WORKER_ENQUEUE_BASE_URL: http://worker:8007
+      IBEX_WORKER_ENQUEUE_API_TOKEN: ${IBEX_WORKER_ENQUEUE_API_TOKEN:?IBEX_WORKER_ENQUEUE_API_TOKEN is required; run make v1-secrets}
+      IBEX_LLM_MODE: ${IBEX_LLM_MODE:-mock}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    secrets:
+      - ca.crt
+      - policy_public_keys.json
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ready >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      auth:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      edge:
+        condition: service_started
+
+  api:
+    build:
+      context: ../../..
+      dockerfile: services/api/Dockerfile
+    restart: unless-stopped
+    # Shares the edge network namespace so the session cookie crosses loopback
+    # only. The edge dials 127.0.0.1:8010.
+    network_mode: "service:edge"
+    environment:
+      IBEX_ENV: ${IBEX_ENV:-staging}
+      # The image CMD binds 0.0.0.0:8010; these keep config and probes aligned.
+      IBEX_API_HOST: 0.0.0.0
+      IBEX_API_PORT: "8010"
+      IBEX_API_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}
+      IBEX_AUTH_GRPC_ADDR: auth:9091
+      IBEX_AUTH_GRPC_CA_FILE: /run/secrets/ca.crt
+      IBEX_AUTH_SERVICE_TOKEN: ${IBEX_AUTH_SERVICE_TOKEN:?IBEX_AUTH_SERVICE_TOKEN is required; run make v1-secrets}
+      IBEX_API_AUTH_TIMEOUT_MS: "2000"
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+      IBEX_ALLOWED_ORIGINS: ${IBEX_ALLOWED_ORIGINS:?IBEX_ALLOWED_ORIGINS is required; run make v1-secrets}
+      DASHBOARD_JWT_PUBLIC_KEYS_FILE: /run/secrets/jwt_public.pem
+      JWT_ISSUER: ibex-harness
+      JWT_AUDIENCE: ibex-dashboard
+      IBEX_OPERATOR_CURSOR_SECRET: ${IBEX_OPERATOR_CURSOR_SECRET:?IBEX_OPERATOR_CURSOR_SECRET is required; run make v1-secrets}
+      DASHBOARD_CSRF_SECRET: ${DASHBOARD_CSRF_SECRET:?DASHBOARD_CSRF_SECRET is required; run make v1-secrets}
+      DASHBOARD_COOKIE_SECURE: "true"
+      DASHBOARD_COOKIE_SAMESITE: lax
+      DASHBOARD_SESSION_COOKIE_NAME: ibex_session
+      IBEX_OPERATOR_FEATURE_ENABLED: ${IBEX_OPERATOR_FEATURE_ENABLED:-true}
+    secrets:
+      - ca.crt
+      - jwt_public.pem
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/ready', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      auth:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      edge:
+        condition: service_started
+
+  memory:
+    build:
+      context: ../../..
+      dockerfile: services/memory/Dockerfile
+    restart: unless-stopped
+    environment:
+      IBEX_ENV: ${IBEX_ENV:-staging}
+      IBEX_MEMORY_HOST: 0.0.0.0
+      IBEX_MEMORY_PORT: "8005"
+      IBEX_MEMORY_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}
+      IBEX_AUTH_GRPC_ADDR: auth:9091
+      IBEX_AUTH_GRPC_CA_FILE: /run/secrets/ca.crt
+      IBEX_MEMORY_AUTH_TIMEOUT_MS: "2000"
+      IBEX_MEMORY_EMBEDDING_BASE_URL: http://embedder:8004
+      IBEX_EMBEDDING_API_TOKEN: ${IBEX_EMBEDDING_API_TOKEN:?IBEX_EMBEDDING_API_TOKEN is required; run make v1-secrets}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+    secrets:
+      - ca.crt
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/ready', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      auth:
+        condition: service_healthy
+      embedder:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - internal
+
+  embedder:
+    build:
+      context: ../../..
+      dockerfile: services/embedder/Dockerfile
+    restart: unless-stopped
+    environment:
+      IBEX_ENV: ${IBEX_ENV:-staging}
+      IBEX_EMBEDDING_PROFILE: gpu
+      IBEX_EMBEDDING_DIM: "1024"
+      IBEX_EMBEDDING_MODEL: BAAI/bge-m3
+      IBEX_EMBEDDING_TEI_BASE_URL: http://tei:80
+      IBEX_EMBEDDING_TEI_ALLOW_INSECURE: "true"
+      # bge-m3 first load is slow; the startup wait is separate from the /ready probe.
+      IBEX_EMBEDDING_TEI_HEALTH_TIMEOUT_SECONDS: "600"
+      IBEX_EMBEDDING_API_TOKEN: ${IBEX_EMBEDDING_API_TOKEN:?IBEX_EMBEDDING_API_TOKEN is required; run make v1-secrets}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/ready', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      tei:
+        condition: service_healthy
+    networks:
+      - internal
+
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4@sha256:2538ea1c9640d3763b15af668039d24172d063b42337b0c27796fc2be180c78d
+    restart: unless-stopped
+    command:
+      - "--model-id=BAAI/bge-m3"
+      - "--revision=5617a9f61b028005a4858fdac845db406aefb181"
+      - "--dtype=float32"
+      - "--port=80"
+      # Single-node sizing: the default 8192-token batch / 512 concurrent
+      # requests need more RAM than a 16 GB host has after the other services.
+      # 2048 tokens still covers normal memory and query text.
+      - "--max-batch-tokens=2048"
+      - "--max-concurrent-requests=16"
+      - "--max-client-batch-size=8"
+    environment:
+      HF_HOME: /data
+      # The Xet client is markedly slower than the classic LFS path on some
+      # networks. The model is downloaded once into the persistent volume.
+      HF_HUB_DISABLE_XET: "1"
+    volumes:
+      - tei-cache:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:80/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      # First start downloads ~2.3 GB and loads a CPU ONNX model. The window is
+      # deliberately generous: a slow host must not be marked unhealthy while
+      # the model is still downloading or loading.
+      retries: 360
+      start_period: 7200s
+    networks:
+      - internal
+
+  worker:
+    build:
+      context: ../../..
+      dockerfile: services/worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      IBEX_ENV: ${IBEX_ENV:-staging}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+      REDIS_DB_QUEUE: "1"
+      REDIS_DB_RESULTS: "3"
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
+      IBEX_WORKER_METRICS_PORT: "8006"
+      IBEX_WORKER_ENQUEUE_PORT: "8007"
+      IBEX_WORKER_ENQUEUE_HOST: 0.0.0.0
+      IBEX_WORKER_ENQUEUE_API_TOKEN: ${IBEX_WORKER_ENQUEUE_API_TOKEN:?IBEX_WORKER_ENQUEUE_API_TOKEN is required; run make v1-secrets}
+      IBEX_WORKER_MEMORY_BASE_URL: http://memory:8005
+      IBEX_WORKER_MEMORY_API_TOKEN: ${IBEX_MEMORY_API_TOKEN:?IBEX_MEMORY_API_TOKEN is required; run make v1-secrets}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8007/ready', timeout=3)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      memory:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    networks:
+      - internal
+
+  # Context assembly shares the edge network namespace with the proxy and binds
+  # 127.0.0.1:9092 only (ADR-0096/ADR-0097 §4). It has no ports and no network of
+  # its own; the edge namespace owns the only published port.
+  context:
+    build:
+      context: ../../..
+      dockerfile: services/context/Dockerfile
+    restart: unless-stopped
+    network_mode: "service:edge"
+    environment:
+      IBEX_CONTEXT_GRPC_ADDR: 127.0.0.1:9092
+      IBEX_CONTEXT_MEMORY_BASE_URL: http://memory:8005
+      IBEX_CONTEXT_MEMORY_API_TOKEN: ${IBEX_MEMORY_API_TOKEN:?IBEX_MEMORY_API_TOKEN is required; run make v1-secrets}
+      IBEX_CONTEXT_GRPC_SERVICE_TOKEN: ${IBEX_CONTEXT_GRPC_SERVICE_TOKEN:?IBEX_CONTEXT_GRPC_SERVICE_TOKEN is required; run make v1-secrets}
+      # Keep server-side retrieval inside the proxy's 2 s client budget. The
+      # cold branch embeds the query through CPU TEI, so it dominates.
+      IBEX_CONTEXT_TIMEOUT: 1800ms
+      IBEX_CONTEXT_DEADLINE_MS: "1800"
+      IBEX_CONTEXT_DIRECTIVE_TIMEOUT_MS: "500"
+      IBEX_CONTEXT_HOT_TIMEOUT_MS: "500"
+      IBEX_CONTEXT_COLD_TIMEOUT_MS: "1500"
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+    healthcheck:
+      # Standard grpc.health.v1 check against the empty (server-wide) service.
+      # grpcio-health-checking is a context image dependency.
+      test: ["CMD-SHELL", "python -c \"import grpc,sys; from grpc_health.v1 import health_pb2, health_pb2_grpc; c=grpc.insecure_channel('127.0.0.1:9092'); r=health_pb2_grpc.HealthStub(c).Check(health_pb2.HealthCheckRequest(), timeout=3); sys.exit(0 if r.status==health_pb2.HealthCheckResponse.SERVING else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      proxy:
+        condition: service_started
+      memory:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+      edge:
+        condition: service_started
+
+  console:
+    build:
+      context: ../../..
+      dockerfile: services/console/Dockerfile
+    restart: unless-stopped
+    # Shares the edge network namespace: the BFF reaches the edge on loopback and
+    # the edge reaches the console on loopback, so the session cookie never
+    # crosses the bridge (ADR-0097 §4).
+    network_mode: "service:edge"
+    environment:
+      # The edge listens on 8443 *inside* the shared namespace; IBEX_EDGE_PORT is
+      # only the host-side mapping (e.g. 443 -> 8443) and is not a listener here.
+      # The BFF must dial https://localhost:8443. The browser keeps using
+      # https://localhost:${IBEX_EDGE_PORT}; the edge certificate carries
+      # DNS:localhost and the BFF trusts the per-install CA.
+      IBEX_OPERATOR_API_ORIGIN: https://localhost:8443
+      IBEX_OPERATOR_API_INTERNAL_ORIGIN: http://127.0.0.1:8010
+      IBEX_OPERATOR_SESSION_COOKIE_NAME: ibex_session
+      NUXT_PUBLIC_IBEX_ENV: ${NUXT_PUBLIC_IBEX_ENV:-self-hosted}
+      NODE_EXTRA_CA_CERTS: /run/secrets/ca.crt
+      HOST: 0.0.0.0
+      PORT: "3000"
+    secrets:
+      - ca.crt
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      edge:
+        condition: service_started
+
+  edge:
+    image: caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /config
+      - /data
+    volumes:
+      - ./edge/Caddyfile:/etc/caddy/Caddyfile:ro
+    secrets:
+      - edge.crt
+      - edge.key
+    ports:
+      - "${IBEX_EDGE_PORT:-443}:8443"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSk https://127.0.0.1:8443/_edge/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - internal
+
+secrets:
+  auth.crt:
+    file: ./secrets/auth.crt
+  auth.key:
+    file: ./secrets/auth.key
+  ca.crt:
+    file: ./secrets/ca.crt
+  edge.crt:
+    file: ./secrets/edge.crt
+  edge.key:
+    file: ./secrets/edge.key
+  jwt_private.pem:
+    file: ./secrets/jwt_private.pem
+  jwt_public.pem:
+    file: ./secrets/jwt_public.pem
+  policy_private.pem:
+    file: ./secrets/policy_private.pem
+  policy_public_keys.json:
+    file: ./secrets/policy_public_keys.json
+
+volumes:
+  postgres-data:
+  redis-data:
+  tei-cache:
+
+networks:
+  internal:
+    name: ibex-v1-single-node-internal

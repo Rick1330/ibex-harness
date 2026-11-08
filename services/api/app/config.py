@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
@@ -48,6 +49,7 @@ class Settings(BaseSettings):
 
     redis_url: str | None = Field(
         default=None,
+        validation_alias=AliasChoices("REDIS_URL", "IBEX_API_REDIS_URL"),
         description="Redis URL for org_suspend + rate-limit config pub/sub (optional; best-effort)",
     )
     rate_limit_default_rpm: int = Field(
@@ -116,6 +118,11 @@ class Settings(BaseSettings):
             "DASHBOARD_JWT_PUBLIC_KEYS_PEM", "IBEX_API_JWT_PUBLIC_KEYS_PEM"
         ),
         description="PEM public key(s) for Auth-issued RS256 session JWTs (4.P.1 dual-verify)",
+    )
+    jwt_public_keys_file: str | None = Field(
+        default=None,
+        validation_alias="DASHBOARD_JWT_PUBLIC_KEYS_FILE",
+        description="Path to a PEM public key file loaded into jwt_public_keys_pem at startup",
     )
     jwt_key_id: str = Field(
         default="v1",
@@ -308,6 +315,20 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _load_jwt_public_keys_file(self) -> Settings:
+        """Load ``DASHBOARD_JWT_PUBLIC_KEYS_FILE`` when no inline PEM is set.
+
+        A configured but unreadable or empty file is a startup failure, not a
+        request-time failure. The inline PEM always wins when both are set.
+        """
+        if (self.jwt_public_keys_pem or "").strip():
+            return self
+        path = (self.jwt_public_keys_file or "").strip()
+        if path:
+            self.jwt_public_keys_pem = _read_pem_file(path, "DASHBOARD_JWT_PUBLIC_KEYS_FILE")
+        return self
+
+    @model_validator(mode="after")
     def _operator_session_boundary(self) -> Settings:
         _validate_operator_session_boundary(self)
         _validate_auth_ca_boundary(self)
@@ -320,6 +341,17 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def _read_pem_file(path: str, env_name: str) -> str:
+    """Read a PEM file or fail startup naming the responsible env var."""
+    try:
+        pem = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"{env_name} is set but could not be read: {path}") from exc
+    if not pem.strip():
+        raise ValueError(f"{env_name} is set but the file is empty: {path}")
+    return pem
 
 
 def _validate_auth_ca_boundary(settings: Settings) -> None:
