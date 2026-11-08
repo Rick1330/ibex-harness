@@ -45,47 +45,61 @@ def _parse(raw: str) -> tuple[str, str | None]:
     return (value[:comment].strip() if comment != -1 else value, None)
 
 
-def _lookup(expression: str, seen: dict[str, str]) -> str:
+def _default_if_empty(value, operand: str) -> str:
+    return value if value else operand
+
+
+def _default_if_unset(value, operand: str) -> str:
+    return value if value is not None else operand
+
+
+def _required_if_empty(value, operand: str) -> str:
+    return value if value else ""
+
+
+def _required_if_unset(value, operand: str) -> str:
+    return value if value is not None else ""
+
+
+def _alternate_if_empty(value, operand: str) -> str:
+    return operand if value else ""
+
+
+def _alternate_if_unset(value, operand: str) -> str:
+    return operand if value is not None else ""
+
+
+# Order matters: the colon forms are matched before their plain counterparts.
+OPERATOR_FUNCS = {
+    ":-": _default_if_empty,
+    "-": _default_if_unset,
+    ":?": _required_if_empty,
+    "?": _required_if_unset,
+    ":+": _alternate_if_empty,
+    "+": _alternate_if_unset,
+}
+
+
+def _split_operator(expression: str) -> tuple[str, str | None, str]:
     expr = expression.strip()
     end = _name_end(expr, 0)
     if end == 0:
-        return ""
-    name = expr[:end]
-    rest = expr[end:]
-    if not rest:
-        operator, operand = None, ""
-    elif rest.startswith(":-"):
-        operator, operand = ":-", rest[2:]
-    elif rest.startswith(":?"):
-        operator, operand = ":?", rest[2:]
-    elif rest.startswith(":+"):
-        operator, operand = ":+", rest[2:]
-    elif rest.startswith("-"):
-        operator, operand = "-", rest[1:]
-    elif rest.startswith("?"):
-        operator, operand = "?", rest[1:]
-    elif rest.startswith("+"):
-        operator, operand = "+", rest[1:]
-    else:
-        return ""
+        return "", None, ""
+    name, rest = expr[:end], expr[end:]
+    for operator in OPERATOR_FUNCS:
+        if rest.startswith(operator):
+            return name, operator, rest[len(operator) :]
+    return name, None, ""
 
+
+def _lookup(expression: str, seen: dict[str, str]) -> str:
+    name, operator, operand = _split_operator(expression)
+    if not name:
+        return ""
     value = os.environ[name] if name in os.environ else seen.get(name)
-    is_set = value is not None
-    is_non_empty = is_set and value != ""
-
     if operator is None:
         return value or ""
-    if operator == ":-":
-        return value if is_non_empty else (operand or "")
-    if operator == "-":
-        return value if is_set else (operand or "")
-    if operator == ":?":
-        return value if is_non_empty else ""
-    if operator == "?":
-        return value if is_set else ""
-    if operator == ":+":  # pragma: no branch
-        return (operand or "") if is_non_empty else ""
-    return (operand or "") if is_set else ""
+    return OPERATOR_FUNCS[operator](value, operand)
 
 
 def _name_end(value: str, start: int) -> int:

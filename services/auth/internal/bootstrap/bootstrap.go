@@ -222,7 +222,7 @@ func writeRestrictedFile(path, value string) error {
 	if err != nil {
 		return err
 	}
-	defer dirHandle.Close()
+	defer func() { _ = dirHandle.Close() }()
 	if err := dirHandle.Sync(); err != nil {
 		return err
 	}

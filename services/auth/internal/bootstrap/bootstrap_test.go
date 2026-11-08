@@ -364,3 +364,16 @@ func TestWriteRestrictedFileRejectsDirectoryDestination(t *testing.T) {
 		t.Fatal("expected an error when the destination is a directory")
 	}
 }
+
+func TestWriteRestrictedFileFailsWhenDirectoryCannotBeOpened(t *testing.T) {
+	dir := t.TempDir()
+	// Write and execute are enough to create and rename inside the directory,
+	// but not to open it for the durability sync.
+	if err := os.Chmod(dir, 0o300); err != nil {
+		t.Fatalf("chmod directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if err := writeRestrictedFile(filepath.Join(dir, "bootstrap.pat"), "ibex_pat_test_value"); err == nil {
+		t.Fatal("expected an error when the directory cannot be opened")
+	}
+}
