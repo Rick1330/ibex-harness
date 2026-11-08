@@ -223,9 +223,7 @@ v1_bootstrap_pat() {
   local -a run_args
   read -r -a engine <<<"$(container_runtime_bin)"
   run_args=("${engine[@]}" run --rm --user 0:0 --entrypoint cat)
-  if [[ "${engine[*]}" == *podman* ]]; then
-    run_args+=(--security-opt label=disable)
-  fi
+  run_args+=(--security-opt label=disable)
   run_args+=(-v "$dir:/run/ibex:ro" ibex-v1-auth:local /run/ibex/bootstrap.pat)
   "${run_args[@]}"
 }
@@ -242,7 +240,11 @@ v1_up() {
   if (( do_build )); then
     compose_with_mode v1 build
   fi
-  compose_with_mode v1 up -d "$@"
+  if (( do_build )); then
+    compose_with_mode v1 up -d "$@"
+    return
+  fi
+  compose_with_mode v1 up -d --no-build "$@"
 }
 
 v1_migrate() {
@@ -417,9 +419,9 @@ case "${1:-help}" in
   e2e-phase25) bash "$ROOT_DIR/infra/scripts/e2e_phase25.sh" ;;
   e2e-smoke-p3-memory) bash "$ROOT_DIR/infra/scripts/verify_phase3_memory_e2e.sh" ;;
   mcp-conformance) bash "$ROOT_DIR/infra/scripts/mcp-conformance.sh" ;;
-  v1-up) v1_up "$@" ;;
-  v1-down) v1_down "$@" ;;
-  v1-migrate) v1_migrate "$@" ;;
+  v1-up) shift; v1_up "$@" ;;
+  v1-down) shift; v1_down "$@" ;;
+  v1-migrate) shift; v1_migrate "$@" ;;
   v1-logs) compose_with_mode v1 logs -f ;;
   v1-ps) compose_with_mode v1 ps ;;
   v1-secrets) bash "$ROOT_DIR/infra/scripts/gen-v1-secrets.sh" ;;

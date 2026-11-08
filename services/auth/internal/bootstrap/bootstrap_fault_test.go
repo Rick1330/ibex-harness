@@ -225,6 +225,9 @@ func TestBootstrapInTxPropagatesOrganizationFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "insert organization") {
 		t.Fatalf("bootstrapInTx error = %v, want an insert-organization failure", err)
 	}
+	if !errors.Is(err, errInjected) {
+		t.Fatalf("bootstrapInTx error = %v, want the injected fault in its chain", err)
+	}
 }
 
 func TestCreateIdentityErrorPaths(t *testing.T) {
@@ -371,9 +374,17 @@ func TestServiceTokenHelperErrors(t *testing.T) {
 		f    faultConfig
 		call func(context.Context, *sql.Tx) error
 	}{
-		{"lookup", faultConfig{query: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
+		{"lookup", faultConfig{query: errInjected, queryAfter: 1}, func(ctx context.Context, tx *sql.Tx) error {
 			in := serviceTokenInput{orgID: orgID, bearer: mustPAT(t)}
 			return writeServiceToken(ctx, tx, in)
+		}},
+		{"prefix check", faultConfig{query: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
+			in := serviceTokenInput{orgID: orgID, bearer: mustPAT(t)}
+			err := writeServiceToken(ctx, tx, in)
+			if err == nil || !strings.Contains(err.Error(), "check memory token prefix") {
+				t.Fatalf("writeServiceToken error = %v, want a prefix-check failure", err)
+			}
+			return err
 		}},
 		{"scan", faultConfig{scan: true}, func(ctx context.Context, tx *sql.Tx) error {
 			_, err := findServiceTokens(ctx, tx, orgID)

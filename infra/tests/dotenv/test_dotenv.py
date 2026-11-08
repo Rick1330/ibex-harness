@@ -113,6 +113,16 @@ class InterpolationTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual(read('A="8443${MISSING:+\\"x\\"}"\n', "A"), "8443")
 
+    def test_escaped_dollar_is_not_interpolated(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read('A="\\$MISSING"\n', "A"), "$MISSING")
+
+    def test_escaped_tab_becomes_a_control_character(self):
+        self.assertEqual(read('A="a\\tb"\n', "A"), "a\tb")
+
+    def test_escaped_newline_becomes_a_control_character(self):
+        self.assertEqual(read('A="a\\nb"\n', "A"), "a\nb")
+
     def test_required_empty_raises(self):
         with mock.patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(dotenv.DotenvError):

@@ -52,12 +52,17 @@ def _closing_quote(value: str, quote: str) -> int:
     return -1
 
 
+# Compose's double-quoted escapes. `\$` must not interpolate, so it becomes a
+# sentinel that is turned back into `$` after interpolation.
+ESCAPES = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "$": "\x00"}
+
+
 def _unescape(value: str) -> str:
     out: list[str] = []
     index = 0
     while index < len(value):
         if value[index] == "\\" and index + 1 < len(value):
-            out.append(value[index + 1])
+            out.append(ESCAPES.get(value[index + 1], value[index + 1]))
             index += 2
             continue
         out.append(value[index])
@@ -207,7 +212,10 @@ def read_value(lines, key: str) -> str:
             continue
         name, rest = assignment
         parsed, quote = _parse(rest)
-        values[name] = parsed if quote == "'" else _interpolate(parsed, values)
+        if quote == "'":
+            values[name] = parsed
+        else:
+            values[name] = _interpolate(parsed, values).replace("\x00", "$")
     return values.get(key, "")
 
 

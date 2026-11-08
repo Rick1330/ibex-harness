@@ -996,3 +996,72 @@ func TestBootstrapIntegrationRunReportsRevokedToken(t *testing.T) {
 		t.Fatalf("stdout = %q, want no summary", stdout.String())
 	}
 }
+
+// TestBootstrapIntegrationRejectsReusedMemoryToken proves one bearer cannot be
+// bound to two organizations. The validator resolves a bearer by prefix alone,
+// so a shared value would make the organizations indistinguishable.
+func TestBootstrapIntegrationRejectsReusedMemoryToken(t *testing.T) {
+	f := newBootstrapFixture(t)
+	f.run()
+
+	other := f.cfg
+	other.OrgSlug = uuid.NewString()
+	other.UserEmail = "reused-token@example.com"
+	t.Cleanup(func() { cleanupBootstrapOrg(t, f.db, other.OrgSlug) })
+
+	_, err := bootstrap(context.Background(), f.db, other)
+	if err == nil || !strings.Contains(err.Error(), "already bound to another organization") {
+		t.Fatalf("bootstrap with a reused memory token error = %v", err)
+	}
+
+	var count int
+	if err := f.db.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM ibex_core.organizations WHERE slug = $1`, other.OrgSlug,
+	).Scan(&count); err != nil {
+		t.Fatalf("count organizations: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("organizations with slug %q = %d, want 0 after the refusal", other.OrgSlug, count)
+	}
+}
+
+// TestBootstrapIntegrationBindsActiveReplacementAgent proves reconciliation
+// selects an active agent when the original one is archived, instead of
+// failing or binding the stale row.
+func TestBootstrapIntegrationBindsActiveReplacementAgent(t *testing.T) {
+	f := newBootstrapFixture(t)
+	first := f.run()
+
+	replacement := uuid.New()
+	f.execServiceTx(func(ctx context.Context, tx *sql.Tx) {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE ibex_core.agents SET status = 'archived' WHERE org_id = $1`,
+			first.OrgID.String(),
+		); err != nil {
+			t.Fatalf("archive agents: %v", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO ibex_core.agents (id, org_id, created_by, name, slug, status)
+			VALUES ($1, $2, $3, 'Replacement Agent', 'replacement', 'active')`,
+			replacement.String(), first.OrgID.String(), first.UserID.String(),
+		); err != nil {
+			t.Fatalf("insert replacement agent: %v", err)
+		}
+	})
+
+	f.cfg.MemoryToken = generatePAT(t)
+	f.run()
+
+	ctx, tx := f.begin()
+	var bound uuid.UUID
+	if err := tx.QueryRowContext(ctx, `
+		SELECT agent_id FROM ibex_core.tokens
+		WHERE org_id = $1 AND type = 'service_token' AND name = 'memory-service' AND NOT is_revoked`,
+		first.OrgID.String(),
+	).Scan(&bound); err != nil {
+		t.Fatalf("read bound agent: %v", err)
+	}
+	if bound != replacement {
+		t.Fatalf("memory token bound to %s, want the active replacement %s", bound, replacement)
+	}
+}

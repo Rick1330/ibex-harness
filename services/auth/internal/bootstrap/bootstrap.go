@@ -187,6 +187,23 @@ func deliverBootstrapPAT(cfg bootstrapConfig, result bootstrapResult) (bootstrap
 	return result, nil
 }
 
+// discardPublishedFile removes a PAT that could not be made durable. A failed
+// removal is reported separately so the operator knows a stale file remains.
+func discardPublishedFile(path string, cause error) error {
+	if err := removeFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w (and the published file %q could not be removed: %v)", cause, path, err)
+	}
+	return cause
+}
+
+// removeFile deletes a published PAT. It is a variable so the removal-failure
+// path can be tested.
+var removeFile = os.Remove
+
+// syncDir flushes the directory entry after the rename. It is a variable so the
+// failure path, which must not leave a retrievable credential, can be tested.
+var syncDir = func(handle *os.File) error { return handle.Sync() }
+
 // writeRestrictedFile creates the destination atomically with mode 0600.
 //
 // Writing a temporary file in the destination directory and renaming it means
@@ -220,16 +237,15 @@ func writeRestrictedFile(path, value string) error {
 	}
 	dirHandle, err := os.Open(dir)
 	if err != nil {
-		return err
+		return discardPublishedFile(path, err)
 	}
 	defer func() { _ = dirHandle.Close() }()
-	if err := dirHandle.Sync(); err != nil {
+	if err := syncDir(dirHandle); err != nil {
 		// The rename already published the file. Remove it so a failed delivery
 		// cannot leave a credential the rolled-back transaction never issued.
-		_ = os.Remove(path)
-		return fmt.Errorf(
+		return discardPublishedFile(path, fmt.Errorf(
 			"sync the PAT directory %q: %w (the filesystem must support directory fsync)", dir, err,
-		)
+		))
 	}
 	return nil
 }
@@ -488,6 +504,9 @@ func writeServiceToken(ctx context.Context, tx *sql.Tx, in serviceTokenInput) er
 	if err != nil {
 		return fmt.Errorf("hash memory service token: %w", err)
 	}
+	if err := ensurePrefixUnused(ctx, tx, in.orgID, parsed.Prefix); err != nil {
+		return err
+	}
 	rows, err := findServiceTokens(ctx, tx, in.orgID)
 	if err != nil {
 		return fmt.Errorf("look up memory service token: %w", err)
@@ -504,6 +523,29 @@ func writeServiceToken(ctx context.Context, tx *sql.Tx, in serviceTokenInput) er
 		return err
 	}
 	return revokeDuplicateServiceTokens(ctx, tx, in.orgID, rows[1:])
+}
+
+// ensurePrefixUnused rejects a bearer whose prefix already belongs to another
+// organization. The validator resolves a bearer by prefix alone, so a reused
+// value would make two organizations indistinguishable at authentication time.
+func ensurePrefixUnused(ctx context.Context, tx *sql.Tx, orgID uuid.UUID, prefix string) error {
+	var owner uuid.UUID
+	err := tx.QueryRowContext(ctx,
+		`SELECT org_id FROM ibex_core.tokens WHERE prefix = $1 LIMIT 1`, prefix,
+	).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check memory token prefix: %w", err)
+	}
+	if owner != orgID {
+		return errors.New(
+			"the memory service token is already bound to another organization; " +
+				"use a distinct IBEX_MEMORY_API_TOKEN",
+		)
+	}
+	return nil
 }
 
 // findServiceTokens returns every managed memory-service row for an organization.

@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -362,6 +363,34 @@ func TestWriteRestrictedFileRejectsDirectoryDestination(t *testing.T) {
 	}
 	if err := writeRestrictedFile(path, "ibex_pat_test_value"); err == nil {
 		t.Fatal("expected an error when the destination is a directory")
+	}
+}
+
+func TestWriteRestrictedFileRemovesFileWhenDirectorySyncFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bootstrap.pat")
+	original := syncDir
+	syncDir = func(*os.File) error { return errors.New("injected sync failure") }
+	t.Cleanup(func() { syncDir = original })
+
+	if err := writeRestrictedFile(path, "ibex_pat_test_value"); err == nil {
+		t.Fatal("expected an error when the directory sync fails")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("PAT file survived a failed sync: %v", err)
+	}
+}
+
+func TestDiscardPublishedFileReportsRemovalFailure(t *testing.T) {
+	original := removeFile
+	removeFile = func(string) error { return errors.New("injected removal failure") }
+	t.Cleanup(func() { removeFile = original })
+
+	err := discardPublishedFile("/tmp/bootstrap.pat", errors.New("sync failed"))
+	if err == nil || !strings.Contains(err.Error(), "could not be removed") {
+		t.Fatalf("discardPublishedFile error = %v, want a removal failure", err)
+	}
+	if !strings.Contains(err.Error(), "sync failed") {
+		t.Fatalf("discardPublishedFile lost the cause: %v", err)
 	}
 }
 
