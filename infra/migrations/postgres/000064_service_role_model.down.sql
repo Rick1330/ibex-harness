@@ -33,6 +33,12 @@ REVOKE ibex_service FROM ibex;
 -- ================================================================
 -- Privileges granted to the capability roles
 -- ================================================================
+-- 000064 added UPDATE (session_id) and SELECT (session_id) on memories for the
+-- session-delete trigger. DROP OWNED removes them; the explicit revoke keeps
+-- the up/down pair auditable.
+REVOKE SELECT (org_id, session_id, id, lifecycle_revision), UPDATE (session_id), DELETE
+    ON ibex_core.memories FROM ibex_purge;
+
 DROP OWNED BY ibex_purge, ibex_runtime, ibex_worker, ibex_bootstrap;
 
 DROP ROLE IF EXISTS ibex_bootstrap, ibex_worker, ibex_runtime, ibex_purge;

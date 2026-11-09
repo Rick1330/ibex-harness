@@ -35,9 +35,16 @@ two-part GUC, and `set_config('app.is_service_account', 'true', true)` is a cust
 current_setting('app.is_service_account', true) = 'true'
 ```
 
-is therefore not an authorization boundary. It is a flag the tenant role can set for itself. This was measured, not
-assumed: in the migration test database a fresh `NOLOGIN NOBYPASSRLS` role set `app.current_org_id` and read through a
-policy that trusted it. An attacker who can run one statement as `ibex_app` can read every tenant.
+is therefore not an authorization boundary. It is a flag the tenant role can set for itself.
+
+**What was measured.** In the migration test database a fresh `NOLOGIN NOBYPASSRLS` role set `app.current_org_id` and
+read another tenant's row through a policy that trusted it. That proves the **tenant selector** is forgeable by a role
+that can run SQL.
+
+**What is an inference.** The same code path reads `current_setting('app.is_service_account', true)`, and PostgreSQL
+lets any role set a custom two-part GUC, so a caller could have set that flag too. We did **not** run a direct
+`app.is_service_account` exploit before removing it; the service-account bypass conclusion is an inference from the
+code and the documented custom-option behaviour, not a recorded exploit.
 
 `ibex_service` carried the same weakness from the other direction. It was created `BYPASSRLS` in `000036`, so the
 attribute, not a policy, authorized every cross-tenant evidence reader. Removing the GUC alone would have left that
@@ -93,16 +100,18 @@ caller.**
 | `ibex_core.budget_reservations_expire_stale(interval, int)` | `services/worker/app/budget_ledger.py` | `ibex_worker` |
 | `ibex_billing.active_periods()` | `services/worker/app/tasks/billing_reconcile.py` | `ibex_worker` |
 
-Each has `SET search_path = <schema>, pg_temp`, no dynamic SQL, parameter validation, a bounded `LIMIT`, and a return
-shape copied from the call site rather than invented. `REVOKE ALL ... FROM PUBLIC` precedes the single grant. The
+Each has `SET search_path = <schema>, pg_temp`, no dynamic SQL, parameter validation, and a return shape copied from
+the call site rather than invented. Only the token lookup and the two sweeps are row-bounded (`LIMIT 1` or a caller
+`LIMIT`); `rate_limit_overrides_snapshot()` and `active_periods()` are full snapshot reads with no row limit, and
+`active_periods()` filters to currently active periods. `REVOKE ALL ... FROM PUBLIC` precedes the single grant. The
 tenant role gets none of them.
 
-**6. The migration is one unit: `000063` → `000064` → `000065` → `000066`.** `000063` rewrites the three helpers,
-alters the 13 inline policies in place (no `DROP POLICY`/`CREATE POLICY` churn), grants helper execution, and terminates
-the attribute. `000064` creates the roles, memberships, purge grants, and the legal-holds trigger. `000065` creates the
+**6. The migration is one unit: `000063` → `000064` → `000065` → `000066` → `000067`.** `000063` rewrites the three
+helpers with a `CASE` and makes every tenant policy call the helper, grants helper execution, and terminates the
+attribute. `000064` creates the roles, memberships, purge grants, and the legal-holds trigger. `000065` creates the
 readers and the column privileges their definer bodies need. `000066` adds the missing `tokens.prefix` index
-(`CREATE INDEX CONCURRENTLY`, one statement per file). Down files exist for development and rollback; production is
-forward-only.
+(`CREATE INDEX CONCURRENTLY`, one statement per file); `000067` refuses to continue if an interrupted build left it
+INVALID. Down files exist for development and rollback; production is forward-only.
 
 **7. Ordering invariant: policies and roles land before any login is swapped.** PR-1 (this unit) changes the database
 only. PR-2..PR-4 pin `ibex_app` in `auth`, `worker`, and the Go packages, and move the five reads to the readers. Only
@@ -146,18 +155,22 @@ both are larger changes that the supported profile does not require yet.
 - Cross-tenant reads are explicit function calls with a named caller, not an ambient session flag.
 - The purge has its own least-privilege identity, and an active legal hold is protected in the database, not only by the
   saga's `WHERE` clause.
-- `migrate provision` is the only writer of the three login passwords; it requires three pairwise-distinct secrets, each
-  different from `POSTGRES_PASSWORD`, and it sends a pre-computed SCRAM-SHA-256 verifier (4096 iterations, random
-  16-byte salt), never the plaintext, so a failing statement cannot put the password in the server log. In the same
-  statement it clears `CONNECTION LIMIT`; it then asserts `rolsuper`, `rolbypassrls`, `rolcreatedb`, `rolcreaterole`,
-  `rolinherit` are false, `rolcanlogin` is true, and `rolconnlimit = -1`.
+- `migrate provision` is the only writer of the three login passwords; it requires three pairwise-distinct, printable
+  ASCII secrets without spaces, each different from the **migration DSN credential** (not only `POSTGRES_PASSWORD`),
+  and it sends a pre-computed SCRAM-SHA-256 verifier (4096 iterations, random 16-byte salt), never the plaintext, so a
+  failing statement cannot put the password in the server log. The ASCII rule exists because PostgreSQL applies SASLprep
+  before deriving the verifier; a non-ASCII password would produce a verifier that never matches, and this project does
+  not implement stringprep. In the same statement it clears `CONNECTION LIMIT`; it then asserts `rolsuper`,
+  `rolbypassrls`, `rolcreatedb`, `rolcreaterole`, `rolinherit` are false, `rolcanlogin` is true, `rolconnlimit = -1`,
+  and that no login reaches `ibex_service` or (for runtime/bootstrap) `ibex_purge` by any membership path.
 - `privacy_audit_append` and `ibex_billing.clear_enforcement_budget_period_id` lose their `ibex_app` EXECUTE grants.
   The only `privacy_audit_append` caller is the worker purge path (which uses `ibex_purge`, and still has EXECUTE); the
   trigger function fires without an EXECUTE check. Both grants are restored in the down file.
 - `ibex_purge`'s `org_deletion_jobs` and `deletion_store_receipts` grants are column-scoped to the saga's statements;
   `org_deletion_jobs` has no INSERT because the API creates the job as `ibex_app`.
 - `000066` indexes `tokens.prefix` with `CREATE INDEX CONCURRENTLY`, and `auth_find_token_by_prefix` orders by
-  `created_at DESC` so a duplicate prefix has a deterministic winner.
+  `created_at DESC` so a duplicate prefix has a deterministic winner. `000067` refuses to proceed if a failed build left
+  the index INVALID and prints the `DROP INDEX CONCURRENTLY …; re-run migrate up` repair.
 
 **What does not change yet**
 
@@ -236,8 +249,9 @@ These are known and deliberately **not** fixed in this unit:
 - Migration `infra/migrations/postgres/000064_service_role_model.{up,down}.sql`
 - Migration `infra/migrations/postgres/000065_privileged_tenant_readers.{up,down}.sql`
 - Migration `infra/migrations/postgres/000066_token_prefix_index.{up,down}.sql`
+- Migration `infra/migrations/postgres/000067_token_prefix_index_valid.{up,down}.sql`
 - `infra/migrations/postgres/provision.go` and `provision_test.go`
-- `infra/migrations/postgres/migrate_unforgeable_tenancy_integration_test.go`
+- `infra/migrations/postgres/tenancy_*_integration_test.go`
 - [`31-v1-release-plan-2026-11-09.md`](../architecture-v2/31-v1-release-plan-2026-11-09.md), P0-06 and W8
 - PostgreSQL row security and custom-option semantics: the server assigns `current_user`; two-part GUCs are settable by
   any role.

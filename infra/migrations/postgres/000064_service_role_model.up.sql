@@ -6,7 +6,8 @@
 --   ibex_runtime    member of ibex_app       (tenant request paths)
 --   ibex_worker     member of ibex_app and
 --                   ibex_purge               (tenant work + org purge)
---   ibex_bootstrap  member of ibex_service   (one-shot schema/tenant bootstrap)
+--   ibex_bootstrap  no memberships            (reserved for a narrow PR-3
+--                                              bootstrap definer; inert)
 --
 -- `ibex_purge` is the NOLOGIN role that runs the organization-deletion saga.
 -- It is org-GUC-scoped (every saga statement filters a known `org_id`) and it
@@ -35,19 +36,19 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_runtime') THEN
         CREATE ROLE ibex_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
     ELSE
-        ALTER ROLE ibex_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
+        ALTER ROLE ibex_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_worker') THEN
         CREATE ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
     ELSE
-        ALTER ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
+        ALTER ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_bootstrap') THEN
         CREATE ROLE ibex_bootstrap LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
     ELSE
-        ALTER ROLE ibex_bootstrap LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
+        ALTER ROLE ibex_bootstrap LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
     END IF;
 END
 $$;
@@ -142,7 +143,13 @@ GRANT SELECT (org_id), DELETE ON ibex_core.memory_feedback TO ibex_purge;
 GRANT SELECT (org_id), DELETE ON ibex_core.memory_conflict_escalations TO ibex_purge;
 GRANT SELECT (org_id), DELETE ON ibex_core.memory_relationships TO ibex_purge;
 GRANT SELECT (org_id), DELETE ON ibex_core.memory_labels TO ibex_purge;
-GRANT SELECT (org_id, id, lifecycle_revision), DELETE ON ibex_core.memories TO ibex_purge;
+-- memories additionally RETURNINGs org_id, id, lifecycle_revision into
+-- memory_lifecycle_outbox. `UPDATE (session_id)` is required because deleting a
+-- session fires `clear_memory_session_id`, which runs as ibex_purge and updates
+-- memories.session_id for that session. The session_id SELECT is what the
+-- trigger's WHERE clause reads.
+GRANT SELECT (org_id, session_id, id, lifecycle_revision), UPDATE (session_id), DELETE
+    ON ibex_core.memories TO ibex_purge;
 GRANT SELECT (org_id), DELETE ON ibex_core.directive_versions TO ibex_purge;
 GRANT SELECT (org_id), DELETE ON ibex_core.directives TO ibex_purge;
 GRANT SELECT (org_id), DELETE ON ibex_core.tokens TO ibex_purge;

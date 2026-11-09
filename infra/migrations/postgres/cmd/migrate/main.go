@@ -17,7 +17,7 @@ func main() {
 		*command = flag.Arg(0)
 	}
 	if *command == "" {
-		fmt.Fprintln(os.Stderr, "usage: migrate -command up|down|version|force|provision [-version N]")
+		printUsage()
 		os.Exit(2)
 	}
 
@@ -63,4 +63,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", *command)
 		os.Exit(2)
 	}
+}
+
+func printUsage() {
+	fmt.Fprintln(os.Stderr, "usage: migrate -command up|down|version|force|provision [-version N]")
+	fmt.Fprintln(os.Stderr, "       provision sets the capability-login passwords from")
+	fmt.Fprintln(os.Stderr, "       IBEX_RUNTIME_DB_PASSWORD, IBEX_WORKER_DB_PASSWORD and")
+	fmt.Fprintln(os.Stderr, "       IBEX_BOOTSTRAP_DB_PASSWORD. Secrets must be printable")
+	fmt.Fprintln(os.Stderr, "       ASCII without spaces, differ from the migration DSN")
+	fmt.Fprintln(os.Stderr, "       credential, and differ from each other.")
 }
