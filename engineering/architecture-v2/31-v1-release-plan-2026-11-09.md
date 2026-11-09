@@ -13,7 +13,8 @@ The audit was written at `6f12c96c` (2026-11-05). Two waves have landed since an
 - [ADR-0097](../adr/0097-v1-supported-profile.md) selected `v1-single-node`, and PR #1147 built it: a
   fourteen-service Compose profile with an edge TLS terminator, digest-pinned dependencies, a pinned TEI/bge-m3
   backend, a one-shot migration gate, a one-time bootstrap, and a recorded start (`29-v1-single-node-start-record-2026-11-07.md`).
-  That closes most of **P0-01**, **P0-02** and **P0-22** *for that profile*.
+  That closes **P0-01** and **P0-02** *for that profile*, and builds the transport half of **P0-22** (its production
+  acceptance is still missing).
 - PR #1152 landed W3's first slice: erasure, the org-deletion cascade, the six-table ClickHouse purge, and
   `ibex_app` pinning for **api, mcp-operator and memory** — closing **P0-07**, **P0-08** and the memory/API half of
   **P0-06**.
@@ -47,10 +48,12 @@ Every row was checked against the tree, not against the previous document.
 | P0-14 | Contract registry covers 5 of 75 routes | **Open** | no registry-completeness check in CI |
 | P0-15 | Release pipeline blocked | **Open — owner action** | `.version-release-manifest.json` = `0.1.9`; 121 commits since `v0.1.9`; `release.yml`/`release-docker.yml` require `VERSION_RELEASE_TOKEN`; #1068 |
 | P0-16 | Provisional rows expire 2026-11-10 | **Runtime rows re-verified 2026-11-09; one owner act left** | the nine runtime rows now read `2027-02-06` with their suites re-run at `df15390d` (`32-ledger-review-2026-11-09.md`). The `idempotency-operation.v1` **contract shape** still lapses 2026-11-10 and can only be renewed or downgraded by the owner |
+| P0-17 | The supported profile is unselected (D5) | **Closed at the decision level** | ADR-0097 selects `v1-single-node` and §10 states the exclusions; the profile now starts (`29-v1-single-node-start-record-2026-11-07.md`). The remaining acceptance evidence is tracked by P0-01 and P0-22, not by this row |
+| P0-20 | Published latency is not reproducible | **Open** | the HNSW artifact carries no runner CPU/RAM, and `baseline-modes.json` records a run URL but no commit, gold-set hash or seed; the gate compares corpus names. W10.1 closes it |
 | P0-18 | Exception text reaches spans and logs | **Open** | `services/worker/app/observability.py:110` calls `span.record_exception` under `record_exception=False`; `services/api/app/errors.py:178` logs `exc_info`; no sentinel test |
 | P0-19 | Nothing pages | **Open** | `infra/monitoring/alertmanager/alertmanager.yml` routes to `local-null` |
 | P0-21 | No route-level two-tenant acceptance | **Partially closed** | tenant negatives exist for org/user, agent and token management; no negative for the operator read routes and no two-tenant browser journey |
-| P0-22 | Chat path cannot authenticate outside development | **Closed for `v1-single-node`** | edge TLS; `IBEX_AUTH_GRPC_TLS_*` + per-install CA on auth, proxy, api and memory; start record's journey |
+| P0-22 | Chat path cannot authenticate outside development | **Open — transport built, production acceptance missing** | the profile carries per-install TLS on every hop (`IBEX_AUTH_GRPC_TLS_*`, `IBEX_AUTH_GRPC_CA_FILE` on proxy/api/memory; edge only port published), but the recorded start is `IBEX_ENV=staging` with `IBEX_LLM_MODE=mock` (`29-v1-single-node-start-record-2026-11-07.md`). No start on `IBEX_ENV=production` has served an authenticated chat request, which is the row's own acceptance evidence |
 
 **One-line verdict:** the profile is real, erasure is real, tenancy is **half** real, and the three things that make a
 1.0 defensible — recovery, contract gates, release integrity — are untouched. Nine ledger rows lapse tomorrow.
@@ -75,21 +78,23 @@ surface, contracts are mechanical, and the release wave needs the owner's secret
 
 | # | Work | Acceptance evidence |
 |---|---|---|
-| 0.1 | Resolve the nine rows that expire 2026-11-10: re-verify with a named suite, or downgrade to the status the evidence supports | each row carries a new date **and** the command/artifact that justifies it, or a downgrade note; ledger diff reviewed |
-| 0.2 | Point P0-03 at the ADR-0097 §10 exclusion and record the chart as non-shipping | plan row cites ADR-0097 §10; chart README says render/lint scaffolding only; no gate depends on the chart |
-| 0.3 | Land the two carried-over items: the coverage commit `0de3e1d1` as a follow-up PR, and the #1149 plan-gate determinism fix | follow-up merged; `test_hnsw_index_scan_at_runtime` green over three runs |
+| 0.1 | Resolve the nine rows that expire 2026-11-10 | **Landing.** Every row was re-verified at `df15390d` by running its own evidence suite and re-dated to 2027-02-06 with status and limitations unchanged — see [`32-ledger-review-2026-11-09.md`](32-ledger-review-2026-11-09.md) §2. The `idempotency-operation.v1` **contract shape** is the one act this cannot perform; §4 holds the evidence packet for the owner |
+| 0.2 | Point P0-03 at the exclusion and record the chart's status | **Done.** ADR-0097 §10 already excludes "Kubernetes, Helm and any HA topology" in release-note words; the chart README calls its values render/lint scaffolding; the live guard is `check-helm-deployable.sh` |
+| 0.3 | Land the two carried-over items | **Landing.** The plan-gate determinism fix passes three consecutive runs (4m13s / 4m11s / 4m59s) and the ledger-scope unit coverage brings `ledger_scope.py`, `db.py` and `erased_response.py` to 100%; both are in PR #1164 |
 
-**Gate:** no ledger row past its date; P0-03 has a written home; CI is not red on a known flake.
+**Gate:** no ledger row past its date (**met for runtime rows**); the contract shape renewed or downgraded by the owner
+(**open**); P0-03 cited to ADR-0097 (**met**); CI free of the known flake (**met, pending the merge of #1164**).
 
 ### W4 — recovery (the largest residual risk)
 
 | # | Work | Acceptance evidence |
 |---|---|---|
-| 4.1 | Add a backup service to `v1-single-node`: pgBackRest (POSIX repo on a dedicated volume, or the optional S3/MinIO target), WAL archiving on, `archive_timeout` set, schedule + retention | `compose.yml` starts the backup service; `pgbackrest check` green; a scheduled backup artifact exists |
+| 4.1 | Add a backup service to `v1-single-node`: pgBackRest with a repository **outside the host failure domain** (S3/MinIO or an external POSIX target), WAL archiving on, `archive_timeout` set, schedule + retention. A host-local volume may cache the repository but cannot be the only copy | `compose.yml` starts the backup service against the off-host repository; `pgbackrest check` green; a scheduled backup exists **and a restore from the off-host copy succeeds** |
 | 4.2 | Alert on archive lag and backup freshness (feeds W6) | rule + alert firing on an induced archive failure |
-| 4.3 | Restore drill: full restore **and** PITR to a timestamp, measured | `restore-drill` record with `rpo_pass=true`, `rto_seconds`, target commit, and post-restore isolation assertions (cross-tenant query still returns one tenant) |
+| 4.3 | Restore drill: full restore **and** PITR to a timestamp, from the off-host repository, measured against the signed targets | `restore-drill` record with `rto_pass` computed against the signed RTO (not merely measured), `rpo_pass=true`, target commit, post-restore isolation assertions, **and a restored provider credential decrypts with the recovered `IBEX_CREDENTIALS_MASTER_KEY`** |
 | 4.4 | Sign the RPO/RTO table per data class (Postgres canonical, outbox, object artifacts, Redis projections, vector index) | table in `15-runtime-operations-and-recovery.md` with numbers, owner and date, referenced from the profile page |
-| 4.5 | Provide a `make v1-restore` / `v1-backup` operator path | one command each, documented, exercised by 4.3 |
+| 4.5 | Back up `IBEX_CREDENTIALS_MASTER_KEY` (and its ID) separately from the database and prove a restored provider credential decrypts | the drill starts a restored stack and reads one provider credential through the API; without the key the auth config refuses to start in production (`services/auth/internal/config/config.go:249`) |
+| 4.6 | Provide a `make v1-restore` / `v1-backup` operator path | one command each, documented, exercised by 4.3 |
 
 **Gate:** one green PITR drill per release with measured RPO/RTO, and the numbers published in the profile page.
 **Research basis:** pgBackRest's POSIX-repo configuration, `archive_mode`/`archive_command`/`archive_timeout`, stanza
@@ -118,8 +123,8 @@ production path sets it.
 | 5.1 | Make `buf-breaking` a required check; prove it with a deliberately breaking PR | branch-protection update + red-then-green evidence |
 | 5.2 | Add `oasdiff breaking` against a pinned baseline (`origin/main` and the release tag), `fail-on: WARN`, `review: false` so no spec leaves CI | a deliberately breaking `/v1` change fails; an additive change passes |
 | 5.3 | Generate the contract registry from `route_inventory.json`, the proto files and the MCP descriptors; fail CI on an unregistered surface | registry diff empty; a new unregistered route fails the check |
-| 5.4 | Deprecation policy in code and docs: `Deprecation`/`Sunset` headers, beta 31 days / stable 180 days, and the support window | oasdiff deprecation checks green; `16-compatibility-and-versioning.md` states the window |
-| 5.5 | MCP descriptor hash checked into review (not computed at runtime only) | hash file diff appears in the PR for a schema change |
+| 5.4 | Deprecation policy in code and docs: `Deprecation`/`Sunset` headers, beta 31 days / stable 180 days, and the support window; the same policy text covers REST, gRPC **and MCP tool schemas** | oasdiff deprecation checks green; a removal before its window fails CI; `16-compatibility-and-versioning.md` states the window for all three surfaces |
+| 5.5 | MCP descriptor diff in review: the committed descriptor is compared with the previous one, and a schema change carries a recorded deprecation decision (notice date, stability class, removal date) rather than only a hash change | a changed tool schema shows a readable diff and its deprecation record; a removal without that record fails the check |
 
 **Research basis:** oasdiff's `breaking` command, `fail-on: WARN`, git-revision specs (`origin/main:openapi.json`) and
 the `deprecation-days-beta` / `deprecation-days-stable` defaults are the parameters used above.
@@ -176,7 +181,7 @@ the `deprecation-days-beta` / `deprecation-days-stable` defaults are the paramet
 | D-A | `VERSION_RELEASE_TOKEN` and the tag-signing key | W7 cannot start; 121 commits are unreleased | no 1.0 tag |
 | D-B | Confirm ADR-0097 §10 is the final word on Kubernetes/Helm for 1.0 (already stated there) | it is recorded, but the chart still exists and needs a stated fate | the row stays cited to §10 and the chart is marked non-shipping |
 | D-C | Console 1.0: login + mutations, or login + declared read-only | changes W9 by roughly a week and changes P0-05's acceptance | read-only, stated |
-| D-D | Backup target for `v1-single-node` (POSIX volume vs MinIO/S3) and the RPO to commit to | W4's RTO/RPO table cannot be signed without it | POSIX volume, RPO ≤ 5 min, RTO ≤ 60 min, all stated as drill-measured |
+| D-D | Which **off-host** backup repository `v1-single-node` requires (S3/MinIO or an external POSIX target) and the RPO/RTO to sign | a host-local repository cannot survive host loss, so its choice is a release decision, not a default | S3/MinIO if available, else an external POSIX target; RPO ≤ 5 min, RTO ≤ 60 min, both drill-measured |
 | D-E | `idempotency-operation.v1`: renew the contract shape to 2027-02-06 on the evidence packet in `32-ledger-review-2026-11-09.md` §4, or downgrade it | the shape lapses 2026-11-10; the runtime slices are already re-verified | the shape lapses and the ledger records it |
 | D-F | Confirm hosted/HA stays out of 1.0 and approve the reworded claims | P1-51/52 and the README | reword to what is measured |
 
@@ -187,7 +192,12 @@ the `deprecation-days-beta` / `deprecation-days-stable` defaults are the paramet
 A tag is defensible only when every line below has a linked artifact:
 
 - [ ] `make v1-up` on a clean host reaches healthy on every service, and `make v1-smoke` passes against it.
-- [ ] Backup runs on a schedule; a PITR drill restores to a timestamp with `rpo_pass=true` and a measured RTO.
+- [ ] The profile serves one authenticated chat request on `IBEX_ENV=production` (the staging + mock start is not that
+      evidence).
+- [ ] Backup runs on a schedule to a repository **outside the host failure domain**; a PITR drill restores from it to
+      a timestamp with `rpo_pass=true` and an RTO measured against the signed target.
+- [ ] A restored provider credential decrypts with the recovered `IBEX_CREDENTIALS_MASTER_KEY`; the key has its own
+      backup and recovery step.
 - [ ] The cross-tenant negative suite is green in the profile **with the service-account bypass unavailable**, at the
       route level, plus the two-tenant browser journey.
 - [ ] A forget erases content, child rows and the idempotent response; a restore replays markers and receipts.
@@ -205,6 +215,8 @@ A tag is defensible only when every line below has a linked artifact:
 | Risk | Retirement |
 |---|---|
 | Restore drill passes on paper only | W4 makes the drill the exit gate, not the backup |
+| Host loss destroys the database and its backup together | the repository is off-host by contract (W4.1); a restore from it is the drill |
+| A restore cannot decrypt provider credentials | the master key has its own backup and a decryption check in the drill (W4.3) |
 | Pinning roles breaks auth/worker/proxy under load | one service per change, with its integration suite and a cross-tenant negative |
 | `oasdiff` drowns the team in warnings | start `fail-on: WARN` with an ignore file, review it quarterly |
 | Console auth inherits CSRF holes | double-submit CSRF + Playwright journey, reviewed by security |
