@@ -40,6 +40,18 @@ pytestmark = pytest.mark.integration
 _SCAN_FLUSH_TIMEOUT_SECONDS = 60.0
 _SCAN_FLUSH_POLL_SECONDS = 0.25
 
+# The gate asserts that this query shape *can* use the HNSW index and that the
+# executed search does. Whether the planner prefers it over a selective btree
+# index plus a sort depends on statistics that shift with seed size and runner
+# timing (issue #1149), so the gate pins the alternative ordered paths off:
+# no sequential scan, no bitmap scan, no sort. The index remains the only way
+# to satisfy ORDER BY, which is the capability under test.
+_PLAN_SETTINGS = {
+    "enable_seqscan": "off",
+    "enable_bitmapscan": "off",
+    "enable_sort": "off",
+}
+
 
 async def _wait_for_hnsw_scan(engine: AsyncEngine, *, before: int) -> int:
     """Wait for the search backend's pg_stat counters to flush."""
@@ -96,12 +108,7 @@ async def test_hnsw_index_scan_at_runtime(
     target = parse_async_database_url(memory_database_url)
     search_engine = create_async_engine(
         target.url,
-        connect_args={
-            **target.connect_args,
-            # Force an index path so the gate verifies HNSW, not runner-specific
-            # planner cost decisions between sequential and index scans.
-            "server_settings": {"enable_seqscan": "off"},
-        },
+        connect_args={**target.connect_args, "server_settings": dict(_PLAN_SETTINGS)},
     )
     try:
         plan_store = PgVectorStore(create_session_factory(search_engine), settings)
@@ -126,10 +133,7 @@ async def test_hnsw_index_scan_at_runtime(
     # above, so this probe cannot satisfy the search assertion.
     probe_engine = create_async_engine(
         target.url,
-        connect_args={
-            **target.connect_args,
-            "server_settings": {"enable_seqscan": "off"},
-        },
+        connect_args={**target.connect_args, "server_settings": dict(_PLAN_SETTINGS)},
     )
     try:
         await _assert_hnsw_plan(probe_engine, plan_seed, settings)
