@@ -1,4 +1,10 @@
-"""Unit tests for the session helper that pins the tenant role."""
+"""Unit tests for the session helpers that pin the tenant role.
+
+Two helpers do the same job for different callers: ``session_with_org`` for the
+memory read/write paths and ``tenant_ledger_session`` for the idempotency
+ledger. Both must clear an inherited service-account bypass, pin ``ibex_app``
+and set the org GUC; a session that already set the bypass must not keep it.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +15,7 @@ from uuid import uuid4
 import pytest
 
 from app.db import session_with_org
+from app.ledger_scope import tenant_ledger_session, tenant_scope
 
 
 class _FakeTransaction:
@@ -81,4 +88,46 @@ async def test_session_with_org_rolls_back_when_pinning_fails() -> None:
     factory = _factory_for(session)
     with pytest.raises(RuntimeError, match="database unavailable"):
         await _open(factory)
+    assert session.rolled_back
+
+
+@pytest.mark.asyncio
+async def test_tenant_ledger_session_pins_the_tenant_role() -> None:
+    """The ledger transaction clears the bypass, pins ibex_app, sets the org."""
+    session = _FakeSession()
+
+    async with tenant_ledger_session(_factory_for(session), str(uuid4())) as opened:
+        assert opened is session
+
+    joined = " ".join(session.statements)
+    assert "SET LOCAL ROLE ibex_app" in joined
+    assert "app.current_org_id" in joined
+    assert "app.is_service_account" in joined
+
+
+@pytest.mark.asyncio
+async def test_tenant_scope_opens_the_same_pinned_session() -> None:
+    """The scope handed to the ledger adapter opens the tenant session."""
+    session = _FakeSession()
+    scope = tenant_scope(_factory_for(session))
+
+    async with scope(str(uuid4())) as opened:
+        assert opened is session
+
+    assert any("SET LOCAL ROLE ibex_app" in statement for statement in session.statements)
+
+
+async def _open_ledger(factory) -> None:
+    """Enter and leave the ledger session so a failure surfaces from the pin."""
+    async with tenant_ledger_session(factory, str(uuid4())):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_tenant_ledger_session_rolls_back_when_pinning_fails() -> None:
+    """A failing pin rolls back the ledger transaction and propagates."""
+    session = _FailingSession()
+    factory = _factory_for(session)
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await _open_ledger(factory)
     assert session.rolled_back
