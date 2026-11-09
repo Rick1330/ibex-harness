@@ -14,6 +14,7 @@ from app.config import Settings
 from app.errors import (
     ApiError,
     ResponseOpts,
+    _frame_file,
     api_error_handler,
     auth_failed_response,
     auth_unavailable_response,
@@ -156,3 +157,10 @@ def test_unhandled_error_logs_type_and_frames_without_the_message(caplog) -> Non
     assert sentinel not in caplog.text
     assert "RuntimeError" in caplog.text
     assert "frames=" in caplog.text
+
+
+def test_frame_file_strips_posix_and_windows_directories() -> None:
+    """A frame line names a file, never the directory tree it came from."""
+    assert _frame_file("/srv/ibex/services/api/app/errors.py") == "errors.py"
+    assert _frame_file(r"C:\Users\operator\ibex\app\errors.py") == "errors.py"
+    assert _frame_file("errors.py") == "errors.py"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import traceback
 from dataclasses import dataclass
 from typing import Any
@@ -171,10 +172,15 @@ def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSO
     )
 
 
+def _frame_file(filename: str) -> str:
+    """Return the file name without its directory, for POSIX and Windows paths."""
+    return re.split(r"[\\/]", filename)[-1]
+
+
 def _frames(exc: BaseException) -> str:
     """Return ``file:line`` for each frame, without the message or locals."""
     return " <- ".join(
-        f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}"
+        f"{_frame_file(frame.filename)}:{frame.lineno}"
         for frame in traceback.extract_tb(exc.__traceback__)
     )
 
