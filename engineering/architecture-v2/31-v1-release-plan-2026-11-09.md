@@ -19,7 +19,8 @@ The audit was written at `6f12c96c` (2026-11-05). Two waves have landed since an
   **P0-06**.
 
 The audit's wave order (W4 recovery, W5 contracts, …) still holds for what is left, but two things moved: the tenancy
-wave is **half done**, not done, and one P0 is now a **dated** obligation (`P0-16`, 2026-11-10). A plan that does not
+wave is **half done**, not done, and one P0 is now a **dated** obligation (`P0-16`: the nine runtime rows were
+re-verified on 2026-11-09, but the `idempotency-operation.v1` contract shape still lapses on 2026-11-10). A plan that does not
 say that would repeat the audit's mistake of scoring the tree from stale evidence.
 
 ---
@@ -32,7 +33,7 @@ Every row was checked against the tree, not against the previous document.
 |---|---|---|---|
 | P0-01 | No profile serves the critical path | **Closed for `v1-single-node`** | `infra/compose/v1-single-node/compose.yml`: postgres, redis, migrate, bootstrap, auth, proxy, api, memory, embedder, tei, worker, context, console, edge; `make v1-up`; start record |
 | P0-02 | Context is undeployable | **Closed for `v1-single-node`** | `services/context/Dockerfile`; `context` runs in the proxy's network namespace and is reached on `127.0.0.1:9092`, so it publishes nothing |
-| P0-03 | Kubernetes cannot install or upgrade | **Open — scope decision missing** | `infra/helm` unchanged; `check-helm-digest-placeholders.sh` still fails; ADR-0097 excludes Kubernetes but the row has no written exclusion to point at |
+| P0-03 | Kubernetes cannot install or upgrade | **Closed by exclusion (ADR-0097 §10)** | ADR-0097 §10 states it in release-note words: "Kubernetes, Helm and any HA topology; no rolling upgrade; a restart is an outage". The chart README says its values are render/lint scaffolding, not deployable artifacts; the live guard is `.github/scripts/check-helm-deployable.sh` (the audit's filename is stale). No 1.0 claim depends on it |
 | P0-04 | Console cannot be logged into | **Open** | no `login`/`logout` page under `services/console/app/pages/`; all BFF routes are reads |
 | P0-05 | Cookie sessions cannot mutate | **Open** | `services/console/server` has no cookie-capable mutation path; mutations need a bearer PAT |
 | P0-06 | RLS inert / bypass survives pinning | **Partially closed** | `api`, `mcp-operator`, `memory` pin `ibex_app` and clear the bypass; **`auth` repositories, `worker`, `relay` and the Go `packages/session` still set `app.is_service_account` without a role pin** |
@@ -45,7 +46,7 @@ Every row was checked against the tree, not against the previous document.
 | P0-13 | OpenAPI is freshness-checked only | **Open** | no `oasdiff` anywhere in `.github/` or `infra/scripts/` |
 | P0-14 | Contract registry covers 5 of 75 routes | **Open** | no registry-completeness check in CI |
 | P0-15 | Release pipeline blocked | **Open — owner action** | `.version-release-manifest.json` = `0.1.9`; 121 commits since `v0.1.9`; `release.yml`/`release-docker.yml` require `VERSION_RELEASE_TOKEN`; #1068 |
-| P0-16 | Provisional rows expire 2026-11-10 | **Open — expires tomorrow** | nine ledger rows carry `2026-11-10`: both `idempotency-operation.v1` rows, GAP-004, GAP-006, evidence relay hardening, GAP-011, session evidence producer, GAP-007 historical, GAP-002 |
+| P0-16 | Provisional rows expire 2026-11-10 | **Runtime rows re-verified 2026-11-09; one owner act left** | the nine runtime rows now read `2027-02-06` with their suites re-run at `df15390d` (`32-ledger-review-2026-11-09.md`). The `idempotency-operation.v1` **contract shape** still lapses 2026-11-10 and can only be renewed or downgraded by the owner |
 | P0-18 | Exception text reaches spans and logs | **Open** | `services/worker/app/observability.py:110` calls `span.record_exception` under `record_exception=False`; `services/api/app/errors.py:178` logs `exc_info`; no sentinel test |
 | P0-19 | Nothing pages | **Open** | `infra/monitoring/alertmanager/alertmanager.yml` routes to `local-null` |
 | P0-21 | No route-level two-tenant acceptance | **Partially closed** | tenant negatives exist for org/user, agent and token management; no negative for the operator read routes and no two-tenant browser journey |
@@ -75,8 +76,8 @@ surface, contracts are mechanical, and the release wave needs the owner's secret
 | # | Work | Acceptance evidence |
 |---|---|---|
 | 0.1 | Resolve the nine rows that expire 2026-11-10: re-verify with a named suite, or downgrade to the status the evidence supports | each row carries a new date **and** the command/artifact that justifies it, or a downgrade note; ledger diff reviewed |
-| 0.2 | Write the Kubernetes exclusion for 1.0 and point P0-03 at it | a scope statement in ADR-0097 (or a new ADR) and a ledger line; `check-helm-digest-placeholders.sh` either wired into a gate or explicitly marked non-shipping |
-| 0.3 | Close out the two carried-over items from #1152: the coverage commit `0de3e1d1` as a follow-up PR, and the #1149 plan-gate flake | follow-up merged; `test_hnsw_index_scan_at_runtime` deterministic over three runs |
+| 0.2 | Point P0-03 at the ADR-0097 §10 exclusion and record the chart as non-shipping | plan row cites ADR-0097 §10; chart README says render/lint scaffolding only; no gate depends on the chart |
+| 0.3 | Land the two carried-over items: the coverage commit `0de3e1d1` as a follow-up PR, and the #1149 plan-gate determinism fix | follow-up merged; `test_hnsw_index_scan_at_runtime` green over three runs |
 
 **Gate:** no ledger row past its date; P0-03 has a written home; CI is not red on a known flake.
 
@@ -173,10 +174,10 @@ the `deprecation-days-beta` / `deprecation-days-stable` defaults are the paramet
 | ID | Decision | Why it blocks | Default if silent |
 |---|---|---|---|
 | D-A | `VERSION_RELEASE_TOKEN` and the tag-signing key | W7 cannot start; 121 commits are unreleased | no 1.0 tag |
-| D-B | Kubernetes formally out of 1.0 (and what happens to the Helm chart) | P0-03 cannot close honestly without it | the row stays open and 1.0 is blocked |
+| D-B | Confirm ADR-0097 §10 is the final word on Kubernetes/Helm for 1.0 (already stated there) | it is recorded, but the chart still exists and needs a stated fate | the row stays cited to §10 and the chart is marked non-shipping |
 | D-C | Console 1.0: login + mutations, or login + declared read-only | changes W9 by roughly a week and changes P0-05's acceptance | read-only, stated |
 | D-D | Backup target for `v1-single-node` (POSIX volume vs MinIO/S3) and the RPO to commit to | W4's RTO/RPO table cannot be signed without it | POSIX volume, RPO ≤ 5 min, RTO ≤ 60 min, all stated as drill-measured |
-| D-E | The nine expiring rows: re-verify now or downgrade | they lapse tomorrow | downgrade to what the evidence supports |
+| D-E | `idempotency-operation.v1`: renew the contract shape to 2027-02-06 on the evidence packet in `32-ledger-review-2026-11-09.md` §4, or downgrade it | the shape lapses 2026-11-10; the runtime slices are already re-verified | the shape lapses and the ledger records it |
 | D-F | Confirm hosted/HA stays out of 1.0 and approve the reworded claims | P1-51/52 and the README | reword to what is measured |
 
 ---
