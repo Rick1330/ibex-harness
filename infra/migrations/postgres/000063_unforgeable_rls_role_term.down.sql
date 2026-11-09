@@ -14,11 +14,11 @@ ALTER ROLE ibex_service BYPASSRLS;
 -- ================================================================
 ALTER POLICY agents_isolation ON ibex_core.agents USING (
     (
-        (NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL)
+        (NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL) -- NOSONAR: DDL cannot declare a constant; the legacy predicate is restored verbatim per function
         AND (org_id = (current_setting('app.current_org_id', true))::uuid)
     )
     OR (id = (NULLIF(current_setting('app.current_user_id', true), ''))::uuid)
-    OR (current_setting('app.is_service_account', true) = 'true')
+    OR (current_setting('app.is_service_account', true) = 'true') -- NOSONAR: DDL cannot declare a constant; the legacy predicate is restored verbatim per function
 );
 
 ALTER POLICY operator_action_ledger_isolation ON ibex_core.operator_action_ledger USING (

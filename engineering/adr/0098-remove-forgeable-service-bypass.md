@@ -162,7 +162,9 @@ both are larger changes that the supported profile does not require yet.
   before deriving the verifier; a non-ASCII password would produce a verifier that never matches, and this project does
   not implement stringprep. In the same statement it clears `CONNECTION LIMIT`; it then asserts `rolsuper`,
   `rolbypassrls`, `rolcreatedb`, `rolcreaterole`, `rolinherit` are false, `rolcanlogin` is true, `rolconnlimit = -1`,
-  and that no login reaches `ibex_service` or (for runtime/bootstrap) `ibex_purge` by any membership path.
+  and that no login reaches `ibex_service`, `ibex_purge` or (bootstrap) `ibex_app` by any membership path, that each
+  login can assume the roles it requires (`ibex_app`; worker also `ibex_purge`), and that no role is expired. `000064`
+  also refuses to grant the purge membership to a pre-existing role that already has a credential.
 - `privacy_audit_append` and `ibex_billing.clear_enforcement_budget_period_id` lose their `ibex_app` EXECUTE grants.
   The only `privacy_audit_append` caller is the worker purge path (which uses `ibex_purge`, and still has EXECUTE); the
   trigger function fires without an EXECUTE check. Both grants are restored in the down file.
@@ -170,7 +172,7 @@ both are larger changes that the supported profile does not require yet.
   `org_deletion_jobs` has no INSERT because the API creates the job as `ibex_app`.
 - `000066` indexes `tokens.prefix` with `CREATE INDEX CONCURRENTLY`, and `auth_find_token_by_prefix` orders by
   `created_at DESC` so a duplicate prefix has a deterministic winner. `000067` refuses to proceed if a failed build left
-  the index INVALID and prints the `DROP INDEX CONCURRENTLY …; re-run migrate up` repair.
+  the index INVALID and prints the `DROP INDEX CONCURRENTLY …; migrate force 65; migrate up` repair.
 
 **What does not change yet**
 

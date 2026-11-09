@@ -2,20 +2,25 @@
 
 package postgres
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
-// A2 — only the owner login carries rolsuper or rolbypassrls; the capability
-// roles are never superusers and never bypass RLS.
+// TestTenancyRoleAttributes asserts A2: only the owner is privileged and the
+// capability roles are non-inheriting, non-bypassing logins.
 func TestTenancyRoleAttributes(t *testing.T) {
 	f := newTenancyFixture(t)
-	assertOnlyOwnerPrivileged(f)
-	assertCapabilityRoleAttributes(f)
+	ctx := t.Context()
+	assertOnlyOwnerPrivileged(f, ctx)
+	assertCapabilityRoleAttributes(f, ctx)
 }
 
-func assertOnlyOwnerPrivileged(f *tenancyFixture) {
+// assertOnlyOwnerPrivileged checks rolsuper and rolbypassrls are ibex-only.
+func assertOnlyOwnerPrivileged(f *tenancyFixture, ctx context.Context) {
 	f.t.Helper()
-	rows, err := f.db.QueryContext(f.ctx,
-		`SELECT rolname FROM pg_roles WHERE rolsuper OR rolbypassrls ORDER BY rolname`)
+	rows, err := f.db.QueryContext(ctx, `
+		SELECT rolname FROM pg_roles WHERE rolsuper OR rolbypassrls ORDER BY rolname`)
 	if err != nil {
 		f.t.Fatalf("pg_roles: %v", err)
 	}
@@ -25,29 +30,33 @@ func assertOnlyOwnerPrivileged(f *tenancyFixture) {
 	}
 }
 
-func assertCapabilityRoleAttributes(f *tenancyFixture) {
+// assertCapabilityRoleAttributes checks the four capability roles.
+func assertCapabilityRoleAttributes(f *tenancyFixture, ctx context.Context) {
 	f.t.Helper()
-	for _, role := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_purge"} {
-		if f.roleBool(role, "rolsuper") || f.roleBool(role, "rolbypassrls") {
-			f.t.Fatalf("%s must not be superuser or BYPASSRLS", role)
+	for _, name := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_purge"} {
+		flags := f.loadRoleFlags(ctx, role(name))
+		if flags.super || flags.bypass {
+			f.t.Fatalf("%s must not be superuser or BYPASSRLS", name)
 		}
 	}
-	for _, role := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap"} {
-		if !f.roleBool(role, "rolcanlogin") || f.roleBool(role, "rolinherit") {
-			f.t.Fatalf("%s must be a NOINHERIT login", role)
+	for _, name := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap"} {
+		flags := f.loadRoleFlags(ctx, role(name))
+		if !flags.login || flags.inherit {
+			f.t.Fatalf("%s must be a NOINHERIT login", name)
 		}
-		f.assertConnLimit(role, 0)
+		f.assertConnLimit(ctx, connLimitCheck{spec: role(name), want: 0})
 	}
-	if f.roleBool("ibex_purge", "rolcanlogin") {
+	if f.loadRoleFlags(ctx, role("ibex_purge")).login {
 		f.t.Fatal("ibex_purge must remain NOLOGIN")
 	}
 }
 
-// A3 — recursive membership: ibex_service has exactly ibex, ibex_purge has
-// exactly ibex_worker, and ibex_bootstrap holds no membership of its own.
+// TestTenancyMemberships asserts A3: ibex_service has exactly ibex, ibex_purge
+// has exactly ibex_worker, and ibex_bootstrap holds no membership.
 func TestTenancyMemberships(t *testing.T) {
 	f := newTenancyFixture(t)
-	f.assertMembers("ibex_service", []string{"ibex"})
-	f.assertMembers("ibex_purge", []string{"ibex_worker"})
-	f.assertNoMemberships("ibex_bootstrap")
+	ctx := t.Context()
+	f.assertMembers(ctx, membershipSpec{role: "ibex_service", want: []string{"ibex"}})
+	f.assertMembers(ctx, membershipSpec{role: "ibex_purge", want: []string{"ibex_worker"}})
+	f.assertNoMemberships(ctx, role("ibex_bootstrap"))
 }

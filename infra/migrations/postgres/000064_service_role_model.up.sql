@@ -26,11 +26,16 @@ SET LOCAL lock_timeout = '5s';
 -- Roles
 -- ================================================================
 DO $$
+DECLARE
+    purge_created  boolean;
+    worker_created boolean;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_purge') THEN
         CREATE ROLE ibex_purge NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+        purge_created := true;
     ELSE
         ALTER ROLE ibex_purge NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+        purge_created := false;
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_runtime') THEN
@@ -41,8 +46,10 @@ BEGIN
 
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_worker') THEN
         CREATE ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
+        worker_created := true;
     ELSE
         ALTER ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+        worker_created := false;
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_bootstrap') THEN
@@ -50,6 +57,9 @@ BEGIN
     ELSE
         ALTER ROLE ibex_bootstrap LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
     END IF;
+
+    PERFORM set_config('ibex.created_purge', purge_created::text, true);
+    PERFORM set_config('ibex.created_worker', worker_created::text, true);
 END
 $$;
 
@@ -57,6 +67,26 @@ $$;
 -- Memberships (the only intended paths into each capability)
 -- ================================================================
 GRANT ibex_app TO ibex_runtime, ibex_worker;
+
+-- Grant ibex_purge to ibex_worker only when this migration created the pair,
+-- or when a pre-existing role has never been provisioned. A pre-existing role
+-- that already has a credential is a drift: granting the purge membership would
+-- silently widen it, so stop and tell the operator to re-provision.
+DO $$
+BEGIN
+    IF current_setting('ibex.created_purge', true) IS DISTINCT FROM 'true'
+       AND EXISTS (SELECT 1 FROM pg_authid WHERE rolname = 'ibex_purge' AND rolpassword IS NOT NULL) THEN
+        RAISE EXCEPTION
+            'ibex_purge pre-exists with a credential; re-provision the capability logins';
+    END IF;
+    IF current_setting('ibex.created_worker', true) IS DISTINCT FROM 'true'
+       AND EXISTS (SELECT 1 FROM pg_authid WHERE rolname = 'ibex_worker' AND rolpassword IS NOT NULL) THEN
+        RAISE EXCEPTION
+            'ibex_worker pre-exists with a credential; re-provision the capability logins';
+    END IF;
+END
+$$;
+
 GRANT ibex_purge TO ibex_worker;
 GRANT ibex_service TO ibex;
 

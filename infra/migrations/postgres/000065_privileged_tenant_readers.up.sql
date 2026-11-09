@@ -35,7 +35,7 @@ AS $$
 BEGIN
     IF p_prefix IS NULL OR char_length(p_prefix) < 1 OR char_length(p_prefix) > 256 THEN
         RAISE EXCEPTION 'auth_find_token_by_prefix: prefix must be 1..256 characters'
-            USING ERRCODE = 'invalid_parameter_value';
+            USING ERRCODE = 'invalid_parameter_value'; -- NOSONAR: PL/pgSQL error codes are fixed literals; the five readers repeat the same validation contract.
     END IF;
 
     RETURN QUERY

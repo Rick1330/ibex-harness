@@ -54,13 +54,7 @@ LANGUAGE sql
 STABLE
 SECURITY INVOKER
 AS $$
-    SELECT CASE
-        WHEN current_user = 'ibex_service' THEN true
-        ELSE COALESCE(
-            NULLIF(current_setting('app.current_org_id', true), '')::uuid = row_org_id,
-            false
-        )
-    END;
+    SELECT ibex_core.rls_org_visible(row_org_id);
 $$;
 
 CREATE OR REPLACE FUNCTION ibex_core.rls_privacy_visible(row_org_id uuid)
@@ -69,13 +63,7 @@ LANGUAGE sql
 STABLE
 SECURITY INVOKER
 AS $$
-    SELECT CASE
-        WHEN current_user = 'ibex_service' THEN true
-        ELSE COALESCE(
-            NULLIF(current_setting('app.current_org_id', true), '')::uuid = row_org_id,
-            false
-        )
-    END;
+    SELECT ibex_core.rls_org_visible(row_org_id);
 $$;
 
 -- Policies execute as the querying user, so every role that queries a guarded

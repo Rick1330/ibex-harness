@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -8,8 +9,11 @@ import (
 	pgmigrate "github.com/Rick1330/ibex-harness/infra/migrations/postgres"
 )
 
+// errForceVersion signals the force command was called without -version.
+var errForceVersion = errors.New("requires -version N")
+
 func main() {
-	command := flag.String("command", "", "migration command: up, down, version, force")
+	command := flag.String("command", "", "migration command: up, down, version, force, provision")
 	version := flag.Int("version", 0, "target version for force")
 	flag.Parse()
 
@@ -20,51 +24,85 @@ func main() {
 		printUsage()
 		os.Exit(2)
 	}
-
-	dsn := pgmigrate.ResolveDSN()
-
-	switch *command {
-	case "up":
-		if err := pgmigrate.Up(dsn); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate up: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("migrate up: ok")
-	case "down":
-		if err := pgmigrate.Down(dsn); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate down: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("migrate down: ok")
-	case "version":
-		v, dirty, err := pgmigrate.Version(dsn)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "migrate version: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("version=%d dirty=%v\n", v, dirty)
-	case "force":
-		if *version <= 0 {
-			fmt.Fprintln(os.Stderr, "migrate force requires -version N")
+	if err := run(*command, *version); err != nil {
+		fmt.Fprintf(os.Stderr, "migrate %s: %v\n", *command, err)
+		if errors.Is(err, errForceVersion) {
 			os.Exit(2)
 		}
-		if err := pgmigrate.Force(dsn, *version); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate force: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("migrate force: ok (version=%d)\n", *version)
-	case "provision":
-		if err := pgmigrate.Provision(dsn); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate provision: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("migrate provision: ok")
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n", *command)
-		os.Exit(2)
+		os.Exit(1)
 	}
 }
 
+// run dispatches one migration command. It is separate from main so the
+// command set does not inflate main's complexity.
+func run(command string, version int) error {
+	dsn := pgmigrate.ResolveDSN()
+	switch command {
+	case "up":
+		return runUp(dsn)
+	case "down":
+		return runDown(dsn)
+	case "version":
+		return runVersion(dsn)
+	case "force":
+		return runForce(dsn, version)
+	case "provision":
+		return runProvision(dsn)
+	default:
+		return fmt.Errorf("unknown command: %s", command)
+	}
+}
+
+// runUp applies pending migrations.
+func runUp(dsn string) error {
+	if err := pgmigrate.Up(dsn); err != nil {
+		return err
+	}
+	fmt.Println("migrate up: ok")
+	return nil
+}
+
+// runDown rolls back one migration step.
+func runDown(dsn string) error {
+	if err := pgmigrate.Down(dsn); err != nil {
+		return err
+	}
+	fmt.Println("migrate down: ok")
+	return nil
+}
+
+// runVersion prints the current version and dirty flag.
+func runVersion(dsn string) error {
+	v, dirty, err := pgmigrate.Version(dsn)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("version=%d dirty=%v\n", v, dirty)
+	return nil
+}
+
+// runForce sets the migration version without running SQL.
+func runForce(dsn string, version int) error {
+	if version <= 0 {
+		return errForceVersion
+	}
+	if err := pgmigrate.Force(dsn, version); err != nil {
+		return err
+	}
+	fmt.Printf("migrate force: ok (version=%d)\n", version)
+	return nil
+}
+
+// runProvision sets the capability-login credentials.
+func runProvision(dsn string) error {
+	if err := pgmigrate.Provision(dsn); err != nil {
+		return err
+	}
+	fmt.Println("migrate provision: ok")
+	return nil
+}
+
+// printUsage writes the command and provisioning help.
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "usage: migrate -command up|down|version|force|provision [-version N]")
 	fmt.Fprintln(os.Stderr, "       provision sets the capability-login passwords from")

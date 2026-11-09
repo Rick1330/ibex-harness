@@ -18,7 +18,7 @@ BEGIN
         RAISE EXCEPTION
             'idx_tokens_prefix is INVALID (interrupted CONCURRENTLY build). '
             'Repair with: DROP INDEX CONCURRENTLY ibex_core.idx_tokens_prefix; '
-            'then re-run `migrate up`.';
+            'then `migrate force 65`, then `migrate up` so 000066 recreates it.';
     END IF;
 END;
 $$;
