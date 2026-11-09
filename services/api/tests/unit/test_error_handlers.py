@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -144,3 +145,14 @@ def test_unhandled_and_auth_helpers() -> None:
         ).status_code
         == 500
     )
+
+
+def test_unhandled_error_logs_type_and_frames_without_the_message(caplog) -> None:
+    sentinel = "SENTINEL-api-content-7b2e"
+    request = _request(Settings(database_url=None))
+    with caplog.at_level(logging.ERROR):
+        resp = unhandled_error_handler(request, RuntimeError(sentinel))
+    assert resp.status_code == 500
+    assert sentinel not in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "frames=" in caplog.text

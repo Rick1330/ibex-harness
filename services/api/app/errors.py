@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import traceback
 from dataclasses import dataclass
 from typing import Any
 
@@ -170,12 +171,24 @@ def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSO
     )
 
 
+def _frames(exc: BaseException) -> str:
+    """Return ``file:line`` for each frame, without the message or locals."""
+    return " <- ".join(
+        f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}"
+        for frame in traceback.extract_tb(exc.__traceback__)
+    )
+
+
 def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Type and call path are enough to locate a 500. The message is not logged:
+    # an exception raised while handling user content can echo it, and a
+    # DBAPIError message carries the statement (the driver masks parameters,
+    # see app/db.py, but the SQL text itself is still not log material).
     logger.error(
-        "unhandled exception type=%s request_id=%s",
+        "unhandled exception type=%s request_id=%s frames=%s",
         type(exc).__name__,
         request_id_for_log(),
-        exc_info=exc,
+        _frames(exc),
     )
     return envelope_response(
         code=INTERNAL_ERROR,

@@ -32,6 +32,12 @@ def create_engine(settings: Settings) -> AsyncEngine:
         parsed.url,
         pool_pre_ping=True,
         connect_args=dict(parsed.connect_args),
+        # A DBAPIError's rendered message carries the failing statement and its
+        # bound parameters; with memory content, tokens and provider secrets
+        # among them, that text must never reach a log line or a span event.
+        # Masking at the driver covers every log site, including tracebacks
+        # rendered by libraries we do not control.
+        hide_parameters=True,
     )
 
 
