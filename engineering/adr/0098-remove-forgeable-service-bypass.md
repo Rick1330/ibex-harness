@@ -1,6 +1,6 @@
 ---
-title: "ADR-0098: Unforgeable RLS tenancy and the service role model"
-description: "Architecture decision record 0098: replace the forgeable app.is_service_account GUC with a current_user predicate, remove BYPASSRLS from ibex_service, split service capabilities into dedicated logins, and route the five cross-tenant reads through SECURITY DEFINER functions."
+title: "ADR-0098: Remove the forgeable service-account bypass"
+description: "Architecture decision record 0098: replace the forgeable app.is_service_account GUC with a current_user predicate, remove BYPASSRLS from ibex_service, split service capabilities into dedicated logins, and route the five cross-tenant reads through SECURITY DEFINER functions. The tenant selector remains a transaction-local GUC."
 adrId: "0098"
 status: "Accepted"
 date: "2026-11-09"
@@ -10,7 +10,7 @@ authors: "Elshaday Mengesha (@Rick1330)"
 ::decision-banner{status="Accepted" date="2026-11-09" id="0098"}
 ::
 
-# ADR-0098: Unforgeable RLS tenancy and the service role model
+# ADR-0098: Remove the forgeable service-account bypass
 
 - **Status:** Accepted
 - **Date:** 2026-11-09
@@ -59,26 +59,28 @@ caller.
 the new predicate. The attribute is replaced by an explicit, auditable policy branch. Existing `SECURITY DEFINER`
 functions owned by `ibex_service` keep working because they execute with `current_user = 'ibex_service'`.
 
-**3. Four capability roles replace the single owner login.** They are created with no password and stay inert until
-`migrate provision` sets one from a dedicated environment variable.
+**3. Four capability roles replace the single owner login.** They are created with no password; the three logins also
+start with `CONNECTION LIMIT 0`, so they stay inert regardless of `pg_hba` until `migrate provision` sets a SCRAM
+verifier and clears the limit to `-1`.
 
 | Role | Login | Attributes | Memberships | Purpose |
 |---|---|---|---|---|
-| `ibex_runtime` | yes | NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT | `ibex_app` | API/proxy/auth request paths; sets role `ibex_app` for tenant queries |
+| `ibex_runtime` | yes | NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0 | `ibex_app` | API/proxy/auth request paths; sets role `ibex_app` for tenant queries |
 | `ibex_worker` | yes | same | `ibex_app`, `ibex_purge` | Celery work; sets role `ibex_app` for tenant work and `ibex_purge` for the deletion saga |
-| `ibex_bootstrap` | yes | same | `ibex_service` | one-shot schema/tenant bootstrap |
+| `ibex_bootstrap` | yes | same | none | inert until PR-3 adds a narrow bootstrap definer; it does **not** hold the service identity |
 | `ibex_purge` | no | NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT | none | org-deletion purge; reachable only through `ibex_worker` |
 
 `ibex` remains the owner login and the only `rolsuper`/`rolbypassrls` role. It is also a member of `ibex_service` and
-`ibex_app` so migrations and operator repair can assume either identity. Forbidden memberships are revoked explicitly,
-not left to absence.
+`ibex_app` so migrations and operator repair can assume either identity. `ibex_service` has exactly one member, `ibex`.
+Forbidden memberships are revoked explicitly, not left to absence.
 
 **4. The org purge uses `ibex_purge`, not `ibex_service`, and stays org-GUC-scoped.** Every saga statement filters a
 known `org_id` (`_PG_PRE_CASCADE`, `_CASCADE_STATEMENTS`, `_claim_job`, receipts, finalize). `ibex_purge` gets only the
 verbs and columns those statements use. It can read `org_id` where a policy or `RETURNING` needs it; it cannot read
 memory content, provider credentials, token hashes, TOTP secrets, or hold reasons. A `BEFORE DELETE` trigger on
-`legal_holds` raises unless `OLD.cleared_at IS NOT NULL`, so an active hold cannot be deleted even by a statement that
-forgets the predicate.
+`legal_holds` raises for `ibex_purge` when `OLD.cleared_at IS NULL`, so the purge cannot delete an active hold even if
+its statement forgets the predicate. `ibex_service` loses `DELETE` on `legal_holds`; the owner and the purge role are
+the only delete paths.
 
 **5. Five cross-tenant reads become `SECURITY DEFINER` functions owned by `ibex_service`, each granted to exactly one
 caller.**
@@ -95,11 +97,12 @@ Each has `SET search_path = <schema>, pg_temp`, no dynamic SQL, parameter valida
 shape copied from the call site rather than invented. `REVOKE ALL ... FROM PUBLIC` precedes the single grant. The
 tenant role gets none of them.
 
-**6. The migration is one unit: `000063` → `000064` → `000065`.** `000063` rewrites the three helpers, alters the 13
-inline policies in place (no `DROP POLICY`/`CREATE POLICY` churn), grants helper execution, and terminates the
-attribute. `000064` creates the roles, memberships, purge grants, and the legal-holds trigger. `000065` creates the
-readers and the column privileges their definer bodies need. Down files exist for development and rollback; production
-is forward-only.
+**6. The migration is one unit: `000063` → `000064` → `000065` → `000066`.** `000063` rewrites the three helpers,
+alters the 13 inline policies in place (no `DROP POLICY`/`CREATE POLICY` churn), grants helper execution, and terminates
+the attribute. `000064` creates the roles, memberships, purge grants, and the legal-holds trigger. `000065` creates the
+readers and the column privileges their definer bodies need. `000066` adds the missing `tokens.prefix` index
+(`CREATE INDEX CONCURRENTLY`, one statement per file). Down files exist for development and rollback; production is
+forward-only.
 
 **7. Ordering invariant: policies and roles land before any login is swapped.** PR-1 (this unit) changes the database
 only. PR-2..PR-4 pin `ibex_app` in `auth`, `worker`, and the Go packages, and move the five reads to the readers. Only
@@ -118,6 +121,21 @@ SELECT current_setting('app.is_service_account', true); -- 'true'
 `current_user`, by contrast, is assigned by the server and can only become `ibex_service` through a membership
 (`SET ROLE`) or through the owner of a `SECURITY DEFINER` function. Both are catalog-visible and reviewable.
 
+## What this does not make unforgeable
+
+The tenant **selector** is still `app.current_org_id`, a transaction-local GUC set by the trusted application layer. It
+is not signed and not derived from an authenticated principal by the database. A caller that can run arbitrary SQL as
+`ibex_app` can set the org GUC to another tenant and read that tenant's rows, exactly as before this change. RLS here is
+a backstop for code that runs as `ibex_app`; it is **not** a barrier against arbitrary SQL by the `ibex_app` role.
+
+What changed is the **service identity**: `app.is_service_account` was a flag the caller could set, and
+`current_user = 'ibex_service'` is a role the server assigns. That removes the ambient cross-tenant bypass from every
+tenant path. It does not make the tenant selector unforgeable.
+
+The two future options are (a) per-tenant database roles, so the server rather than a GUC chooses the tenant, or (b) a
+`SECURITY DEFINER` entry point that validates a signed tenant claim before it sets the selector. This PR does neither;
+both are larger changes that the supported profile does not require yet.
+
 ## Consequences
 
 **What changes**
@@ -128,33 +146,38 @@ SELECT current_setting('app.is_service_account', true); -- 'true'
 - Cross-tenant reads are explicit function calls with a named caller, not an ambient session flag.
 - The purge has its own least-privilege identity, and an active legal hold is protected in the database, not only by the
   saga's `WHERE` clause.
-- `migrate provision` is the only writer of the three login passwords; it refuses a missing secret, a NUL byte, or a
-  secret equal to `POSTGRES_PASSWORD`, and it asserts `rolsuper = false`, `rolbypassrls = false`, `rolcanlogin = true`
-  before commit. It sends a pre-computed SCRAM-SHA-256 verifier (4096 iterations, random 16-byte salt), never the
-  plaintext, so a failing statement cannot put the password in the server log.
+- `migrate provision` is the only writer of the three login passwords; it requires three pairwise-distinct secrets, each
+  different from `POSTGRES_PASSWORD`, and it sends a pre-computed SCRAM-SHA-256 verifier (4096 iterations, random
+  16-byte salt), never the plaintext, so a failing statement cannot put the password in the server log. In the same
+  statement it clears `CONNECTION LIMIT`; it then asserts `rolsuper`, `rolbypassrls`, `rolcreatedb`, `rolcreaterole`,
+  `rolinherit` are false, `rolcanlogin` is true, and `rolconnlimit = -1`.
+- `privacy_audit_append` and `ibex_billing.clear_enforcement_budget_period_id` lose their `ibex_app` EXECUTE grants.
+  The only `privacy_audit_append` caller is the worker purge path (which uses `ibex_purge`, and still has EXECUTE); the
+  trigger function fires without an EXECUTE check. Both grants are restored in the down file.
+- `ibex_purge`'s `org_deletion_jobs` and `deletion_store_receipts` grants are column-scoped to the saga's statements;
+  `org_deletion_jobs` has no INSERT because the API creates the job as `ibex_app`.
+- `000066` indexes `tokens.prefix` with `CREATE INDEX CONCURRENTLY`, and `auth_find_token_by_prefix` orders by
+  `created_at DESC` so a duplicate prefix has a deterministic winner.
 
 **What does not change yet**
 
 - The services still run as `ibex` in the supported profile, so their current GUC writes are inert but harmless. PR-2..4
   remove them and pin roles.
-- `ibex_bootstrap` is a member of `ibex_service`. Under the new policies that is a **full cross-tenant capability**:
-  `SET ROLE ibex_service` makes `current_user = 'ibex_service'`, so every tenant policy admits its reads and writes
-  without `BYPASSRLS`. This is deliberate for a one-shot, no-listener bootstrap login whose only job is to create the
-  first org/user and repair schema state; it is provisioned only for that job and has no request path. It is **not** a
-  least-privilege tenant identity, and its safety rests on credential handling and process lifetime, not on table
-  grants. PR-3 must either narrow it (for example, replace the bootstrap statements with a reviewed `SECURITY DEFINER`
-  path and revoke the membership after the one-shot run) or record the bootstrap trust boundary explicitly. Leaving it
-  as an ambient service login with no listener is acceptable only while the credential is operator-controlled and the
-  process exits.
+- `ibex_bootstrap` is created `LOGIN` with `CONNECTION LIMIT 0` and **no membership**. It cannot connect before
+  `provision`, and after `provision` it still has no service identity, no tenant-table grants, and no path to another
+  org. PR-3 will add a narrow `SECURITY DEFINER` bootstrap function and grant exactly that; until then the role is
+  intentionally unusable. This is why the service identity has exactly one member, `ibex`.
 - No compose file, DSN, or deployment manifest changes in this unit. The new logins are inert until provisioned.
 - No ledger row is promoted. The runtime claim stays where the status ledger records it.
 
 **Costs and limits**
 
 - `ALTER POLICY` is catalog-only (no table rewrite, no backfill) but takes an `ACCESS EXCLUSIVE` lock on each target
-  table for the duration of that statement (milliseconds). On a hot table this is a short write barrier; schedule the
-  migration, do not assume it is lock-free. `CREATE OR REPLACE FUNCTION` and `ALTER ROLE` are similarly brief catalog
-  operations; `CREATE TRIGGER` takes `SHARE ROW EXCLUSIVE` on `legal_holds`.
+  table. Because the file is one transaction, the locks accumulate until `COMMIT`; the migration is short but it is a
+  read+write barrier on the altered tables (including `tokens` and `organizations`). Run it in a low-traffic window and
+  keep `lock_timeout`. Measured via `pg_locks`; `CREATE TRIGGER` takes `SHARE ROW EXCLUSIVE` on `legal_holds`.
+- `CREATE INDEX CONCURRENTLY` cannot run inside a transaction, so `000066` is deliberately one statement per file (the
+  same pattern as `000059`). A failed build can leave an INVALID index; drop it and retry.
 - The migration suite now creates and drops the four capability roles; `resetSchema` drops them before `ibex_app` so a
   rerun is idempotent.
 - `ibex_service` needs column privileges on `tokens`, `organizations`, `rate_limit_overrides`, and `sessions` for the
@@ -176,6 +199,26 @@ A compromised `ibex_worker` credential can therefore still drive a deletion for 
 authority the worker already needed to run the saga; the change removes the ambient BYPASSRLS reach that made every
 org readable, not the deletion authority itself.
 
+## Recorded residual risks and non-goals
+
+These are known and deliberately **not** fixed in this unit:
+
+1. **The tenant selector is still a client-set GUC.** Per-tenant database roles or a definer that validates a signed
+   tenant claim are the only true fixes; both are out of scope, and this PR does neither. A caller with arbitrary SQL as
+   `ibex_app` can still set `app.current_org_id` and read another tenant.
+2. **The supported profile still connects every service as the `ibex` superuser** until PR-4 swaps the DSNs. Until then
+   RLS is inert for those services and this migration is defensive only. The ordering invariant in decision 7 is what
+   keeps the swap from silently reintroducing that state.
+3. **The legal hold is enforced by the saga and a row trigger, not by a database-wide invariant.** The saga checks the
+   hold under an advisory lock and the `ibex_purge` trigger rejects an active-hold delete. A DB-level "no tenant row may
+   be deleted while a hold is active" backstop is not built. `ibex_app` keeps `UPDATE`/`INSERT` on `legal_holds` because
+   the API's hold endpoints need them.
+4. **The three cross-tenant readers share the `ibex_runtime` login.** Splitting them onto separate logins (or moving the
+   session sweep to the worker) is a PR-4 decision once Compose wires the logins; the function grants are already
+   per-function, so the split is a credential and DSN change, not a rewrite.
+5. **`down` restores the old bypass.** Production is forward-only. If a rollback is ever needed, the rollback unit is the
+   whole wave (`000063`–`000066` plus the service pins), not an individual migration.
+
 ## Alternatives rejected
 
 - **Keep the GUC and enforce it only in application code.** Rejected: the database is the last line of defense, and the
@@ -192,7 +235,8 @@ org readable, not the deletion authority itself.
 - Migration `infra/migrations/postgres/000063_unforgeable_rls_role_term.{up,down}.sql`
 - Migration `infra/migrations/postgres/000064_service_role_model.{up,down}.sql`
 - Migration `infra/migrations/postgres/000065_privileged_tenant_readers.{up,down}.sql`
-- `infra/migrations/postgres/cmd/migrate/provision.go` and `provision_test.go`
+- Migration `infra/migrations/postgres/000066_token_prefix_index.{up,down}.sql`
+- `infra/migrations/postgres/provision.go` and `provision_test.go`
 - `infra/migrations/postgres/migrate_unforgeable_tenancy_integration_test.go`
 - [`31-v1-release-plan-2026-11-09.md`](../architecture-v2/31-v1-release-plan-2026-11-09.md), P0-06 and W8
 - PostgreSQL row security and custom-option semantics: the server assigns `current_user`; two-part GUCs are settable by

@@ -12,7 +12,7 @@ Decision records are not implementation evidence. A record can be **Proposed**, 
 
 Notable records:
 
-- [ADR-0098](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0098-unforgeable-rls-tenancy.md) — unforgeable RLS tenancy: `current_user = 'ibex_service'` replaces the client-writable GUC, `ibex_service` loses `BYPASSRLS`, and four capability roles plus five `SECURITY DEFINER` readers replace ambient cross-tenant reach.
+- [ADR-0098](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0098-remove-forgeable-service-bypass.md) — remove the forgeable service-account bypass: `current_user = 'ibex_service'` replaces the client-writable flag, `ibex_service` loses `BYPASSRLS`, and four capability roles plus five `SECURITY DEFINER` readers replace ambient cross-tenant reach. The tenant selector remains a transaction-local GUC.
 - [ADR-0097](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0097-v1-supported-profile.md) — the v1.0 supported profile: single-node self-hosted Compose, its component and transport contract, the dependency matrix, and the exclusions.
 - [ADR-0096](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0096-context-grpc-caller-authentication.md) — caller authentication for context assembly: shared service token, principal-bound selectors, memory-hit tenant validation, loopback-only plaintext.
 - [ADR-0095](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0095-retrieval-and-agreement-metrics.md) — nDCG@k, tail-extrapolated RBO, and Cohen's kappa defined once in `services/memory/app/eval`. The benchmark (5.C.2)

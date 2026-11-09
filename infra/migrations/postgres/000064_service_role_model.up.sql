@@ -33,21 +33,21 @@ BEGIN
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_runtime') THEN
-        CREATE ROLE ibex_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+        CREATE ROLE ibex_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
     ELSE
-        ALTER ROLE ibex_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+        ALTER ROLE ibex_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_worker') THEN
-        CREATE ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+        CREATE ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
     ELSE
-        ALTER ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+        ALTER ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_bootstrap') THEN
-        CREATE ROLE ibex_bootstrap LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+        CREATE ROLE ibex_bootstrap LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
     ELSE
-        ALTER ROLE ibex_bootstrap LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+        ALTER ROLE ibex_bootstrap LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT CONNECTION LIMIT 0;
     END IF;
 END
 $$;
@@ -57,11 +57,11 @@ $$;
 -- ================================================================
 GRANT ibex_app TO ibex_runtime, ibex_worker;
 GRANT ibex_purge TO ibex_worker;
-GRANT ibex_service TO ibex, ibex_bootstrap;
+GRANT ibex_service TO ibex;
 
 -- Explicit denials. Do not rely on absence: a future GRANT must not be able to
 -- turn a tenant login into a service or purge identity silently.
-REVOKE ibex_service FROM ibex_app, ibex_runtime, ibex_worker, ibex_purge, ibex_evidence_relay;
+REVOKE ibex_service FROM ibex_app, ibex_runtime, ibex_worker, ibex_bootstrap, ibex_purge, ibex_evidence_relay;
 REVOKE ibex_purge FROM ibex_app, ibex_runtime, ibex_bootstrap, ibex_service, ibex_evidence_relay;
 REVOKE ibex_app FROM ibex_bootstrap, ibex_purge, ibex_service, ibex_evidence_relay;
 
@@ -79,13 +79,23 @@ GRANT USAGE ON SCHEMA ibex_billing TO ibex_worker;
 -- memory content, credentials, token hashes, TOTP secrets, or hold reasons.
 -- ================================================================
 
--- _claim_job / _finish_job (UPDATE), _load_archived_uri_snapshot (SELECT),
--- _save_archived_uri_snapshot (UPDATE), job creation/repair (INSERT).
-GRANT SELECT, INSERT, UPDATE ON ibex_core.org_deletion_jobs TO ibex_purge;
+-- _claim_job / _finish_job / _load_archived_uri_snapshot /
+-- _save_archived_uri_snapshot. The saga only claims and finishes an existing
+-- job; the API creates it as ibex_app, so ibex_purge gets no INSERT.
+GRANT SELECT (id, org_id, status, started_at, archived_uri_snapshot)
+    ON ibex_core.org_deletion_jobs TO ibex_purge;
+GRANT UPDATE (status, started_at, error, finished_at, archived_uri_snapshot)
+    ON ibex_core.org_deletion_jobs TO ibex_purge;
 
 -- upsert_receipt (INSERT ... ON CONFLICT DO UPDATE), _latest_receipt_status
--- (SELECT), _receipt_digests (SELECT).
-GRANT SELECT, INSERT, UPDATE ON ibex_core.deletion_store_receipts TO ibex_purge;
+-- (SELECT), _receipt_digests (SELECT). INSERT stays column-scoped to the
+-- repository's explicit column list.
+GRANT SELECT (job_id, store, status, verified_absent_at, error, updated_at, idempotency_key)
+    ON ibex_core.deletion_store_receipts TO ibex_purge;
+GRANT INSERT (job_id, store, scope, status, verified_absent_at, idempotency_key, error)
+    ON ibex_core.deletion_store_receipts TO ibex_purge;
+GRANT UPDATE (status, verified_absent_at, error, updated_at)
+    ON ibex_core.deletion_store_receipts TO ibex_purge;
 
 -- _has_active_legal_hold (SELECT org_id, cleared_at) and the cleared-only
 -- DELETE in _PG_PRE_CASCADE. The BEFORE DELETE trigger below rejects an active
@@ -191,3 +201,19 @@ REVOKE DELETE ON ibex_core.directive_versions FROM ibex_service;
 -- ibex_purge, so the broad service identity loses the verb: the only delete
 -- paths are ibex_purge (cleared holds, guarded by the trigger) and the owner.
 REVOKE DELETE ON ibex_core.legal_holds FROM ibex_service;
+
+-- ================================================================
+-- Two over-broad definer grants, verified against every caller in services/
+-- and packages/ before removing.
+-- ================================================================
+-- The only privacy_audit_append caller is services/worker/app/tasks/
+-- org_deletion.py (the purge path, which uses ibex_purge and keeps EXECUTE).
+-- packages/privacyaudit only reads the ledger; services/api only reads it.
+REVOKE EXECUTE ON FUNCTION ibex_core.privacy_audit_append(
+    UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT[], TEXT, TEXT, TEXT, TEXT, TEXT, JSONB
+) FROM ibex_app;
+
+-- clear_enforcement_budget_period_id is a trigger function. Triggers fire
+-- without an EXECUTE check on the invoking role, and no caller invokes it
+-- directly.
+REVOKE EXECUTE ON FUNCTION ibex_billing.clear_enforcement_budget_period_id() FROM ibex_app;

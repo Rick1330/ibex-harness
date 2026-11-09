@@ -164,7 +164,7 @@ func TestUnforgeableRLSMemberships(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	assertMembers(t, ctx, db, "ibex_service", []string{"ibex", "ibex_bootstrap"})
+	assertMembers(t, ctx, db, "ibex_service", []string{"ibex"})
 	assertMembers(t, ctx, db, "ibex_purge", []string{"ibex_worker"})
 }
 
@@ -497,8 +497,18 @@ func TestProvisionSetsScramAndAllowsLogin(t *testing.T) {
 	t.Setenv("IBEX_WORKER_DB_PASSWORD", workerPassword)
 	t.Setenv("IBEX_BOOTSTRAP_DB_PASSWORD", bootstrapPassword)
 
+	// Inert before provisioning regardless of pg_hba.
+	for _, role := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap"} {
+		assertConnLimit(t, db, role, 0)
+	}
+
 	if err := Provision(dsn); err != nil {
 		t.Fatalf("Provision: %v", err)
+	}
+
+	// Provision clears the limit in the same statement as the verifier.
+	for _, role := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap"} {
+		assertConnLimit(t, db, role, -1)
 	}
 
 	ctx := context.Background()
@@ -612,15 +622,21 @@ func TestUnforgeableRLSDownUpCycle(t *testing.T) {
 	}
 	want := maxEmbeddedMigrationVersion(t)
 	assertVersion(t, dsn, want)
+	ctx := context.Background()
+	if !indexExists(t, ctx, db, "ibex_core.idx_tokens_prefix") {
+		t.Fatal("expected 000066 up to create idx_tokens_prefix")
+	}
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		if err := Down(dsn); err != nil {
 			t.Fatalf("down %d: %v", i+1, err)
 		}
 	}
-	assertVersion(t, dsn, want-3)
+	assertVersion(t, dsn, want-4)
+	if indexExists(t, ctx, db, "ibex_core.idx_tokens_prefix") {
+		t.Fatal("expected 000066 down to drop idx_tokens_prefix")
+	}
 
-	ctx := context.Background()
 	if !roleBypassRLS(t, ctx, db, "ibex_service") {
 		t.Fatal("expected 000063 down to restore ibex_service BYPASSRLS")
 	}
@@ -632,6 +648,9 @@ func TestUnforgeableRLSDownUpCycle(t *testing.T) {
 		t.Fatalf("re-up: %v", err)
 	}
 	assertVersion(t, dsn, want)
+	if !indexExists(t, ctx, db, "ibex_core.idx_tokens_prefix") {
+		t.Fatal("expected re-up to recreate idx_tokens_prefix")
+	}
 	if roleBypassRLS(t, ctx, db, "ibex_service") {
 		t.Fatal("expected 000063 up to remove ibex_service BYPASSRLS")
 	}
@@ -676,4 +695,24 @@ func roleCount(t *testing.T, ctx context.Context, db *sql.DB, roles ...string) i
 		t.Fatalf("pg_roles count: %v", err)
 	}
 	return n
+}
+
+func assertConnLimit(t *testing.T, db *sql.DB, role string, want int) {
+	t.Helper()
+	var got int
+	if err := db.QueryRow(`SELECT rolconnlimit FROM pg_roles WHERE rolname = $1`, role).Scan(&got); err != nil {
+		t.Fatalf("rolconnlimit %s: %v", role, err)
+	}
+	if got != want {
+		t.Fatalf("%s rolconnlimit = %d, want %d", role, got, want)
+	}
+}
+
+func indexExists(t *testing.T, ctx context.Context, db *sql.DB, qualified string) bool {
+	t.Helper()
+	var exists bool
+	if err := db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, qualified).Scan(&exists); err != nil {
+		t.Fatalf("to_regclass %s: %v", qualified, err)
+	}
+	return exists
 }

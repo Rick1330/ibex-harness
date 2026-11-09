@@ -10,7 +10,7 @@ DROP FUNCTION IF EXISTS ibex_core.sessions_abandon_idle(timestamptz, int);
 DROP FUNCTION IF EXISTS ibex_core.rate_limit_overrides_snapshot();
 DROP FUNCTION IF EXISTS ibex_core.auth_find_token_by_prefix(text);
 
-REVOKE SELECT (id, org_id, user_id, agent_id, permissions, expires_at, hash, prefix, is_revoked)
+REVOKE SELECT (id, org_id, user_id, agent_id, permissions, expires_at, hash, prefix, is_revoked, created_at)
     ON ibex_core.tokens FROM ibex_service;
 REVOKE SELECT (id, status, deleted_at)
     ON ibex_core.organizations FROM ibex_service;

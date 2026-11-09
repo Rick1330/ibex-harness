@@ -14,14 +14,14 @@ func TestBuildProvisionStatementUsesSCRAMAndOmitsPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProvisionStatement: %v", err)
 	}
-	if !strings.HasPrefix(stmt, `ALTER ROLE "ibex_runtime" PASSWORD 'SCRAM-SHA-256$4096:`) {
+	if !strings.HasPrefix(stmt, `ALTER ROLE "ibex_runtime" CONNECTION LIMIT -1 PASSWORD 'SCRAM-SHA-256$4096:`) {
 		t.Fatalf("unexpected statement shape: %q", stmt)
 	}
 	if strings.Contains(stmt, password) {
 		t.Fatalf("plaintext password leaked into statement: %q", stmt)
 	}
 	pattern := regexp.MustCompile(
-		`^ALTER ROLE "ibex_runtime" PASSWORD 'SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+'$`)
+		`^ALTER ROLE "ibex_runtime" CONNECTION LIMIT -1 PASSWORD 'SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+'$`)
 	if !pattern.MatchString(stmt) {
 		t.Fatalf("statement does not match the SCRAM format: %q", stmt)
 	}
@@ -119,21 +119,39 @@ func TestResolveProvisionSecrets(t *testing.T) {
 	if _, err := resolveProvisionSecrets(func(k string) string { return env[k] }); err == nil {
 		t.Fatal("expected owner-password collision error")
 	}
+
+	env["IBEX_WORKER_DB_PASSWORD"] = "runtime"
+	if _, err := resolveProvisionSecrets(func(k string) string { return env[k] }); err == nil {
+		t.Fatal("expected pairwise-distinct error")
+	}
 }
 
 func TestRedactError(t *testing.T) {
-	secret := "sup3r-secret"
-	err := errors.New(`syntax error near "'sup3r-secret'"`)
-	got := redactError(err, secret)
-	if strings.Contains(got.Error(), secret) {
-		t.Fatalf("secret survived redaction: %q", got)
+	tests := []struct {
+		name   string
+		secret string
+		msg    string
+	}{
+		{name: "raw", secret: "sup3r-secret", msg: `syntax error near "'sup3r-secret'"`},
+		{name: "quote-doubled", secret: "pa'ss", msg: `syntax error near "'pa''ss'"`},
 	}
-	if !strings.Contains(got.Error(), "[redacted]") {
-		t.Fatalf("expected [redacted] marker, got %q", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactError(errors.New(tc.msg), tc.secret)
+			if strings.Contains(got.Error(), tc.secret) {
+				t.Fatalf("secret survived redaction: %q", got)
+			}
+			if doubled := strings.ReplaceAll(tc.secret, "'", "''"); strings.Contains(got.Error(), doubled) {
+				t.Fatalf("quote-doubled secret survived redaction: %q", got)
+			}
+			if !strings.Contains(got.Error(), "[redacted]") {
+				t.Fatalf("expected [redacted] marker, got %q", got)
+			}
+		})
 	}
 
 	plain := errors.New("no secret here")
-	if redactError(plain, secret) != plain {
+	if redactError(plain, "sup3r-secret") != plain {
 		t.Fatal("expected unchanged error when the secret is absent")
 	}
 }

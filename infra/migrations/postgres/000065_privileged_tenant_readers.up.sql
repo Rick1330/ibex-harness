@@ -53,6 +53,7 @@ BEGIN
       AND t.is_revoked = false
       AND (t.expires_at IS NULL OR t.expires_at > NOW())
       AND o.deleted_at IS NULL
+    ORDER BY t.created_at DESC
     LIMIT 1;
 END;
 $$;
@@ -228,7 +229,7 @@ REVOKE ALL ON FUNCTION ibex_billing.active_periods() FROM PUBLIC;
 -- the owner because it is NOBYPASSRLS; the policy admits `current_user`).
 -- Column-scoped: no content, credential, or secret column is granted.
 -- ================================================================
-GRANT SELECT (id, org_id, user_id, agent_id, permissions, expires_at, hash, prefix, is_revoked)
+GRANT SELECT (id, org_id, user_id, agent_id, permissions, expires_at, hash, prefix, is_revoked, created_at)
     ON ibex_core.tokens TO ibex_service;
 GRANT SELECT (id, status, deleted_at)
     ON ibex_core.organizations TO ibex_service;

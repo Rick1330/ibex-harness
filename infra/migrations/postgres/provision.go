@@ -100,17 +100,20 @@ func provisionOne(tx *sql.Tx, target provisionTarget, secret string) error {
 		return fmt.Errorf("provision %s: ALTER ROLE failed: %w", target.role, err)
 	}
 
-	var rolsuper, rolbypassrls, rolcanlogin bool
+	var rolsuper, rolbypassrls, rolcanlogin, rolinherit, rolcreatedb, rolcreaterole bool
+	var rolconnlimit int
 	if err := tx.QueryRow(
-		`SELECT rolsuper, rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname = $1`,
+		`SELECT rolsuper, rolbypassrls, rolcanlogin, rolinherit, rolcreatedb, rolcreaterole, rolconnlimit
+		 FROM pg_roles WHERE rolname = $1`,
 		target.role,
-	).Scan(&rolsuper, &rolbypassrls, &rolcanlogin); err != nil {
+	).Scan(&rolsuper, &rolbypassrls, &rolcanlogin, &rolinherit, &rolcreatedb, &rolcreaterole, &rolconnlimit); err != nil {
 		return fmt.Errorf("provision %s: verify role: %w", target.role, err)
 	}
-	if rolsuper || rolbypassrls || !rolcanlogin {
+	if rolsuper || rolbypassrls || !rolcanlogin || rolinherit || rolcreatedb || rolcreaterole || rolconnlimit != -1 {
 		return fmt.Errorf(
-			"provision %s: unsafe role attributes (rolsuper=%v rolbypassrls=%v rolcanlogin=%v)",
-			target.role, rolsuper, rolbypassrls, rolcanlogin,
+			"provision %s: unsafe role attributes (rolsuper=%v rolbypassrls=%v rolcanlogin=%v "+
+				"rolinherit=%v rolcreatedb=%v rolcreaterole=%v rolconnlimit=%d)",
+			target.role, rolsuper, rolbypassrls, rolcanlogin, rolinherit, rolcreatedb, rolcreaterole, rolconnlimit,
 		)
 	}
 	return nil
@@ -118,6 +121,8 @@ func provisionOne(tx *sql.Tx, target provisionTarget, secret string) error {
 
 // buildProvisionStatement returns the only SQL Provision sends. The password
 // appears only as a SCRAM verifier; the plaintext is not in the statement.
+// CONNECTION LIMIT -1 is set in the same statement, so a provisioned login is
+// usable and a not-yet-provisioned login stays at limit 0 regardless of pg_hba.
 func buildProvisionStatement(role, password string) (string, error) {
 	if strings.ContainsRune(password, '\x00') {
 		return "", errors.New("password contains a NUL byte")
@@ -136,7 +141,7 @@ func buildProvisionStatement(role, password string) (string, error) {
 	// #nosec G201 -- role name is a fixed identifier and the literal is a
 	// single-quote-doubled SCRAM verifier; utility statements cannot bind
 	// parameters.
-	return fmt.Sprintf("ALTER ROLE %s PASSWORD %s", quoteIdent(role), literal), nil
+	return fmt.Sprintf("ALTER ROLE %s CONNECTION LIMIT -1 PASSWORD %s", quoteIdent(role), literal), nil
 }
 
 // scramSHA256Verifier builds PostgreSQL's stored SCRAM-SHA-256 secret
@@ -166,11 +171,13 @@ func hmacSHA256(key, message []byte) []byte {
 	return mac.Sum(nil)
 }
 
-// resolveProvisionSecrets reads the three passwords and enforces the two safety
-// rules: every secret must be present, and none may equal the owner password.
+// resolveProvisionSecrets reads the three passwords and enforces the safety
+// rules: every secret must be present, pairwise distinct, and different from
+// the owner password.
 func resolveProvisionSecrets(getenv func(string) string) (map[string]string, error) {
 	ownerPassword := getenv("POSTGRES_PASSWORD")
 	secrets := make(map[string]string, len(provisionTargets))
+	seen := make(map[string]string, len(provisionTargets))
 	for _, target := range provisionTargets {
 		value := getenv(target.envName)
 		if strings.TrimSpace(value) == "" {
@@ -182,6 +189,10 @@ func resolveProvisionSecrets(getenv func(string) string) (map[string]string, err
 		if ownerPassword != "" && value == ownerPassword {
 			return nil, fmt.Errorf("provision: %s must differ from POSTGRES_PASSWORD", target.envName)
 		}
+		if previous, ok := seen[value]; ok {
+			return nil, fmt.Errorf("provision: %s must differ from %s", target.envName, previous)
+		}
+		seen[value] = target.envName
 		secrets[target.role] = value
 	}
 	return secrets, nil
@@ -202,16 +213,20 @@ func quoteIdent(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
-// redactError removes a secret from an error string before it can reach a
-// terminal or a log. The statement no longer contains the plaintext, but this
-// is the belt to the verifier's braces.
+// redactError removes a secret, and its single-quote-doubled form, from an
+// error string before it can reach a terminal or a log. The statement no longer
+// contains the plaintext, but this is the belt to the verifier's braces.
 func redactError(err error, secret string) error {
 	if err == nil || secret == "" {
 		return err
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, secret) {
+	redacted := strings.ReplaceAll(msg, secret, "[redacted]")
+	if doubled := strings.ReplaceAll(secret, "'", "''"); doubled != secret {
+		redacted = strings.ReplaceAll(redacted, doubled, "[redacted]")
+	}
+	if redacted == msg {
 		return err
 	}
-	return errors.New(strings.ReplaceAll(msg, secret, "[redacted]"))
+	return errors.New(redacted)
 }

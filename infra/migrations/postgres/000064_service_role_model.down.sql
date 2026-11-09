@@ -11,6 +11,12 @@ GRANT DELETE ON ibex_core.session_events TO ibex_service;
 GRANT DELETE ON ibex_core.directive_versions TO ibex_service;
 GRANT DELETE ON ibex_core.legal_holds TO ibex_service;
 
+-- Restore the two ibex_app EXECUTE grants revoked by `up`.
+GRANT EXECUTE ON FUNCTION ibex_core.privacy_audit_append(
+    UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT[], TEXT, TEXT, TEXT, TEXT, TEXT, JSONB
+) TO ibex_app;
+GRANT EXECUTE ON FUNCTION ibex_billing.clear_enforcement_budget_period_id() TO ibex_app;
+
 -- ================================================================
 -- Legal-holds guard
 -- ================================================================
@@ -22,7 +28,7 @@ DROP FUNCTION IF EXISTS ibex_core.legal_holds_reject_active_delete();
 -- ================================================================
 REVOKE ibex_app FROM ibex_runtime, ibex_worker;
 REVOKE ibex_purge FROM ibex_worker;
-REVOKE ibex_service FROM ibex, ibex_bootstrap;
+REVOKE ibex_service FROM ibex;
 
 -- ================================================================
 -- Privileges granted to the capability roles
