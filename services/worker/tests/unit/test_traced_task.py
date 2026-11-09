@@ -7,6 +7,7 @@ from celery.exceptions import Retry
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 
 from app.observability import run_task_in_span, traced_task
 from app.telemetry import TRACER_NAME, reset_tracing_for_tests
@@ -44,21 +45,28 @@ def test_run_task_in_span_success(otel_memory_exporter: InMemorySpanExporter) ->
     assert attrs["ibex.org_id"] == "550e8400-e29b-41d4-a716-446655440000"
 
 
-def test_run_task_in_span_failure_records_exception(
+def test_run_task_in_span_failure_keeps_exception_text_out_of_the_span(
     otel_memory_exporter: InMemorySpanExporter,
 ) -> None:
-    with pytest.raises(ValueError, match="boom"):
+    sentinel = "SENTINEL-worker-task-content-4a71"
+    with pytest.raises(RuntimeError, match=sentinel):
         run_task_in_span(
             "ibex.worker.test.fail",
             None,
             {},
-            lambda: (_ for _ in ()).throw(ValueError("boom")),
+            lambda: (_ for _ in ()).throw(RuntimeError(sentinel)),
         )
     spans = otel_memory_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
     assert not span.status.is_ok
-    assert any(event.name == "exception" for event in span.events)
+    assert span.status.status_code is StatusCode.ERROR
+    assert "RuntimeError" in (span.status.description or "")
+    assert not any(event.name == "exception" for event in span.events)
+    rendered = repr(dict(span.attributes or {})) + repr(
+        [(event.name, dict(event.attributes or {})) for event in span.events]
+    )
+    assert sentinel not in rendered
 
 
 def test_traced_task_decorator(otel_memory_exporter: InMemorySpanExporter) -> None:

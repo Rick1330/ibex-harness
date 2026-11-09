@@ -17,6 +17,14 @@ def test_create_engine_requires_database_url() -> None:
         create_engine(Settings(database_url=None))
 
 
+def test_create_engine_masks_bound_parameters() -> None:
+    """A DBAPIError's text must never carry the statement's parameters."""
+    engine = create_engine(
+        Settings(database_url="postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex")
+    )
+    assert engine.sync_engine.hide_parameters is True
+
+
 def test_create_engine_and_session_factory() -> None:
     settings = Settings(database_url="postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex")
     engine = create_engine(settings)

@@ -39,6 +39,9 @@ def create_engine(settings: Settings) -> AsyncEngine:
         target.url,
         pool_pre_ping=True,
         connect_args=dict(target.connect_args),
+        # See services/api/app/db.py: DBAPIError text can carry bound
+        # parameters, which include extraction content.
+        hide_parameters=True,
     )
 
 

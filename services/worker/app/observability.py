@@ -107,7 +107,9 @@ def run_task_in_span(
         except Retry:
             raise
         except BaseException as exc:
-            span.record_exception(exc)
+            # The span records that the task failed and with which type, not the
+            # exception text: a provider or database error can echo content, and
+            # an exception *event* would copy it into the exported trace.
             span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
             raise
 
