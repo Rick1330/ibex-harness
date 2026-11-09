@@ -45,9 +45,12 @@ func resetSchema(t *testing.T, db *sql.DB) {
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_billing CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_core CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS schema_migrations`)
-	_, err := db.ExecContext(ctx, `DROP ROLE IF EXISTS ibex_app`)
-	if err != nil {
-		t.Fatalf("drop role: %v", err)
+	// Capability roles first: they hold grantable privileges and memberships
+	// that the schema drop does not remove.
+	for _, role := range []string{"ibex_purge", "ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_app"} {
+		if _, err := db.ExecContext(ctx, `DROP ROLE IF EXISTS `+role); err != nil {
+			t.Fatalf("drop role %s: %v", role, err)
+		}
 	}
 }
 

@@ -17,7 +17,7 @@ func main() {
 		*command = flag.Arg(0)
 	}
 	if *command == "" {
-		fmt.Fprintln(os.Stderr, "usage: migrate -command up|down|version|force [-version N]")
+		fmt.Fprintln(os.Stderr, "usage: migrate -command up|down|version|force|provision [-version N]")
 		os.Exit(2)
 	}
 
@@ -53,6 +53,12 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("migrate force: ok (version=%d)\n", *version)
+	case "provision":
+		if err := pgmigrate.Provision(dsn); err != nil {
+			fmt.Fprintf(os.Stderr, "migrate provision: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("migrate provision: ok")
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", *command)
 		os.Exit(2)

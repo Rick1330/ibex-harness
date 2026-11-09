@@ -6,12 +6,13 @@ audience: contributor
 
 # Architecture Decision Records
 
-Each ADR captures a decision, its context, consequences, and its own status. Browse the records in this directory through ADR-0089.
+Each ADR captures a decision, its context, consequences, and its own status. Browse the records in this directory through ADR-0098.
 
 Decision records are not implementation evidence. A record can be **Proposed**, **Accepted**, **Rejected**, or **Superseded** while the runtime remains provisional or absent. The authoritative runtime claim is the [status ledger](../architecture-v2/00-status-and-evidence.md).
 
 Notable records:
 
+- [ADR-0098](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0098-unforgeable-rls-tenancy.md) — unforgeable RLS tenancy: `current_user = 'ibex_service'` replaces the client-writable GUC, `ibex_service` loses `BYPASSRLS`, and four capability roles plus five `SECURITY DEFINER` readers replace ambient cross-tenant reach.
 - [ADR-0097](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0097-v1-supported-profile.md) — the v1.0 supported profile: single-node self-hosted Compose, its component and transport contract, the dependency matrix, and the exclusions.
 - [ADR-0096](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0096-context-grpc-caller-authentication.md) — caller authentication for context assembly: shared service token, principal-bound selectors, memory-hit tenant validation, loopback-only plaintext.
 - [ADR-0095](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0095-retrieval-and-agreement-metrics.md) — nDCG@k, tail-extrapolated RBO, and Cohen's kappa defined once in `services/memory/app/eval`. The benchmark (5.C.2)
