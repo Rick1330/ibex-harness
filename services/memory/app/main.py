@@ -134,8 +134,11 @@ async def _memory_service_lifespan(
         try:
             yield
         finally:
-            await auth.aclose()
+            # ADR-0019 §8: flush the exporter before dependency teardown, and
+            # before anything that can raise — a close failure must not swallow
+            # the flush.
             shutdown_tracing()
+            await auth.aclose()
         return
 
     engine = create_engine(cfg)
