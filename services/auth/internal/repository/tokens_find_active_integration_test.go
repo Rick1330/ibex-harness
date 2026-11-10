@@ -74,6 +74,7 @@ func TestTokensRepository_FindActiveByPrefix_NewestWins(t *testing.T) {
 // deterministic; the repository insert API deliberately does not take it.
 func setTokenCreatedAt(t *testing.T, db *sql.DB, tokenID string, at time.Time) {
 	t.Helper()
+	// nosemgrep: go_sql_rule-concat-sqli -- the statement is a compile-time constant and both values are bound parameters; no test value is ever interpolated into the SQL text.
 	if _, err := db.Exec(`UPDATE ibex_core.tokens SET created_at = $1 WHERE id = $2::uuid`, at, tokenID); err != nil {
 		t.Fatalf("set created_at: %v", err)
 	}
