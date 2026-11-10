@@ -51,7 +51,12 @@ class LexicalOverlapReranker:
         self.calls = 0
         self.documents_scored = 0
 
-    async def rerank(self, query: str, documents: Sequence[str]) -> list[float]:
+    # The ``async`` is the protocol contract, not an accident: the real client's
+    # ``RerankClient.rerank`` is ``async def`` and the read path awaits it inside
+    # ``asyncio.wait_for``, so a sync stub would break ``hybrid_rerank``.
+    async def rerank(  # NOSONAR(S7503)
+        self, query: str, documents: Sequence[str]
+    ) -> list[float]:
         """One score per document, in the order given.
 
         The service client returns a bare list, so a short list would silently shift every

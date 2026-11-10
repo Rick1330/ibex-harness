@@ -128,10 +128,14 @@ async def _memory_service_lifespan(
         state.ready = False
         state.ready_error = "IBEX_MEMORY_DATABASE_URL not set"
         logger.error("memory not ready: %s", state.ready_error)
-        yield
-        await auth.aclose()
-        # The not-ready path never reaches _shutdown_memory, so flush here.
-        shutdown_tracing()
+        # The not-ready path never reaches _shutdown_memory, so flush here; the
+        # gRPC channel and the exporter must be released on every exit shape,
+        # including a consumer exception thrown into this generator.
+        try:
+            yield
+        finally:
+            await auth.aclose()
+            shutdown_tracing()
         return
 
     engine = create_engine(cfg)

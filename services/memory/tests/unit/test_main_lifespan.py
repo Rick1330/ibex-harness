@@ -76,6 +76,50 @@ async def test_memory_lifespan_forwards_the_ca_file_to_the_validator(
 
 
 @pytest.mark.asyncio
+async def test_not_ready_lifespan_releases_resources_when_consumer_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A consumer exception must not skip the gRPC channel close or the flush.
+
+    The not-ready path has no ``finally`` of its own, so an exception thrown
+    into the generator at ``yield`` used to leak the aio channel and the
+    OTel exporter (python:S9152).
+    """
+    from app.main import MemoryAppState
+
+    closed: list[bool] = []
+
+    class _ClosingValidator:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr("app.main.GRPCTokenValidator", _ClosingValidator)
+    monkeypatch.setattr("app.main.configure_tracing", lambda *_a, **_k: None)
+    shutdown = MagicMock()
+    monkeypatch.setattr("app.main.shutdown_tracing", shutdown)
+
+    settings = Settings(database_url="")
+    state = MemoryAppState(settings=settings)
+
+    with pytest.raises(RuntimeError, match="consumer boom"):
+        await _consume_raising(state, settings)
+
+    assert closed, "auth channel was not closed after a consumer exception"
+    shutdown.assert_called_once_with()
+
+
+async def _consume_raising(state: object, settings: object) -> None:
+    """Enter the not-ready lifespan and blow up the consumer side."""
+    from app.main import _memory_service_lifespan
+
+    async with _memory_service_lifespan(state, settings, None):  # type: ignore[arg-type]
+        raise RuntimeError("consumer boom")
+
+
+@pytest.mark.asyncio
 async def test_build_embed_no_token_raises() -> None:
     from app.main import _build_embed
 

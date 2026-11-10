@@ -252,6 +252,39 @@ class TestLifespanShutdown:
         assert aclose_called, "hosted backend aclose() was not called on lifespan shutdown"
         get_settings.cache_clear()
 
+    async def test_backend_closed_when_consumer_raises(self) -> None:
+        """S9152: a consumer exception must still close the backend.
+
+        ``TestClient`` unwinds the lifespan with a normal shutdown message, so
+        only driving the generator directly throws into ``yield`` the way a
+        crashing consumer does.
+        """
+        aclose = AsyncMock()
+        fake_backend = MagicMock()
+        fake_backend.name = "tei"
+        fake_backend.aclose = aclose
+
+        async def fake_startup(state) -> None:
+            state.backend = fake_backend
+
+        with (
+            patch("app.main.get_settings") as mock_settings,
+            patch("app.main._startup", new=fake_startup),
+        ):
+            mock_settings.return_value.profile = "gpu"
+            with pytest.raises(RuntimeError, match="consumer boom"):
+                await _consume_raising_lifespan(MagicMock())
+
+        assert aclose.await_count == 1, "backend aclose() was skipped on consumer exception"
+
+
+async def _consume_raising_lifespan(app) -> None:
+    """Drive the real lifespan and fail the way a crashing consumer does."""
+    from app.main import lifespan
+
+    async with lifespan(app):
+        raise RuntimeError("consumer boom")
+
 
 class TestLifespanStartupPaths:
     """Verify lifespan startup error handling via TestClient."""

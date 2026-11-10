@@ -278,9 +278,11 @@ class ParallelRetriever:
             hits = await asyncio.wait_for(fetch(timeout_s), timeout=timeout_s)
         except TimeoutError:
             return _timeout_memories(name, started, f"{name}_timeout")
-        except MemoryHttpTimeout:
-            return _timeout_memories(name, started, f"{name}_http_timeout")
         except MemoryHttpError as exc:
+            # A memory HTTP timeout carries no status code but is still a timeout
+            # outcome, not an error, so it keeps its own detail and its own shape.
+            if isinstance(exc, MemoryHttpTimeout):
+                return _timeout_memories(name, started, f"{name}_http_timeout")
             return _error_memories(name, started, str(exc))
         except Exception as exc:  # noqa: BLE001 — fail-open
             return _error_memories(name, started, type(exc).__name__)
