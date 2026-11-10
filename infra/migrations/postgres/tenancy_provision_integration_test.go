@@ -304,6 +304,38 @@ func TestExistingProvisionedRoleKeepsLimit(t *testing.T) {
 // presence — a credential on a role that holds both direct memberships is the
 // provisioned case locked by TestMigrationRerunsOnProvisionedCluster.
 func TestMigrationRejectsProvisionedWorkerBeforeGrant(t *testing.T) {
+	assertMigrationRejectsForeignWorker(t, foreignWorkerCase{
+		setup: func(ctx context.Context, f *tenancyFixture) {
+			f.exec(ctx, createdWorker(runtimeSecret, 1))
+		},
+		drops: []string{`DROP ROLE IF EXISTS ibex_worker`},
+	})
+}
+
+// foreignWorkerCase is one hand-built ibex_worker shape the migration must
+// refuse. setup creates the roles and memberships; revokes and drops undo them
+// afterwards, on the success and failure paths alike.
+type foreignWorkerCase struct {
+	setup   func(context.Context, *tenancyFixture)
+	revokes []string
+	drops   []string
+}
+
+// workerTeardown removes every membership and privilege the cases add to
+// ibex_worker before the role is dropped. Revoking a role that does not exist
+// is an ignored no-op, so the same teardown serves every case.
+var workerTeardown = []string{
+	`REVOKE ibex_app FROM ibex_worker`,
+	`REVOKE ibex_purge FROM ibex_worker`,
+	`DROP OWNED BY ibex_worker`,
+}
+
+// assertMigrationRejectsForeignWorker rolls the migration suite back five
+// steps, builds the case's worker shape, and requires 000064's
+// capability-role-model abort. Cleanup is registered before Up so the roles a
+// case created are removed even when the assertion fails.
+func assertMigrationRejectsForeignWorker(t *testing.T, tc foreignWorkerCase) {
+	t.Helper()
 	f := newTenancyFixture(t)
 	ctx := t.Context()
 	for i := 0; i < 5; i++ {
@@ -311,21 +343,40 @@ func TestMigrationRejectsProvisionedWorkerBeforeGrant(t *testing.T) {
 			t.Fatalf(downErrFormat, i+1, err)
 		}
 	}
-	f.exec(ctx, fmt.Sprintf(`
-		CREATE ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
-		NOBYPASSRLS NOINHERIT PASSWORD '%s'`,
-		scramSHA256Verifier(scramInput{
-			password: runtimeSecret, salt: bytes.Repeat([]byte{1}, scramSaltBytes), iterations: scramIterations,
-		})))
+	tc.setup(ctx, f)
+	t.Cleanup(func() {
+		revokes := append(append([]string{}, workerTeardown...), tc.revokes...)
+		dropClusterRoles(context.Background(), f, revokes, tc.drops)
+	})
+
 	err := Up(f.dsn)
 	if err == nil {
-		t.Fatal("expected 000064 to reject a provisioned worker")
+		t.Fatal("expected 000064 to reject the foreign worker")
 	}
 	for _, want := range []string{"pre-exists with a credential", "capability role model"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error does not mention %q: %v", want, err)
 		}
 	}
+}
+
+// dropClusterRoles revokes memberships then drops cluster-global roles. Errors
+// are ignored so cleanup still runs after a failed assertion.
+func dropClusterRoles(ctx context.Context, f *tenancyFixture, revokes, drops []string) {
+	for _, statement := range append(append([]string{}, revokes...), drops...) {
+		_, _ = f.db.ExecContext(ctx, statement)
+	}
+}
+
+// createdWorker returns the CREATE ROLE statement for an already provisioned
+// ibex_worker. The salt byte keeps each test's verifier distinct.
+func createdWorker(password string, saltByte byte) string {
+	return fmt.Sprintf(`
+		CREATE ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+		NOBYPASSRLS NOINHERIT PASSWORD '%s'`,
+		scramSHA256Verifier(scramInput{
+			password: password, salt: bytes.Repeat([]byte{saltByte}, scramSaltBytes), iterations: scramIterations,
+		}))
 }
 
 // TestMigrationRejectsPurgeMemberWorkerWithoutApp is the F3 lock. A role that
@@ -337,46 +388,77 @@ func TestMigrationRejectsProvisionedWorkerBeforeGrant(t *testing.T) {
 // hand that foreign role full tenant read/write on the branch the guard exists
 // to abort, so both direct memberships are required.
 func TestMigrationRejectsPurgeMemberWorkerWithoutApp(t *testing.T) {
-	f := newTenancyFixture(t)
-	ctx := t.Context()
-	for i := 0; i < 5; i++ {
-		if err := Down(f.dsn); err != nil {
-			t.Fatalf(downErrFormat, i+1, err)
-		}
-	}
-	f.exec(ctx, `CREATE ROLE ibex_purge NOLOGIN NOINHERIT`)
-	f.exec(ctx, fmt.Sprintf(`
-		CREATE ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
-		NOBYPASSRLS NOINHERIT PASSWORD '%s'`,
-		scramSHA256Verifier(scramInput{
-			password: workerSecret, salt: bytes.Repeat([]byte{2}, scramSaltBytes), iterations: scramIterations,
-		})))
-	// Direct purge membership, no ibex_app membership: purge is reachable, app
-	// is not, which is exactly the shape the reachability test used to accept.
-	f.exec(ctx, `GRANT ibex_purge TO ibex_worker`)
-	t.Cleanup(func() { dropForeignWorker(context.Background(), f) })
-
-	err := Up(f.dsn)
-	if err == nil {
-		t.Fatal("expected 000064 to reject a purge member without ibex_app")
-	}
-	for _, want := range []string{"pre-exists with a credential", "capability role model"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error does not mention %q: %v", want, err)
-		}
-	}
+	assertMigrationRejectsForeignWorker(t, foreignWorkerCase{
+		setup: func(ctx context.Context, f *tenancyFixture) {
+			f.exec(ctx, `CREATE ROLE ibex_purge NOLOGIN NOINHERIT`)
+			f.exec(ctx, createdWorker(workerSecret, 2))
+			// Direct purge membership, no ibex_app membership: purge is
+			// reachable, app is not, which is exactly the shape the
+			// reachability test used to accept.
+			f.exec(ctx, `GRANT ibex_purge TO ibex_worker`)
+		},
+		drops: []string{
+			`DROP ROLE IF EXISTS ibex_worker`,
+			`DROP ROLE IF EXISTS ibex_purge`,
+		},
+	})
 }
 
-// dropForeignWorker removes the membership and roles this test built by hand so
-// a later test does not inherit a foreign ibex_worker from the cluster.
-func dropForeignWorker(ctx context.Context, f *tenancyFixture) {
-	for _, statement := range []string{
-		`REVOKE ibex_purge FROM ibex_worker`,
-		`DROP ROLE IF EXISTS ibex_worker`,
-		`DROP ROLE IF EXISTS ibex_purge`,
-	} {
-		_, _ = f.db.ExecContext(ctx, statement)
-	}
+// TestMigrationRejectsTransitiveMemberWorker is the F2 lock: reachability is
+// not provenance. A bridge role holds ibex_app and ibex_purge, and ibex_worker
+// reaches both only through it. `pg_has_role(..., 'MEMBER')` would accept that
+// shape — and `migrate provision` would too, because it checks reachability by
+// any path — but 000064's model is a direct, SET-enabled grant, so the worker
+// is foreign and must abort. Reverting the predicate to pg_has_role re-opens
+// the widening path and fails this test.
+func TestMigrationRejectsTransitiveMemberWorker(t *testing.T) {
+	assertMigrationRejectsForeignWorker(t, foreignWorkerCase{
+		setup: func(ctx context.Context, f *tenancyFixture) {
+			f.exec(ctx, `CREATE ROLE ibex_purge NOLOGIN NOINHERIT`)
+			f.exec(ctx, `CREATE ROLE ibex_bridge NOLOGIN NOINHERIT`)
+			f.exec(ctx, createdWorker(workerSecret, 3))
+			// ibex_worker holds no direct capability row: both reach only
+			// through the bridge, which is the shape a reachability predicate
+			// accepts.
+			f.exec(ctx, `GRANT ibex_app TO ibex_bridge`)
+			f.exec(ctx, `GRANT ibex_purge TO ibex_bridge`)
+			f.exec(ctx, `GRANT ibex_bridge TO ibex_worker`)
+		},
+		revokes: []string{
+			`REVOKE ibex_bridge FROM ibex_worker`,
+			`REVOKE ibex_app FROM ibex_bridge`,
+			`REVOKE ibex_purge FROM ibex_bridge`,
+			`DROP OWNED BY ibex_bridge`,
+		},
+		drops: []string{
+			`DROP ROLE IF EXISTS ibex_worker`,
+			`DROP ROLE IF EXISTS ibex_bridge`,
+			`DROP ROLE IF EXISTS ibex_purge`,
+		},
+	})
+}
+
+// TestMigrationRejectsSetFalseMemberWorker is the SET-option lock. The worker
+// holds direct rows for both capabilities, but each was granted WITH SET FALSE:
+// a NOINHERIT login cannot assume them, so the rows describe a narrowed
+// membership rather than provenance from this model. The unconditional GRANT
+// below the guard would flip set_option back to true and silently widen it.
+// Removing `AND m.set_option` re-opens that path and fails this test.
+func TestMigrationRejectsSetFalseMemberWorker(t *testing.T) {
+	assertMigrationRejectsForeignWorker(t, foreignWorkerCase{
+		setup: func(ctx context.Context, f *tenancyFixture) {
+			f.exec(ctx, `CREATE ROLE ibex_purge NOLOGIN NOINHERIT`)
+			f.exec(ctx, createdWorker(workerSecret, 4))
+			// Direct rows that exist but cannot be assumed: the exact shape the
+			// bare EXISTS predicate accepted.
+			f.exec(ctx, `GRANT ibex_app TO ibex_worker WITH SET FALSE`)
+			f.exec(ctx, `GRANT ibex_purge TO ibex_worker WITH SET FALSE`)
+		},
+		drops: []string{
+			`DROP ROLE IF EXISTS ibex_worker`,
+			`DROP ROLE IF EXISTS ibex_purge`,
+		},
+	})
 }
 
 // driftCase is one pre-provision drift that must make Provision reject.
