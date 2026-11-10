@@ -12,8 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[3]
-SCHEMA_PATH = ROOT / "infra/assurance/p6/manifest.schema.json"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 ARTIFACT_URI = re.compile(r"^(https://|s3://|gs://|file://).+")
@@ -269,7 +267,9 @@ def main() -> int:
     parser.add_argument("--sha256", action="store_true", help="also print the manifest digest")
     args = parser.parse_args()
     try:
-        raw = args.manifest.read_bytes()
+        # Path is supplied by the operator/CI, read-only, no privilege boundary:
+        # check-p6-bootstrap.sh passes mktemp and NamedTemporaryFile fixtures outside ROOT.
+        raw = args.manifest.read_bytes()  # NOSONAR pythonsecurity:S8707
         parsed = json.loads(raw)
         if not isinstance(parsed, dict):
             fail("manifest: expected JSON object")

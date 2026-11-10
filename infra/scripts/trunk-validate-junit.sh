@@ -3,7 +3,7 @@
 # Usage: trunk-validate-junit.sh <junit-paths-glob>
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
+if [[ "$#" -ne 1 ]]; then
   echo "usage: $0 <junit-paths-glob>" >&2
   exit 2
 fi
@@ -12,7 +12,7 @@ junit_paths="$1"
 repo_root="$(git rev-parse --show-toplevel)"
 cli="${TRUNK_ANALYTICS_CLI:-$repo_root/trunk-analytics-cli}"
 
-if [ ! -x "$cli" ]; then
+if [[ ! -x "$cli" ]]; then
   os="$(uname -s)"
   arch="$(uname -m)"
   case "$os-$arch" in
@@ -28,7 +28,7 @@ if [ ! -x "$cli" ]; then
   esac
   tmpdir="$(mktemp -d)"
   trap 'rm -rf "$tmpdir"' EXIT
-  curl -fL --retry 3 \
+  curl --proto '=https' --tlsv1.2 --proto-redir '=https' -fL --retry 3 \
     "https://github.com/trunk-io/analytics-cli/releases/latest/download/${sku}" \
     | tar -xz -C "$tmpdir"
   cli="$tmpdir/trunk-analytics-cli"
