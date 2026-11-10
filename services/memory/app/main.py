@@ -137,8 +137,16 @@ async def _memory_service_lifespan(
             # ADR-0019 §8: flush the exporter before dependency teardown, and
             # before anything that can raise — a close failure must not swallow
             # the flush.
-            shutdown_tracing()
-            await auth.aclose()
+            #
+            # The flush is nested so a raising exporter (timeout, collector
+            # down) cannot skip the close and leak the gRPC channel. If both
+            # fail, the close error propagates with the flush error chained as
+            # its __context__: the caller sees the later failure, and the
+            # flush fault stays in the traceback instead of being discarded.
+            try:
+                shutdown_tracing()
+            finally:
+                await auth.aclose()
         return
 
     engine = create_engine(cfg)

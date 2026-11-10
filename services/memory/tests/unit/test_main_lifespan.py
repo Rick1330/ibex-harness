@@ -12,6 +12,21 @@ from app.config import Settings
 from app.main import create_app
 
 
+@pytest.fixture
+def closing_validator() -> tuple[type, list[bool]]:
+    """A validator that records every channel close into a shared list."""
+    closed: list[bool] = []
+
+    class _ClosingValidator:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    return _ClosingValidator, closed
+
+
 def test_create_app_without_database_url_not_ready() -> None:
     settings = Settings(database_url="", embedding_api_token="tok")
     validator = StaticTokenValidator({}, available=True)
@@ -78,6 +93,7 @@ async def test_memory_lifespan_forwards_the_ca_file_to_the_validator(
 @pytest.mark.asyncio
 async def test_not_ready_lifespan_releases_resources_when_consumer_raises(
     monkeypatch: pytest.MonkeyPatch,
+    closing_validator: tuple[type, list[bool]],
 ) -> None:
     """A consumer exception must not skip the gRPC channel close or the flush.
 
@@ -87,16 +103,9 @@ async def test_not_ready_lifespan_releases_resources_when_consumer_raises(
     """
     from app.main import MemoryAppState
 
-    closed: list[bool] = []
+    validator_cls, closed = closing_validator
 
-    class _ClosingValidator:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
-
-        async def aclose(self) -> None:
-            closed.append(True)
-
-    monkeypatch.setattr("app.main.GRPCTokenValidator", _ClosingValidator)
+    monkeypatch.setattr("app.main.GRPCTokenValidator", validator_cls)
     monkeypatch.setattr("app.main.configure_tracing", lambda *_a, **_k: None)
     shutdown = MagicMock()
     monkeypatch.setattr("app.main.shutdown_tracing", shutdown)
@@ -109,6 +118,72 @@ async def test_not_ready_lifespan_releases_resources_when_consumer_raises(
 
     assert closed, "auth channel was not closed after a consumer exception"
     shutdown.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_not_ready_lifespan_closes_channel_when_the_flush_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    closing_validator: tuple[type, list[bool]],
+) -> None:
+    """A raising flush must not skip the gRPC channel close.
+
+    ``shutdown_tracing`` force-flushes and then shuts the provider down without
+    a handler, so an exporter timeout raises. Sequencing the close after it
+    plainly would leak exactly the channel this cleanup exists to release.
+    """
+    from app.main import MemoryAppState
+
+    validator_cls, closed = closing_validator
+
+    monkeypatch.setattr("app.main.GRPCTokenValidator", validator_cls)
+    monkeypatch.setattr("app.main.configure_tracing", lambda *_a, **_k: None)
+    shutdown = MagicMock(side_effect=RuntimeError("flush boom"))
+    monkeypatch.setattr("app.main.shutdown_tracing", shutdown)
+
+    settings = Settings(database_url="")
+    state = MemoryAppState(settings=settings)
+
+    with pytest.raises(RuntimeError, match="flush boom"):
+        await _consume_raising(state, settings)
+
+    assert closed, "auth channel was not closed after a failing tracing flush"
+    shutdown.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_not_ready_lifespan_surfaces_the_close_error_and_keeps_the_flush_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both failures stay visible: the close error propagates, flush is its cause."""
+    from app.main import MemoryAppState
+
+    closed: list[bool] = []
+
+    class _FailingCloseValidator:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def aclose(self) -> None:
+            closed.append(True)
+            raise OSError("close boom")
+
+    monkeypatch.setattr("app.main.GRPCTokenValidator", _FailingCloseValidator)
+    monkeypatch.setattr("app.main.configure_tracing", lambda *_a, **_k: None)
+    shutdown = MagicMock(side_effect=RuntimeError("flush boom"))
+    monkeypatch.setattr("app.main.shutdown_tracing", shutdown)
+
+    settings = Settings(database_url="")
+    state = MemoryAppState(settings=settings)
+
+    with pytest.raises(OSError, match="close boom") as excinfo:
+        await _consume_raising(state, settings)
+
+    assert closed
+    assert shutdown.call_count == 1
+    # The flush error is not discarded: it is chained behind the close error.
+    context = excinfo.value.__context__
+    assert isinstance(context, RuntimeError)
+    assert str(context) == "flush boom"
 
 
 async def _consume_raising(state: object, settings: object) -> None:
