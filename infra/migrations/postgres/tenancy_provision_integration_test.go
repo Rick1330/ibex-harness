@@ -229,9 +229,10 @@ func TestProvisionedLoginSurvivesReRun(t *testing.T) {
 // cluster-global role model. Roles, their credentials and their memberships are
 // shared by every database in a cluster, so a second database resets only its
 // own schemas and then re-runs 000064 against a login that `migrate provision`
-// already secured. `provision` cannot commit unless ibex_worker is a member of
-// ibex_purge, so that membership — not the bare presence of a credential — is
-// the provenance signal, and the re-run must succeed without widening anything.
+// already secured. `provision` cannot commit unless ibex_worker holds a direct
+// membership of both ibex_app and ibex_purge, so those two rows — not the bare
+// presence of a credential — are the provenance signal, and the re-run must
+// succeed without widening anything.
 func TestMigrationRerunsOnProvisionedCluster(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
@@ -297,11 +298,11 @@ func TestExistingProvisionedRoleKeepsLimit(t *testing.T) {
 }
 
 // TestMigrationRejectsProvisionedWorkerBeforeGrant proves 000064 still refuses a
-// foreign login: ibex_worker exists with a credential but was never made a
-// member of ibex_purge, so `migrate provision` cannot have produced it. This
-// pins the membership condition, not bare credential presence — a credential on
-// a role that already holds the purge membership is the provisioned case locked
-// by TestMigrationRerunsOnProvisionedCluster.
+// foreign login: ibex_worker exists with a credential but holds no direct
+// membership of ibex_app or ibex_purge, so `migrate provision` cannot have
+// produced it. This pins the direct-membership condition, not bare credential
+// presence — a credential on a role that holds both direct memberships is the
+// provisioned case locked by TestMigrationRerunsOnProvisionedCluster.
 func TestMigrationRejectsProvisionedWorkerBeforeGrant(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
@@ -324,6 +325,57 @@ func TestMigrationRejectsProvisionedWorkerBeforeGrant(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error does not mention %q: %v", want, err)
 		}
+	}
+}
+
+// TestMigrationRejectsPurgeMemberWorkerWithoutApp is the F3 lock. A role that
+// already holds ibex_purge but was never made a member of ibex_app is
+// necessarily hand-built: `migrate provision` requires both memberships and no
+// migration grants ibex_purge to anything but the modelled pair. Reaching
+// ibex_purge alone would satisfy a `pg_has_role(..., 'MEMBER')` provenance test,
+// and the unconditional `GRANT ibex_app TO ibex_runtime, ibex_worker` would then
+// hand that foreign role full tenant read/write on the branch the guard exists
+// to abort, so both direct memberships are required.
+func TestMigrationRejectsPurgeMemberWorkerWithoutApp(t *testing.T) {
+	f := newTenancyFixture(t)
+	ctx := t.Context()
+	for i := 0; i < 5; i++ {
+		if err := Down(f.dsn); err != nil {
+			t.Fatalf(downErrFormat, i+1, err)
+		}
+	}
+	f.exec(ctx, `CREATE ROLE ibex_purge NOLOGIN NOINHERIT`)
+	f.exec(ctx, fmt.Sprintf(`
+		CREATE ROLE ibex_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+		NOBYPASSRLS NOINHERIT PASSWORD '%s'`,
+		scramSHA256Verifier(scramInput{
+			password: workerSecret, salt: bytes.Repeat([]byte{2}, scramSaltBytes), iterations: scramIterations,
+		})))
+	// Direct purge membership, no ibex_app membership: purge is reachable, app
+	// is not, which is exactly the shape the reachability test used to accept.
+	f.exec(ctx, `GRANT ibex_purge TO ibex_worker`)
+	t.Cleanup(func() { dropForeignWorker(context.Background(), f) })
+
+	err := Up(f.dsn)
+	if err == nil {
+		t.Fatal("expected 000064 to reject a purge member without ibex_app")
+	}
+	for _, want := range []string{"pre-exists with a credential", "capability role model"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error does not mention %q: %v", want, err)
+		}
+	}
+}
+
+// dropForeignWorker removes the membership and roles this test built by hand so
+// a later test does not inherit a foreign ibex_worker from the cluster.
+func dropForeignWorker(ctx context.Context, f *tenancyFixture) {
+	for _, statement := range []string{
+		`REVOKE ibex_purge FROM ibex_worker`,
+		`DROP ROLE IF EXISTS ibex_worker`,
+		`DROP ROLE IF EXISTS ibex_purge`,
+	} {
+		_, _ = f.db.ExecContext(ctx, statement)
 	}
 }
 

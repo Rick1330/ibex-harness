@@ -27,8 +27,9 @@ SET LOCAL lock_timeout = '5s';
 -- ================================================================
 DO $$
 DECLARE
-    purge_created  boolean;
-    worker_created boolean;
+    purge_created   boolean;
+    worker_created  boolean;
+    worker_modelled boolean;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_purge') THEN -- NOSONAR: ALTER ROLE attributes cannot be parameterised; each role restates the same attribute set deliberately
         CREATE ROLE ibex_purge NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
@@ -60,6 +61,24 @@ BEGIN
 
     PERFORM set_config('ibex.created_purge', purge_created::text, true);
     PERFORM set_config('ibex.created_worker', worker_created::text, true);
+
+    -- Direct grant rows only: pg_has_role(...,'MEMBER') also counts transitive
+    -- and SET-option memberships, which a hand-built role could satisfy without
+    -- ever being part of this model.
+    worker_modelled :=
+        EXISTS (
+            SELECT 1 FROM pg_auth_members m
+            JOIN pg_roles granted ON granted.oid = m.roleid
+            JOIN pg_roles member  ON member.oid  = m.member
+            WHERE granted.rolname = 'ibex_app' AND member.rolname = 'ibex_worker'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_auth_members m
+            JOIN pg_roles granted ON granted.oid = m.roleid
+            JOIN pg_roles member  ON member.oid  = m.member
+            WHERE granted.rolname = 'ibex_purge' AND member.rolname = 'ibex_worker'
+        );
+    PERFORM set_config('ibex.worker_modelled', worker_modelled::text, true);
 END
 $$;
 
@@ -73,10 +92,18 @@ GRANT ibex_app TO ibex_runtime, ibex_worker;
 -- Roles and memberships are cluster-global, so a second database in a
 -- provisioned cluster re-runs this file against a login that `migrate
 -- provision` already secured. `provision` cannot commit unless ibex_worker is
--- a member of ibex_purge, so that membership is the provenance signal: a
--- credential alone is not drift. Without the membership the role is foreign and
--- granting ibex_purge would silently widen it, so stop and tell the operator to
--- re-provision.
+-- already a direct member of both ibex_app and ibex_purge, so those two
+-- pg_auth_members rows — captured above, before any GRANT in this file ran — are
+-- the provenance signal. A credential alone is not drift, and neither is a
+-- membership that exists only through another role. Without both direct
+-- memberships the role is foreign: granting ibex_app (above) or ibex_purge
+-- (below) would silently widen it, so stop and tell the operator to drop it.
+--
+-- The signal is the presence of direct rows, deliberately not
+-- pg_has_role(..., 'MEMBER'): that predicate is documented as direct *or
+-- indirect*, and a row granted with SET FALSE still counts. Both let a
+-- hand-built role satisfy a reachability test without ever being produced by
+-- this model.
 --
 -- The ibex_purge guard stays on bare credential presence: provisionTargets has
 -- no ibex_purge entry, so `provision` can never set a verifier on it, and any
@@ -86,16 +113,13 @@ BEGIN
     IF current_setting('ibex.created_purge', true) IS DISTINCT FROM 'true'
        AND EXISTS (SELECT 1 FROM pg_authid WHERE rolname = 'ibex_purge' AND rolpassword IS NOT NULL) THEN
         RAISE EXCEPTION
-            'ibex_purge pre-exists with a credential; re-provision the capability logins';
+            'ibex_purge has an out-of-band credential; clear it with ALTER ROLE ibex_purge PASSWORD NULL, then re-run the migration';
     END IF;
     IF current_setting('ibex.created_worker', true) IS DISTINCT FROM 'true'
-       AND EXISTS (SELECT 1 FROM pg_authid WHERE rolname = 'ibex_worker' AND rolpassword IS NOT NULL) THEN
-        -- Nested deliberately: `pg_has_role` raises for a missing role, and
-        -- AND-clause evaluation order is not guaranteed.
-        IF NOT pg_has_role('ibex_worker', 'ibex_purge', 'MEMBER') THEN
-            RAISE EXCEPTION
-                'ibex_worker pre-exists with a credential outside the capability role model; re-provision the capability logins';
-        END IF;
+       AND EXISTS (SELECT 1 FROM pg_authid WHERE rolname = 'ibex_worker' AND rolpassword IS NOT NULL)
+       AND current_setting('ibex.worker_modelled', true) IS DISTINCT FROM 'true' THEN
+        RAISE EXCEPTION
+            'ibex_worker pre-exists with a credential outside the capability role model; drop the foreign role, re-run the migration, then provision';
     END IF;
 END
 $$;
