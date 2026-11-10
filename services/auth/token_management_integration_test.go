@@ -171,6 +171,8 @@ func TestListTokensAfterCreate(t *testing.T) {
 	}
 }
 
+// TestRevokeTokenCrossTenant proves an admin token for org A cannot revoke a
+// token belonging to org B: the gRPC layer answers PermissionDenied, not a miss.
 func TestRevokeTokenCrossTenant(t *testing.T) {
 	dsn, cleanupPG := testutil.SetupPostgres(t)
 	defer cleanupPG()

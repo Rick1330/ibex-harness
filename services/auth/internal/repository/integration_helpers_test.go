@@ -31,6 +31,8 @@ type findActiveCase struct {
 	wantFound bool
 }
 
+// seedFindActiveToken creates one organisation and the token described by tc,
+// returning the prefix the lookup under test is made with.
 func seedFindActiveToken(t *testing.T, repo *repository.TokensRepository, db *sql.DB, tc findActiveCase) string {
 	t.Helper()
 	orgID := testutil.SeedOrganization(t, db, "Find Org "+tc.name, "find-"+uuid.NewString()[:8])
@@ -118,6 +120,8 @@ func assertTokenIDsPresent(t *testing.T, want []string, rows []repository.TokenM
 	}
 }
 
+// insertNamedToken inserts a token with a real Argon2 hash so every row in a
+// listing is valid, and returns its id.
 func insertNamedToken(t *testing.T, repo *repository.TokensRepository, orgID, name string) string {
 	t.Helper()
 	tokenID := uuid.New()

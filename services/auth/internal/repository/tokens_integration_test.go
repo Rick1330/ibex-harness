@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// TestTokensRepository_CreateToken proves the insert round-trips and returns the
+// caller-supplied id.
 func TestTokensRepository_CreateToken(t *testing.T) {
 	repo, db := setupTokensRepo(t)
 	orgID := testutil.SeedOrganization(t, db, "Create Org", "create-"+uuid.NewString()[:8])
@@ -41,6 +43,8 @@ func TestTokensRepository_RevokeToken_ErrNotFound(t *testing.T) {
 	}
 }
 
+// TestTokensRepository_RevokeToken_HappyPath proves an active token is revoked
+// from within its own organisation.
 func TestTokensRepository_RevokeToken_HappyPath(t *testing.T) {
 	repo, db := setupTokensRepo(t)
 	orgID := testutil.SeedOrganization(t, db, "Revoke OK Org", "revoke-ok-"+uuid.NewString()[:8])

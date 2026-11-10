@@ -33,6 +33,9 @@ type isolationFixture struct {
 	credCiphertext []byte
 }
 
+// newIsolationFixture seeds two organisations and binds every repository to the
+// shared test database, with the rows the cross-tenant cases read or mutate
+// already in place.
 func newIsolationFixture(t *testing.T) *isolationFixture {
 	t.Helper()
 	dsn, cleanup := testutil.SetupPostgres(t)
@@ -63,6 +66,8 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 	return f
 }
 
+// seedRows creates org B's token, TOTP secret and provider credential, plus a
+// token for org A so a listing has something of its own to return.
 func (f *isolationFixture) seedRows(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
@@ -114,6 +119,8 @@ type crossTenantCaseTable struct {
 	run  func(*testing.T)
 }
 
+// crossTenantCases returns one case per tenant operation, each attempting to
+// reach org B's row while scoped to org A.
 func crossTenantCases(ctx context.Context, f *isolationFixture) []crossTenantCaseTable {
 	return []crossTenantCaseTable{
 		{"user", func(t *testing.T) {
@@ -170,6 +177,8 @@ func crossTenantCases(ctx context.Context, f *isolationFixture) []crossTenantCas
 	}
 }
 
+// assertCrossTenantSentinel requires the operation to fail with want and never
+// with a permission error, so an outage cannot pass as a tenant denial.
 func assertCrossTenantSentinel(t *testing.T, label string, want error, call func() error) {
 	t.Helper()
 	err := call()
@@ -179,6 +188,8 @@ func assertCrossTenantSentinel(t *testing.T, label string, want error, call func
 	}
 }
 
+// assertCrossTenantMiss requires the operation to succeed with no row visible
+// to the pinned organisation.
 func assertCrossTenantMiss(t *testing.T, label string, found func() (bool, error)) {
 	t.Helper()
 	hit, err := found()
@@ -191,6 +202,8 @@ func assertCrossTenantMiss(t *testing.T, label string, found func() (bool, error
 	}
 }
 
+// assertCrossTenantTokenList requires org A's listing to contain none of org
+// B's prefixes.
 func assertCrossTenantTokenList(t *testing.T, ctx context.Context, f *isolationFixture) {
 	t.Helper()
 	rows, _, err := f.repo.ListTokens(ctx, f.orgA, "", 100)
@@ -205,6 +218,8 @@ func assertCrossTenantTokenList(t *testing.T, ctx context.Context, f *isolationF
 	}
 }
 
+// lookupTokenID resolves org B's token id through the cross-tenant definer, so
+// the revoke case can name a row org A must not reach.
 func lookupTokenID(t *testing.T, f *isolationFixture, prefix string) string {
 	t.Helper()
 	row, err := f.repo.FindActiveByPrefix(context.Background(), prefix)
@@ -214,6 +229,8 @@ func lookupTokenID(t *testing.T, f *isolationFixture, prefix string) string {
 	return row.ID
 }
 
+// assertNoPermissionError fails when err is SQLSTATE 42501: a wrong pin must
+// surface as a tenant miss, never as a privilege error.
 func assertNoPermissionError(t *testing.T, err error) {
 	t.Helper()
 	var pqErr *pq.Error

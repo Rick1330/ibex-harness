@@ -94,6 +94,8 @@ func openRuntimeDB(t *testing.T, dsn string) *sql.DB {
 	return db
 }
 
+// newRuntimeValidator builds a validator over a pool opened as ibex_runtime, so
+// the definer call and the role grant are exercised, not just the Go SQL.
 func newRuntimeValidator(t *testing.T, db *sql.DB, argon2 token.Argon2Params) *token.Validator {
 	t.Helper()
 	repo := repository.RequireTokensRepository(t, db, nil)
@@ -114,6 +116,8 @@ type runtimeSeed struct {
 	expiresAt *time.Time
 }
 
+// seedRuntimeBearer inserts the token described by seed for orgID and returns
+// the bearer the validator is called with.
 func seedRuntimeBearer(t *testing.T, repo *repository.TokensRepository, orgID string, seed runtimeSeed) string {
 	t.Helper()
 	tokenID := uuid.New()
@@ -131,6 +135,9 @@ func seedRuntimeBearer(t *testing.T, repo *repository.TokensRepository, orgID st
 	return bearer
 }
 
+// assertRuntimeUnauthenticated requires a rejected bearer to fail as
+// unauthenticated, which is the same answer a wrong token gets under the owner
+// login; the definer must not turn a miss into a different error.
 func assertRuntimeUnauthenticated(t *testing.T, validator *token.Validator, bearer, label string) {
 	t.Helper()
 	_, err := validator.Validate(context.Background(), bearer)

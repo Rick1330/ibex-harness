@@ -101,6 +101,8 @@ func (e validateEnv) mustHash(t *testing.T, bearer bearerRef) string {
 	return hash
 }
 
+// insertActivePAT stores one valid PAT for org and returns the bearer that
+// validates it.
 func (e validateEnv) insertActivePAT(t *testing.T, org orgRef, perms int64) bearerRef {
 	t.Helper()
 	tokenID := uuid.New()
@@ -139,6 +141,8 @@ func (e validateEnv) assertUnauthenticated(t *testing.T, bearer bearerRef) {
 	}
 }
 
+// assertRevokedRejected inserts a token that is already revoked and requires the
+// validator to reject it as unauthenticated.
 func (e validateEnv) assertRevokedRejected(t *testing.T, org orgRef) {
 	t.Helper()
 	revokedID := uuid.New()

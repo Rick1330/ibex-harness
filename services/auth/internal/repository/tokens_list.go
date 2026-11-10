@@ -58,6 +58,9 @@ type listTokensQuery struct {
 	limit    int
 }
 
+// queryTokenMetadataPage lists one page of token metadata for q.orgID inside a
+// tenant-pinned transaction. It reads one row beyond the limit so the caller can
+// decide whether a next cursor exists.
 func (r *TokensRepository) queryTokenMetadataPage(ctx context.Context, q listTokensQuery) ([]TokenMetadata, error) {
 	var rows []TokenMetadata
 	err := withTenant(ctx, r.db, q.orgID, func(tx *sql.Tx) error {

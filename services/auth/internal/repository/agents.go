@@ -29,6 +29,9 @@ func NewAgentsRepository(db *sql.DB, obs metrics.QueryObserver) *AgentsRepositor
 	return &AgentsRepository{db: db, obs: obs}
 }
 
+// GetByIDAndOrg returns the agent only when it belongs to orgID. The org is
+// part of the WHERE clause as well as the RLS predicate, so a foreign agent is a
+// miss rather than a permission error.
 func (r *AgentsRepository) GetByIDAndOrg(
 	ctx context.Context,
 	agentID, orgID uuid.UUID,

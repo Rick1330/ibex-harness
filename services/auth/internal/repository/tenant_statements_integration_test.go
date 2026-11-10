@@ -59,6 +59,7 @@ type captureDriver struct {
 	log   *statementLog
 }
 
+// Open wraps the lib/pq connection so every statement it carries is recorded.
 func (d captureDriver) Open(name string) (driver.Conn, error) {
 	conn, err := d.inner.Open(name)
 	if err != nil {
@@ -79,6 +80,8 @@ func (c *captureConn) Prepare(query string) (driver.Stmt, error) {
 	return c.Conn.Prepare(query)
 }
 
+// ExecContext records the statement and forwards it when the underlying
+// connection supports context-aware execution.
 func (c *captureConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	execer, ok := c.Conn.(driver.ExecerContext)
 	if !ok {
@@ -88,6 +91,8 @@ func (c *captureConn) ExecContext(ctx context.Context, query string, args []driv
 	return execer.ExecContext(ctx, query, args)
 }
 
+// QueryContext records the statement and forwards it when the underlying
+// connection supports context-aware queries.
 func (c *captureConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	queryer, ok := c.Conn.(driver.QueryerContext)
 	if !ok {
@@ -97,6 +102,8 @@ func (c *captureConn) QueryContext(ctx context.Context, query string, args []dri
 	return queryer.QueryContext(ctx, query, args)
 }
 
+// BeginTx forwards to the context-aware beginner when available. It records
+// nothing: a transaction boundary is not a statement sent to the server.
 func (c *captureConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	if beginner, ok := c.Conn.(driver.ConnBeginTx); ok {
 		return beginner.BeginTx(ctx, opts)
@@ -113,6 +120,8 @@ func (c *captureConn) CheckNamedValue(nv *driver.NamedValue) error {
 	return driver.ErrSkip
 }
 
+// openCaptureDB registers the recording driver once per process and opens a
+// pool that routes every statement through it.
 func openCaptureDB(t *testing.T, dsn string) *sql.DB {
 	t.Helper()
 	captureOnce.Do(func() {
@@ -133,6 +142,8 @@ type tenantCaptureEnv struct {
 	pendingCiphertext      []byte
 }
 
+// seedTenantCaptureEnv creates one organisation with a user, an agent and a
+// token, and returns the ids every capture case addresses.
 func seedTenantCaptureEnv(t *testing.T, seedRepo *repository.TokensRepository, db *sql.DB) tenantCaptureEnv {
 	t.Helper()
 	label := uuid.NewString()[:8]
@@ -166,6 +177,8 @@ type captureRepos struct {
 	tokenID string
 }
 
+// newCaptureRepos binds each repository to the recording pool so the same
+// operations can be inspected statement by statement.
 func newCaptureRepos(t *testing.T, db *sql.DB, env tenantCaptureEnv) *captureRepos {
 	t.Helper()
 	tokens := repository.RequireTokensRepository(t, db, nil)
@@ -213,6 +226,8 @@ func seedCaptureRows(t *testing.T, r *captureRepos) {
 	}
 }
 
+// tenantCaptureCases returns one repository operation per tenant path, paired
+// with a fragment that identifies the table it must reach.
 func tenantCaptureCases() []tenantCaptureCase {
 	return []tenantCaptureCase{
 		{"CreateToken", "INSERT INTO ibex_core.tokens", func(ctx context.Context, r *captureRepos) error {
@@ -375,6 +390,8 @@ func TestRepositoryTenantIDFailsClosed(t *testing.T) {
 	}
 }
 
+// assertStatementContains requires at least one recorded statement to contain
+// fragment, which is how each case proves it reached its table.
 func assertStatementContains(t *testing.T, stmts []string, fragment string) {
 	t.Helper()
 	for _, stmt := range stmts {
@@ -385,6 +402,8 @@ func assertStatementContains(t *testing.T, stmts []string, fragment string) {
 	t.Fatalf("no statement contained %q: %v", fragment, stmts)
 }
 
+// assertNoServiceAccountGUC fails if any recorded statement still sets the
+// retired app.is_service_account flag.
 func assertNoServiceAccountGUC(t *testing.T, stmts []string) {
 	t.Helper()
 	for _, stmt := range stmts {
