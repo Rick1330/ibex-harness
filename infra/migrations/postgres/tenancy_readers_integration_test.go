@@ -50,7 +50,11 @@ func TestTenancyReaderGrantMatrix(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
 	for _, grant := range readerGrants {
-		t.Run(grant.name, func(t *testing.T) { assertReaderGrants(f, ctx, grant) })
+		t.Run(grant.name, func(t *testing.T) {
+			sub := *f
+			sub.t = t
+			assertReaderGrants(&sub, ctx, grant)
+		})
 	}
 }
 

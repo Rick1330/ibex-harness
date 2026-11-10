@@ -167,6 +167,7 @@ func provisionOne(tx *sql.Tx, credential provisionCredential) error {
 	if err != nil {
 		return fmt.Errorf("provision %s: %w", role, err)
 	}
+	// nosemgrep: go_sql_rule-concat-sqli -- the role is a compile-time allowlist constant and the verifier is produced by scramSHA256Verifier (base64, $ and : only), so no caller input reaches the string.
 	if _, err := tx.Exec(statement); err != nil {
 		return fmt.Errorf("provision %s: ALTER ROLE failed: %w", role, err)
 	}

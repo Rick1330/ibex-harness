@@ -34,7 +34,11 @@ func TestTenancyPurgeCannotReadSecrets(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
 	for _, tc := range sealedColumnCases {
-		t.Run(tc.name, func(t *testing.T) { assertSealedColumn(f, ctx, tc) })
+		t.Run(tc.name, func(t *testing.T) {
+			sub := *f
+			sub.t = t
+			assertSealedColumn(&sub, ctx, tc)
+		})
 	}
 }
 

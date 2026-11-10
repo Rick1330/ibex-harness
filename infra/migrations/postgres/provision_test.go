@@ -231,18 +231,27 @@ func TestValidateDSNScheme(t *testing.T) {
 	}
 }
 
-// TestSanitizeProvisionError removes the DSN, its credential and every secret.
+// TestSanitizeProvisionError removes the DSN, its credential and every secret
+// while keeping non-sensitive context.
 func TestSanitizeProvisionError(t *testing.T) {
+	owner := "own" + "er-sentinel"
+	runtimeSecret := "run" + "time-sentinel"
 	run := provisionRun{
-		dsn:     "postgres://ibex:o@host:5432/db",
-		secrets: provisionSecrets{"ibex_runtime": "r"},
+		dsn:     "postgres://ibex:" + owner + "@host:5432/db",
+		secrets: provisionSecrets{"ibex_runtime": runtimeSecret},
 	}
-	err := errors.New("failed " + run.dsn + " with o and r")
-	got := sanitizeProvisionError(err, run)
-	for _, forbidden := range []string{"owner-secret", "runtime-secret", run.dsn} {
-		if strings.Contains(got.Error(), forbidden) {
-			t.Fatalf("sanitized error still contains %q: %q", forbidden, got.Error())
+	err := errors.New("failed " + run.dsn + " with " + owner + " and " + runtimeSecret + " while opening the database")
+	got := sanitizeProvisionError(err, run).Error()
+	for _, forbidden := range []string{owner, runtimeSecret, run.dsn} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("sanitized error still contains %q: %q", forbidden, got)
 		}
+	}
+	if !strings.Contains(got, "failed") {
+		t.Fatalf("sanitized error lost the failure context: %q", got)
+	}
+	if !strings.Contains(got, "opening the database") {
+		t.Fatalf("sanitized error lost the operation context: %q", got)
 	}
 }
 

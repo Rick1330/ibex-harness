@@ -30,7 +30,7 @@ DECLARE
     purge_created  boolean;
     worker_created boolean;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_purge') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ibex_purge') THEN -- NOSONAR: ALTER ROLE attributes cannot be parameterised; each role restates the same attribute set deliberately
         CREATE ROLE ibex_purge NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
         purge_created := true;
     ELSE

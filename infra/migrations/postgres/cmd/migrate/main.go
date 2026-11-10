@@ -12,6 +12,9 @@ import (
 // errForceVersion signals the force command was called without -version.
 var errForceVersion = errors.New("requires -version N")
 
+// errUnknownCommand signals an unrecognised migration command.
+var errUnknownCommand = errors.New("unknown command")
+
 func main() {
 	command := flag.String("command", "", "migration command: up, down, version, force, provision")
 	version := flag.Int("version", 0, "target version for force")
@@ -26,11 +29,21 @@ func main() {
 	}
 	if err := run(*command, *version); err != nil {
 		fmt.Fprintf(os.Stderr, "migrate %s: %v\n", *command, err)
-		if errors.Is(err, errForceVersion) {
-			os.Exit(2)
+		code := exitCode(err)
+		if code == 2 {
+			printUsage()
 		}
-		os.Exit(1)
+		os.Exit(code)
 	}
+}
+
+// exitCode maps a run error to the process exit status. Usage errors keep
+// status 2; everything else is a failure.
+func exitCode(err error) int {
+	if errors.Is(err, errForceVersion) || errors.Is(err, errUnknownCommand) {
+		return 2
+	}
+	return 1
 }
 
 // run dispatches one migration command. It is separate from main so the
@@ -49,7 +62,7 @@ func run(command string, version int) error {
 	case "provision":
 		return runProvision(dsn)
 	default:
-		return fmt.Errorf("unknown command: %s", command)
+		return fmt.Errorf("%w: %s", errUnknownCommand, command)
 	}
 }
 

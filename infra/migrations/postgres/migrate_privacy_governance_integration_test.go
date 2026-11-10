@@ -187,7 +187,11 @@ func withOrgRoleContext(ctx context.Context, db *sql.DB, role, orgID string, fn 
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SET LOCAL ROLE `+role); err != nil {
+	statement, ok := roleStatements[role]
+	if !ok {
+		return fmt.Errorf("unsupported role %q", role)
+	}
+	if _, err := tx.ExecContext(ctx, statement); err != nil {
 		return fmt.Errorf("set role %s: %w", role, err)
 	}
 	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID); err != nil {

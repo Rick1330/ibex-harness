@@ -78,30 +78,28 @@ type roleFlags struct {
 	super, bypass, login, inherit bool
 }
 
-// roleStatement maps an allowlisted role to its fixed SET LOCAL ROLE statement.
-// The statement is a compile-time literal per case, so no SQL is formatted from
-// a variable and a name outside the allowlist cannot reach the server.
+// roleStatements maps an allowlisted role to its fixed SET LOCAL ROLE
+// statement. The statement is a compile-time literal per role, so no SQL is
+// formatted from a variable and a name outside the allowlist cannot reach the
+// server.
+var roleStatements = map[string]string{
+	"ibex":                "SET LOCAL ROLE ibex",
+	"ibex_app":            "SET LOCAL ROLE ibex_app",
+	"ibex_service":        "SET LOCAL ROLE ibex_service",
+	"ibex_purge":          "SET LOCAL ROLE ibex_purge",
+	"ibex_runtime":        "SET LOCAL ROLE ibex_runtime",
+	"ibex_worker":         "SET LOCAL ROLE ibex_worker",
+	"ibex_bootstrap":      "SET LOCAL ROLE ibex_bootstrap",
+	"ibex_evidence_relay": "SET LOCAL ROLE ibex_evidence_relay",
+}
+
+// roleStatement looks up an allowlisted role statement.
 func roleStatement(name string) (string, error) {
-	switch name {
-	case "ibex":
-		return "SET LOCAL ROLE ibex", nil
-	case "ibex_app":
-		return "SET LOCAL ROLE ibex_app", nil
-	case "ibex_service":
-		return "SET LOCAL ROLE ibex_service", nil
-	case "ibex_purge":
-		return "SET LOCAL ROLE ibex_purge", nil
-	case "ibex_runtime":
-		return "SET LOCAL ROLE ibex_runtime", nil
-	case "ibex_worker":
-		return "SET LOCAL ROLE ibex_worker", nil
-	case "ibex_bootstrap":
-		return "SET LOCAL ROLE ibex_bootstrap", nil
-	case "ibex_evidence_relay":
-		return "SET LOCAL ROLE ibex_evidence_relay", nil
-	default:
+	statement, ok := roleStatements[name]
+	if !ok {
 		return "", fmt.Errorf("unsupported role %q", name)
 	}
+	return statement, nil
 }
 
 // role returns a roleSpec without an org GUC.
