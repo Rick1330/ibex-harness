@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -8,8 +9,14 @@ import (
 	pgmigrate "github.com/Rick1330/ibex-harness/infra/migrations/postgres"
 )
 
+// errForceVersion signals the force command was called without -version.
+var errForceVersion = errors.New("requires -version N")
+
+// errUnknownCommand signals an unrecognised migration command.
+var errUnknownCommand = errors.New("unknown command")
+
 func main() {
-	command := flag.String("command", "", "migration command: up, down, version, force")
+	command := flag.String("command", "", "migration command: up, down, version, force, provision")
 	version := flag.Int("version", 0, "target version for force")
 	flag.Parse()
 
@@ -17,44 +24,103 @@ func main() {
 		*command = flag.Arg(0)
 	}
 	if *command == "" {
-		fmt.Fprintln(os.Stderr, "usage: migrate -command up|down|version|force [-version N]")
+		printUsage()
 		os.Exit(2)
 	}
+	if err := run(*command, *version); err != nil {
+		fmt.Fprintf(os.Stderr, "migrate %s: %v\n", *command, err)
+		code := exitCode(err)
+		if code == 2 {
+			printUsage()
+		}
+		os.Exit(code)
+	}
+}
 
+// exitCode maps a run error to the process exit status. Usage errors keep
+// status 2; everything else is a failure.
+func exitCode(err error) int {
+	if errors.Is(err, errForceVersion) || errors.Is(err, errUnknownCommand) {
+		return 2
+	}
+	return 1
+}
+
+// run dispatches one migration command. It is separate from main so the
+// command set does not inflate main's complexity.
+func run(command string, version int) error {
 	dsn := pgmigrate.ResolveDSN()
-
-	switch *command {
+	switch command {
 	case "up":
-		if err := pgmigrate.Up(dsn); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate up: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("migrate up: ok")
+		return runUp(dsn)
 	case "down":
-		if err := pgmigrate.Down(dsn); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate down: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("migrate down: ok")
+		return runDown(dsn)
 	case "version":
-		v, dirty, err := pgmigrate.Version(dsn)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "migrate version: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("version=%d dirty=%v\n", v, dirty)
+		return runVersion(dsn)
 	case "force":
-		if *version <= 0 {
-			fmt.Fprintln(os.Stderr, "migrate force requires -version N")
-			os.Exit(2)
-		}
-		if err := pgmigrate.Force(dsn, *version); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate force: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("migrate force: ok (version=%d)\n", *version)
+		return runForce(dsn, version)
+	case "provision":
+		return runProvision(dsn)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n", *command)
-		os.Exit(2)
+		return fmt.Errorf("%w: %s", errUnknownCommand, command)
 	}
+}
+
+// runUp applies pending migrations.
+func runUp(dsn string) error {
+	if err := pgmigrate.Up(dsn); err != nil {
+		return err
+	}
+	fmt.Println("migrate up: ok")
+	return nil
+}
+
+// runDown rolls back one migration step.
+func runDown(dsn string) error {
+	if err := pgmigrate.Down(dsn); err != nil {
+		return err
+	}
+	fmt.Println("migrate down: ok")
+	return nil
+}
+
+// runVersion prints the current version and dirty flag.
+func runVersion(dsn string) error {
+	v, dirty, err := pgmigrate.Version(dsn)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("version=%d dirty=%v\n", v, dirty)
+	return nil
+}
+
+// runForce sets the migration version without running SQL.
+func runForce(dsn string, version int) error {
+	if version <= 0 {
+		return errForceVersion
+	}
+	if err := pgmigrate.Force(dsn, version); err != nil {
+		return err
+	}
+	fmt.Printf("migrate force: ok (version=%d)\n", version)
+	return nil
+}
+
+// runProvision sets the capability-login credentials.
+func runProvision(dsn string) error {
+	if err := pgmigrate.Provision(dsn); err != nil {
+		return err
+	}
+	fmt.Println("migrate provision: ok")
+	return nil
+}
+
+// printUsage writes the command and provisioning help.
+func printUsage() {
+	fmt.Fprintln(os.Stderr, "usage: migrate -command up|down|version|force|provision [-version N]")
+	fmt.Fprintln(os.Stderr, "       provision sets the capability-login passwords from")
+	fmt.Fprintln(os.Stderr, "       IBEX_RUNTIME_DB_PASSWORD, IBEX_WORKER_DB_PASSWORD and")
+	fmt.Fprintln(os.Stderr, "       IBEX_BOOTSTRAP_DB_PASSWORD. Secrets must be printable")
+	fmt.Fprintln(os.Stderr, "       ASCII without spaces, differ from the migration DSN")
+	fmt.Fprintln(os.Stderr, "       credential, and differ from each other.")
 }

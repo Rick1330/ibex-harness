@@ -60,7 +60,7 @@ func assertLedgerChain(t *testing.T, ctx context.Context, db *sql.DB, ids privac
 	t.Helper()
 	var seq1, seq2 int64
 	var prev2, hash1, hash2 string
-	err := withOrgContext(ctx, db, ids.orgID, func(tx *sql.Tx) error {
+	err := withOrgRoleContext(ctx, db, "ibex_purge", ids.orgID, func(tx *sql.Tx) error {
 		var id, oid, prev string
 		var created interface{}
 		return tx.QueryRowContext(ctx, `
@@ -75,7 +75,7 @@ func assertLedgerChain(t *testing.T, ctx context.Context, db *sql.DB, ids privac
 	if seq1 != 1 {
 		t.Fatalf("seq1=%d", seq1)
 	}
-	err = withOrgContext(ctx, db, ids.orgID, func(tx *sql.Tx) error {
+	err = withOrgRoleContext(ctx, db, "ibex_purge", ids.orgID, func(tx *sql.Tx) error {
 		var id, oid string
 		var created interface{}
 		return tx.QueryRowContext(ctx, `
@@ -173,15 +173,26 @@ func assertPrivacyRLSCrossTenant(t *testing.T, ctx context.Context, db *sql.DB, 
 	}
 }
 
-// withOrgContext sets ibex_app role + app.current_org_id for privacy RLS + append auth.
+// withOrgContext sets ibex_app role + app.current_org_id for privacy RLS tests.
 func withOrgContext(ctx context.Context, db *sql.DB, orgID string, fn func(*sql.Tx) error) error {
+	return withOrgRoleContext(ctx, db, "ibex_app", orgID, fn)
+}
+
+// withOrgRoleContext sets the given role + app.current_org_id. The audit append
+// is called as ibex_purge, the only non-owner caller after 000064 revoked the
+// ibex_app EXECUTE grant.
+func withOrgRoleContext(ctx context.Context, db *sql.DB, role, orgID string, fn func(*sql.Tx) error) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SET LOCAL ROLE ibex_app`); err != nil {
-		return fmt.Errorf("set role ibex_app: %w", err)
+	statement, ok := roleStatements[role]
+	if !ok {
+		return fmt.Errorf("unsupported role %q", role)
+	}
+	if _, err := tx.ExecContext(ctx, statement); err != nil {
+		return fmt.Errorf("set role %s: %w", role, err)
 	}
 	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID); err != nil {
 		return err

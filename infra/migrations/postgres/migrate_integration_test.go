@@ -45,9 +45,19 @@ func resetSchema(t *testing.T, db *sql.DB) {
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_billing CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_core CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS schema_migrations`)
-	_, err := db.ExecContext(ctx, `DROP ROLE IF EXISTS ibex_app`)
-	if err != nil {
-		t.Fatalf("drop role: %v", err)
+	// Capability roles first: they hold grantable privileges and memberships
+	// that the schema drop does not remove. The statements are literals so no
+	// role name is concatenated into SQL.
+	for _, drop := range []struct{ name, statement string }{
+		{"ibex_purge", "DROP ROLE IF EXISTS ibex_purge"},
+		{"ibex_runtime", "DROP ROLE IF EXISTS ibex_runtime"},
+		{"ibex_worker", "DROP ROLE IF EXISTS ibex_worker"},
+		{"ibex_bootstrap", "DROP ROLE IF EXISTS ibex_bootstrap"},
+		{"ibex_app", "DROP ROLE IF EXISTS ibex_app"},
+	} {
+		if _, err := db.ExecContext(ctx, drop.statement); err != nil {
+			t.Fatalf("drop role %s: %v", drop.name, err)
+		}
 	}
 }
 
@@ -172,6 +182,9 @@ func TestTokenForeignKeysEnforced(t *testing.T) {
 	}
 
 	nonexistentUser := uuid.New().String()
+	// Fixed values: this test only needs a valid token row whose user FK fails.
+	hash := "hash_fk_violation_fixed"
+	prefix := "ibex_pat_fkprefix_fixed"
 	// Attempt to insert a token with a non-existent user_id must fail with FK violation.
 	err = withServiceAccount(ctx, db, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
@@ -180,8 +193,8 @@ func TestTokenForeignKeysEnforced(t *testing.T) {
 			VALUES
 				($1::uuid, 'pat', $2, $3, $4, $5, false, NULL, $6::uuid)`,
 			orgA,
-			"hash_fk_violation_"+uuid.New().String(),
-			"ibex_pat_"+"fkprefix_"+uuid.New().String(),
+			hash,
+			prefix,
 			"token-fk-violation",
 			0,
 			nonexistentUser,

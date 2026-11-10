@@ -37,7 +37,7 @@ Every row was checked against the tree, not against the previous document.
 | P0-03 | Kubernetes cannot install or upgrade | **Closed by exclusion (ADR-0097 §10)** | ADR-0097 §10 states it in release-note words: "Kubernetes, Helm and any HA topology; no rolling upgrade; a restart is an outage". The chart README says its values are render/lint scaffolding, not deployable artifacts; the live guard is `.github/scripts/check-helm-deployable.sh` (the audit's filename is stale). No 1.0 claim depends on it |
 | P0-04 | Console cannot be logged into | **Open** | no `login`/`logout` page under `services/console/app/pages/`; all BFF routes are reads |
 | P0-05 | Cookie sessions cannot mutate | **Open** | `services/console/server` has no cookie-capable mutation path; mutations need a bearer PAT |
-| P0-06 | RLS inert / bypass survives pinning | **Partially closed** | `api`, `mcp-operator`, `memory` pin `ibex_app` and clear the bypass; **`auth` repositories, `worker`, `relay` and the Go `packages/session` still set `app.is_service_account` without a role pin** |
+| P0-06 | RLS inert / bypass survives pinning | **Partially closed — service-bypass removal in PR-1** | `000063`–`000067` and [ADR-0098](../adr/0098-remove-forgeable-service-bypass.md) remove the forgeable service-account flag, drop `ibex_service`'s `BYPASSRLS`, and create inert capability roles plus per-function readers; **the tenant selector remains `app.current_org_id`, so arbitrary SQL as `ibex_app` can still select another tenant**; `api`, `mcp-operator`, `memory` already pin `ibex_app`; **`auth`, `worker`, `relay` and `packages/session` still set `app.is_service_account` until PR-2..4** |
 | P0-07 | Org deletion aborts on the ledger | **Closed** | migrations `000059`–`000062`; `test_org_postgres_purge_clears_idempotency_ledger` |
 | P0-08 | Forget does not erase | **Closed** | erase + child deletes + ledger marker; `test_forget_erases_content_and_child_labels`, `test_finalize_after_forget_stores_the_erased_marker` |
 | P0-09 | No backup | **Open — and absent from the profile** | no `pgbackrest`/WAL service in `compose.yml`; `infra/backup/pgbackrest` is `.example` only |
@@ -105,9 +105,14 @@ same source warns that a persistent archive failure grows `pg_wal` until the dis
 
 ### W8 — tenancy completion (was half of W3)
 
+**Sequencing:** 8.0 is the database foundation and lands first (PR-1). 8.1–8.3 are the service pinning (PR-2..4). No
+login or DSN swap happens before the matching service pin: until a service pins its role it still connects as the owner
+login, so the policy change is inert for that path rather than silently bypassed.
+
 | # | Work | Acceptance evidence |
 |---|---|---|
-| 8.1 | Pin `ibex_app` in `services/auth` repositories and `bootstrap`; remove the bypass from every production path | statement-capture test per repository: `SET LOCAL ROLE ibex_app` present, `app.is_service_account` absent |
+| 8.0 | Land the policy foundation: `current_user = 'ibex_service'` predicates, `ibex_service NOBYPASSRLS`, the four capability roles, the five `SECURITY DEFINER` readers, password/limit provisioning, and the token-prefix index (**PR-1**) | migrations `000063`–`000067`; [ADR-0098](../adr/0098-remove-forgeable-service-bypass.md); `tenancy_*_integration_test.go` A1–A3/A7, sealed purge reads, the legal-hold trigger, provisioning, and the down/up cycle are green |
+| 8.1 | Pin `ibex_app` in `services/auth` repositories and `bootstrap`; move the token lookup to `auth_find_token_by_prefix` and remove the bypass from every production path | statement-capture test per repository: `SET LOCAL ROLE ibex_app` present, `app.is_service_account` absent; reader called as `ibex_runtime` |
 | 8.2 | Pin `ibex_app` in `services/worker` (extraction, budget, idempotency facade) | worker integration test with RLS enforced and no bypass; an unfiltered `SELECT` returns one tenant |
 | 8.3 | Pin the Go `packages/session` / `packages/directive` / `packages/modelpolicy` / `packages/budgetledger` stores, or move the purge-only paths to `ibex_service` | `-tags=integration` RLS tests per package; `ibex_service` used only where cross-tenant reach is the point |
 | 8.4 | Route-level cross-tenant negatives for the operator read routes (`/v1/operator/agents`, `/v1/operator/context`, `/v1/operator/platform/health`) and the memory/proxy chat path | one negative per path, asserting 404 not 403 |
