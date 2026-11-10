@@ -69,9 +69,18 @@ $$;
 GRANT ibex_app TO ibex_runtime, ibex_worker;
 
 -- Grant ibex_purge to ibex_worker only when this migration created the pair,
--- or when a pre-existing role has never been provisioned. A pre-existing role
--- that already has a credential is a drift: granting the purge membership would
--- silently widen it, so stop and tell the operator to re-provision.
+-- or when the pre-existing pair is already part of the capability role model.
+-- Roles and memberships are cluster-global, so a second database in a
+-- provisioned cluster re-runs this file against a login that `migrate
+-- provision` already secured. `provision` cannot commit unless ibex_worker is
+-- a member of ibex_purge, so that membership is the provenance signal: a
+-- credential alone is not drift. Without the membership the role is foreign and
+-- granting ibex_purge would silently widen it, so stop and tell the operator to
+-- re-provision.
+--
+-- The ibex_purge guard stays on bare credential presence: provisionTargets has
+-- no ibex_purge entry, so `provision` can never set a verifier on it, and any
+-- credential there is genuine out-of-band drift.
 DO $$
 BEGIN
     IF current_setting('ibex.created_purge', true) IS DISTINCT FROM 'true'
@@ -81,8 +90,12 @@ BEGIN
     END IF;
     IF current_setting('ibex.created_worker', true) IS DISTINCT FROM 'true'
        AND EXISTS (SELECT 1 FROM pg_authid WHERE rolname = 'ibex_worker' AND rolpassword IS NOT NULL) THEN
-        RAISE EXCEPTION
-            'ibex_worker pre-exists with a credential; re-provision the capability logins';
+        -- Nested deliberately: `pg_has_role` raises for a missing role, and
+        -- AND-clause evaluation order is not guaranteed.
+        IF NOT pg_has_role('ibex_worker', 'ibex_purge', 'MEMBER') THEN
+            RAISE EXCEPTION
+                'ibex_worker pre-exists with a credential outside the capability role model; re-provision the capability logins';
+        END IF;
     END IF;
 END
 $$;

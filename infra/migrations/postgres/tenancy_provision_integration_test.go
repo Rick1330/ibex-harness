@@ -225,6 +225,56 @@ func TestProvisionedLoginSurvivesReRun(t *testing.T) {
 	f.assertConnLimit(ctx, connLimitCheck{spec: role("ibex_runtime"), want: -1})
 }
 
+// TestMigrationRerunsOnProvisionedCluster is the regression lock for the
+// cluster-global role model. Roles, their credentials and their memberships are
+// shared by every database in a cluster, so a second database resets only its
+// own schemas and then re-runs 000064 against a login that `migrate provision`
+// already secured. `provision` cannot commit unless ibex_worker is a member of
+// ibex_purge, so that membership — not the bare presence of a credential — is
+// the provenance signal, and the re-run must succeed without widening anything.
+func TestMigrationRerunsOnProvisionedCluster(t *testing.T) {
+	f := newTenancyFixture(t)
+	ctx := t.Context()
+	setProvisionEnv(t)
+	if err := Provision(f.dsn); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	f.assertConnLimit(ctx, connLimitCheck{spec: role("ibex_worker"), want: -1})
+	resetPerDatabaseState(ctx, f)
+
+	if err := Up(f.dsn); err != nil {
+		t.Fatalf("re-up on a provisioned cluster: %v", err)
+	}
+	assertWorkerPurgeMembership(ctx, f)
+	// The capability ALTER ROLE deliberately omits CONNECTION LIMIT, so the
+	// provisioned -1 has to survive the re-run rather than reverting to 0.
+	f.assertConnLimit(ctx, connLimitCheck{spec: role("ibex_worker"), want: -1})
+}
+
+// resetPerDatabaseState drops only per-database state: the two schemas and
+// golang-migrate's bookkeeping table. Cluster-global roles, credentials and
+// memberships survive, which is exactly what a second database in a
+// provisioned cluster sees when it migrates from scratch.
+func resetPerDatabaseState(ctx context.Context, f *tenancyFixture) {
+	f.t.Helper()
+	f.exec(ctx, `DROP SCHEMA IF EXISTS ibex_billing CASCADE`)
+	f.exec(ctx, `DROP SCHEMA IF EXISTS ibex_core CASCADE`)
+	f.exec(ctx, `DROP TABLE IF EXISTS schema_migrations`)
+}
+
+// assertWorkerPurgeMembership proves ibex_worker still reaches ibex_purge.
+func assertWorkerPurgeMembership(ctx context.Context, f *tenancyFixture) {
+	f.t.Helper()
+	var isMember bool
+	if err := f.db.QueryRowContext(ctx,
+		`SELECT pg_has_role('ibex_worker'::name, 'ibex_purge'::name, 'MEMBER')`).Scan(&isMember); err != nil {
+		f.t.Fatalf("pg_has_role: %v", err)
+	}
+	if !isMember {
+		f.t.Fatal("ibex_worker is not a member of ibex_purge after the re-run")
+	}
+}
+
 // TestExistingProvisionedRoleKeepsLimit proves 000064's ELSE branch leaves the
 // limit alone when the role pre-exists.
 func TestExistingProvisionedRoleKeepsLimit(t *testing.T) {
@@ -246,8 +296,12 @@ func TestExistingProvisionedRoleKeepsLimit(t *testing.T) {
 	f.assertConnLimit(ctx, connLimitCheck{spec: role("ibex_runtime"), want: -1})
 }
 
-// TestMigrationRejectsProvisionedWorkerBeforeGrant proves 000064 refuses to
-// grant ibex_purge to a pre-existing, already-provisioned ibex_worker.
+// TestMigrationRejectsProvisionedWorkerBeforeGrant proves 000064 still refuses a
+// foreign login: ibex_worker exists with a credential but was never made a
+// member of ibex_purge, so `migrate provision` cannot have produced it. This
+// pins the membership condition, not bare credential presence — a credential on
+// a role that already holds the purge membership is the provisioned case locked
+// by TestMigrationRerunsOnProvisionedCluster.
 func TestMigrationRejectsProvisionedWorkerBeforeGrant(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
@@ -266,8 +320,10 @@ func TestMigrationRejectsProvisionedWorkerBeforeGrant(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected 000064 to reject a provisioned worker")
 	}
-	if !strings.Contains(err.Error(), "pre-exists with a credential") {
-		t.Fatalf("unexpected error: %v", err)
+	for _, want := range []string{"pre-exists with a credential", "capability role model"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error does not mention %q: %v", want, err)
+		}
 	}
 }
 
