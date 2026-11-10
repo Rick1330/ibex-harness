@@ -27,6 +27,28 @@ def closing_validator() -> tuple[type, list[bool]]:
     return _ClosingValidator, closed
 
 
+def _not_ready_env(
+    monkeypatch: pytest.MonkeyPatch,
+    validator_cls: type,
+    *,
+    flush_error: BaseException | None = None,
+) -> tuple[object, Settings, MagicMock]:
+    """Wire the not-ready lifespan with a stub tracing flush.
+
+    ``flush_error`` makes the flush raise, which is the only way to reach the
+    cleanup's failure path: ``shutdown_tracing`` force-flushes before shutting
+    the provider down, with no handler of its own.
+    """
+    from app.main import MemoryAppState
+
+    monkeypatch.setattr("app.main.GRPCTokenValidator", validator_cls)
+    monkeypatch.setattr("app.main.configure_tracing", lambda *_a, **_k: None)
+    shutdown = MagicMock() if flush_error is None else MagicMock(side_effect=flush_error)
+    monkeypatch.setattr("app.main.shutdown_tracing", shutdown)
+    settings = Settings(database_url="")
+    return MemoryAppState(settings=settings), settings, shutdown
+
+
 def test_create_app_without_database_url_not_ready() -> None:
     settings = Settings(database_url="", embedding_api_token="tok")
     validator = StaticTokenValidator({}, available=True)
@@ -97,21 +119,12 @@ async def test_not_ready_lifespan_releases_resources_when_consumer_raises(
 ) -> None:
     """A consumer exception must not skip the gRPC channel close or the flush.
 
-    The not-ready path has no ``finally`` of its own, so an exception thrown
-    into the generator at ``yield`` used to leak the aio channel and the
-    OTel exporter (python:S9152).
+    The not-ready path throws the consumer exception into the generator at
+    ``yield``, which used to leak the aio channel and the OTel exporter
+    (python:S9152).
     """
-    from app.main import MemoryAppState
-
     validator_cls, closed = closing_validator
-
-    monkeypatch.setattr("app.main.GRPCTokenValidator", validator_cls)
-    monkeypatch.setattr("app.main.configure_tracing", lambda *_a, **_k: None)
-    shutdown = MagicMock()
-    monkeypatch.setattr("app.main.shutdown_tracing", shutdown)
-
-    settings = Settings(database_url="")
-    state = MemoryAppState(settings=settings)
+    state, settings, shutdown = _not_ready_env(monkeypatch, validator_cls)
 
     with pytest.raises(RuntimeError, match="consumer boom"):
         await _consume_raising(state, settings)
@@ -131,17 +144,10 @@ async def test_not_ready_lifespan_closes_channel_when_the_flush_raises(
     a handler, so an exporter timeout raises. Sequencing the close after it
     plainly would leak exactly the channel this cleanup exists to release.
     """
-    from app.main import MemoryAppState
-
     validator_cls, closed = closing_validator
-
-    monkeypatch.setattr("app.main.GRPCTokenValidator", validator_cls)
-    monkeypatch.setattr("app.main.configure_tracing", lambda *_a, **_k: None)
-    shutdown = MagicMock(side_effect=RuntimeError("flush boom"))
-    monkeypatch.setattr("app.main.shutdown_tracing", shutdown)
-
-    settings = Settings(database_url="")
-    state = MemoryAppState(settings=settings)
+    state, settings, shutdown = _not_ready_env(
+        monkeypatch, validator_cls, flush_error=RuntimeError("flush boom")
+    )
 
     with pytest.raises(RuntimeError, match="flush boom"):
         await _consume_raising(state, settings)
@@ -155,8 +161,6 @@ async def test_not_ready_lifespan_surfaces_the_close_error_and_keeps_the_flush_e
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Both failures stay visible: the close error propagates, flush is its cause."""
-    from app.main import MemoryAppState
-
     closed: list[bool] = []
 
     class _FailingCloseValidator:
@@ -167,13 +171,9 @@ async def test_not_ready_lifespan_surfaces_the_close_error_and_keeps_the_flush_e
             closed.append(True)
             raise OSError("close boom")
 
-    monkeypatch.setattr("app.main.GRPCTokenValidator", _FailingCloseValidator)
-    monkeypatch.setattr("app.main.configure_tracing", lambda *_a, **_k: None)
-    shutdown = MagicMock(side_effect=RuntimeError("flush boom"))
-    monkeypatch.setattr("app.main.shutdown_tracing", shutdown)
-
-    settings = Settings(database_url="")
-    state = MemoryAppState(settings=settings)
+    state, settings, shutdown = _not_ready_env(
+        monkeypatch, _FailingCloseValidator, flush_error=RuntimeError("flush boom")
+    )
 
     with pytest.raises(OSError, match="close boom") as excinfo:
         await _consume_raising(state, settings)
