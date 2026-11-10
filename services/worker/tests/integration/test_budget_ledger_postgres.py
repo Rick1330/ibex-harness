@@ -532,9 +532,8 @@ async def test_cross_tenant_isolation_and_service_account_sweep(
 
         await _expire_lease(pg_factory, org_a, "extraction:shared")
         await _expire_lease(pg_factory, org_b, "extraction:shared")
-        monkeypatch.setattr(
-            ledger_module, "session_as_service_account", _session_as_app_service_account
-        )
+        # The production path: the sweep is a definer capability, not a
+        # bypass-GUC session, so it works under any login and across tenants.
         expired = await ledger.expire_stale(grace_seconds=3600, batch_limit=100)
         assert expired >= 2
         row_a = await _fetch_reservation(pg_factory, org_a, "extraction:shared")

@@ -67,10 +67,21 @@ class _Result:
         return self._all_rows
 
 
+class _NullTransaction:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
 class _Session:
     def __init__(self, *results: _Result) -> None:
         self.results = list(results)
         self.calls: list[tuple[object, object]] = []
+
+    def begin(self) -> _NullTransaction:
+        return _NullTransaction()
 
     async def execute(self, statement: object, params: object = None) -> _Result:
         self.calls.append((statement, params))
@@ -81,9 +92,22 @@ class _FailingSession:
     def __init__(self, error: Exception) -> None:
         self.error = error
 
+    def begin(self) -> _NullTransaction:
+        return _NullTransaction()
+
     async def execute(self, statement: object, params: object = None) -> _Result:
         del statement, params
         raise self.error
+
+
+def _factory_for(session: object):
+    """Factory double for the sweep, which opens its own session."""
+
+    @asynccontextmanager
+    async def _cm():
+        yield session
+
+    return _cm
 
 
 @pytest.fixture
@@ -632,10 +656,8 @@ async def test_release_wraps_sqlalchemy_errors(org_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_expire_stale_reraises_ledger_errors(service_session) -> None:
-    install, _ = service_session
-    install(_FailingSession(BudgetLedgerError("boom")))
-    ledger = mod._AsyncBudgetLedger(object())
+async def test_expire_stale_reraises_ledger_errors() -> None:
+    ledger = mod._AsyncBudgetLedger(_factory_for(_FailingSession(BudgetLedgerError("boom"))))
     with pytest.raises(BudgetLedgerError, match="boom"):
         await ledger.expire_stale(grace_seconds=1, batch_limit=1)
 
@@ -671,10 +693,9 @@ async def test_write_helpers_raise_closed_on_rowcount_miss() -> None:
 
 
 @pytest.mark.asyncio
-async def test_expire_stale_service_account_and_validation(service_session) -> None:
-    install, _ = service_session
-    install(_Session(_Result(all_rows=[uuid4(), uuid4()])))
-    ledger = mod._AsyncBudgetLedger(object())
+async def test_expire_stale_calls_the_definer_and_validates() -> None:
+    session = _Session(_Result(all_rows=[uuid4(), uuid4()]))
+    ledger = mod._AsyncBudgetLedger(_factory_for(session))
     assert await ledger.expire_stale(grace_seconds=3600, batch_limit=500) == 2
 
     with pytest.raises(BudgetLedgerError):
@@ -682,17 +703,19 @@ async def test_expire_stale_service_account_and_validation(service_session) -> N
     with pytest.raises(BudgetLedgerError):
         await ledger.expire_stale(grace_seconds=1, batch_limit=0)
 
-    install(_FailingSession(SQLAlchemyError("down")))
+    down = mod._AsyncBudgetLedger(_factory_for(_FailingSession(SQLAlchemyError("down"))))
     with pytest.raises(BudgetLedgerUnavailableError):
-        await ledger.expire_stale(grace_seconds=1, batch_limit=1)
+        await down.expire_stale(grace_seconds=1, batch_limit=1)
 
 
-def test_expire_stale_sql_rechecks_version_and_lease() -> None:
-    # The sweep's UPDATE must re-assert both the observed version and staleness
-    # so a row reclaimed between SELECT and UPDATE is never expired.
+def test_expire_stale_is_a_definer_call_not_a_tenant_update() -> None:
+    # The sweep spans every org, so it is the SECURITY DEFINER capability from
+    # 000065; its version/lease fence lives inside that function. A tenant
+    # UPDATE here would match no rows under RLS and silently expire nothing.
     sql = mod._EXPIRE_STALE_SQL
-    assert "r.version = stale.version" in sql
-    assert "r.lease_expires_at <= NOW() - CAST(:grace AS interval)" in sql
+    assert "ibex_core.budget_reservations_expire_stale(" in sql
+    assert "UPDATE " not in sql
+    assert "set_config" not in sql
 
 
 @pytest.mark.asyncio
