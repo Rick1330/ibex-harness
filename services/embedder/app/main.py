@@ -230,11 +230,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         state.ready_error = str(exc) or "invalid startup configuration"
         logger.exception("embedder startup configuration error profile=%s", profile)
 
-    yield
-
-    if state.backend is not None:
-        await _aclose_backend(state.backend)
-        logger.info("embedding backend closed backend=%s", state.backend.name)
+    try:
+        yield
+    finally:
+        if state.backend is not None:
+            await _aclose_backend(state.backend)
+            logger.info("embedding backend closed backend=%s", state.backend.name)
 
 
 def create_app() -> FastAPI:

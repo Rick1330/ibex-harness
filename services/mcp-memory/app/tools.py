@@ -30,7 +30,6 @@ from app.clients.memory import (
     LineageEdge,
     MemoryHttpClient,
     MemoryHttpError,
-    MemoryHttpTimeout,
     SearchHit,
 )
 from app.errors import (
@@ -371,10 +370,11 @@ def _require_client(client: MemoryHttpClient | None) -> MemoryHttpClient:
 
 
 async def _call_memory[T](op: Callable[[], Awaitable[T]]) -> T:
+    # MemoryHttpTimeout is a MemoryHttpError with status_code=None, and
+    # _map_memory_http_error maps that to BackendUnavailableError(str(exc)) —
+    # the same type, message, and __cause__ a dedicated clause would raise.
     try:
         return await op()
-    except MemoryHttpTimeout as exc:
-        raise BackendUnavailableError(str(exc)) from exc
     except MemoryHttpError as exc:
         raise _map_memory_http_error(exc) from exc
 
