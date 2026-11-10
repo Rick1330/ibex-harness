@@ -261,9 +261,11 @@ func assertRLSPolicyIgnoresNamedOrg(t *testing.T, f *isolationFixture) {
 		t.Fatalf("begin RLS probe: %v", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// nosemgrep: go_sql_rule-concat-sqli -- the statement is a compile-time constant and every value is a bound parameter.
 	if _, err := tx.ExecContext(ctx, `SET LOCAL ROLE ibex_app`); err != nil {
 		t.Fatalf("pin ibex_app for RLS probe: %v", err)
 	}
+	// nosemgrep: go_sql_rule-concat-sqli -- the statement is a compile-time constant and every value is a bound parameter.
 	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, f.orgB); err != nil {
 		t.Fatalf("pin org B for RLS probe: %v", err)
 	}
@@ -280,6 +282,7 @@ func assertRLSPolicyIgnoresNamedOrg(t *testing.T, f *isolationFixture) {
 func countUserRows(t *testing.T, ctx context.Context, tx *sql.Tx, userID string) int {
 	t.Helper()
 	var n int
+	// nosemgrep: go_sql_rule-concat-sqli -- the statement is a compile-time constant and every value is a bound parameter.
 	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM ibex_core.users WHERE id = $1::uuid`, userID).Scan(&n)
 	assertNoPermissionError(t, err)
 	if err != nil {
