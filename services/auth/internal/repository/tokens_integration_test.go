@@ -20,7 +20,9 @@ func TestTokensRepository_CreateToken(t *testing.T) {
 	rowID := uuid.New()
 	id, err := repo.CreateToken(context.Background(), repository.CreateTokenParams{
 		ID: rowID.String(), OrgID: orgID, Name: "integration-create", Description: "desc",
-		Hash: "hash-placeholder", Prefix: "ibex_pat_" + rowID.String(), Permissions: 42,
+		// A unique hash: tokens.hash is UNIQUE, so a fixed value makes the test
+		// fail on the second run against the same database.
+		Hash: "hash-" + rowID.String(), Prefix: "ibex_pat_" + rowID.String(), Permissions: 42,
 	})
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
