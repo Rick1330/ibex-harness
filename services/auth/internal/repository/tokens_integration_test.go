@@ -49,7 +49,9 @@ func TestTokensRepository_RevokeToken_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hash: %v", err)
 	}
-	id, err := repo.InsertTestToken(context.Background(), orgID, prefix, hash, "revoke-me", 1, false, nil)
+	id, err := repo.InsertTestToken(context.Background(), repository.TestTokenParams{
+		OrgID: orgID, Prefix: prefix, Hash: hash, Name: "revoke-me", Permissions: 1,
+	})
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}

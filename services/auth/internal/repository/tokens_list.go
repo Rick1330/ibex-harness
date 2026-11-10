@@ -60,7 +60,7 @@ type listTokensQuery struct {
 
 func (r *TokensRepository) queryTokenMetadataPage(ctx context.Context, q listTokensQuery) ([]TokenMetadata, error) {
 	var rows []TokenMetadata
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	err := withTenant(ctx, r.db, q.orgID, func(tx *sql.Tx) error {
 		result, err := queryListTokens(ctx, tx, q)
 		if err != nil {
 			return err

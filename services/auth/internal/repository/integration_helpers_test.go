@@ -46,7 +46,10 @@ func seedFindActiveToken(t *testing.T, repo *repository.TokensRepository, db *sq
 		past := time.Now().UTC().Add(-time.Hour)
 		expiresAt = &past
 	}
-	if _, err = repo.InsertTestToken(context.Background(), orgID, prefix, hash, tc.name, 7, tc.revoked, expiresAt); err != nil {
+	if _, err = repo.InsertTestToken(context.Background(), repository.TestTokenParams{
+		OrgID: orgID, Prefix: prefix, Hash: hash, Name: tc.name, Permissions: 7,
+		Revoked: tc.revoked, ExpiresAt: expiresAt,
+	}); err != nil {
 		t.Fatalf("insert token: %v", err)
 	}
 	return prefix
@@ -124,7 +127,9 @@ func insertNamedToken(t *testing.T, repo *repository.TokensRepository, orgID, na
 	if err != nil {
 		t.Fatalf("hash %s: %v", name, err)
 	}
-	id, err := repo.InsertTestToken(context.Background(), orgID, prefix, hash, name, 1, false, nil)
+	id, err := repo.InsertTestToken(context.Background(), repository.TestTokenParams{
+		OrgID: orgID, Prefix: prefix, Hash: hash, Name: name, Permissions: 1,
+	})
 	if err != nil {
 		t.Fatalf("insert %s: %v", name, err)
 	}

@@ -5,8 +5,10 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lib/pq"
 )
@@ -112,6 +114,109 @@ func TestTenancyDefinerReaderUnderRuntime(t *testing.T) {
 		return err
 	})
 	f.requireSQLSTATE(err, sqlState{code: "42501"})
+}
+
+// tokenFilter is the row shape the definer filter tests seed.
+type tokenFilter struct {
+	orgID     string
+	prefix    string
+	hash      string
+	revoked   bool
+	expired   bool
+	createdAt time.Time
+}
+
+// TestTenancyDefinerTokenFilters proves auth_find_token_by_prefix enforces the
+// same filters the deleted SQL did: revoked and expired rows and rows of a
+// soft-deleted organization are excluded, and a duplicate prefix resolves to
+// the newest row.
+func TestTenancyDefinerTokenFilters(t *testing.T) {
+	f := newTenancyFixture(t)
+	ctx := t.Context()
+	f.seedTenant(ctx)
+
+	t.Run("active row is visible", func(t *testing.T) {
+		id := f.seedFilterToken(ctx, tokenFilter{
+			orgID: f.orgID, prefix: "filter-active", hash: "hash-active", createdAt: time.Now().UTC(),
+		})
+		row, err := readTokenAsRuntime(ctx, f, "filter-active")
+		if err != nil {
+			t.Fatalf("active token: %v", err)
+		}
+		assertTokenRow(t, row, tokenWant{tokenID: id, orgID: f.orgID, status: "active", hash: "hash-active"})
+	})
+
+	t.Run("revoked row excluded", func(t *testing.T) {
+		f.seedFilterToken(ctx, tokenFilter{
+			orgID: f.orgID, prefix: "filter-revoked", hash: "hash-revoked", revoked: true, createdAt: time.Now().UTC(),
+		})
+		assertDefinerMiss(t, f, ctx, "filter-revoked")
+	})
+
+	t.Run("expired row excluded", func(t *testing.T) {
+		f.seedFilterToken(ctx, tokenFilter{
+			orgID: f.orgID, prefix: "filter-expired", hash: "hash-expired", expired: true, createdAt: time.Now().UTC(),
+		})
+		assertDefinerMiss(t, f, ctx, "filter-expired")
+	})
+
+	t.Run("soft-deleted organization excluded", func(t *testing.T) {
+		deleted := f.seedTenantNamed(ctx, "deleted-org")
+		if _, err := f.db.ExecContext(ctx,
+			`UPDATE ibex_core.organizations SET deleted_at = NOW() WHERE id = $1::uuid`, deleted.orgID); err != nil {
+			t.Fatalf("soft-delete org: %v", err)
+		}
+		f.seedFilterToken(ctx, tokenFilter{
+			orgID: deleted.orgID, prefix: "filter-deleted", hash: "hash-deleted", createdAt: time.Now().UTC(),
+		})
+		assertDefinerMiss(t, f, ctx, "filter-deleted")
+	})
+
+	t.Run("newest duplicate prefix wins", func(t *testing.T) {
+		older := f.seedFilterToken(ctx, tokenFilter{
+			orgID: f.orgID, prefix: "filter-duplicate", hash: "hash-older",
+			createdAt: time.Now().UTC().Add(-time.Hour),
+		})
+		newer := f.seedFilterToken(ctx, tokenFilter{
+			orgID: f.orgID, prefix: "filter-duplicate", hash: "hash-newer", createdAt: time.Now().UTC(),
+		})
+		row, err := readTokenAsRuntime(ctx, f, "filter-duplicate")
+		if err != nil {
+			t.Fatalf("duplicate prefix: %v", err)
+		}
+		if row.tokenID == older {
+			t.Fatalf("reader returned the older token %s, want %s", older, newer)
+		}
+		assertTokenRow(t, row, tokenWant{tokenID: newer, orgID: f.orgID, status: "active", hash: "hash-newer"})
+	})
+}
+
+// seedFilterToken inserts one token directly so each filter can be set.
+func (f *tenancyFixture) seedFilterToken(ctx context.Context, filter tokenFilter) string {
+	f.t.Helper()
+	var expiresAt any
+	if filter.expired {
+		expiresAt = time.Now().UTC().Add(-time.Hour)
+	}
+	var id string
+	if err := f.db.QueryRowContext(ctx, `
+		INSERT INTO ibex_core.tokens (org_id, type, hash, prefix, name, permissions, is_revoked, expires_at, created_at)
+		VALUES ($1::uuid, 'pat', $2, $3, 'filter', 0, $4, $5, $6)
+		RETURNING id::text`,
+		filter.orgID, filter.hash, filter.prefix, filter.revoked, expiresAt, filter.createdAt,
+	).Scan(&id); err != nil {
+		f.t.Fatalf("seed filter token %s: %v", filter.prefix, err)
+	}
+	return id
+}
+
+// assertDefinerMiss asserts the reader returns zero rows for a filtered prefix.
+func assertDefinerMiss(t *testing.T, f *tenancyFixture, ctx context.Context, prefix string) {
+	t.Helper()
+	_, err := readTokenAsRuntime(ctx, f, prefix)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("%s: err = %v, want sql.ErrNoRows", prefix, err)
+	}
 }
 
 // tokenRow is the eight-column auth reader result.

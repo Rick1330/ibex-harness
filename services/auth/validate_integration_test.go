@@ -107,7 +107,9 @@ func (e validateEnv) insertActivePAT(t *testing.T, org orgRef, perms int64) bear
 	bearer := bearerRef{raw: "ibex_pat_" + tokenID.String() + "_integrationsecret"}
 	prefix := "ibex_pat_" + tokenID.String()
 	hash := e.mustHash(t, bearer)
-	_, err := e.repo.InsertTestToken(context.Background(), org.id, prefix, hash, "test-pat", perms, false, nil)
+	_, err := e.repo.InsertTestToken(context.Background(), repository.TestTokenParams{
+		OrgID: org.id, Prefix: prefix, Hash: hash, Name: "test-pat", Permissions: perms,
+	})
 	if err != nil {
 		t.Fatalf("insert token: %v", err)
 	}
@@ -142,7 +144,10 @@ func (e validateEnv) assertRevokedRejected(t *testing.T, org orgRef) {
 	revokedID := uuid.New()
 	revokedBearer := bearerRef{raw: "ibex_pat_" + revokedID.String() + "_revoked"}
 	revokedHash := e.mustHash(t, revokedBearer)
-	_, err := e.repo.InsertTestToken(context.Background(), org.id, "ibex_pat_"+revokedID.String(), revokedHash, "revoked", 1, true, nil)
+	_, err := e.repo.InsertTestToken(context.Background(), repository.TestTokenParams{
+		OrgID: org.id, Prefix: "ibex_pat_" + revokedID.String(), Hash: revokedHash,
+		Name: "revoked", Permissions: 1, Revoked: true,
+	})
 	if err != nil {
 		t.Fatalf("insert revoked: %v", err)
 	}

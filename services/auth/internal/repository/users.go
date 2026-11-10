@@ -17,7 +17,8 @@ type UserRecord struct {
 	OrgID string
 }
 
-// UsersRepository loads users under the service-account RLS context.
+// UsersRepository loads users under the ibex_app RLS context, scoped to one
+// organisation per query.
 type UsersRepository struct {
 	db  *sql.DB
 	obs metrics.QueryObserver
@@ -38,7 +39,7 @@ func (r *UsersRepository) GetByIDAndOrg(
 	defer observeQuery(r.obs, metrics.DBOpGetUserByID, start)
 
 	var out *UserRecord
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	err := withTenant(ctx, r.db, orgID.String(), func(tx *sql.Tx) error {
 		row := tx.QueryRowContext(ctx, `
 			SELECT id::text, org_id::text
 			FROM ibex_core.users
@@ -62,20 +63,4 @@ func (r *UsersRepository) GetByIDAndOrg(
 		return nil, err
 	}
 	return out, nil
-}
-
-func (r *UsersRepository) withServiceAccount(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
-		return fmt.Errorf("set service account: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		return err
-	}
-	return tx.Commit()
 }
