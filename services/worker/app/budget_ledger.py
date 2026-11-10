@@ -277,24 +277,14 @@ _RELEASE_SQL = """
     RETURNING id
 """
 
+# The sweep is cross-tenant: it reclaims expired leases for every org. Under
+# RLS a tenant-scoped session matches no rows, so the sweep is a named
+# SECURITY DEFINER capability (000065) rather than an unqualified UPDATE. It
+# returns the ids it changed, so the caller counts exactly what moved.
 _EXPIRE_STALE_SQL = """
-    WITH stale AS (
-        SELECT id, version
-        FROM ibex_core.budget_reservations
-        WHERE state = 'claimed'
-          AND lease_expires_at <= NOW() - CAST(:grace AS interval)
-        ORDER BY lease_expires_at
-        LIMIT :batch_limit
+    SELECT ibex_core.budget_reservations_expire_stale(
+        CAST(:grace AS interval), :batch_limit
     )
-    UPDATE ibex_core.budget_reservations r
-    SET state = 'expired', lease_expires_at = NULL,
-        version = r.version + 1, updated_at = NOW()
-    FROM stale
-    WHERE r.id = stale.id
-      AND r.state = 'claimed'
-      AND r.version = stale.version
-      AND r.lease_expires_at <= NOW() - CAST(:grace AS interval)
-    RETURNING r.id
 """
 
 
@@ -616,7 +606,7 @@ class _AsyncBudgetLedger:
     async def expire_stale(self, *, grace_seconds: int, batch_limit: int) -> int:
         _validate_sweep(grace_seconds, batch_limit)
         try:
-            async with session_as_service_account(self._factory) as session:
+            async with self._factory() as session, session.begin():
                 result = await session.execute(
                     text(_EXPIRE_STALE_SQL),
                     {"grace": timedelta(seconds=grace_seconds), "batch_limit": batch_limit},
