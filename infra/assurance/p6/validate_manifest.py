@@ -269,7 +269,7 @@ def main() -> int:
     try:
         # Path is supplied by the operator/CI, read-only, no privilege boundary:
         # check-p6-bootstrap.sh passes mktemp and NamedTemporaryFile fixtures outside ROOT.
-        raw = args.manifest.read_bytes()  # NOSONAR pythonsecurity:S8707
+        raw = args.manifest.read_bytes()  # NOSONAR(S8707) line-wide on purpose: this is the only issue on the line
         parsed = json.loads(raw)
         if not isinstance(parsed, dict):
             fail("manifest: expected JSON object")
