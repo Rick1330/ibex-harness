@@ -309,6 +309,86 @@ func TestUnit_CreateToken_CommitFault(t *testing.T) {
 	assertFaultError(t, err, errFault, "injected driver fault")
 }
 
+// newOrgInsertFault returns a repository whose driver echoes the inserted id
+// back from RETURNING, plus the plan that records every statement it issues.
+func newOrgInsertFault(t *testing.T) (*repository.TokensRepository, *faultPlan) {
+	t.Helper()
+	plan := &faultPlan{returnFirstArgOnQuery: true}
+	return repository.RequireTokensRepository(t, openFaultDB(t, plan), nil), plan
+}
+
+// insertFaultOrg runs the helper under test and fails when it reports an error.
+func insertFaultOrg(t *testing.T, repo *repository.TokensRepository) string {
+	t.Helper()
+	id, err := repo.InsertTestOrganization(context.Background(), "Fault Org", "fault-org")
+	if err != nil {
+		t.Fatalf("InsertTestOrganization: %v", err)
+	}
+	return id
+}
+
+// assertUsableOrgID proves the returned id is a non-nil uuid the caller can
+// address the new tenant by.
+func assertUsableOrgID(t *testing.T, id string) {
+	t.Helper()
+	parsed, err := uuid.Parse(id)
+	if err != nil || parsed == uuid.Nil {
+		t.Fatalf("returned id %q is not a usable uuid: %v", id, err)
+	}
+}
+
+// assertPinArgs proves set_config bound exactly one argument and returns the
+// org id it pinned.
+func assertPinArgs(t *testing.T, stmt faultStmt) string {
+	t.Helper()
+	if len(stmt.args) != 1 {
+		t.Fatalf("set_config args = %v", stmt.args)
+	}
+	pinned, _ := stmt.args[0].(string)
+	return pinned
+}
+
+// assertInsertArgs proves the insert bound an id plus the caller's name and
+// slug, and returns the id it inserted.
+func assertInsertArgs(t *testing.T, stmt faultStmt) string {
+	t.Helper()
+	if len(stmt.args) != 3 {
+		t.Fatalf("insert args = %v", stmt.args)
+	}
+	if stmt.args[1] != "Fault Org" || stmt.args[2] != "fault-org" {
+		t.Fatalf("insert args = %v, want name/slug preserved", stmt.args)
+	}
+	inserted, _ := stmt.args[0].(string)
+	return inserted
+}
+
+// boundOrgIDs returns the org id the helper pinned and the id it inserted,
+// leaving either empty when the helper never issued that statement.
+func boundOrgIDs(t *testing.T, stmts []faultStmt) (pinned, inserted string) {
+	t.Helper()
+	for _, stmt := range stmts {
+		switch {
+		case strings.Contains(stmt.query, "set_config"):
+			pinned = assertPinArgs(t, stmt)
+		case strings.Contains(stmt.query, "INSERT INTO ibex_core.organizations"):
+			inserted = assertInsertArgs(t, stmt)
+		}
+	}
+	return pinned, inserted
+}
+
+// assertOrgRowIsPinned proves the helper pinned the same id it inserted and
+// returned, so the new organisation exists inside its own tenant scope.
+func assertOrgRowIsPinned(t *testing.T, id, pinned, inserted string) {
+	t.Helper()
+	if inserted != id {
+		t.Fatalf("inserted id %q != returned id %q", inserted, id)
+	}
+	if pinned != id {
+		t.Fatalf("pinned org %q != inserted id %q", pinned, id)
+	}
+}
+
 // TestUnit_InsertTestOrganization_PinsTheRowItInserts proves the helper pins
 // app.current_org_id to the generated id it inserts, and returns that same id.
 // A mismatch would create an organisation outside its own tenant scope or
@@ -317,40 +397,10 @@ func TestUnit_CreateToken_CommitFault(t *testing.T) {
 // Mutation that breaks it: pinning a different UUID than the inserted one,
 // returning the input name/slug instead of the scanned id, or skipping the pin.
 func TestUnit_InsertTestOrganization_PinsTheRowItInserts(t *testing.T) {
-	plan := &faultPlan{returnFirstArgOnQuery: true}
-	repo := repository.RequireTokensRepository(t, openFaultDB(t, plan), nil)
+	repo, plan := newOrgInsertFault(t)
 
-	id, err := repo.InsertTestOrganization(context.Background(), "Fault Org", "fault-org")
-	if err != nil {
-		t.Fatalf("InsertTestOrganization: %v", err)
-	}
-	parsed, parseErr := uuid.Parse(id)
-	if parseErr != nil || parsed == uuid.Nil {
-		t.Fatalf("returned id %q is not a usable uuid: %v", id, parseErr)
-	}
-
-	var pinned, inserted string
-	for _, stmt := range plan.snapshot() {
-		switch {
-		case strings.Contains(stmt.query, "set_config"):
-			if len(stmt.args) != 1 {
-				t.Fatalf("set_config args = %v", stmt.args)
-			}
-			pinned, _ = stmt.args[0].(string)
-		case strings.Contains(stmt.query, "INSERT INTO ibex_core.organizations"):
-			if len(stmt.args) != 3 {
-				t.Fatalf("insert args = %v", stmt.args)
-			}
-			inserted, _ = stmt.args[0].(string)
-			if stmt.args[1] != "Fault Org" || stmt.args[2] != "fault-org" {
-				t.Fatalf("insert args = %v, want name/slug preserved", stmt.args)
-			}
-		}
-	}
-	if inserted != id {
-		t.Fatalf("inserted id %q != returned id %q", inserted, id)
-	}
-	if pinned != id {
-		t.Fatalf("pinned org %q != inserted id %q", pinned, id)
-	}
+	id := insertFaultOrg(t, repo)
+	assertUsableOrgID(t, id)
+	pinned, inserted := boundOrgIDs(t, plan.snapshot())
+	assertOrgRowIsPinned(t, id, pinned, inserted)
 }
