@@ -12,21 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
-)
 
-const (
-	runtimeSecret   = "capability-test-only"
-	workerSecret    = "capability-test-only-worker"
-	bootstrapSecret = "capability-test-only-bootstrap"
+	"github.com/Rick1330/ibex-harness/infra/testing/testcreds"
 )
-
-// setProvisionEnv provides the three capability secrets for a test.
-func setProvisionEnv(t *testing.T) {
-	t.Helper()
-	t.Setenv("IBEX_RUNTIME_DB_PASSWORD", runtimeSecret)
-	t.Setenv("IBEX_WORKER_DB_PASSWORD", workerSecret)
-	t.Setenv("IBEX_BOOTSTRAP_DB_PASSWORD", bootstrapSecret)
-}
 
 // TestProvisionSetsScramAndAllowsLogin proves the inert-to-provisioned
 // transition, the SCRAM verifier, and password authentication over TCP.
@@ -37,15 +25,15 @@ func TestProvisionSetsScramAndAllowsLogin(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
 	assertCapabilityConnLimits(f, ctx, 0)
-	setProvisionEnv(t)
+	testcreds.SetProvisionEnv(t)
 	if err := Provision(f.dsn); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
 	assertCapabilityConnLimits(f, ctx, -1)
 	assertScramVerifier(t, f, provisionCredential{
-		target: provisionTarget{role: "ibex_runtime"}, password: runtimeSecret,
+		target: provisionTarget{role: "ibex_runtime"}, password: testcreds.RuntimeLoginTestPassword,
 	})
-	assertRuntimeLogin(t, f, ctx, runtimeSecret)
+	assertRuntimeLogin(t, f, ctx, testcreds.RuntimeLoginTestPassword)
 }
 
 // assertCapabilityConnLimits checks all three login limits.
@@ -211,7 +199,7 @@ func assertCapabilityRoles(f *tenancyFixture, ctx context.Context, want int) {
 func TestProvisionedLoginSurvivesReRun(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
-	setProvisionEnv(t)
+	testcreds.SetProvisionEnv(t)
 	if err := Provision(f.dsn); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -229,14 +217,16 @@ func TestProvisionedLoginSurvivesReRun(t *testing.T) {
 // cluster-global role model. Roles, their credentials and their memberships are
 // shared by every database in a cluster, so a second database resets only its
 // own schemas and then re-runs 000064 against a login that `migrate provision`
-// already secured. `provision` cannot commit unless ibex_worker holds a direct
-// membership of both ibex_app and ibex_purge, so those two rows — not the bare
-// presence of a credential — are the provenance signal, and the re-run must
-// succeed without widening anything.
+// already secured. `provision` requires both ibex_app and ibex_purge to be
+// reachable from ibex_worker by any membership path and never issues a GRANT, so
+// it is weaker than the guard below it. 000064 is deliberately stricter: it
+// demands the direct, SET-enabled rows that the migration itself creates, and
+// those two rows — not the bare presence of a credential — are the provenance
+// signal, so the re-run must succeed without widening anything.
 func TestMigrationRerunsOnProvisionedCluster(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
-	setProvisionEnv(t)
+	testcreds.SetProvisionEnv(t)
 	if err := Provision(f.dsn); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -298,15 +288,16 @@ func TestExistingProvisionedRoleKeepsLimit(t *testing.T) {
 }
 
 // TestMigrationRejectsProvisionedWorkerBeforeGrant proves 000064 still refuses a
-// foreign login: ibex_worker exists with a credential but holds no direct
-// membership of ibex_app or ibex_purge, so `migrate provision` cannot have
-// produced it. This pins the direct-membership condition, not bare credential
-// presence — a credential on a role that holds both direct memberships is the
-// provisioned case locked by TestMigrationRerunsOnProvisionedCluster.
+// foreign login: ibex_worker exists with a credential but reaches neither
+// ibex_app nor ibex_purge, so `migrate provision` — which requires both roles
+// reachable — cannot have committed it, and 000064 is stricter still. This pins
+// the direct, SET-enabled condition, not bare credential presence — a
+// credential on a role that holds both direct memberships is the provisioned
+// case locked by TestMigrationRerunsOnProvisionedCluster.
 func TestMigrationRejectsProvisionedWorkerBeforeGrant(t *testing.T) {
 	assertMigrationRejectsForeignWorker(t, foreignWorkerCase{
 		setup: func(ctx context.Context, f *tenancyFixture) {
-			f.exec(ctx, createdWorker(runtimeSecret, 1))
+			f.exec(ctx, createdWorker(testcreds.RuntimeLoginTestPassword, 1))
 		},
 		drops: []string{`DROP ROLE IF EXISTS ibex_worker`},
 	})
@@ -322,8 +313,11 @@ type foreignWorkerCase struct {
 }
 
 // workerTeardown removes every membership and privilege the cases add to
-// ibex_worker before the role is dropped. Revoking a role that does not exist
-// is an ignored no-op, so the same teardown serves every case.
+// ibex_worker before the role is dropped. Every statement tolerates a missing
+// object: the revokes and DROP OWNED BY raise when a role does not exist and
+// dropClusterRoles discards that error, and the drops are IF EXISTS. The same
+// teardown therefore serves every case, including one whose setup failed
+// partway through.
 var workerTeardown = []string{
 	`REVOKE ibex_app FROM ibex_worker`,
 	`REVOKE ibex_purge FROM ibex_worker`,
@@ -332,8 +326,11 @@ var workerTeardown = []string{
 
 // assertMigrationRejectsForeignWorker rolls the migration suite back five
 // steps, builds the case's worker shape, and requires 000064's
-// capability-role-model abort. Cleanup is registered before Up so the roles a
-// case created are removed even when the assertion fails.
+// capability-role-model abort. Cleanup is registered before setup and before Up
+// so the roles a case created are removed even when setup fails partway through
+// or the assertion fails. It is registered after the rollback: a failed Down
+// leaves the migration state unknown, and dropping roles the migrations still
+// own would turn one failure into a cross-test leak.
 func assertMigrationRejectsForeignWorker(t *testing.T, tc foreignWorkerCase) {
 	t.Helper()
 	f := newTenancyFixture(t)
@@ -343,11 +340,11 @@ func assertMigrationRejectsForeignWorker(t *testing.T, tc foreignWorkerCase) {
 			t.Fatalf(downErrFormat, i+1, err)
 		}
 	}
-	tc.setup(ctx, f)
 	t.Cleanup(func() {
 		revokes := append(append([]string{}, workerTeardown...), tc.revokes...)
 		dropClusterRoles(context.Background(), f, revokes, tc.drops)
 	})
+	tc.setup(ctx, f)
 
 	err := Up(f.dsn)
 	if err == nil {
@@ -360,12 +357,28 @@ func assertMigrationRejectsForeignWorker(t *testing.T, tc foreignWorkerCase) {
 	}
 }
 
-// dropClusterRoles revokes memberships then drops cluster-global roles. Errors
-// are ignored so cleanup still runs after a failed assertion.
+// dropClusterRoles revokes memberships then drops cluster-global roles.
 func dropClusterRoles(ctx context.Context, f *tenancyFixture, revokes, drops []string) {
-	for _, statement := range append(append([]string{}, revokes...), drops...) {
+	execIgnoringError(ctx, f, append(append([]string{}, revokes...), drops...))
+}
+
+// execIgnoringError runs cleanup statements and discards their errors, so
+// cleanup still completes after a failed assertion and tolerates the objects a
+// partial fixture never created.
+func execIgnoringError(ctx context.Context, f *tenancyFixture, statements []string) {
+	for _, statement := range statements {
 		_, _ = f.db.ExecContext(ctx, statement)
 	}
+}
+
+// undoOnCleanup reverses a drift case's cluster-global change after its
+// subtest. Roles, their attributes and their memberships live in the cluster
+// rather than the database, so an unundone drift fails the next package's
+// `provision` instead of the next assertion.
+func undoOnCleanup(f *tenancyFixture, statements ...string) {
+	f.t.Cleanup(func() {
+		execIgnoringError(context.Background(), f, statements)
+	})
 }
 
 // createdWorker returns the CREATE ROLE statement for an already provisioned
@@ -381,17 +394,17 @@ func createdWorker(password string, saltByte byte) string {
 
 // TestMigrationRejectsPurgeMemberWorkerWithoutApp is the F3 lock. A role that
 // already holds ibex_purge but was never made a member of ibex_app is
-// necessarily hand-built: `migrate provision` requires both memberships and no
-// migration grants ibex_purge to anything but the modelled pair. Reaching
+// necessarily hand-built: `migrate provision` requires both roles reachable and
+// no migration grants ibex_purge to anything but the modelled pair. Reaching
 // ibex_purge alone would satisfy a `pg_has_role(..., 'MEMBER')` provenance test,
 // and the unconditional `GRANT ibex_app TO ibex_runtime, ibex_worker` would then
 // hand that foreign role full tenant read/write on the branch the guard exists
-// to abort, so both direct memberships are required.
+// to abort, so 000064 requires both direct, SET-enabled memberships.
 func TestMigrationRejectsPurgeMemberWorkerWithoutApp(t *testing.T) {
 	assertMigrationRejectsForeignWorker(t, foreignWorkerCase{
 		setup: func(ctx context.Context, f *tenancyFixture) {
 			f.exec(ctx, `CREATE ROLE ibex_purge NOLOGIN NOINHERIT`)
-			f.exec(ctx, createdWorker(workerSecret, 2))
+			f.exec(ctx, createdWorker(testcreds.WorkerLoginTestPassword, 2))
 			// Direct purge membership, no ibex_app membership: purge is
 			// reachable, app is not, which is exactly the shape the
 			// reachability test used to accept.
@@ -416,7 +429,7 @@ func TestMigrationRejectsTransitiveMemberWorker(t *testing.T) {
 		setup: func(ctx context.Context, f *tenancyFixture) {
 			f.exec(ctx, `CREATE ROLE ibex_purge NOLOGIN NOINHERIT`)
 			f.exec(ctx, `CREATE ROLE ibex_bridge NOLOGIN NOINHERIT`)
-			f.exec(ctx, createdWorker(workerSecret, 3))
+			f.exec(ctx, createdWorker(testcreds.WorkerLoginTestPassword, 3))
 			// ibex_worker holds no direct capability row: both reach only
 			// through the bridge, which is the shape a reachability predicate
 			// accepts.
@@ -448,7 +461,7 @@ func TestMigrationRejectsSetFalseMemberWorker(t *testing.T) {
 	assertMigrationRejectsForeignWorker(t, foreignWorkerCase{
 		setup: func(ctx context.Context, f *tenancyFixture) {
 			f.exec(ctx, `CREATE ROLE ibex_purge NOLOGIN NOINHERIT`)
-			f.exec(ctx, createdWorker(workerSecret, 4))
+			f.exec(ctx, createdWorker(testcreds.WorkerLoginTestPassword, 4))
 			// Direct rows that exist but cannot be assumed: the exact shape the
 			// bare EXISTS predicate accepted.
 			f.exec(ctx, `GRANT ibex_app TO ibex_worker WITH SET FALSE`)
@@ -473,7 +486,7 @@ func TestProvisionRejectsDrift(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newTenancyFixture(t)
 			ctx := t.Context()
-			setProvisionEnv(t)
+			testcreds.SetProvisionEnv(t)
 			tc.apply(ctx, f)
 			if err := Provision(f.dsn); err == nil {
 				t.Fatal("expected Provision to reject the drift")
@@ -485,33 +498,43 @@ func TestProvisionRejectsDrift(t *testing.T) {
 
 // driftCases covers unsafe attributes, direct/indirect forbidden memberships,
 // a missing required role, an expired credential and a bootstrap tenant drift.
+// Each case undoes its cluster-global change on cleanup: a leftover membership
+// or attribute is visible to every later package, which provisions the same
+// roles, so it would fail them instead of failing here.
 func driftCases() []driftCase {
 	return []driftCase{
 		{"unsafe attributes", func(ctx context.Context, f *tenancyFixture) {
 			f.exec(ctx, `ALTER ROLE ibex_runtime SUPERUSER`)
+			undoOnCleanup(f, `ALTER ROLE ibex_runtime NOSUPERUSER`)
 		}},
 		{"direct forbidden", func(ctx context.Context, f *tenancyFixture) {
 			f.exec(ctx, `GRANT ibex_service TO ibex_runtime`)
+			undoOnCleanup(f, `REVOKE ibex_service FROM ibex_runtime`)
 		}},
 		{"indirect forbidden", func(ctx context.Context, f *tenancyFixture) {
 			f.exec(ctx, `CREATE ROLE drift_bridge NOLOGIN`)
 			f.exec(ctx, `GRANT ibex_service TO drift_bridge`)
 			f.exec(ctx, `GRANT drift_bridge TO ibex_runtime`)
-			f.t.Cleanup(func() {
-				cleanupCtx := context.Background()
-				f.exec(cleanupCtx, `REVOKE drift_bridge FROM ibex_runtime`)
-				f.exec(cleanupCtx, `DROP OWNED BY drift_bridge`)
-				f.exec(cleanupCtx, `DROP ROLE IF EXISTS drift_bridge`)
-			})
+			undoOnCleanup(f,
+				`REVOKE drift_bridge FROM ibex_runtime`,
+				`DROP OWNED BY drift_bridge`,
+				`DROP ROLE IF EXISTS drift_bridge`,
+			)
 		}},
 		{"missing required", func(ctx context.Context, f *tenancyFixture) {
 			f.exec(ctx, `REVOKE ibex_app FROM ibex_runtime`)
+			undoOnCleanup(f, `GRANT ibex_app TO ibex_runtime`)
 		}},
 		{"expired credential", func(ctx context.Context, f *tenancyFixture) {
 			f.exec(ctx, `ALTER ROLE ibex_runtime VALID UNTIL '2000-01-01'`)
+			// 'infinity' is the natural no-expiry value, but lib/pq cannot scan
+			// it into a time.Time and Provision fails on that scan, so the undo
+			// uses a finite far-future date instead.
+			undoOnCleanup(f, `ALTER ROLE ibex_runtime VALID UNTIL '2099-01-01T00:00:00Z'`)
 		}},
 		{"bootstrap tenant drift", func(ctx context.Context, f *tenancyFixture) {
 			f.exec(ctx, `GRANT ibex_app TO ibex_bootstrap`)
+			undoOnCleanup(f, `REVOKE ibex_app FROM ibex_bootstrap`)
 		}},
 	}
 }

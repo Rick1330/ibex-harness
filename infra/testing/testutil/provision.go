@@ -9,20 +9,21 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/infra/migrations/postgres"
+	"github.com/Rick1330/ibex-harness/infra/testing/testcreds"
 )
 
 // Capability-login secrets for tests that provision the runtime, worker and
 // bootstrap logins. Roles and their passwords are cluster-global, so every
 // integration package that provisions must use the same values: two packages
 // provisioning the same role with different secrets invalidate each other's
-// connection, and `go test ./...` runs package binaries in parallel. Provision
-// rejects a secret that is blank, non-ASCII, contains a space, equals the owner
-// credential, or repeats another capability secret, so the three values below
-// are pairwise distinct and differ from the DSN credential.
+// connection, and `go test ./...` runs package binaries in parallel. The values
+// live in testcreds because this package imports the migration package and the
+// migration tests are inside it; re-exporting keeps the existing call sites
+// reading from one source of truth.
 const (
-	RuntimeLoginTestPassword   = "capability-test-only-runtime"
-	WorkerLoginTestPassword    = "capability-test-only-worker"
-	BootstrapLoginTestPassword = "capability-test-only-bootstrap"
+	RuntimeLoginTestPassword   = testcreds.RuntimeLoginTestPassword
+	WorkerLoginTestPassword    = testcreds.WorkerLoginTestPassword
+	BootstrapLoginTestPassword = testcreds.BootstrapLoginTestPassword
 )
 
 const (
@@ -37,9 +38,7 @@ const (
 // SetProvisionEnv exports the capability-login secrets Provision reads.
 func SetProvisionEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("IBEX_RUNTIME_DB_PASSWORD", RuntimeLoginTestPassword)
-	t.Setenv("IBEX_WORKER_DB_PASSWORD", WorkerLoginTestPassword)
-	t.Setenv("IBEX_BOOTSTRAP_DB_PASSWORD", BootstrapLoginTestPassword)
+	testcreds.SetProvisionEnv(t)
 }
 
 // ProvisionCapabilityLogins gives the capability logins a SCRAM verifier and
