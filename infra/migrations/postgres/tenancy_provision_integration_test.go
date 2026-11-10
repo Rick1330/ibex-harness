@@ -30,6 +30,9 @@ func setProvisionEnv(t *testing.T) {
 
 // TestProvisionSetsScramAndAllowsLogin proves the inert-to-provisioned
 // transition, the SCRAM verifier, and password authentication over TCP.
+// downErrFormat is the shared failure format for the down/up cycle.
+const downErrFormat = "down %d: %v"
+
 func TestProvisionSetsScramAndAllowsLogin(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
@@ -160,7 +163,7 @@ func TestTenancyDownUpCycle(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		if err := Down(f.dsn); err != nil {
-			t.Fatalf("down %d: %v", i+1, err)
+			t.Fatalf(downErrFormat, i+1, err)
 		}
 	}
 	f.assertVersion(ctx, versionCheck{want: want - 5})
@@ -229,7 +232,7 @@ func TestExistingProvisionedRoleKeepsLimit(t *testing.T) {
 	ctx := t.Context()
 	for i := 0; i < 5; i++ {
 		if err := Down(f.dsn); err != nil {
-			t.Fatalf("down %d: %v", i+1, err)
+			t.Fatalf(downErrFormat, i+1, err)
 		}
 	}
 	if _, err := f.db.ExecContext(ctx, `
@@ -250,7 +253,7 @@ func TestMigrationRejectsProvisionedWorkerBeforeGrant(t *testing.T) {
 	ctx := t.Context()
 	for i := 0; i < 5; i++ {
 		if err := Down(f.dsn); err != nil {
-			t.Fatalf("down %d: %v", i+1, err)
+			t.Fatalf(downErrFormat, i+1, err)
 		}
 	}
 	f.exec(ctx, fmt.Sprintf(`

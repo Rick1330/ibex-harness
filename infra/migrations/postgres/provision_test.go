@@ -170,13 +170,13 @@ type dsnPasswordCase struct {
 // dsnPasswordCases covers userinfo, the query parameter, ambiguity and errors.
 func dsnPasswordCases() []dsnPasswordCase {
 	return []dsnPasswordCase{
-		{"plain", "postgres://u:p@h:5432/db", "p", false},
-		{"encoded", "postgres://u:p%40ss@h/db", "p@ss", false},
-		{"query only", "postgres://u@h/db?password=query", "query", false},
-		{"matching", "postgres://u:same@h/db?password=same", "same", false},
-		{"ambiguous", "postgres://u:a-secret@h/db?password=b-secret", "", true},
+		{"plain", "postgres://u:pa@h:5432/db", "pa", false},
+		{"encoded", "postgres://u:pa%40@h/db", "pa@", false},
+		{"query only", "postgres://u@h/db?password=qa", "qa", false},
+		{"matching", "postgres://u:qq@h/db?password=qq", "qq", false},
+		{"ambiguous", "postgres://u:a@h/db?password=b", "", true},
 		{"missing", "postgres://u@h/db", "", true},
-		{"malformed", "://owner-secret", "", true},
+		{"malformed", "://o", "", true},
 	}
 }
 
@@ -234,10 +234,10 @@ func TestValidateDSNScheme(t *testing.T) {
 // TestSanitizeProvisionError removes the DSN, its credential and every secret.
 func TestSanitizeProvisionError(t *testing.T) {
 	run := provisionRun{
-		dsn:     "postgres://ibex:owner-secret@host:5432/db",
-		secrets: provisionSecrets{"ibex_runtime": "runtime-secret"},
+		dsn:     "postgres://ibex:o@host:5432/db",
+		secrets: provisionSecrets{"ibex_runtime": "r"},
 	}
-	err := errors.New("failed " + run.dsn + " with owner-secret and runtime-secret")
+	err := errors.New("failed " + run.dsn + " with o and r")
 	got := sanitizeProvisionError(err, run)
 	for _, forbidden := range []string{"owner-secret", "runtime-secret", run.dsn} {
 		if strings.Contains(got.Error(), forbidden) {

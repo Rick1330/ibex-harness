@@ -78,10 +78,30 @@ type roleFlags struct {
 	super, bypass, login, inherit bool
 }
 
-// allowedRoles is the compile-time allowlist for SET LOCAL ROLE.
-var allowedRoles = map[string]struct{}{
-	"ibex": {}, "ibex_app": {}, "ibex_service": {}, "ibex_purge": {},
-	"ibex_runtime": {}, "ibex_worker": {}, "ibex_bootstrap": {}, "ibex_evidence_relay": {},
+// roleStatement maps an allowlisted role to its fixed SET LOCAL ROLE statement.
+// The statement is a compile-time literal per case, so no SQL is formatted from
+// a variable and a name outside the allowlist cannot reach the server.
+func roleStatement(name string) (string, error) {
+	switch name {
+	case "ibex":
+		return "SET LOCAL ROLE ibex", nil
+	case "ibex_app":
+		return "SET LOCAL ROLE ibex_app", nil
+	case "ibex_service":
+		return "SET LOCAL ROLE ibex_service", nil
+	case "ibex_purge":
+		return "SET LOCAL ROLE ibex_purge", nil
+	case "ibex_runtime":
+		return "SET LOCAL ROLE ibex_runtime", nil
+	case "ibex_worker":
+		return "SET LOCAL ROLE ibex_worker", nil
+	case "ibex_bootstrap":
+		return "SET LOCAL ROLE ibex_bootstrap", nil
+	case "ibex_evidence_relay":
+		return "SET LOCAL ROLE ibex_evidence_relay", nil
+	default:
+		return "", fmt.Errorf("unsupported role %q", name)
+	}
 }
 
 // role returns a roleSpec without an org GUC.
@@ -93,15 +113,6 @@ func role(name string) roleSpec {
 func (r roleSpec) withGUC(value string) roleSpec {
 	r.orgGUC = &value
 	return r
-}
-
-// quoteRole validates a role against the allowlist and returns a safe
-// identifier. The identifier never comes from untrusted input.
-func quoteRole(name string) (string, error) {
-	if _, ok := allowedRoles[name]; !ok {
-		return "", fmt.Errorf("unsupported role %q", name)
-	}
-	return pq.QuoteIdentifier(name), nil
 }
 
 // newTenancyFixture resets the schema, applies the migrations and returns the
@@ -199,12 +210,11 @@ func (f *tenancyFixture) applyGUC(ctx context.Context, tx *sql.Tx, guc *string) 
 
 // setRole validates and sets one allowlisted role.
 func setRole(ctx context.Context, tx *sql.Tx, name string) error {
-	identifier, err := quoteRole(name)
+	statement, err := roleStatement(name)
 	if err != nil {
 		return err
 	}
-	// nosemgrep: go_sql_rule-concat-sqli -- identifier comes from a compile-time role allowlist and is quoted by pq.QuoteIdentifier.
-	if _, err := tx.ExecContext(ctx, `SET LOCAL ROLE `+identifier); err != nil {
+	if _, err := tx.ExecContext(ctx, statement); err != nil {
 		return fmt.Errorf("set role %s: %w", name, err)
 	}
 	return nil
