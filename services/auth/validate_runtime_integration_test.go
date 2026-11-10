@@ -10,14 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Rick1330/ibex-harness/infra/migrations/postgres"
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
 )
-
-const runtimeIntegrationSecret = "runtime-integration-secret"
 
 // TestValidateTokenIntegration_AsRuntime is the guard for the ordering
 // invariant in ADR-0098: the validation lookup must work when the service
@@ -39,7 +36,7 @@ func TestValidateTokenIntegration_AsRuntime(t *testing.T) {
 	expiredAt := time.Now().UTC().Add(-time.Hour)
 	expired := seedRuntimeBearer(t, seedRepo, orgID, runtimeSeed{expiresAt: &expiredAt})
 
-	provisionRuntimeLogin(t, dsn)
+	testutil.ProvisionCapabilityLogins(t, dsn)
 	runtimeDB := openRuntimeDB(t, dsn)
 	defer func() { _ = runtimeDB.Close() }()
 
@@ -61,19 +58,6 @@ func TestValidateTokenIntegration_AsRuntime(t *testing.T) {
 	assertRuntimeUnauthenticated(t, validator, "ibex_pat_"+uuid.NewString()+"_unknown", "unknown prefix")
 }
 
-// provisionRuntimeLogin gives the capability logins a SCRAM verifier and clears
-// their connection limit. The secrets are test-only and pairwise distinct from
-// the owner credential in the test DSN.
-func provisionRuntimeLogin(t *testing.T, dsn string) {
-	t.Helper()
-	t.Setenv("IBEX_RUNTIME_DB_PASSWORD", runtimeIntegrationSecret)
-	t.Setenv("IBEX_WORKER_DB_PASSWORD", runtimeIntegrationSecret+"-worker")
-	t.Setenv("IBEX_BOOTSTRAP_DB_PASSWORD", runtimeIntegrationSecret+"-bootstrap")
-	if err := postgres.Provision(dsn); err != nil {
-		t.Fatalf("Provision capability logins: %v", err)
-	}
-}
-
 // openRuntimeDB connects with the ibex_runtime credential.
 func openRuntimeDB(t *testing.T, dsn string) *sql.DB {
 	t.Helper()
@@ -81,7 +65,7 @@ func openRuntimeDB(t *testing.T, dsn string) *sql.DB {
 	if err != nil {
 		t.Fatalf("parse test DSN: %v", err)
 	}
-	parsed.User = url.UserPassword("ibex_runtime", runtimeIntegrationSecret)
+	parsed.User = url.UserPassword("ibex_runtime", testutil.RuntimeLoginTestPassword)
 	db, err := sql.Open("postgres", parsed.String())
 	if err != nil {
 		t.Fatalf("open runtime pool: %v", err)

@@ -10,18 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Rick1330/ibex-harness/infra/migrations/postgres"
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
-
-// isolationRuntimeSecret is the test-only password for ibex_runtime. Provision
-// rejects a capability password that is blank, non-ASCII, contains a space,
-// equals the owner credential, or repeats another capability password, so the
-// three values below are pairwise distinct and differ from the DSN password.
-const isolationRuntimeSecret = "isolation-runtime-secret"
 
 // isolationFixture holds two tenants and one row each for the repositories
 // under test. The repositories run on the ibex_runtime pool; the rows were
@@ -88,7 +81,7 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 		creds:  seedCreds,
 	})
 
-	provisionRuntimeLoginForIsolation(t, dsn)
+	testutil.ProvisionCapabilityLogins(t, dsn)
 	runtimeDB := openIsolationRuntimeDB(t, dsn)
 	t.Cleanup(func() { _ = runtimeDB.Close() })
 	f.bindRuntimeRepos(t, runtimeDB)
@@ -148,19 +141,6 @@ func (f *isolationFixture) bindRuntimeRepos(t *testing.T, db *sql.DB) {
 	f.creds = creds
 }
 
-// provisionRuntimeLoginForIsolation gives the capability logins a SCRAM
-// verifier and clears their connection limit. The secrets are test-only and
-// pairwise distinct from the owner credential in the test DSN.
-func provisionRuntimeLoginForIsolation(t *testing.T, dsn string) {
-	t.Helper()
-	t.Setenv("IBEX_RUNTIME_DB_PASSWORD", isolationRuntimeSecret)
-	t.Setenv("IBEX_WORKER_DB_PASSWORD", isolationRuntimeSecret+"-worker")
-	t.Setenv("IBEX_BOOTSTRAP_DB_PASSWORD", isolationRuntimeSecret+"-bootstrap")
-	if err := postgres.Provision(dsn); err != nil {
-		t.Fatalf("Provision capability logins: %v", err)
-	}
-}
-
 // openIsolationRuntimeDB connects with the ibex_runtime credential.
 func openIsolationRuntimeDB(t *testing.T, dsn string) *sql.DB {
 	t.Helper()
@@ -168,7 +148,7 @@ func openIsolationRuntimeDB(t *testing.T, dsn string) *sql.DB {
 	if err != nil {
 		t.Fatalf("parse test DSN: %v", err)
 	}
-	parsed.User = url.UserPassword("ibex_runtime", isolationRuntimeSecret)
+	parsed.User = url.UserPassword("ibex_runtime", testutil.RuntimeLoginTestPassword)
 	db, err := sql.Open("postgres", parsed.String())
 	if err != nil {
 		t.Fatalf("open runtime pool: %v", err)
