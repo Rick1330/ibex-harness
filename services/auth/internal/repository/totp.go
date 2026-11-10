@@ -39,28 +39,12 @@ func NewTotpSecretRepo(db *sql.DB) *TotpSecretRepo {
 	return &TotpSecretRepo{db: db}
 }
 
-func (r *TotpSecretRepo) withServiceAccount(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("totp repo: begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
-		return fmt.Errorf("totp repo: set service account: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 // UpsertPending inserts or replaces an unconfirmed secret.
 func (r *TotpSecretRepo) UpsertPending(ctx context.Context, row TotpSecretRow) error {
 	if r == nil || r.db == nil {
 		return fmt.Errorf("totp repo: nil db")
 	}
-	return r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	return withTenant(ctx, r.db, row.OrgID, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO ibex_core.user_totp_secrets (
 				org_id, user_id, ciphertext, wrapped_dek, encryption_key_id, confirmed_at
@@ -82,7 +66,7 @@ func (r *TotpSecretRepo) Get(ctx context.Context, orgID, userID string) (TotpSec
 		return TotpSecretRow{}, fmt.Errorf("totp repo: nil db")
 	}
 	var out TotpSecretRow
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	err := withTenant(ctx, r.db, orgID, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
 			SELECT org_id, user_id, ciphertext, wrapped_dek, encryption_key_id, confirmed_at
 			FROM ibex_core.user_totp_secrets
@@ -112,7 +96,7 @@ func (r *TotpSecretRepo) ConfirmCiphertext(ctx context.Context, p ConfirmCiphert
 		return fmt.Errorf("totp repo: nil db")
 	}
 	var res sql.Result
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	err := withTenant(ctx, r.db, p.OrgID, func(tx *sql.Tx) error {
 		var execErr error
 		res, execErr = execConfirmCiphertext(ctx, tx, p)
 		return execErr

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	migratepg "github.com/Rick1330/ibex-harness/infra/migrations/postgres"
+	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/google/uuid"
@@ -401,6 +402,7 @@ func resetSchema(t *testing.T, db *sql.DB) {
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_billing CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_core CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS schema_migrations`)
+	testutil.ResetCapabilityRoles(ctx, db)
 	_, _ = db.ExecContext(ctx, `DROP ROLE IF EXISTS ibex_app`)
 }
 

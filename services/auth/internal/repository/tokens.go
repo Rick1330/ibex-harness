@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/google/uuid"
 )
 
 // ErrNotFound is returned when a token row does not exist for the given org scope.
@@ -25,31 +25,32 @@ type TokenRow struct {
 	Hash        string
 }
 
-// TokensRepository loads tokens under the service-account RLS context.
+// TokensRepository loads tokens. Tenant-scoped writes and lists run under the
+// ibex_app role with app.current_org_id pinned; the cross-tenant validation
+// lookup uses the SECURITY DEFINER reader instead of a session flag.
 type TokensRepository struct {
 	db  *sql.DB
 	obs metrics.QueryObserver
 }
 
-// FindActiveByPrefix returns a non-revoked, non-expired token with the given prefix.
+// findActiveTokenByPrefixSQL is the SECURITY DEFINER reader. Its eight output
+// columns match the Scan order below; the owner is ibex_service and EXECUTE is
+// granted to ibex_runtime only, so it is callable under both the current owner
+// login and a future runtime DSN without a role pin.
+const findActiveTokenByPrefixSQL = `SELECT * FROM ibex_core.auth_find_token_by_prefix($1)`
+
+// FindActiveByPrefix returns a non-revoked, non-expired token with the given
+// prefix. A miss returns sql.ErrNoRows so the Validator can equalize Argon2
+// cost before denying.
 func (r *TokensRepository) FindActiveByPrefix(ctx context.Context, prefix string) (TokenRow, error) {
 	start := time.Now()
 	defer observeQuery(r.obs, metrics.DBOpFindTokenByPrefix, start)
 
 	var row TokenRow
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `
-			SELECT t.id::text, t.org_id::text, o.status, t.user_id::text, t.agent_id::text,
-			       t.permissions, t.expires_at, t.hash
-			FROM ibex_core.tokens t
-			INNER JOIN ibex_core.organizations o ON o.id = t.org_id
-			WHERE t.prefix = $1
-			  AND t.is_revoked = false
-			  AND (t.expires_at IS NULL OR t.expires_at > NOW())
-			  AND o.deleted_at IS NULL
-			LIMIT 1`,
-			prefix,
-		).Scan(&row.ID, &row.OrgID, &row.OrgStatus, &row.UserID, &row.AgentID, &row.Permissions, &row.ExpiresAt, &row.Hash)
+	err := withReaderTx(ctx, r.db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, findActiveTokenByPrefixSQL, prefix).Scan(
+			&row.ID, &row.OrgID, &row.OrgStatus, &row.UserID, &row.AgentID, &row.Permissions, &row.ExpiresAt, &row.Hash,
+		)
 	})
 	if err != nil {
 		return TokenRow{}, err
@@ -57,35 +58,30 @@ func (r *TokensRepository) FindActiveByPrefix(ctx context.Context, prefix string
 	return row, nil
 }
 
-func (r *TokensRepository) withServiceAccount(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
-		return fmt.Errorf("set service account: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		return err
-	}
-	return tx.Commit()
+// TestTokenParams is one seeded token row (integration tests only).
+type TestTokenParams struct {
+	OrgID       string
+	Prefix      string
+	Hash        string
+	Name        string
+	Permissions int64
+	Revoked     bool
+	ExpiresAt   *time.Time
 }
 
 // InsertTestToken inserts a token row (integration tests only).
-func (r *TokensRepository) InsertTestToken(ctx context.Context, orgID, prefix, hash, name string, permissions int64, revoked bool, expiresAt *time.Time) (string, error) {
+func (r *TokensRepository) InsertTestToken(ctx context.Context, p TestTokenParams) (string, error) {
 	var id string
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	err := withTenant(ctx, r.db, p.OrgID, func(tx *sql.Tx) error {
 		var exp any
-		if expiresAt != nil {
-			exp = *expiresAt
+		if p.ExpiresAt != nil {
+			exp = *p.ExpiresAt
 		}
 		return tx.QueryRowContext(ctx, `
 			INSERT INTO ibex_core.tokens (org_id, type, hash, prefix, name, permissions, is_revoked, expires_at)
 			VALUES ($1::uuid, 'pat', $2, $3, $4, $5, $6, $7)
 			RETURNING id::text`,
-			orgID, hash, prefix, name, permissions, revoked, exp,
+			p.OrgID, p.Hash, p.Prefix, p.Name, p.Permissions, p.Revoked, exp,
 		).Scan(&id)
 	})
 	return id, err
@@ -123,7 +119,7 @@ func (r *TokensRepository) CreateToken(ctx context.Context, p CreateTokenParams)
 	defer observeQuery(r.obs, metrics.DBOpCreateToken, start)
 
 	var id string
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	err := withTenant(ctx, r.db, p.OrgID, func(tx *sql.Tx) error {
 		var exp any
 		if p.ExpiresAt != nil {
 			exp = *p.ExpiresAt
@@ -161,7 +157,7 @@ func (r *TokensRepository) RevokeToken(ctx context.Context, in RevokeTokenInput)
 	start := time.Now()
 	defer observeQuery(r.obs, "revoke_token", start)
 
-	return r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	return withTenant(ctx, r.db, in.OrgID, func(tx *sql.Tx) error {
 		var revokedByArg any
 		if in.RevokedBy != "" {
 			revokedByArg = in.RevokedBy
@@ -201,7 +197,7 @@ func (r *TokensRepository) ListActiveTokenIDsByUser(ctx context.Context, scope O
 	defer observeQuery(r.obs, "list_active_token_ids_by_user", start)
 
 	var ids []string
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	err := withTenant(ctx, r.db, scope.OrgID, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
 			SELECT id::text
 			FROM ibex_core.tokens
@@ -227,14 +223,16 @@ func (r *TokensRepository) ListActiveTokenIDsByUser(ctx context.Context, scope O
 	return ids, err
 }
 
-// InsertTestOrganization inserts an organization (integration tests only).
+// InsertTestOrganization inserts an organization (integration tests only). The
+// id is generated here so the insert can run with the tenant selector pinned to
+// the row it is about to create.
 func (r *TokensRepository) InsertTestOrganization(ctx context.Context, name, slug string) (string, error) {
-	var id string
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	id := uuid.NewString()
+	err := withTenant(ctx, r.db, id, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.organizations (name, slug)
-			VALUES ($1, $2)
-			RETURNING id::text`, name, slug,
+			INSERT INTO ibex_core.organizations (id, name, slug)
+			VALUES ($1::uuid, $2, $3)
+			RETURNING id::text`, id, name, slug,
 		).Scan(&id)
 	})
 	return id, err

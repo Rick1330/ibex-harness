@@ -18,7 +18,8 @@ type AgentRecord struct {
 	Status string
 }
 
-// AgentsRepository loads agents under the service-account RLS context.
+// AgentsRepository loads agents under the ibex_app RLS context, scoped to one
+// organisation per query.
 type AgentsRepository struct {
 	db  *sql.DB
 	obs metrics.QueryObserver
@@ -28,6 +29,9 @@ func NewAgentsRepository(db *sql.DB, obs metrics.QueryObserver) *AgentsRepositor
 	return &AgentsRepository{db: db, obs: obs}
 }
 
+// GetByIDAndOrg returns the agent only when it belongs to orgID. The org is
+// part of the WHERE clause as well as the RLS predicate, so a foreign agent is a
+// miss rather than a permission error.
 func (r *AgentsRepository) GetByIDAndOrg(
 	ctx context.Context,
 	agentID, orgID uuid.UUID,
@@ -36,7 +40,7 @@ func (r *AgentsRepository) GetByIDAndOrg(
 	defer observeQuery(r.obs, metrics.DBOpGetAgentByID, start)
 
 	var out *AgentRecord
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	err := withTenant(ctx, r.db, orgID.String(), func(tx *sql.Tx) error {
 		// Note: org_id is part of the WHERE clause to prevent cross-tenant lookups.
 		row := tx.QueryRowContext(ctx, `
 			SELECT id::text, org_id::text, status
@@ -64,20 +68,4 @@ func (r *AgentsRepository) GetByIDAndOrg(
 		return nil, err
 	}
 	return out, nil
-}
-
-func (r *AgentsRepository) withServiceAccount(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
-		return fmt.Errorf("set service account: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		return err
-	}
-	return tx.Commit()
 }

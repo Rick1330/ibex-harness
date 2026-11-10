@@ -163,8 +163,18 @@ both are larger changes that the supported profile does not require yet.
   not implement stringprep. In the same statement it clears `CONNECTION LIMIT`; it then asserts `rolsuper`,
   `rolbypassrls`, `rolcreatedb`, `rolcreaterole`, `rolinherit` are false, `rolcanlogin` is true, `rolconnlimit = -1`,
   and that no login reaches `ibex_service`, `ibex_purge` or (bootstrap) `ibex_app` by any membership path, that each
-  login can assume the roles it requires (`ibex_app`; worker also `ibex_purge`), and that no role is expired. `000064`
-  also refuses to grant the purge membership to a pre-existing role that already has a credential.
+  login can assume the roles it requires (`ibex_app`; worker also `ibex_purge`), and that no role is expired.
+  `000064` refuses to widen a pre-existing `ibex_worker` that carries a credential unless that role is already part of
+  the model, proven by **direct, `SET`-enabled** `ibex_app` and `ibex_purge` rows in `pg_auth_members`, captured before
+  the file grants anything. Roles and memberships are cluster-global, so a second database in a provisioned cluster
+  re-runs this file against a login `migrate provision` already secured. `provision` cannot commit unless **both roles
+  are reachable** from `ibex_worker` by some path, but its check is `pg_has_role(…, 'MEMBER')` — reachability by any
+  path and option-blind — and it never issues a `GRANT`. The shape this file creates is a direct, `SET`-enabled grant,
+  and the guard requires that shape deliberately, so it is stricter than `provision`: a cluster provisioned through an
+  intermediate role is rejected here, and the message says how to repair it. `pg_has_role(…, 'MEMBER')` is not used
+  because it counts transitive membership, and a bare row is not enough because it may carry `SET FALSE`; either would
+  let a hand-built role satisfy the test without ever being produced by this model. `ibex_purge` itself is guarded on
+  bare credential presence, because `provision` never sets a verifier on that role.
 - `privacy_audit_append` and `ibex_billing.clear_enforcement_budget_period_id` lose their `ibex_app` EXECUTE grants.
   The only `privacy_audit_append` caller is the worker purge path (which uses `ibex_purge`, and still has EXECUTE); the
   trigger function fires without an EXECUTE check. Both grants are restored in the down file.
@@ -194,7 +204,12 @@ both are larger changes that the supported profile does not require yet.
 - `CREATE INDEX CONCURRENTLY` cannot run inside a transaction, so `000066` is deliberately one statement per file (the
   same pattern as `000059`). A failed build can leave an INVALID index; drop it and retry.
 - The migration suite now creates and drops the four capability roles; `resetSchema` drops them before `ibex_app` so a
-  rerun is idempotent.
+  rerun is idempotent. Roles and memberships are cluster-global while `schema_migrations` is per-database, so
+  `services/relay/internal/relaytest` and the `packages/*` harnesses — which reset only the schema — re-run `000064`
+  against a provisioned cluster. `TestMigrationRerunsOnProvisionedCluster` pins that tolerance, and
+  `TestMigrationRejectsPurgeMemberWorkerWithoutApp`, `TestMigrationRejectsTransitiveMemberWorker` and
+  `TestMigrationRejectsSetFalseMemberWorker` pin the three rejection shapes (missing capability row, bridge-only
+  reachability, and `SET FALSE` rows), so neither the false positive nor the widened foreign role can return unnoticed.
 - `ibex_service` needs column privileges on `tokens`, `organizations`, `rate_limit_overrides`, and `sessions` for the
   reader bodies. Those grants are column-scoped and live in `000065`, not in the tenant role.
 

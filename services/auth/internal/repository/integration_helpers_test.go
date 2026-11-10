@@ -31,6 +31,8 @@ type findActiveCase struct {
 	wantFound bool
 }
 
+// seedFindActiveToken creates one organisation and the token described by tc,
+// returning the prefix the lookup under test is made with.
 func seedFindActiveToken(t *testing.T, repo *repository.TokensRepository, db *sql.DB, tc findActiveCase) string {
 	t.Helper()
 	orgID := testutil.SeedOrganization(t, db, "Find Org "+tc.name, "find-"+uuid.NewString()[:8])
@@ -46,7 +48,10 @@ func seedFindActiveToken(t *testing.T, repo *repository.TokensRepository, db *sq
 		past := time.Now().UTC().Add(-time.Hour)
 		expiresAt = &past
 	}
-	if _, err = repo.InsertTestToken(context.Background(), orgID, prefix, hash, tc.name, 7, tc.revoked, expiresAt); err != nil {
+	if _, err = repo.InsertTestToken(context.Background(), repository.TestTokenParams{
+		OrgID: orgID, Prefix: prefix, Hash: hash, Name: tc.name, Permissions: 7,
+		Revoked: tc.revoked, ExpiresAt: expiresAt,
+	}); err != nil {
 		t.Fatalf("insert token: %v", err)
 	}
 	return prefix
@@ -115,6 +120,8 @@ func assertTokenIDsPresent(t *testing.T, want []string, rows []repository.TokenM
 	}
 }
 
+// insertNamedToken inserts a token with a real Argon2 hash so every row in a
+// listing is valid, and returns its id.
 func insertNamedToken(t *testing.T, repo *repository.TokensRepository, orgID, name string) string {
 	t.Helper()
 	tokenID := uuid.New()
@@ -124,7 +131,9 @@ func insertNamedToken(t *testing.T, repo *repository.TokensRepository, orgID, na
 	if err != nil {
 		t.Fatalf("hash %s: %v", name, err)
 	}
-	id, err := repo.InsertTestToken(context.Background(), orgID, prefix, hash, name, 1, false, nil)
+	id, err := repo.InsertTestToken(context.Background(), repository.TestTokenParams{
+		OrgID: orgID, Prefix: prefix, Hash: hash, Name: name, Permissions: 1,
+	})
 	if err != nil {
 		t.Fatalf("insert %s: %v", name, err)
 	}

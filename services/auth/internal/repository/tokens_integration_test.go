@@ -14,13 +14,17 @@ import (
 	"github.com/google/uuid"
 )
 
+// TestTokensRepository_CreateToken proves the insert round-trips and returns the
+// caller-supplied id.
 func TestTokensRepository_CreateToken(t *testing.T) {
 	repo, db := setupTokensRepo(t)
 	orgID := testutil.SeedOrganization(t, db, "Create Org", "create-"+uuid.NewString()[:8])
 	rowID := uuid.New()
 	id, err := repo.CreateToken(context.Background(), repository.CreateTokenParams{
 		ID: rowID.String(), OrgID: orgID, Name: "integration-create", Description: "desc",
-		Hash: "hash-placeholder", Prefix: "ibex_pat_" + rowID.String(), Permissions: 42,
+		// A unique hash: tokens.hash is UNIQUE, so a fixed value makes the test
+		// fail on the second run against the same database.
+		Hash: "hash-" + rowID.String(), Prefix: "ibex_pat_" + rowID.String(), Permissions: 42,
 	})
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
@@ -39,6 +43,8 @@ func TestTokensRepository_RevokeToken_ErrNotFound(t *testing.T) {
 	}
 }
 
+// TestTokensRepository_RevokeToken_HappyPath proves an active token is revoked
+// from within its own organisation.
 func TestTokensRepository_RevokeToken_HappyPath(t *testing.T) {
 	repo, db := setupTokensRepo(t)
 	orgID := testutil.SeedOrganization(t, db, "Revoke OK Org", "revoke-ok-"+uuid.NewString()[:8])
@@ -49,7 +55,9 @@ func TestTokensRepository_RevokeToken_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hash: %v", err)
 	}
-	id, err := repo.InsertTestToken(context.Background(), orgID, prefix, hash, "revoke-me", 1, false, nil)
+	id, err := repo.InsertTestToken(context.Background(), repository.TestTokenParams{
+		OrgID: orgID, Prefix: prefix, Hash: hash, Name: "revoke-me", Permissions: 1,
+	})
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/metrics"
@@ -43,28 +42,13 @@ func NewProviderCredentialsRepository(db *sql.DB, obs metrics.QueryObserver) (*P
 	return &ProviderCredentialsRepository{db: db, obs: obs}, nil
 }
 
-func (r *ProviderCredentialsRepository) withServiceAccount(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
-		return fmt.Errorf("set service account: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 // Upsert seals a credential row for (org_id, provider_name).
 func (r *ProviderCredentialsRepository) Upsert(ctx context.Context, row ProviderCredentialRow) (ProviderCredentialRow, error) {
 	start := time.Now()
 	defer observeQuery(r.obs, metrics.DBOpUpsertProviderCredential, start)
 
 	var out ProviderCredentialRow
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	err := withTenant(ctx, r.db, row.OrgID, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
 			INSERT INTO ibex_core.provider_credentials (
 				org_id, provider_name, ciphertext, wrapped_dek, encryption_key_id,
@@ -103,7 +87,7 @@ func (r *ProviderCredentialsRepository) FindByOrgProvider(ctx context.Context, o
 	defer observeQuery(r.obs, metrics.DBOpFindProviderCredential, start)
 
 	var out ProviderCredentialRow
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	err := withTenant(ctx, r.db, orgID, func(tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `
 			SELECT id::text, org_id::text, provider_name, ciphertext, wrapped_dek,
 				encryption_key_id, key_hint, base_url, status, last_validated_at, created_at, updated_at
@@ -133,7 +117,7 @@ func (r *ProviderCredentialsRepository) ListByOrg(ctx context.Context, orgID str
 	defer observeQuery(r.obs, metrics.DBOpListProviderCredentials, start)
 
 	var rows []ProviderCredentialRow
-	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	err := withTenant(ctx, r.db, orgID, func(tx *sql.Tx) error {
 		rs, err := tx.QueryContext(ctx, `
 			SELECT id::text, org_id::text, provider_name, ciphertext, wrapped_dek,
 				encryption_key_id, key_hint, base_url, status, last_validated_at, created_at, updated_at
@@ -170,7 +154,7 @@ func (r *ProviderCredentialsRepository) Delete(ctx context.Context, orgID, provi
 	start := time.Now()
 	defer observeQuery(r.obs, metrics.DBOpDeleteProviderCredential, start)
 
-	return r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+	return withTenant(ctx, r.db, orgID, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `
 			DELETE FROM ibex_core.provider_credentials
 			WHERE org_id = $1::uuid AND provider_name = $2`,
