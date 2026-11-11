@@ -41,7 +41,8 @@ Every row keeps its limitation text unchanged, because none of those limitations
 ## 4. The one row this review cannot renew
 
 `idempotency-operation.v1` is one of the five **accepted contract shapes**, and it is the only one whose contract-shape
-acceptance was not re-verified on 2026-11-06. It therefore still lapses on **2026-11-10**. Re-dating it is a G0
+acceptance was not re-verified on 2026-11-06. It therefore lapsed on **2026-11-10**; the owner renewed it on
+2026-11-11 (§4 outcome note). Re-dating it is a G0
 acceptance act, not a test result; this review instead prepares the evidence for it:
 
 - the shared JCS fingerprint contract: 2 vectors, plus the shared-ledger contract cases, **12 pass with PostgreSQL
@@ -54,6 +55,11 @@ acceptance act, not a test result; this review instead prepares the evidence for
 
 **Recommendation:** the owner renews `idempotency-operation.v1` to 2027-02-06 with the four items above as the
 evidence, or downgrades it — either decision has to be recorded on or before 2026-11-10.
+
+**Outcome (annotated 2026-11-11):** no decision was recorded on or before 2026-11-10, so the contract-shape acceptance
+lapsed; the owner renewed it to 2027-02-06 on 2026-11-11 on this section's packet plus the additive
+`409 IDEMPOTENCY_KEY_ERASED` term from PR #1152 — [`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md).
+This section is left as the recommendation it was.
 
 ## 5. Effect on the ledger
 
