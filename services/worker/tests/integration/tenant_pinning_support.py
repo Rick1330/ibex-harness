@@ -213,17 +213,23 @@ async def seed_rate_card(
 
 
 async def seed_capture_policy(
-    factory: async_sessionmaker[AsyncSession], org_id: UUID
+    factory: async_sessionmaker[AsyncSession],
+    org_id: UUID,
+    *,
+    agent_id: UUID | None = None,
+    mode: str = "metadata_only",
+    priority: int = 0,
 ) -> None:
+    """Seed one capture policy row; ``agent_id=None`` is the org default."""
     async with factory() as session, session.begin():
         await session.execute(
             sql_text(
                 """
                 INSERT INTO ibex_core.org_capture_policies (org_id, agent_id, mode, priority)
-                VALUES (:org, NULL, 'metadata_only', 0)
+                VALUES (:org, :agent, :mode, :priority)
                 """
             ),
-            {"org": org_id},
+            {"org": org_id, "agent": agent_id, "mode": mode, "priority": priority},
         )
 
 

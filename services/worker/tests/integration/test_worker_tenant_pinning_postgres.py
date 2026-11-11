@@ -233,6 +233,41 @@ async def test_capture_redaction_reads_the_policy_as_worker_login(
 
 
 @pytest.mark.asyncio
+async def test_capture_redaction_agent_policy_wins_over_org_default_as_worker_login(
+    owner_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An agent-scoped row beats the org default even at a worse priority.
+
+    This is the only case that binds a non-NULL ``agent_id`` into
+    ``resolve_capture_mode``, so it exercises the ``CAST(:agent_id AS text)``
+    binding and the ``agent_id IS NOT NULL`` ordering. The agent row is given
+    the numerically larger (worse) priority on purpose: agent specificity, not
+    priority alone, must select it.
+    """
+    await assert_worker_login(capability_worker_dsn)
+    org_id = uuid4()
+    await seed_org(owner_factory, org_id)
+    _, agent_id = await seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
+    await seed_capture_policy(
+        owner_factory, org_id, agent_id=None, mode="metadata_only", priority=0
+    )
+    await seed_capture_policy(
+        owner_factory, org_id, agent_id=agent_id, mode="redacted", priority=100
+    )
+    monkeypatch.setattr(
+        capture_redaction,
+        "get_settings",
+        lambda: Settings(database_url=capability_worker_dsn),
+    )
+    out = await capture_redaction._run(
+        capture_redaction._CaptureJob(org_id=str(org_id), agent_id=str(agent_id))
+    )
+    assert out == {"status": "redacted", "mode": "redacted", "event_id": ""}
+
+
+@pytest.mark.asyncio
 async def test_capture_redaction_without_the_pin_is_42501(
     owner_factory: async_sessionmaker[AsyncSession],
     capability_worker_dsn: str,
