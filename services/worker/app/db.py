@@ -93,8 +93,11 @@ async def _transaction(
 async def _pin_role(session: AsyncSession, role: str) -> None:
     statement = _PINNED_ROLE_SQL.get(role)
     if statement is None:
-        # Reached only by a coding error, never by request data.
-        msg = f"role {role!r} is not an assignable worker capability role"
+        # Reached only by a coding error, never by request data. The message
+        # names what is allowed and does not echo the rejected value, so a
+        # future caller that forwards unvalidated input cannot reflect it here.
+        allowed = ", ".join(sorted(_PINNED_ROLE_SQL))
+        msg = f"worker capability role must be one of: {allowed}"
         raise ValueError(msg)
     await session.execute(text(statement))  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
 
