@@ -350,12 +350,16 @@ SET search_path = ibex_core, pg_temp
 AS $$
 DECLARE
     c_bootstrap_permissions constant bigint := 35455006347011;
+    -- The three refusals below are the same class of failure, so the SQLSTATE is
+    -- named once. A guard that raised a different code would be a different
+    -- contract for the caller.
+    c_check_violation constant text := 'check_violation';
 BEGIN
     IF p_permissions IS DISTINCT FROM c_bootstrap_permissions THEN
         RAISE EXCEPTION
             'bootstrap_insert_pat: permissions % is not the bootstrap PAT grant %; this function writes that mask only',
             p_permissions, c_bootstrap_permissions
-            USING ERRCODE = 'check_violation';
+            USING ERRCODE = c_check_violation;
     END IF;
 
     PERFORM pg_advisory_xact_lock(hashtext(p_org_id::text));
@@ -382,7 +386,7 @@ BEGIN
         RAISE EXCEPTION
             'bootstrap_insert_pat: user % is not an active owner of organization %',
             p_user_id, p_org_id
-            USING ERRCODE = 'check_violation';
+            USING ERRCODE = c_check_violation;
     END IF;
 
     IF NOT EXISTS (
@@ -395,7 +399,7 @@ BEGIN
         RAISE EXCEPTION
             'bootstrap_insert_pat: agent % is not an active agent of organization %',
             p_agent_id, p_org_id
-            USING ERRCODE = 'check_violation';
+            USING ERRCODE = c_check_violation;
     END IF;
 
     INSERT INTO ibex_core.tokens
@@ -445,6 +449,13 @@ DECLARE
     -- permissions.MemoryRead | permissions.MemoryWrite, the value Go's
     -- writeServiceToken passes (services/auth/internal/bootstrap/bootstrap.go).
     c_service_token_permissions constant bigint := 3;
+    -- The managed row is identified by these two values in the find, the insert
+    -- and the duplicate sweep. Named once so no branch can look for a row the
+    -- other branch would not have written, and the guard SQLSTATE once so both
+    -- refusals stay the same contract.
+    c_token_type      constant text := 'service_token';
+    c_token_name      constant text := 'memory-service';
+    c_check_violation constant text := 'check_violation';
     v_token_id uuid;
     v_revoked  boolean;
     v_user_id  uuid;
@@ -454,7 +465,7 @@ BEGIN
         RAISE EXCEPTION
             'bootstrap_upsert_service_token: permissions % is not the memory-service grant %; this function writes that mask only',
             p_permissions, c_service_token_permissions
-            USING ERRCODE = 'check_violation';
+            USING ERRCODE = c_check_violation;
     END IF;
 
     -- Lock order: org first, then prefix, in every body that takes either
@@ -498,7 +509,7 @@ BEGIN
         RAISE EXCEPTION
             'bootstrap_upsert_service_token: organization % has no active owner user (owner_id %) or no active agent (agent_id %); both subjects are required',
             p_org_id, v_user_id, v_agent_id
-            USING ERRCODE = 'check_violation';
+            USING ERRCODE = c_check_violation;
     END IF;
 
     -- findServiceTokens: the managed row is the one already carrying this hash
@@ -512,8 +523,8 @@ BEGIN
       INTO v_token_id, v_revoked
       FROM ibex_core.tokens t
      WHERE t.org_id = p_org_id
-       AND t.type = 'service_token'
-       AND t.name = 'memory-service'
+       AND t.type = c_token_type
+       AND t.name = c_token_name
      ORDER BY (t.hash = p_hash) DESC, t.created_at, t.id
      LIMIT 1;
 
@@ -523,8 +534,8 @@ BEGIN
             (id, org_id, user_id, agent_id, type, hash, prefix, name,
              permissions, is_revoked, expires_at)
         VALUES
-            (gen_random_uuid(), p_org_id, v_user_id, v_agent_id, 'service_token',
-             p_hash, p_prefix, 'memory-service', p_permissions, false, NULL)
+            (gen_random_uuid(), p_org_id, v_user_id, v_agent_id, c_token_type,
+             p_hash, p_prefix, c_token_name, p_permissions, false, NULL)
         RETURNING id INTO v_token_id;
 
         RETURN QUERY SELECT 'inserted'::text, v_token_id;
@@ -562,10 +573,10 @@ BEGIN
            revoke_reason = 'duplicate memory-service row',
            updated_at = NOW()
      WHERE org_id = p_org_id
-       AND type = 'service_token'
-       AND name = 'memory-service'
+       AND type = c_token_type
+       AND name = c_token_name
        AND id <> v_token_id
-       AND is_revoked = false;
+       AND NOT is_revoked;
 
     RETURN QUERY SELECT 'updated'::text, v_token_id;
 END;

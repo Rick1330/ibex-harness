@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/google/uuid"
@@ -82,6 +83,14 @@ type serviceTokenRow struct {
 	permissions                   int64
 }
 
+// managedTokenSeed is one managed memory-service row seeded directly by a test,
+// with an explicit age so the definer's oldest-row choice is deterministic
+// rather than a race on created_at ties.
+type managedTokenSeed struct {
+	hash, prefix string
+	age          time.Duration
+}
+
 // bootstrapCase is one named subtest body. Cases share one migrated fixture but
 // get their own subtest-scoped clone.
 type bootstrapCase struct {
@@ -89,18 +98,19 @@ type bootstrapCase struct {
 	run  func(bootstrapEnv)
 }
 
-// bootstrapEnv is one subtest's fixture, test handle and context. Passing it as
-// a single value keeps every helper at three parameters or fewer.
+// bootstrapEnv is one subtest's fixture and test handle. Passing it as a single
+// value keeps every helper at three parameters or fewer. The context is not
+// stored here: each helper takes it as a parameter, and the subtest handle is
+// the one source for it (t.Context()).
 type bootstrapEnv struct {
-	t   *testing.T
-	f   *tenancyFixture
-	ctx context.Context
+	t *testing.T
+	f *tenancyFixture
 }
 
 // newBootstrapEnv binds a subtest to a clone of the shared fixture, so a helper
 // that fails reports against the subtest instead of the parent test.
 func newBootstrapEnv(f *tenancyFixture, t *testing.T) bootstrapEnv {
-	return bootstrapEnv{t: t, f: f.sub(t), ctx: t.Context()}
+	return bootstrapEnv{t: t, f: f.sub(t)}
 }
 
 // runBootstrapCases registers every case as a subtest over the shared fixture.
@@ -233,8 +243,8 @@ func insertPAT(ctx context.Context, tx *sql.Tx, call patCall) error {
 // mustCreateIdentity is the positive-control call for a fresh organization.
 func (e bootstrapEnv) mustCreateIdentity(call identityCall) {
 	e.t.Helper()
-	err := e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
-		return createIdentity(e.ctx, tx, call)
+	err := e.f.asBootstrap(e.t.Context(), func(tx *sql.Tx) error {
+		return createIdentity(e.t.Context(), tx, call)
 	})
 	if err != nil {
 		e.t.Fatalf("create identity for %s: %v", call.slug, err)
@@ -244,8 +254,8 @@ func (e bootstrapEnv) mustCreateIdentity(call identityCall) {
 // mustInsertPAT is the positive-control call for the bootstrap PAT.
 func (e bootstrapEnv) mustInsertPAT(call patCall) {
 	e.t.Helper()
-	err := e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
-		return insertPAT(e.ctx, tx, call)
+	err := e.f.asBootstrap(e.t.Context(), func(tx *sql.Tx) error {
+		return insertPAT(e.t.Context(), tx, call)
 	})
 	if err != nil {
 		e.t.Fatalf("insert bootstrap PAT %s: %v", call.prefix, err)
@@ -256,8 +266,8 @@ func (e bootstrapEnv) mustInsertPAT(call patCall) {
 // state and a message naming rule.
 func (e bootstrapEnv) requirePATRejected(call patCall, state, rule string) {
 	e.t.Helper()
-	err := e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
-		return insertPAT(e.ctx, tx, call)
+	err := e.f.asBootstrap(e.t.Context(), func(tx *sql.Tx) error {
+		return insertPAT(e.t.Context(), tx, call)
 	})
 	e.f.requireGuardError(err, sqlState{code: state}, rule)
 }
@@ -266,7 +276,7 @@ func (e bootstrapEnv) requirePATRejected(call patCall, state, rule string) {
 // definers, so every PAT subtest starts from a legal first install.
 func (e bootstrapEnv) bootstrapIdentity(slug string) (string, identityIDs) {
 	e.t.Helper()
-	orgID := e.f.seedEmptyOrg(e.ctx, slug)
+	orgID := e.f.seedEmptyOrg(e.t.Context(), slug)
 	ids := newIdentityIDs()
 	e.mustCreateIdentity(identityCall{orgID: orgID, slug: slug, ids: ids})
 	return orgID, ids
@@ -300,8 +310,8 @@ func (e bootstrapEnv) upsertServiceTokenMask(call serviceTokenCall, mask any) (s
 	e.t.Helper()
 	var outcome string
 	var tokenID sql.NullString
-	err := e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
-		return upsertServiceTokenTx(e.ctx, tx, call, mask).Scan(&outcome, &tokenID)
+	err := e.f.asBootstrap(e.t.Context(), func(tx *sql.Tx) error {
+		return upsertServiceTokenTx(e.t.Context(), tx, call, mask).Scan(&outcome, &tokenID)
 	})
 	return outcome, tokenID.String, err
 }
@@ -320,10 +330,10 @@ func upsertServiceTokenTx(ctx context.Context, tx *sql.Tx, call serviceTokenCall
 // are discarded.
 func (e bootstrapEnv) upsertServiceTokenRejected(call serviceTokenCall, mask any) error {
 	e.t.Helper()
-	return e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
+	return e.f.asBootstrap(e.t.Context(), func(tx *sql.Tx) error {
 		var outcome string
 		var tokenID sql.NullString
-		return upsertServiceTokenTx(e.ctx, tx, call, mask).Scan(&outcome, &tokenID)
+		return upsertServiceTokenTx(e.t.Context(), tx, call, mask).Scan(&outcome, &tokenID)
 	})
 }
 
@@ -368,7 +378,7 @@ func TestTenancyBootstrapCreateIdentityGuard(t *testing.T) {
 // bootstrapIdentityFirstInstall proves the definer's happy path on an empty
 // organization.
 func bootstrapIdentityFirstInstall(e bootstrapEnv) {
-	orgID := e.f.seedEmptyOrg(e.ctx, "first-install")
+	orgID := e.f.seedEmptyOrg(e.t.Context(), "first-install")
 	ids := newIdentityIDs()
 	e.mustCreateIdentity(identityCall{orgID: orgID, slug: "first-install", ids: ids})
 	e.assertIdentityRows(orgID, ids)
@@ -377,12 +387,12 @@ func bootstrapIdentityFirstInstall(e bootstrapEnv) {
 // bootstrapIdentityRerunRefused proves a second identity cannot be added to an
 // organization that already has one.
 func bootstrapIdentityRerunRefused(e bootstrapEnv) {
-	orgID := e.f.seedEmptyOrg(e.ctx, "re-run-target")
+	orgID := e.f.seedEmptyOrg(e.t.Context(), "re-run-target")
 	ids := newIdentityIDs()
 	e.mustCreateIdentity(identityCall{orgID: orgID, slug: "re-run-target", ids: ids})
 	call := identityCall{orgID: orgID, slug: "re-run-again", ids: newIdentityIDs()}
-	err := e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
-		return createIdentity(e.ctx, tx, call)
+	err := e.f.asBootstrap(e.t.Context(), func(tx *sql.Tx) error {
+		return createIdentity(e.t.Context(), tx, call)
 	})
 	e.f.requireGuardError(err, sqlState{code: "42501"}, "already has a users row")
 }
@@ -390,13 +400,13 @@ func bootstrapIdentityRerunRefused(e bootstrapEnv) {
 // bootstrapIdentityExistingOrgRefused proves the definer refuses a victim
 // organization that already has a user and leaves its row untouched.
 func bootstrapIdentityExistingOrgRefused(e bootstrapEnv) {
-	victim := e.f.seedTenantNamed(e.ctx, "identity-victim")
+	victim := e.f.seedTenantNamed(e.t.Context(), "identity-victim")
 	call := identityCall{orgID: victim.orgID, slug: "identity-attacker", ids: newIdentityIDs()}
-	err := e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
-		return createIdentity(e.ctx, tx, call)
+	err := e.f.asBootstrap(e.t.Context(), func(tx *sql.Tx) error {
+		return createIdentity(e.t.Context(), tx, call)
 	})
 	e.f.requireGuardError(err, sqlState{code: "42501"}, "already has a users row")
-	if users := e.f.countUsersFor(e.ctx, victim.orgID); users != 1 {
+	if users := e.f.countUsersFor(e.t.Context(), victim.orgID); users != 1 {
 		e.t.Fatalf("victim organization has %d users, want its original 1", users)
 	}
 }
@@ -424,7 +434,7 @@ func (e bootstrapEnv) assertIdentityRows(orgID string, ids identityIDs) {
 func (e bootstrapEnv) scanPair(label, query string, args ...any) (string, string) {
 	e.t.Helper()
 	var first, second string
-	if err := e.f.db.QueryRowContext(e.ctx, query, args...).Scan(&first, &second); err != nil {
+	if err := e.f.db.QueryRowContext(e.t.Context(), query, args...).Scan(&first, &second); err != nil {
 		e.t.Fatalf("%s: %v", label, err)
 	}
 	return first, second
@@ -459,7 +469,7 @@ func TestTenancyBootstrapPATGuard(t *testing.T) {
 
 // bootstrapPATAccepted proves the exact bootstrap mask is written.
 func bootstrapPATAccepted(e bootstrapEnv) {
-	orgID := e.f.seedEmptyOrg(e.ctx, "pat-org")
+	orgID := e.f.seedEmptyOrg(e.t.Context(), "pat-org")
 	ids := newIdentityIDs()
 	e.mustCreateIdentity(identityCall{orgID: orgID, slug: "pat-org", ids: ids})
 	e.mustInsertPAT(patCall{orgID: orgID, ids: ids, prefix: "ibex_pat_first", mask: bootstrapMask})
@@ -481,7 +491,7 @@ func bootstrapPATMaskRefused(e bootstrapEnv) {
 		call := patCall{orgID: orgID, ids: ids, prefix: "ibex_pat_mask", mask: mask}
 		e.requirePATRejected(call, "23514", "is not the bootstrap PAT grant")
 	}
-	if n := e.f.countTokensFor(e.ctx, orgID, ""); n != 0 {
+	if n := e.f.countTokensFor(e.t.Context(), orgID, ""); n != 0 {
 		e.t.Fatalf("refused masks wrote %d tokens, want 0", n)
 	}
 }
@@ -499,7 +509,7 @@ func bootstrapPATSecondRefused(e bootstrapEnv) {
 func bootstrapPATForeignOwnerRefused(e bootstrapEnv) {
 	owner, _ := e.bootstrapIdentity("pat-owner-org")
 	target, targetIDs := e.bootstrapIdentity("pat-target-org")
-	ids := identityIDs{user: e.f.firstUserID(e.ctx, owner), agent: targetIDs.agent}
+	ids := identityIDs{user: e.f.firstUserID(e.t.Context(), owner), agent: targetIDs.agent}
 	call := patCall{orgID: target, ids: ids, prefix: "ibex_pat_foreign", mask: bootstrapMask}
 	e.requirePATRejected(call, "23514", "is not an active owner")
 }
@@ -509,7 +519,7 @@ func bootstrapPATForeignOwnerRefused(e bootstrapEnv) {
 func bootstrapPATForeignAgentRefused(e bootstrapEnv) {
 	owner, _ := e.bootstrapIdentity("pat-agent-org")
 	target, targetIDs := e.bootstrapIdentity("pat-agent-target")
-	ids := identityIDs{user: targetIDs.user, agent: e.f.firstAgentID(e.ctx, owner)}
+	ids := identityIDs{user: targetIDs.user, agent: e.f.firstAgentID(e.t.Context(), owner)}
 	call := patCall{orgID: target, ids: ids, prefix: "ibex_pat_foreign_agent", mask: bootstrapMask}
 	e.requirePATRejected(call, "23514", "is not an active agent")
 }
@@ -517,15 +527,15 @@ func bootstrapPATForeignAgentRefused(e bootstrapEnv) {
 // bootstrapPATBootstrappedOrgRefused proves an already bootstrapped victim
 // organization keeps its original PAT and receives no attacker row.
 func bootstrapPATBootstrappedOrgRefused(e bootstrapEnv) {
-	victim := e.f.seedTenantNamed(e.ctx, "pat-victim")
-	e.f.seedVictimPAT(e.ctx, victim)
+	victim := e.f.seedTenantNamed(e.t.Context(), "pat-victim")
+	e.f.seedVictimPAT(e.t.Context(), victim)
 	ids := identityIDs{user: victim.userID, agent: victim.agentID}
 	call := patCall{orgID: victim.orgID, ids: ids, prefix: "ibex_pat_attacker", mask: bootstrapMask}
-	err := e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
-		return insertPAT(e.ctx, tx, call)
+	err := e.f.asBootstrap(e.t.Context(), func(tx *sql.Tx) error {
+		return insertPAT(e.t.Context(), tx, call)
 	})
 	e.f.requireGuardError(err, sqlState{code: "42501"}, "already owns a pat row")
-	if n := e.f.countTokensFor(e.ctx, victim.orgID, "pat"); n != 1 {
+	if n := e.f.countTokensFor(e.t.Context(), victim.orgID, "pat"); n != 1 {
 		e.t.Fatalf("victim organization has %d pat rows, want its original 1", n)
 	}
 }
@@ -537,7 +547,7 @@ func (e bootstrapEnv) assertBootstrapPAT(orgID, prefix string) {
 	var mask int64
 	var revoked bool
 	var expiresAt sql.NullTime
-	if err := e.f.db.QueryRowContext(e.ctx, `
+	if err := e.f.db.QueryRowContext(e.t.Context(), `
 		SELECT type, permissions, is_revoked, expires_at FROM ibex_core.tokens
 		WHERE org_id = $1::uuid AND prefix = $2`, orgID, prefix).
 		Scan(&tokenType, &mask, &revoked, &expiresAt); err != nil {
@@ -587,12 +597,12 @@ func TestTenancyBootstrapModelPolicyGuard(t *testing.T) {
 // bootstrapModelPolicyFirstInstall proves the fallback and epoch a fresh
 // organization receives.
 func bootstrapModelPolicyFirstInstall(e bootstrapEnv) {
-	orgID := e.f.seedEmptyOrg(e.ctx, "policy-first-install")
+	orgID := e.f.seedEmptyOrg(e.t.Context(), "policy-first-install")
 	if err := e.writeModelPolicy(orgID); err != nil {
 		e.t.Fatalf("write model policy: %v", err)
 	}
 	e.assertModelPolicy(orgID, modelPolicyRow{allowed: true, priority: 1000, epoch: 1})
-	if n := e.f.countModelPolicies(e.ctx, orgID); n != 1 {
+	if n := e.f.countModelPolicies(e.t.Context(), orgID); n != 1 {
 		e.t.Fatalf("model policy rows = %d, want 1", n)
 	}
 }
@@ -600,12 +610,12 @@ func bootstrapModelPolicyFirstInstall(e bootstrapEnv) {
 // bootstrapModelPolicyConfiguredRefused proves a tenant with any policy row is
 // refused and its row is untouched.
 func bootstrapModelPolicyConfiguredRefused(e bootstrapEnv) {
-	orgID := e.f.seedEmptyOrg(e.ctx, "policy-configured")
+	orgID := e.f.seedEmptyOrg(e.t.Context(), "policy-configured")
 	seeded := modelPolicySeed{pattern: "gpt-*", allowed: false, priority: 10}
-	e.f.seedModelPolicy(e.ctx, orgID, seeded)
+	e.f.seedModelPolicy(e.t.Context(), orgID, seeded)
 	err := e.writeModelPolicy(orgID)
 	e.f.requireGuardError(err, sqlState{code: "42501"}, "already has a model policy or epoch")
-	if n := e.f.countModelPolicies(e.ctx, orgID); n != 1 {
+	if n := e.f.countModelPolicies(e.t.Context(), orgID); n != 1 {
 		e.t.Fatalf("model policy rows = %d, want the seeded 1", n)
 	}
 	e.assertSeededPolicy(orgID, seeded)
@@ -614,14 +624,14 @@ func bootstrapModelPolicyConfiguredRefused(e bootstrapEnv) {
 // bootstrapModelPolicyEpochRefused proves an epoch alone (the partial state a
 // previous write could leave) is enough to refuse, and writes no policy.
 func bootstrapModelPolicyEpochRefused(e bootstrapEnv) {
-	orgID := e.f.seedEmptyOrg(e.ctx, "policy-epoch")
-	e.f.seedPolicyEpoch(e.ctx, orgID, 7)
+	orgID := e.f.seedEmptyOrg(e.t.Context(), "policy-epoch")
+	e.f.seedPolicyEpoch(e.t.Context(), orgID, 7)
 	err := e.writeModelPolicy(orgID)
 	e.f.requireGuardError(err, sqlState{code: "42501"}, "already has a model policy or epoch")
-	if n := e.f.countModelPolicies(e.ctx, orgID); n != 0 {
+	if n := e.f.countModelPolicies(e.t.Context(), orgID); n != 0 {
 		e.t.Fatalf("refused call wrote %d model policies, want 0", n)
 	}
-	if epoch := e.f.readPolicyEpoch(e.ctx, orgID); epoch != 7 {
+	if epoch := e.f.readPolicyEpoch(e.t.Context(), orgID); epoch != 7 {
 		e.t.Fatalf("epoch = %d, want the seeded 7", epoch)
 	}
 }
@@ -629,9 +639,9 @@ func bootstrapModelPolicyEpochRefused(e bootstrapEnv) {
 // writeModelPolicy calls bootstrap_write_model_policy as ibex_bootstrap.
 func (e bootstrapEnv) writeModelPolicy(orgID string) error {
 	e.t.Helper()
-	return e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
+	return e.f.asBootstrap(e.t.Context(), func(tx *sql.Tx) error {
 		// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; orgID is a bound parameter.
-		_, err := tx.ExecContext(e.ctx, `SELECT ibex_core.bootstrap_write_model_policy($1::uuid)`, orgID)
+		_, err := tx.ExecContext(e.t.Context(), `SELECT ibex_core.bootstrap_write_model_policy($1::uuid)`, orgID)
 		return err
 	})
 }
@@ -640,7 +650,7 @@ func (e bootstrapEnv) writeModelPolicy(orgID string) error {
 func (e bootstrapEnv) assertModelPolicy(orgID string, want modelPolicyRow) {
 	e.t.Helper()
 	var got modelPolicyRow
-	if err := e.f.db.QueryRowContext(e.ctx, `
+	if err := e.f.db.QueryRowContext(e.t.Context(), `
 		SELECT p.allowed, p.priority, m.epoch
 		FROM ibex_core.org_model_policies p
 		JOIN ibex_core.org_model_policy_meta m ON m.org_id = p.org_id
@@ -658,7 +668,7 @@ func (e bootstrapEnv) assertSeededPolicy(orgID string, want modelPolicySeed) {
 	e.t.Helper()
 	var gotAllowed bool
 	var gotPriority int
-	if err := e.f.db.QueryRowContext(e.ctx, `
+	if err := e.f.db.QueryRowContext(e.t.Context(), `
 		SELECT allowed, priority FROM ibex_core.org_model_policies
 		WHERE org_id = $1::uuid AND model_pattern = $2`, orgID, want.pattern).
 		Scan(&gotAllowed, &gotPriority); err != nil {
@@ -718,6 +728,7 @@ func TestTenancyBootstrapServiceTokenGuard(t *testing.T) {
 		{"organization without agent refused", bootstrapServiceTokenNoAgentRefused},
 		{"non-service mask refused", bootstrapServiceTokenMaskRefused},
 		{"inserted then rotated", bootstrapServiceTokenRotates},
+		{"rotation sweeps duplicate managed rows", bootstrapServiceTokenSweepsDuplicates},
 		{"own prefix re-run is not a conflict", bootstrapServiceTokenOwnPrefixRerun},
 		{"another organization's prefix refused", bootstrapServiceTokenForeignPrefixRefused},
 	})
@@ -751,7 +762,7 @@ func bootstrapServiceTokenMaskRefused(e bootstrapEnv) {
 			e.t.Fatalf("rejected mask %v changed the token: before %+v, after %+v", mask, before, after)
 		}
 	}
-	if n := e.f.countTokensFor(e.ctx, tenant.orgID, "service_token"); n != 1 {
+	if n := e.f.countTokensFor(e.t.Context(), tenant.orgID, "service_token"); n != 1 {
 		e.t.Fatalf("service token rows = %d, want the single seeded row", n)
 	}
 }
@@ -759,13 +770,13 @@ func bootstrapServiceTokenMaskRefused(e bootstrapEnv) {
 // bootstrapServiceTokenNoOwnerRefused proves an organization with an agent but
 // no owner is refused and writes no token.
 func bootstrapServiceTokenNoOwnerRefused(e bootstrapEnv) {
-	e.assertServiceTokenSubjectMissing(e.f.seedAgentOnlyOrg(e.ctx, "token-no-owner"), "no active owner user")
+	e.assertServiceTokenSubjectMissing(e.f.seedAgentOnlyOrg(e.t.Context(), "token-no-owner"), "no active owner user")
 }
 
 // bootstrapServiceTokenNoAgentRefused proves an organization with an owner but
 // no agent is refused and writes no token.
 func bootstrapServiceTokenNoAgentRefused(e bootstrapEnv) {
-	e.assertServiceTokenSubjectMissing(e.f.seedOwnerOnlyOrg(e.ctx, "token-no-agent"), "no active agent")
+	e.assertServiceTokenSubjectMissing(e.f.seedOwnerOnlyOrg(e.t.Context(), "token-no-agent"), "no active agent")
 }
 
 // assertServiceTokenSubjectMissing asserts the definer refuses the tenant on
@@ -783,7 +794,7 @@ func (e bootstrapEnv) assertServiceTokenSubjectMissing(tenant tenantSeed, rule s
 		e.t.Fatalf("expected a refusal, got outcome %q id %q", outcome, tokenID)
 	}
 	e.f.requireGuardError(err, sqlState{code: "23514"}, rule)
-	if n := e.f.countTokensFor(e.ctx, tenant.orgID, ""); n != 0 {
+	if n := e.f.countTokensFor(e.t.Context(), tenant.orgID, ""); n != 0 {
 		e.t.Fatalf("refused upsert wrote %d tokens, want 0", n)
 	}
 }
@@ -794,6 +805,86 @@ func bootstrapServiceTokenRotates(e bootstrapEnv) {
 	tenant := e.bootstrapTenant("token-rotates")
 	e.assertServiceTokenInserted(tenant)
 	e.assertServiceTokenRotated(tenant)
+}
+
+// bootstrapServiceTokenSweepsDuplicates proves the rotation ends the call with
+// exactly one active managed row: a row another writer left behind is revoked
+// rather than left live beside the rotated credential. The definer picks the
+// organization's oldest managed row, so the second row is the one the sweep
+// must catch, and it must carry the reason the operator sees.
+func bootstrapServiceTokenSweepsDuplicates(e bootstrapEnv) {
+	tenant := e.bootstrapTenant("token-duplicates")
+	older := e.f.seedManagedServiceToken(e.t.Context(), tenant, managedTokenSeed{
+		hash: "hash-dup-older", prefix: "ibex_pat_dup_older", age: 3 * time.Minute,
+	})
+	first := serviceTokenCall{orgID: tenant.orgID, hash: "hash-dup-rotation", prefix: "ibex_pat_dup_rotation"}
+	outcome, rotated, err := e.upsertServiceToken(first)
+	if err != nil {
+		e.t.Fatalf("rotate the seeded managed row: %v", err)
+	}
+	if outcome != "updated" || rotated != older {
+		e.t.Fatalf("outcome %q for token %s, want updated on the seeded row %s", outcome, rotated, older)
+	}
+
+	duplicate := e.f.seedManagedServiceToken(e.t.Context(), tenant, managedTokenSeed{
+		hash: "hash-dup-later", prefix: "ibex_pat_dup_later", age: time.Minute,
+	})
+	second := serviceTokenCall{orgID: tenant.orgID, hash: "hash-dup-final", prefix: "ibex_pat_dup_final"}
+	outcome, rotatedAgain, err := e.upsertServiceToken(second)
+	if err != nil {
+		e.t.Fatalf("rotate with a duplicate present: %v", err)
+	}
+	if outcome != "updated" || rotatedAgain != older {
+		e.t.Fatalf("outcome %q for token %s, want updated on %s", outcome, rotatedAgain, older)
+	}
+	e.assertSingleActiveManagedToken(tenant.orgID, older, duplicate)
+}
+
+// assertSingleActiveManagedToken asserts the organization holds one active
+// memory-service row (wantActive), and that the only other managed row is the
+// one the sweep revoked with the documented reason.
+func (e bootstrapEnv) assertSingleActiveManagedToken(orgID, wantActive, wantRevoked string) {
+	e.t.Helper()
+	var active, swept int
+	var activeID, revokedID string
+	if err := e.f.db.QueryRowContext(e.t.Context(), `
+		SELECT count(*) FILTER (WHERE NOT is_revoked),
+		       count(*) FILTER (WHERE is_revoked
+		                          AND revoke_reason = 'duplicate memory-service row'),
+		       COALESCE(min(id::text) FILTER (WHERE NOT is_revoked), ''),
+		       COALESCE(min(id::text) FILTER (WHERE is_revoked), '')
+		FROM ibex_core.tokens
+		WHERE org_id = $1::uuid
+		  AND type = 'service_token'
+		  AND name = 'memory-service'`, orgID).
+		Scan(&active, &swept, &activeID, &revokedID); err != nil {
+		e.t.Fatalf("read managed service rows: %v", err)
+	}
+	if active != 1 || activeID != wantActive {
+		e.t.Fatalf("active managed rows = %d (id %s), want 1 (id %s)", active, activeID, wantActive)
+	}
+	if swept != 1 || revokedID != wantRevoked {
+		e.t.Fatalf("swept managed rows = %d (id %s), want 1 (id %s)", swept, revokedID, wantRevoked)
+	}
+}
+
+// seedManagedServiceToken inserts one managed memory-service row directly, as a
+// writer that predates the definer could have left it, so the duplicate sweep
+// has something to revoke.
+func (f *tenancyFixture) seedManagedServiceToken(ctx context.Context, tenant tenantSeed, seed managedTokenSeed) string {
+	f.t.Helper()
+	var id string
+	if err := f.db.QueryRowContext(ctx, `
+		INSERT INTO ibex_core.tokens
+			(org_id, user_id, agent_id, type, hash, prefix, name, permissions, created_at)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, 'service_token', $4, $5, 'memory-service',
+		        $6, $7)
+		RETURNING id::text`,
+		tenant.orgID, tenant.userID, tenant.agentID, seed.hash, seed.prefix,
+		serviceTokenMask, time.Now().Add(-seed.age)).Scan(&id); err != nil {
+		f.t.Fatalf("seed managed service token %s: %v", seed.prefix, err)
+	}
+	return id
 }
 
 // bootstrapServiceTokenOwnPrefixRerun proves the same operator re-run is an
@@ -809,8 +900,8 @@ func bootstrapServiceTokenOwnPrefixRerun(e bootstrapEnv) {
 // bootstrapServiceTokenForeignPrefixRefused proves another organization's
 // prefix is reported as a conflict and writes no row.
 func bootstrapServiceTokenForeignPrefixRefused(e bootstrapEnv) {
-	holder := e.f.seedTenantNamed(e.ctx, "prefix-holder")
-	e.f.seedTokenFor(e.ctx, holder.orgID, tokenSeed{prefix: "ibex_pat_held", hash: "hash-held"})
+	holder := e.f.seedTenantNamed(e.t.Context(), "prefix-holder")
+	e.f.seedTokenFor(e.t.Context(), holder.orgID, tokenSeed{prefix: "ibex_pat_held", hash: "hash-held"})
 	tenant := e.bootstrapTenant("prefix-taker")
 	call := serviceTokenCall{orgID: tenant.orgID, hash: "hash-taker", prefix: "ibex_pat_held"}
 	outcome, tokenID, err := e.upsertServiceToken(call)
@@ -823,7 +914,7 @@ func bootstrapServiceTokenForeignPrefixRefused(e bootstrapEnv) {
 	if tokenID != "" {
 		e.t.Fatalf("token id = %q, want empty", tokenID)
 	}
-	if n := e.f.countTokensFor(e.ctx, tenant.orgID, ""); n != 0 {
+	if n := e.f.countTokensFor(e.t.Context(), tenant.orgID, ""); n != 0 {
 		e.t.Fatalf("conflicting org wrote %d tokens, want 0", n)
 	}
 }
@@ -840,7 +931,7 @@ func (e bootstrapEnv) assertServiceTokenInserted(tenant tenantSeed) {
 // subjects still bound.
 func (e bootstrapEnv) assertServiceTokenRotated(tenant tenantSeed) {
 	e.t.Helper()
-	before := e.f.serviceTokenID(e.ctx, tenant.orgID)
+	before := e.f.serviceTokenID(e.t.Context(), tenant.orgID)
 	call := serviceTokenCall{orgID: tenant.orgID, hash: "hash-second", prefix: "ibex_pat_service_second"}
 	outcome, tokenID, err := e.upsertServiceToken(call)
 	if err != nil {
@@ -914,7 +1005,7 @@ func (e bootstrapEnv) assertServiceTokenSubjects(tokenID string, tenant tenantSe
 func (e bootstrapEnv) readServiceToken(tokenID string) serviceTokenRow {
 	e.t.Helper()
 	var row serviceTokenRow
-	if err := e.f.db.QueryRowContext(e.ctx, `
+	if err := e.f.db.QueryRowContext(e.t.Context(), `
 		SELECT user_id::text, agent_id::text, prefix, hash, permissions
 		FROM ibex_core.tokens WHERE id = $1::uuid`, tokenID).
 		Scan(&row.userID, &row.agentID, &row.prefix, &row.hash, &row.permissions); err != nil {
