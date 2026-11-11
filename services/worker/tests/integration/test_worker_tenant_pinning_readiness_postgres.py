@@ -59,6 +59,7 @@ async def test_session_store_pins_the_org_as_worker_login(
     worker_factory: async_sessionmaker[AsyncSession],
     capability_worker_dsn: str,
 ) -> None:
+    """The session pointer reads and advances as the worker login under the org pin."""
     await assert_worker_login(capability_worker_dsn)
     org_id, session_id = uuid4(), uuid4()
     await seed_org(owner_factory, org_id)
@@ -88,6 +89,7 @@ async def test_session_store_without_the_pin_is_42501(
     worker_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """An unpinned session read fails 42501."""
     org_id, session_id = uuid4(), uuid4()
     await seed_org(owner_factory, org_id)
     _, agent_id = await seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
@@ -116,6 +118,7 @@ async def test_failed_tasks_insert_uses_pinned_app_without_an_org_guc(
     worker_factory: async_sessionmaker[AsyncSession],
     capability_worker_dsn: str,
 ) -> None:
+    """The dead-letter insert works with the app pin and binds no org GUC."""
     await assert_worker_login(capability_worker_dsn)
     task_id = f"pinned-{uuid4()}"
     assert await insert_failed_task(worker_factory, failed_record(task_id)) is True
@@ -152,6 +155,7 @@ async def test_failed_tasks_insert_without_the_pin_is_42501(
     worker_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """An unpinned dead-letter insert fails 42501."""
     monkeypatch.setattr(
         failed_tasks_module, "session_as_app", lambda factory: session_unpinned(factory)
     )
@@ -171,6 +175,7 @@ async def test_idempotency_ledger_ping_and_claim_with_injected_scopes(
     worker_factory: async_sessionmaker[AsyncSession],
     capability_worker_dsn: str,
 ) -> None:
+    """The ledger's injected probe and tenant scopes work on the worker login."""
     await assert_worker_login(capability_worker_dsn)
     org_id, agent_id = uuid4(), uuid4()
     await seed_org(owner_factory, org_id)

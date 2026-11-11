@@ -95,6 +95,7 @@ class PostgresSessionStore:
         )
 
     async def _load(self, org_id: UUID, session_id: UUID) -> SessionSnapshot | None:
+        """Read the session snapshot under the tenant pin."""
         async with session_as_app_org(self._factory, str(org_id)) as session:
             result = await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
@@ -120,6 +121,7 @@ class PostgresSessionStore:
         self, org_id: UUID, session_id: UUID, last_extracted_turn: int,
         expected_lifecycle_revision: int,
     ) -> None:
+        """Advance ``last_extracted_turn`` when the lifecycle revision still matches."""
         async with session_as_app_org(self._factory, str(org_id)) as session:
             result = await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text

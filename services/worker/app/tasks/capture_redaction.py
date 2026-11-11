@@ -77,6 +77,7 @@ def _parse_job(kwargs: dict[str, Any]) -> _CaptureJob:
 
 
 async def _run(job: _CaptureJob) -> dict[str, str]:
+    """Run one capture job through the tenant-pinned worker login."""
     settings = get_settings()
     if not settings.database_url:
         raise ValueError("database_url is required")

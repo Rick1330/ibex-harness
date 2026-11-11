@@ -38,6 +38,7 @@ def _wire_run(
     mode: str,
     session: AsyncMock | None = None,
 ) -> AsyncMock:
+    """Wire ``_run`` to a fake engine and session and return that session."""
     settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db")
     monkeypatch.setattr(capture_redaction, "get_settings", lambda: settings)
     engine = MagicMock()

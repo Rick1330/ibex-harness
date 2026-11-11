@@ -48,39 +48,106 @@ func TestTokensRepository_FindActiveByPrefix(t *testing.T) {
 // left the lookup unable to resolve the surviving row, authentication would break
 // for the tenant that owns the prefix.
 func TestTokensRepository_FindActiveByPrefix_RefusesDuplicatePrefix(t *testing.T) {
-	repo, db := setupTokensRepo(t)
-	ctx := context.Background()
-	prefix := "ibex_pat_" + uuid.NewString()
-	ownerOrg := testutil.SeedOrganization(t, db, "Prefix Owner", "prefix-owner-"+uuid.NewString()[:8])
-	takerOrg := testutil.SeedOrganization(t, db, "Prefix Taker", "prefix-taker-"+uuid.NewString()[:8])
+	s := newDuplicatePrefixScenario(t)
+	requireDuplicatePrefixRefused(t, s.insertTaker(t), s.prefix)
+	s.requireSingleRow(t)
+	s.requireSurvivor(t)
+}
 
-	ownerID, err := repo.InsertTestToken(ctx, repository.TestTokenParams{
-		OrgID: ownerOrg, Prefix: prefix, Hash: "hash-owner-" + uuid.NewString(), Name: "owner", Permissions: 1,
+// duplicatePrefixScenario is two tenants claiming one prefix: the owner inserts
+// first, then the taker attempts a second row on the same prefix.
+type duplicatePrefixScenario struct {
+	repo     *repository.TokensRepository
+	db       *sql.DB
+	prefix   string
+	ownerOrg string
+	takerOrg string
+	ownerID  string
+}
+
+func newDuplicatePrefixScenario(t *testing.T) *duplicatePrefixScenario {
+	t.Helper()
+	repo, db := setupTokensRepo(t)
+	s := &duplicatePrefixScenario{
+		repo:     repo,
+		db:       db,
+		prefix:   "ibex_pat_" + uuid.NewString(),
+		ownerOrg: testutil.SeedOrganization(t, db, "Prefix Owner", "prefix-owner-"+uuid.NewString()[:8]),
+		takerOrg: testutil.SeedOrganization(t, db, "Prefix Taker", "prefix-taker-"+uuid.NewString()[:8]),
+	}
+	s.ownerID = s.insertOwner(t)
+	return s
+}
+
+// insertToken seeds one row on the scenario prefix and returns its id. Both
+// callers use distinct names, hashes, and orgs, so only the prefix index can
+// refuse the taker's row.
+func (s *duplicatePrefixScenario) insertToken(t *testing.T, orgID, name string, permissions int64) string {
+	t.Helper()
+	id, err := s.repo.InsertTestToken(context.Background(), repository.TestTokenParams{
+		OrgID: orgID, Prefix: s.prefix, Hash: "hash-" + name + "-" + uuid.NewString(), Name: name, Permissions: permissions,
 	})
 	if err != nil {
-		t.Fatalf("insert first token: %v", err)
+		t.Fatalf("insert %s token: %v", name, err)
 	}
+	return id
+}
 
-	_, err = repo.InsertTestToken(ctx, repository.TestTokenParams{
-		OrgID: takerOrg, Prefix: prefix, Hash: "hash-taker-" + uuid.NewString(), Name: "taker", Permissions: 2,
+func (s *duplicatePrefixScenario) insertOwner(t *testing.T) string {
+	t.Helper()
+	return s.insertToken(t, s.ownerOrg, "owner", 1)
+}
+
+// insertTaker returns the second insert's error instead of failing the test,
+// because a refusal is the expected outcome the caller asserts.
+func (s *duplicatePrefixScenario) insertTaker(t *testing.T) error {
+	t.Helper()
+	_, err := s.repo.InsertTestToken(context.Background(), repository.TestTokenParams{
+		OrgID: s.takerOrg, Prefix: s.prefix, Hash: "hash-taker-" + uuid.NewString(), Name: "taker", Permissions: 2,
 	})
+	return err
+}
+
+func requireDuplicatePrefixRefused(t *testing.T, err error, prefix string) {
+	t.Helper()
+	pqErr := requirePQError(t, err, prefix)
+	if string(pqErr.Code) != "23505" {
+		t.Fatalf("second insert on prefix %s SQLSTATE = %s, want 23505", prefix, pqErr.Code)
+	}
+}
+
+func requirePQError(t *testing.T, err error, prefix string) *pq.Error {
+	t.Helper()
 	var pqErr *pq.Error
-	if !errors.As(err, &pqErr) || string(pqErr.Code) != "23505" {
+	if !errors.As(err, &pqErr) {
 		t.Fatalf("second insert on prefix %s error = %v, want SQLSTATE 23505", prefix, err)
 	}
-	if n := countTokensWithPrefix(t, db, prefix); n != 1 {
-		t.Fatalf("rows for prefix %s = %d, want 1 (the refused insert left a row behind)", prefix, n)
-	}
+	return pqErr
+}
 
-	row, err := repo.FindActiveByPrefix(ctx, prefix)
+func (s *duplicatePrefixScenario) requireSingleRow(t *testing.T) {
+	t.Helper()
+	if n := countTokensWithPrefix(t, s.db, s.prefix); n != 1 {
+		t.Fatalf("rows for prefix %s = %d, want 1 (the refused insert left a row behind)", s.prefix, n)
+	}
+}
+
+func (s *duplicatePrefixScenario) requireSurvivor(t *testing.T) {
+	t.Helper()
+	row, err := s.repo.FindActiveByPrefix(context.Background(), s.prefix)
 	if err != nil {
 		t.Fatalf("FindActiveByPrefix after the refused insert: %v", err)
 	}
-	if row.ID != ownerID {
-		t.Fatalf("token id = %s, want the only surviving %s", row.ID, ownerID)
+	s.requireSurvivorFields(t, row)
+}
+
+func (s *duplicatePrefixScenario) requireSurvivorFields(t *testing.T, row repository.TokenRow) {
+	t.Helper()
+	if row.ID != s.ownerID {
+		t.Fatalf("token id = %s, want the only surviving %s", row.ID, s.ownerID)
 	}
-	if row.OrgID != ownerOrg {
-		t.Fatalf("token org = %s, want the prefix owner %s", row.OrgID, ownerOrg)
+	if row.OrgID != s.ownerOrg {
+		t.Fatalf("token org = %s, want the prefix owner %s", row.OrgID, s.ownerOrg)
 	}
 	if row.Permissions != 1 {
 		t.Fatalf("permissions = %d, want the surviving row's 1", row.Permissions)

@@ -129,49 +129,50 @@ func (f *tenancyFixture) requireGuardError(err error, state sqlState, rule strin
 	}
 }
 
-// countTokensFor counts an organization's token rows, optionally of one type.
-func (f *tenancyFixture) countTokensFor(ctx context.Context, orgID, tokenType string) int {
+// countOne runs a COUNT query and returns its value, failing the test with
+// label on error.
+func (f *tenancyFixture) countOne(ctx context.Context, label, query string, args ...any) int {
 	f.t.Helper()
 	var n int
-	if err := f.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM ibex_core.tokens
-		WHERE org_id = $1::uuid AND ($2 = '' OR type = $2)`, orgID, tokenType).Scan(&n); err != nil {
-		f.t.Fatalf("count tokens: %v", err)
+	if err := f.db.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+		f.t.Fatalf("%s: %v", label, err)
 	}
 	return n
+}
+
+// countTokensFor counts an organization's token rows, optionally of one type.
+func (f *tenancyFixture) countTokensFor(ctx context.Context, orgID, tokenType string) int {
+	return f.countOne(ctx, "count tokens", `
+		SELECT COUNT(*) FROM ibex_core.tokens
+		WHERE org_id = $1::uuid AND ($2 = '' OR type = $2)`, orgID, tokenType)
 }
 
 // countUsersFor counts an organization's user rows.
 func (f *tenancyFixture) countUsersFor(ctx context.Context, orgID string) int {
+	return f.countOne(ctx, "count users", `
+		SELECT COUNT(*) FROM ibex_core.users WHERE org_id = $1::uuid`, orgID)
+}
+
+// queryID reads one text id, failing the test with label on error.
+func (f *tenancyFixture) queryID(ctx context.Context, label, query string, args ...any) string {
 	f.t.Helper()
-	var n int
-	if err := f.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM ibex_core.users WHERE org_id = $1::uuid`, orgID).Scan(&n); err != nil {
-		f.t.Fatalf("count users: %v", err)
+	var id string
+	if err := f.db.QueryRowContext(ctx, query, args...).Scan(&id); err != nil {
+		f.t.Fatalf("%s: %v", label, err)
 	}
-	return n
+	return id
 }
 
 // firstUserID returns the organization's first user id.
 func (f *tenancyFixture) firstUserID(ctx context.Context, orgID string) string {
-	f.t.Helper()
-	var id string
-	if err := f.db.QueryRowContext(ctx, `
-		SELECT id::text FROM ibex_core.users WHERE org_id = $1::uuid`, orgID).Scan(&id); err != nil {
-		f.t.Fatalf("read foreign user: %v", err)
-	}
-	return id
+	return f.queryID(ctx, "read foreign user", `
+		SELECT id::text FROM ibex_core.users WHERE org_id = $1::uuid`, orgID)
 }
 
 // firstAgentID returns the organization's first agent id.
 func (f *tenancyFixture) firstAgentID(ctx context.Context, orgID string) string {
-	f.t.Helper()
-	var id string
-	if err := f.db.QueryRowContext(ctx, `
-		SELECT id::text FROM ibex_core.agents WHERE org_id = $1::uuid`, orgID).Scan(&id); err != nil {
-		f.t.Fatalf("read foreign agent: %v", err)
-	}
-	return id
+	return f.queryID(ctx, "read foreign agent", `
+		SELECT id::text FROM ibex_core.agents WHERE org_id = $1::uuid`, orgID)
 }
 
 // createIdentity calls bootstrap_create_identity as the current role.
@@ -214,6 +215,16 @@ func (e bootstrapEnv) mustInsertPAT(call patCall) {
 	if err != nil {
 		e.t.Fatalf("insert bootstrap PAT %s: %v", call.prefix, err)
 	}
+}
+
+// requirePATRejected asserts bootstrap_insert_pat refuses call with SQLSTATE
+// state and a message naming rule.
+func (e bootstrapEnv) requirePATRejected(call patCall, state, rule string) {
+	e.t.Helper()
+	err := e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
+		return insertPAT(e.ctx, tx, call)
+	})
+	e.f.requireGuardError(err, sqlState{code: state}, rule)
 }
 
 // bootstrapIdentity creates an empty organization plus its identity through the
@@ -374,28 +385,28 @@ func (e bootstrapEnv) assertIdentityRows(orgID string, ids identityIDs) {
 	}
 }
 
+// scanPair runs a two-column query, failing the test with label on error.
+func (e bootstrapEnv) scanPair(label, query string, args ...any) (string, string) {
+	e.t.Helper()
+	var first, second string
+	if err := e.f.db.QueryRowContext(e.ctx, query, args...).Scan(&first, &second); err != nil {
+		e.t.Fatalf("%s: %v", label, err)
+	}
+	return first, second
+}
+
 // readOwnerUser returns the role and status of one user row.
 func (e bootstrapEnv) readOwnerUser(orgID, userID string) (string, string) {
-	e.t.Helper()
-	var role, status string
-	if err := e.f.db.QueryRowContext(e.ctx, `
+	return e.scanPair("read owner user", `
 		SELECT role, status FROM ibex_core.users
-		WHERE id = $1::uuid AND org_id = $2::uuid`, userID, orgID).Scan(&role, &status); err != nil {
-		e.t.Fatalf("read owner user: %v", err)
-	}
-	return role, status
+		WHERE id = $1::uuid AND org_id = $2::uuid`, userID, orgID)
 }
 
 // readAgent returns the created_by and status of one agent row.
 func (e bootstrapEnv) readAgent(orgID, agentID string) (string, string) {
-	e.t.Helper()
-	var createdBy, status string
-	if err := e.f.db.QueryRowContext(e.ctx, `
+	return e.scanPair("read agent", `
 		SELECT created_by::text, status FROM ibex_core.agents
-		WHERE id = $1::uuid AND org_id = $2::uuid`, agentID, orgID).Scan(&createdBy, &status); err != nil {
-		e.t.Fatalf("read agent: %v", err)
-	}
-	return createdBy, status
+		WHERE id = $1::uuid AND org_id = $2::uuid`, agentID, orgID)
 }
 
 // TestTenancyBootstrapPATGuard is the F1 lock for the PAT definer.
@@ -433,10 +444,7 @@ func bootstrapPATMaskRefused(e bootstrapEnv) {
 		nil,
 	} {
 		call := patCall{orgID: orgID, ids: ids, prefix: "ibex_pat_mask", mask: mask}
-		err := e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
-			return insertPAT(e.ctx, tx, call)
-		})
-		e.f.requireGuardError(err, sqlState{code: "23514"}, "is not the bootstrap PAT grant")
+		e.requirePATRejected(call, "23514", "is not the bootstrap PAT grant")
 	}
 	if n := e.f.countTokensFor(e.ctx, orgID, ""); n != 0 {
 		e.t.Fatalf("refused masks wrote %d tokens, want 0", n)
@@ -448,10 +456,7 @@ func bootstrapPATSecondRefused(e bootstrapEnv) {
 	orgID, ids := e.bootstrapIdentity("pat-second")
 	e.mustInsertPAT(patCall{orgID: orgID, ids: ids, prefix: "ibex_pat_one", mask: bootstrapMask})
 	call := patCall{orgID: orgID, ids: ids, prefix: "ibex_pat_two", mask: bootstrapMask}
-	err := e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
-		return insertPAT(e.ctx, tx, call)
-	})
-	e.f.requireGuardError(err, sqlState{code: "42501"}, "already owns a pat row")
+	e.requirePATRejected(call, "42501", "already owns a pat row")
 }
 
 // bootstrapPATForeignOwnerRefused proves the definer rejects a user that does
@@ -461,10 +466,7 @@ func bootstrapPATForeignOwnerRefused(e bootstrapEnv) {
 	target, targetIDs := e.bootstrapIdentity("pat-target-org")
 	ids := identityIDs{user: e.f.firstUserID(e.ctx, owner), agent: targetIDs.agent}
 	call := patCall{orgID: target, ids: ids, prefix: "ibex_pat_foreign", mask: bootstrapMask}
-	err := e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
-		return insertPAT(e.ctx, tx, call)
-	})
-	e.f.requireGuardError(err, sqlState{code: "23514"}, "is not an active owner")
+	e.requirePATRejected(call, "23514", "is not an active owner")
 }
 
 // bootstrapPATForeignAgentRefused proves the definer rejects an agent that does
@@ -474,10 +476,7 @@ func bootstrapPATForeignAgentRefused(e bootstrapEnv) {
 	target, targetIDs := e.bootstrapIdentity("pat-agent-target")
 	ids := identityIDs{user: targetIDs.user, agent: e.f.firstAgentID(e.ctx, owner)}
 	call := patCall{orgID: target, ids: ids, prefix: "ibex_pat_foreign_agent", mask: bootstrapMask}
-	err := e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
-		return insertPAT(e.ctx, tx, call)
-	})
-	e.f.requireGuardError(err, sqlState{code: "23514"}, "is not an active agent")
+	e.requirePATRejected(call, "23514", "is not an active agent")
 }
 
 // bootstrapPATBootstrappedOrgRefused proves an already bootstrapped victim
@@ -652,14 +651,22 @@ func (e bootstrapEnv) assertServiceTokenRotated(tenant tenantSeed) {
 	e.assertServiceTokenSubjects(before, tenant, "ibex_pat_service_second")
 }
 
-// assertServiceTokenReplay covers the same-prefix re-run: it updates the same
-// row instead of reporting a conflict with the caller's own organization.
-func (e bootstrapEnv) assertServiceTokenReplay(call serviceTokenCall, label, wantID string) {
+// upsertServiceTokenChecked calls the definer and fails the test with label on
+// error, returning the outcome and the token id.
+func (e bootstrapEnv) upsertServiceTokenChecked(call serviceTokenCall, label string) (string, string) {
 	e.t.Helper()
 	outcome, tokenID, err := e.upsertServiceToken(call)
 	if err != nil {
 		e.t.Fatalf("%s: %v", label, err)
 	}
+	return outcome, tokenID
+}
+
+// assertServiceTokenReplay covers the same-prefix re-run: it updates the same
+// row instead of reporting a conflict with the caller's own organization.
+func (e bootstrapEnv) assertServiceTokenReplay(call serviceTokenCall, label, wantID string) {
+	e.t.Helper()
+	outcome, tokenID := e.upsertServiceTokenChecked(call, label)
 	if outcome != "updated" {
 		e.t.Fatalf("%s outcome = %q, want updated", label, outcome)
 	}
@@ -672,10 +679,7 @@ func (e bootstrapEnv) assertServiceTokenReplay(call serviceTokenCall, label, wan
 // the id.
 func (e bootstrapEnv) mustUpsertInserted(call serviceTokenCall, label string) string {
 	e.t.Helper()
-	outcome, tokenID, err := e.upsertServiceToken(call)
-	if err != nil {
-		e.t.Fatalf("%s: %v", label, err)
-	}
+	outcome, tokenID := e.upsertServiceTokenChecked(call, label)
 	if outcome != "inserted" {
 		e.t.Fatalf("%s outcome = %q, want inserted", label, outcome)
 	}
@@ -715,15 +719,10 @@ func (e bootstrapEnv) readServiceToken(tokenID string) serviceTokenRow {
 
 // serviceTokenID returns the organization's managed memory-service token id.
 func (f *tenancyFixture) serviceTokenID(ctx context.Context, orgID string) string {
-	f.t.Helper()
-	var id string
-	if err := f.db.QueryRowContext(ctx, `
+	return f.queryID(ctx, "read service token id", `
 		SELECT id::text FROM ibex_core.tokens
 		WHERE org_id = $1::uuid AND type = 'service_token' AND name = 'memory-service'`,
-		orgID).Scan(&id); err != nil {
-		f.t.Fatalf("read service token id: %v", err)
-	}
-	return id
+		orgID)
 }
 
 // seedTokenFor inserts one token for an explicit organization.

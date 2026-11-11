@@ -47,6 +47,7 @@ async def test_deletion_saga_erases_one_org_as_worker_login(
     require_redis: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The erasure saga deletes one org as the worker login and leaves the other intact."""
     await assert_worker_login(capability_worker_dsn)
     org_a, org_b = uuid4(), uuid4()
     job_id = uuid4()
@@ -126,6 +127,7 @@ async def test_purge_pin_reaches_the_org_but_not_another_org(
     owner_factory: async_sessionmaker[AsyncSession],
     worker_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    """The purge pin reaches its own org and cannot delete another tenant's row."""
     org_a, org_b = uuid4(), uuid4()
     await seed_org(owner_factory, org_a)
     await seed_org(owner_factory, org_b)
@@ -202,6 +204,7 @@ async def test_pinned_role_does_not_leak_on_a_pooled_connection(
 async def test_app_scope_does_not_leak_on_a_pooled_connection(
     capability_worker_dsn: str,
 ) -> None:
+    """``SET LOCAL`` must not leave ``ibex_app`` on a reused pooled connection."""
     from ibex_async_db import parse_async_database_url
     from sqlalchemy.ext.asyncio import create_async_engine
 

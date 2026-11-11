@@ -186,6 +186,7 @@ async def _claim(ledger: _AsyncBudgetLedger, org_id: UUID, agent_id: UUID, **ove
 
 
 async def _fetch_reservation(factory: async_sessionmaker, org_id: UUID, key: str) -> dict | None:
+    """Read one reservation row on the owner login, or ``None`` when absent."""
     async with session_unpinned(factory) as session:
         result = await session.execute(
             _sql(
@@ -474,6 +475,7 @@ async def test_stale_key_reclaims_after_expiry(pg_factory) -> None:
 async def test_cross_tenant_isolation_and_service_account_sweep(
     pg_factory,
 ) -> None:
+    """Each org sees only its own reservation; the definer sweep still expires both."""
     org_a, agent_a = await _seed_full_org(pg_factory, cap_cents=10_000)
     org_b, agent_b = await _seed_full_org(pg_factory, cap_cents=10_000)
     try:

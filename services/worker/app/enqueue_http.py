@@ -318,6 +318,7 @@ def create_enqueue_app(
     apply_async: Any | None = None,
     ledger: Any | None = None,
 ) -> Starlette:
+    """Build the worker enqueue ASGI app with its routes and pinned ledger scopes."""
     resolved_settings = settings or get_settings()
     app = Starlette(
         routes=[

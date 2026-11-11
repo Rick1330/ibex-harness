@@ -35,6 +35,9 @@ from app.db import session_unpinned
 from app.tasks import capture_redaction
 from app.tasks.billing_reconcile import SqlAlchemySpendStore
 from tests.integration.tenant_pinning_support import (
+    CapturePolicySeed,
+    SessionEventSeed,
+    SessionSeed,
     assert_worker_login,
     budget_request,
     count_rows,
@@ -43,6 +46,8 @@ from tests.integration.tenant_pinning_support import (
     seed_org,
     seed_period,
     seed_rate_card,
+    seed_session,
+    seed_session_event,
     seed_tenant_rows,
     sql_text,
     sqlstate,
@@ -89,6 +94,7 @@ async def test_update_period_spent_pins_the_rows_org_as_worker_login(
     owner_factory: async_sessionmaker[AsyncSession],
     capability_worker_dsn: str,
 ) -> None:
+    """A pinned spend update moves its own row and cannot touch another org's."""
     await assert_worker_login(capability_worker_dsn)
     org_a, org_b = uuid4(), uuid4()
     period_a, period_b = uuid4(), uuid4()
@@ -155,6 +161,7 @@ async def test_budget_claim_finalize_release_pin_the_org_as_worker_login(
     worker_factory: async_sessionmaker[AsyncSession],
     capability_worker_dsn: str,
 ) -> None:
+    """Claim, finalize, and release all run as the worker login under the org pin."""
     await assert_worker_login(capability_worker_dsn)
     org_id = uuid4()
     period_id = uuid4()
@@ -193,6 +200,7 @@ async def test_budget_claim_without_the_pin_is_42501(
     worker_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """An unpinned claim fails 42501 instead of writing."""
     org_id = uuid4()
     await seed_org(owner_factory, org_id)
     _, agent_id = await seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
@@ -219,10 +227,11 @@ async def test_capture_redaction_reads_the_policy_as_worker_login(
     capability_worker_dsn: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The policy read succeeds on the pinned worker login (metadata-only path)."""
     await assert_worker_login(capability_worker_dsn)
     org_id = uuid4()
     await seed_org(owner_factory, org_id)
-    await seed_capture_policy(owner_factory, org_id)
+    await seed_capture_policy(owner_factory, CapturePolicySeed(org_id=org_id))
     monkeypatch.setattr(
         capture_redaction,
         "get_settings",
@@ -251,10 +260,12 @@ async def test_capture_redaction_agent_policy_wins_over_org_default_as_worker_lo
     await seed_org(owner_factory, org_id)
     _, agent_id = await seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
     await seed_capture_policy(
-        owner_factory, org_id, agent_id=None, mode="metadata_only", priority=0
+        owner_factory,
+        CapturePolicySeed(org_id=org_id, agent_id=None, mode="metadata_only", priority=0),
     )
     await seed_capture_policy(
-        owner_factory, org_id, agent_id=agent_id, mode="redacted", priority=100
+        owner_factory,
+        CapturePolicySeed(org_id=org_id, agent_id=agent_id, mode="redacted", priority=100),
     )
     monkeypatch.setattr(
         capture_redaction,
@@ -268,14 +279,80 @@ async def test_capture_redaction_agent_policy_wins_over_org_default_as_worker_lo
 
 
 @pytest.mark.asyncio
+async def test_capture_redaction_redacted_branch_persists_both_writes_as_worker_login(
+    owner_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ``redacted`` branch writes both columns through the pinned login.
+
+    The metadata-only cases return before touching a row, so they cannot see a
+    broken pin. This case seeds a real session event and forces ``redacted``:
+    ``_persist_redacted`` rewrites ``data`` and ``_set_archived_to`` rewrites
+    ``archived_to``, both inside ``session_as_app_org``. A pin that stopped
+    binding the org would either fail 42501 or match zero rows (which
+    ``_set_archived_to`` turns into an error), so the event cannot be lost
+    quietly.
+    """
+    await assert_worker_login(capability_worker_dsn)
+    org_id, session_id = uuid4(), uuid4()
+    await seed_org(owner_factory, org_id)
+    _, agent_id = await seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
+    await seed_session(
+        owner_factory,
+        SessionSeed(org_id=org_id, agent_id=agent_id, session_id=session_id),
+    )
+    await seed_capture_policy(
+        owner_factory, CapturePolicySeed(org_id=org_id, mode="redacted")
+    )
+    payload = {"prompt": "secret", "content": "secret", "raw": "secret", "meta": "keep"}
+    event_id = await seed_session_event(
+        owner_factory,
+        SessionEventSeed(org_id=org_id, session_id=session_id, data=payload),
+    )
+    archive_uri = f"s3://ibex-sessions/{org_id}/capture/redacted/{event_id}.json"
+    uploaded: list[tuple[dict[str, object], str]] = []
+
+    def fake_upload(_settings, _job, filtered, kind):
+        uploaded.append((filtered, kind))
+        return archive_uri
+
+    monkeypatch.setattr(capture_redaction, "_put_archive_blob", fake_upload)
+    monkeypatch.setattr(
+        capture_redaction,
+        "get_settings",
+        lambda: Settings(database_url=capability_worker_dsn),
+    )
+
+    out = await capture_redaction._run(
+        capture_redaction._CaptureJob(
+            org_id=str(org_id), event_id=event_id, payload=payload
+        )
+    )
+
+    assert out == {"status": "redacted", "mode": "redacted", "event_id": event_id}
+    assert uploaded == [({"meta": "keep"}, "redacted")]
+    row = await fetch_one(
+        owner_factory,
+        "SELECT data, archived_to FROM ibex_core.session_events"
+        " WHERE id = :id AND org_id = :org",
+        id=event_id,
+        org=org_id,
+    )
+    assert row[0] == {"meta": "keep"}
+    assert row[1] == archive_uri
+
+
+@pytest.mark.asyncio
 async def test_capture_redaction_without_the_pin_is_42501(
     owner_factory: async_sessionmaker[AsyncSession],
     capability_worker_dsn: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """An unpinned policy read fails 42501."""
     org_id = uuid4()
     await seed_org(owner_factory, org_id)
-    await seed_capture_policy(owner_factory, org_id)
+    await seed_capture_policy(owner_factory, CapturePolicySeed(org_id=org_id))
     monkeypatch.setattr(
         capture_redaction,
         "get_settings",

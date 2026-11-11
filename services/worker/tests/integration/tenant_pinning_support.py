@@ -61,6 +61,11 @@ async def seed_org(
     *,
     job_id: UUID | None = None,
 ) -> None:
+    """Seed one organization, and optionally its pending deletion job.
+
+    ``job_id`` binds the erasure saga's job row to the organization; the other
+    tenant cases pass ``None`` and get only the organization.
+    """
     async with factory() as session, session.begin():
         await session.execute(
             sql_text("INSERT INTO ibex_core.organizations (id, name, slug) VALUES (:id, :name, :slug)"),
@@ -212,15 +217,20 @@ async def seed_rate_card(
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CapturePolicySeed:
+    """One capture-policy row; ``agent_id=None`` is the organization default."""
+
+    org_id: UUID
+    agent_id: UUID | None = None
+    mode: str = "metadata_only"
+    priority: int = 0
+
+
 async def seed_capture_policy(
-    factory: async_sessionmaker[AsyncSession],
-    org_id: UUID,
-    *,
-    agent_id: UUID | None = None,
-    mode: str = "metadata_only",
-    priority: int = 0,
+    factory: async_sessionmaker[AsyncSession], seed: CapturePolicySeed
 ) -> None:
-    """Seed one capture policy row; ``agent_id=None`` is the org default."""
+    """Seed one capture policy row from ``seed``."""
     async with factory() as session, session.begin():
         await session.execute(
             sql_text(
@@ -229,7 +239,12 @@ async def seed_capture_policy(
                 VALUES (:org, :agent, :mode, :priority)
                 """
             ),
-            {"org": org_id, "agent": agent_id, "mode": mode, "priority": priority},
+            {
+                "org": seed.org_id,
+                "agent": seed.agent_id,
+                "mode": seed.mode,
+                "priority": seed.priority,
+            },
         )
 
 
@@ -246,6 +261,7 @@ class SessionSeed:
 async def seed_session(
     factory: async_sessionmaker[AsyncSession], seed: SessionSeed
 ) -> None:
+    """Seed one completed session row for ``seed``."""
     async with factory() as session, session.begin():
         await session.execute(
             sql_text(
@@ -264,6 +280,42 @@ async def seed_session(
                 "turn": seed.turn,
             },
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionEventSeed:
+    """One session event the capture-redaction task may rewrite."""
+
+    org_id: UUID
+    session_id: UUID
+    data: dict[str, object]
+    sequence_number: int = 1
+    event_type: str = "inference_response"
+
+
+async def seed_session_event(
+    factory: async_sessionmaker[AsyncSession], seed: SessionEventSeed
+) -> int:
+    """Insert one session event and return its bigint id."""
+    async with factory() as session, session.begin():
+        result = await session.execute(
+            sql_text(
+                """
+                INSERT INTO ibex_core.session_events
+                    (session_id, org_id, sequence_number, event_type, data)
+                VALUES (:session_id, :org_id, :seq, :event_type, CAST(:data AS jsonb))
+                RETURNING id
+                """
+            ),
+            {
+                "session_id": seed.session_id,
+                "org_id": seed.org_id,
+                "seq": seed.sequence_number,
+                "event_type": seed.event_type,
+                "data": json.dumps(seed.data),
+            },
+        )
+        return int(result.scalar_one())
 
 
 def budget_request(org_id: UUID, agent_id: UUID, *, key: str) -> BudgetClaimRequest:

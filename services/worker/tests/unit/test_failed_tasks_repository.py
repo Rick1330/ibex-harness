@@ -45,6 +45,7 @@ async def truncate_failed_tasks(pg_engine: AsyncEngine) -> None:
 async def test_insert_failed_task_persists_row(
     pg_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    """A first insert is reported true and persists the row."""
     inserted = await insert_failed_task(
         pg_session_factory,
         FailedTaskRecord(

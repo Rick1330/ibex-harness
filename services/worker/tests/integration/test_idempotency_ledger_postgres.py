@@ -89,6 +89,7 @@ async def _delete_seed(factory: async_sessionmaker, org_id: UUID, agent_id: UUID
 
 @pytest.mark.asyncio
 async def test_ledger_real_postgres_isolates_organizations_and_allows_release(pg_factory) -> None:
+    """The same key in two orgs stays isolated, and a released claim is not replayed."""
     org_a, org_b = uuid4(), uuid4()
     agent_a, agent_b = uuid4(), uuid4()
     await _seed_org_agent(pg_factory, org_a, agent_a)

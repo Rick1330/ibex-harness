@@ -121,6 +121,7 @@ def _session_factory(execute: AsyncMock) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_load_found_binds_org_and_session() -> None:
+    """The load pins the role and org before the session SELECT."""
     org_id, session_id = uuid4(), uuid4()
     row = SimpleNamespace(last_extracted_turn=4, status="completed", deleted_at=None, lifecycle_revision=3)
     result = MagicMock()
@@ -149,6 +150,7 @@ async def test_load_none_when_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_update_binds_turn_and_org() -> None:
+    """The update pins the role and binds turn, session, and org."""
     org_id, session_id = uuid4(), uuid4()
     result = MagicMock()
     result.scalar_one_or_none.return_value = uuid4()

@@ -40,6 +40,7 @@ class _Seed:
 
 
 async def _seed(factory: async_sessionmaker, seed: _Seed) -> None:
+    """Seed both orgs, the agent, and the session the retrieval case reads."""
     async with session_unpinned(factory) as session:
         for org_id, slug in ((seed.org_a, "iso-a"), (seed.org_b, "iso-b")):
             await session.execute(

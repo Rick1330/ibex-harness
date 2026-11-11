@@ -31,6 +31,7 @@ def _session_with_nested() -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_insert_failed_task_executes_insert() -> None:
+    """The repository executes one insert inside the app pin."""
     session = _session_with_nested()
     result = MagicMock()
     result.rowcount = 1
@@ -61,6 +62,7 @@ async def test_insert_failed_task_executes_insert() -> None:
 
 @pytest.mark.asyncio
 async def test_insert_failed_task_duplicate_returns_false() -> None:
+    """A duplicate ``task_id`` reports false instead of raising."""
     session = _session_with_nested()
     result = MagicMock()
     result.rowcount = 0

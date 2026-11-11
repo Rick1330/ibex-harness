@@ -228,6 +228,7 @@ async def test_session_as_app_pins_the_role_without_an_org_guc() -> None:
 
 @pytest.mark.asyncio
 async def test_session_as_app_rolls_back_when_the_body_raises() -> None:
+    """A body error rolls the transaction back instead of committing the pin."""
     session = _FakeSession()
     with pytest.raises(_BodyError):
         async with session_as_app(_factory(session)):
@@ -243,6 +244,7 @@ async def test_session_as_app_rolls_back_when_the_body_raises() -> None:
 
 @pytest.mark.asyncio
 async def test_app_org_scope_pins_app_and_binds_the_org() -> None:
+    """The scope factory pins ``ibex_app`` and binds the org GUC."""
     session = _FakeSession()
     async with app_org_scope(_factory(session))(_ORG_ID) as scoped:
         assert scoped is session
@@ -252,6 +254,7 @@ async def test_app_org_scope_pins_app_and_binds_the_org() -> None:
 
 @pytest.mark.asyncio
 async def test_app_probe_scope_pins_app_without_an_org_guc() -> None:
+    """The probe scope pins ``ibex_app`` and binds no org GUC."""
     session = _FakeSession()
     async with app_probe_scope(_factory(session))() as scoped:
         assert scoped is session
