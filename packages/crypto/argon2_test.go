@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -72,19 +73,44 @@ func TestVerifyTimingSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
-	_, _ = VerifySecret("wrong", hash, p)
-	wrongDuration := time.Since(start)
-	start = time.Now()
-	_, _ = VerifySecret("test-password", hash, p)
-	correctDuration := time.Since(start)
-	if correctDuration == 0 {
-		t.Skip("correct duration too small to compare")
+	wrongDuration, correctDuration := medianVerifyDurations(t, hash, p)
+	if wrongDuration == 0 || correctDuration == 0 {
+		t.Fatalf("verify durations must be measurable: wrong=%v correct=%v", wrongDuration, correctDuration)
 	}
 	ratio := float64(wrongDuration) / float64(correctDuration)
-	if ratio < 0.5 || ratio > 2.0 {
-		t.Logf("advisory timing ratio=%.2f (wrong=%v correct=%v)", ratio, wrongDuration, correctDuration)
+	// Both paths run exactly one Argon2id evaluation, so a wrong secret must cost
+	// about as much as the correct one. A ratio below 0.5 means the mismatch was
+	// rejected before hashing; the wide upper bound tolerates scheduler noise on a
+	// loaded runner while still catching a doubled hashing pass.
+	if ratio < 0.5 || ratio > 3.0 {
+		t.Fatalf("wrong-secret verify is not comparable to correct-secret verify: ratio=%.2f (wrong=%v correct=%v)", ratio, wrongDuration, correctDuration)
 	}
+}
+
+// medianVerifyDurations measures the wrong- and correct-secret verify paths in
+// interleaved batches and returns their medians. Interleaving spreads scheduler
+// noise across both paths, and the median rejects a single preempted sample.
+func medianVerifyDurations(t *testing.T, hash string, p Argon2Params) (wrong, correct time.Duration) {
+	t.Helper()
+	const samples = 7
+	wrongSamples := make([]time.Duration, samples)
+	correctSamples := make([]time.Duration, samples)
+	for i := 0; i < samples; i++ {
+		wrongSamples[i] = measureVerify(t, "wrong", hash, p)
+		correctSamples[i] = measureVerify(t, "test-password", hash, p)
+	}
+	slices.Sort(wrongSamples)
+	slices.Sort(correctSamples)
+	return wrongSamples[samples/2], correctSamples[samples/2]
+}
+
+func measureVerify(t *testing.T, plaintext, hash string, p Argon2Params) time.Duration {
+	t.Helper()
+	start := time.Now()
+	if _, err := VerifySecret(plaintext, hash, p); err != nil {
+		t.Fatalf("verify %q: %v", plaintext, err)
+	}
+	return time.Since(start)
 }
 
 func min(a, b int) int {
