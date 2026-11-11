@@ -293,7 +293,7 @@ async def test_capture_redaction_redacted_branch_persists_both_writes_as_worker_
     ``archived_to``, both inside ``session_as_app_org``. A pin that stopped
     binding the org would either fail 42501 or match zero rows (which
     ``_set_archived_to`` turns into an error), so the event cannot be lost
-    quietly.
+    quietly. The event id is passed as a string, exactly as Celery delivers it.
     """
     await assert_worker_login(capability_worker_dsn)
     org_id, session_id = uuid4(), uuid4()
@@ -327,11 +327,16 @@ async def test_capture_redaction_redacted_branch_persists_both_writes_as_worker_
 
     out = await capture_redaction._run(
         capture_redaction._CaptureJob(
-            org_id=str(org_id), event_id=event_id, payload=payload
+            org_id=str(org_id), event_id=str(event_id), payload=payload
         )
     )
 
-    assert out == {"status": "redacted", "mode": "redacted", "event_id": event_id}
+    # Celery serialises kwargs as JSON, so the task sees the id as a string.
+    assert out == {
+        "status": "redacted",
+        "mode": "redacted",
+        "event_id": str(event_id),
+    }
     assert uploaded == [({"meta": "keep"}, "redacted")]
     row = await fetch_one(
         owner_factory,
@@ -342,6 +347,38 @@ async def test_capture_redaction_redacted_branch_persists_both_writes_as_worker_
     )
     assert row[0] == {"meta": "keep"}
     assert row[1] == archive_uri
+
+
+@pytest.mark.asyncio
+async def test_capture_redaction_rejects_non_numeric_event_id(
+    owner_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-numeric id fails with a clear ``ValueError``, not a driver ``DataError``.
+
+    The column is ``bigint``; binding an arbitrary string would make asyncpg
+    raise ``DataError`` after the transaction has started. The task must reject
+    it at the boundary instead.
+    """
+    await assert_worker_login(capability_worker_dsn)
+    org_id = uuid4()
+    await seed_org(owner_factory, org_id)
+    await seed_capture_policy(
+        owner_factory, CapturePolicySeed(org_id=org_id, mode="redacted")
+    )
+    monkeypatch.setattr(
+        capture_redaction,
+        "get_settings",
+        lambda: Settings(database_url=capability_worker_dsn),
+    )
+
+    with pytest.raises(ValueError, match="event_id must be a numeric string"):
+        await capture_redaction._run(
+            capture_redaction._CaptureJob(
+                org_id=str(org_id), event_id="not-a-number", payload={"meta": "keep"}
+            )
+        )
 
 
 @pytest.mark.asyncio

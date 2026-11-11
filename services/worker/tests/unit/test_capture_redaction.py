@@ -154,6 +154,7 @@ async def test_run_redacted_persists(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sess.execute.await_count >= 1
     call_args = sess.execute.await_args_list[0]
     params = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("params")
+    assert params["event_id"] == 42
     assert '"raw"' not in params["data"]
     assert "meta" in params["data"]
 
@@ -185,6 +186,39 @@ async def test_run_full_archive_exception_propagates(monkeypatch: pytest.MonkeyP
     job = _CaptureJob(org_id="o", event_id="1", payload={"content": "secret"})
     with pytest.raises(RuntimeError, match="seal failed"):
         await capture_redaction._run(job)
+
+
+@pytest.mark.asyncio
+async def test_run_redacted_rejects_non_numeric_event_id_before_bind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-numeric id fails clearly before the driver sees a bad bind."""
+    sess = _wire_run(monkeypatch, mode="redacted")
+    monkeypatch.setattr(capture_redaction, "_put_archive_blob", MagicMock())
+    job = _CaptureJob(org_id="o", event_id="not-a-number", payload={"meta": "y"})
+    with pytest.raises(ValueError, match="event_id must be a numeric string"):
+        await capture_redaction._run(job)
+    sess.execute.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("42", 42), (42, 42), (None, None)])
+def test_coerce_event_id_accepts_bigint_values(raw, expected) -> None:
+    assert capture_redaction._coerce_event_id(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "error"),
+    [
+        ("abc", ValueError),
+        ("1.5", ValueError),
+        ("12x", ValueError),
+        (True, TypeError),
+        (2**63, ValueError),
+    ],
+)
+def test_coerce_event_id_rejects_non_bigint_values(raw, error) -> None:
+    with pytest.raises(error, match="event_id"):
+        capture_redaction._coerce_event_id(raw)
 
 
 def test_parse_job_from_kwargs() -> None:

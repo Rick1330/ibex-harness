@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 TASK_APPLY_CAPTURE_REDACTION = "ibex.privacy.apply_capture_redaction"
 _DEFAULT_MODE = "metadata_only"
 _STRIP_KEYS = frozenset({"raw", "content", "prompt"})
+_BIGINT_MAX = 2**63 - 1
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,29 @@ def _parse_job(kwargs: dict[str, Any]) -> _CaptureJob:
         agent_id=kwargs.get("agent_id"),
         payload=payload,
     )
+
+
+def _coerce_event_id(event_id: str | int | None) -> int | None:
+    """Coerce a Celery JSON string id into the bigint ``session_events.id``.
+
+    Celery serialises task kwargs as JSON, so ``event_id`` arrives as a string
+    even though the column is ``bigint``. Binding the raw string makes asyncpg
+    raise ``DataError``; coerce once here so a numeric string persists and a
+    non-numeric id fails with a clear ``ValueError``.
+    """
+    if event_id is None:
+        return None
+    if isinstance(event_id, bool):
+        raise TypeError(f"event_id must be an integer, got bool: {event_id!r}")
+    if isinstance(event_id, int):
+        value = event_id
+    elif isinstance(event_id, str) and event_id.strip().isdigit():
+        value = int(event_id.strip())
+    else:
+        raise ValueError(f"event_id must be a numeric string: {event_id!r}")
+    if not 0 <= value <= _BIGINT_MAX:
+        raise ValueError(f"event_id is outside the bigint range: {event_id!r}")
+    return value
 
 
 async def _run(job: _CaptureJob) -> dict[str, str]:
@@ -157,6 +181,7 @@ async def _persist_redacted(ctx: _RedactCtx, filtered: dict[str, Any]) -> None:
     job = ctx.job
     if not job.event_id:
         return
+    event_id = _coerce_event_id(job.event_id)
     await ctx.session.execute(
         text(
             """
@@ -167,7 +192,7 @@ async def _persist_redacted(ctx: _RedactCtx, filtered: dict[str, Any]) -> None:
             """
         ),
         {
-            "event_id": job.event_id,
+            "event_id": event_id,
             "org_id": job.org_id,
             "data": json.dumps(filtered),
         },
@@ -201,6 +226,7 @@ async def _archive_payload(ctx: _RedactCtx, payload: dict[str, Any]) -> None:
 
 
 async def _set_archived_to(session, job: _CaptureJob, uri: str) -> None:
+    event_id = _coerce_event_id(job.event_id)
     result = await session.execute(
         text(
             """
@@ -210,7 +236,7 @@ async def _set_archived_to(session, job: _CaptureJob, uri: str) -> None:
               AND org_id = CAST(:org_id AS uuid)
             """
         ),
-        {"event_id": job.event_id, "org_id": job.org_id, "uri": uri},
+        {"event_id": event_id, "org_id": job.org_id, "uri": uri},
     )
     if result.rowcount == 0:
         raise RuntimeError(
