@@ -129,7 +129,7 @@ export const capabilities: Capability[] = [
   {
     name: 'v1-single-node profile',
     status: 'IMPLEMENTED',
-    detail: 'One Compose project starts every required service behind an edge TLS terminator with one published port, digest-pinned dependencies, a one-shot migration gate, and a safe one-time bootstrap. Evidenced by a local start on one host; hosted/HA operation, multi-user auth, a measured p99 SLO, cross-tenant acceptance, and a recovery drill remain open.',
+    detail: 'One Compose project starts every required service behind an edge TLS terminator with one published port, digest-pinned dependencies, and a safe one-time identity bootstrap. Three one-shot gates run in order: migrate, provision, then bootstrap. Every DSN still points at the owner login, so no service runs as a capability login. Evidenced by a local start on one host; hosted/HA operation, multi-user auth, a measured p99 SLO, cross-tenant acceptance, and a recovery drill remain open.',
     href: '/docs/deployment/v1-single-node',
   },
   {
