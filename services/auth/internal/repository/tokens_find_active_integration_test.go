@@ -5,12 +5,13 @@ package repository_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
-	"time"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 func findActiveCases() []findActiveCase {
@@ -33,49 +34,68 @@ func TestTokensRepository_FindActiveByPrefix(t *testing.T) {
 	}
 }
 
-// TestTokensRepository_FindActiveByPrefix_NewestWins proves the definer's
-// `ORDER BY created_at DESC LIMIT 1` reaches the caller: two rows sharing a
-// prefix resolve to the newer one.
-func TestTokensRepository_FindActiveByPrefix_NewestWins(t *testing.T) {
+// TestTokensRepository_FindActiveByPrefix_RefusesDuplicatePrefix proves the
+// invariant migration 000071 makes structural: ibex_core.idx_tokens_prefix_unique
+// refuses a second row on an existing prefix, so two tenants can never share one.
+//
+// The refusal is asserted as SQLSTATE 23505, not as message text. Both inserts
+// use distinct ids, hashes, and names, so the only index that can refuse the
+// second row is the prefix index; a 23505 from another unique index would mean
+// the seed itself is wrong, not that the prefix invariant holds.
+//
+// The reader is asserted afterwards on purpose: the index guards the writer, and
+// FindActiveByPrefix runs on every authenticated request. If the refusal ever
+// left the lookup unable to resolve the surviving row, authentication would break
+// for the tenant that owns the prefix.
+func TestTokensRepository_FindActiveByPrefix_RefusesDuplicatePrefix(t *testing.T) {
 	repo, db := setupTokensRepo(t)
-	orgID := testutil.SeedOrganization(t, db, "Newest Org", "newest-"+uuid.NewString()[:8])
+	ctx := context.Background()
 	prefix := "ibex_pat_" + uuid.NewString()
-	olderHash := "hash-older-" + uuid.NewString()
-	newerHash := "hash-newer-" + uuid.NewString()
+	ownerOrg := testutil.SeedOrganization(t, db, "Prefix Owner", "prefix-owner-"+uuid.NewString()[:8])
+	takerOrg := testutil.SeedOrganization(t, db, "Prefix Taker", "prefix-taker-"+uuid.NewString()[:8])
 
-	olderID, err := repo.InsertTestToken(context.Background(), repository.TestTokenParams{
-		OrgID: orgID, Prefix: prefix, Hash: olderHash, Name: "older", Permissions: 1,
+	ownerID, err := repo.InsertTestToken(ctx, repository.TestTokenParams{
+		OrgID: ownerOrg, Prefix: prefix, Hash: "hash-owner-" + uuid.NewString(), Name: "owner", Permissions: 1,
 	})
 	if err != nil {
-		t.Fatalf("insert older token: %v", err)
+		t.Fatalf("insert first token: %v", err)
 	}
-	newerID, err := repo.InsertTestToken(context.Background(), repository.TestTokenParams{
-		OrgID: orgID, Prefix: prefix, Hash: newerHash, Name: "newer", Permissions: 2,
-	})
-	if err != nil {
-		t.Fatalf("insert newer token: %v", err)
-	}
-	setTokenCreatedAt(t, db, olderID, time.Now().UTC().Add(-time.Hour))
-	setTokenCreatedAt(t, db, newerID, time.Now().UTC())
 
-	row, err := repo.FindActiveByPrefix(context.Background(), prefix)
+	_, err = repo.InsertTestToken(ctx, repository.TestTokenParams{
+		OrgID: takerOrg, Prefix: prefix, Hash: "hash-taker-" + uuid.NewString(), Name: "taker", Permissions: 2,
+	})
+	var pqErr *pq.Error
+	if !errors.As(err, &pqErr) || string(pqErr.Code) != "23505" {
+		t.Fatalf("second insert on prefix %s error = %v, want SQLSTATE 23505", prefix, err)
+	}
+	if n := countTokensWithPrefix(t, db, prefix); n != 1 {
+		t.Fatalf("rows for prefix %s = %d, want 1 (the refused insert left a row behind)", prefix, n)
+	}
+
+	row, err := repo.FindActiveByPrefix(ctx, prefix)
 	if err != nil {
-		t.Fatalf("FindActiveByPrefix: %v", err)
+		t.Fatalf("FindActiveByPrefix after the refused insert: %v", err)
 	}
-	if row.ID != newerID {
-		t.Fatalf("token id = %s, want the newer %s", row.ID, newerID)
+	if row.ID != ownerID {
+		t.Fatalf("token id = %s, want the only surviving %s", row.ID, ownerID)
 	}
-	if row.Hash != newerHash {
-		t.Fatalf("hash = %s, want %s", row.Hash, newerHash)
+	if row.OrgID != ownerOrg {
+		t.Fatalf("token org = %s, want the prefix owner %s", row.OrgID, ownerOrg)
+	}
+	if row.Permissions != 1 {
+		t.Fatalf("permissions = %d, want the surviving row's 1", row.Permissions)
 	}
 }
 
-// setTokenCreatedAt adjusts created_at so the duplicate-prefix ordering is
-// deterministic; the repository insert API deliberately does not take it.
-func setTokenCreatedAt(t *testing.T, db *sql.DB, tokenID string, at time.Time) {
+// countTokensWithPrefix counts the rows carrying prefix. It runs on the owner
+// login on purpose: the invariant is global, and RLS would hide a cross-tenant
+// row from a tenant-pinned connection.
+func countTokensWithPrefix(t *testing.T, db *sql.DB, prefix string) int {
 	t.Helper()
-	// nosemgrep: go_sql_rule-concat-sqli -- the statement is a compile-time constant and both values are bound parameters; no test value is ever interpolated into the SQL text.
-	if _, err := db.Exec(`UPDATE ibex_core.tokens SET created_at = $1 WHERE id = $2::uuid`, at, tokenID); err != nil {
-		t.Fatalf("set created_at: %v", err)
+	var n int
+	// nosemgrep: go_sql_rule-concat-sqli -- the statement is a compile-time constant and prefix is a bound parameter; no test value is ever interpolated into the SQL text.
+	if err := db.QueryRow(`SELECT count(*) FROM ibex_core.tokens WHERE prefix = $1`, prefix).Scan(&n); err != nil {
+		t.Fatalf("count tokens for prefix: %v", err)
 	}
+	return n
 }
