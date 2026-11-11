@@ -262,6 +262,12 @@ def validate(manifest: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    """Validate the manifest named on the command line and report the outcome.
+
+    Returns the process exit code: 0 when the manifest is valid, 1 when the
+    file cannot be read or fails validation. ``--sha256`` also prints the
+    digest of the exact bytes that were validated.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--sha256", action="store_true", help="also print the manifest digest")

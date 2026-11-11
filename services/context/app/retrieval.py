@@ -272,6 +272,13 @@ class ParallelRetriever:
         timeout_ms: float,
         fetch,
     ) -> _BranchResult:
+        """Fetch one source's memories within its own deadline.
+
+        Every outcome is a ``_BranchResult``: a timeout, a transport error and a
+        cancelled sibling all become a non-raising result, because context
+        assembly is fail-open (ADR-0071, ADR-0096). The caller merges whatever
+        arrived.
+        """
         timeout_s = timeout_ms / 1000.0
         started = time.perf_counter()
         try:

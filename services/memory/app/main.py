@@ -115,6 +115,13 @@ async def _memory_service_lifespan(
     cfg: Settings,
     validator: TokenValidator | None,
 ) -> AsyncGenerator[None, None]:
+    """Yield either the not-ready app or a fully wired service, and tear down.
+
+    Missing database configuration takes the short path: the app answers 503 and
+    never builds an engine. Otherwise the engine, store, PII service, Redis,
+    embedding and rerank clients are constructed, readiness is refreshed, and
+    ``_shutdown_memory`` releases them on the way out.
+    """
     logger.info("memory service starting port=%s", cfg.port)
     configure_tracing(cfg.otel_endpoint)
     auth = validator or GRPCTokenValidator(
