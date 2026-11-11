@@ -40,22 +40,38 @@ func NewConfigStore(db *sql.DB) (*ConfigStore, error) {
 	return &ConfigStore{db: db, tracer: otel.Tracer("ibex-ratelimit")}, nil
 }
 
+// configStatement is one statement a load runs before its read, with the label
+// its failure is reported under.
+type configStatement struct {
+	label string
+	query string
+	args  []any
+}
+
 type loadOverridesParams struct {
 	spanName  string
-	preQuery  string
-	preArgs   []any
-	preLabel  string
+	pre       []configStatement
 	query     string
 	queryArgs []any
 }
 
 // LoadOrg returns overrides for one org under app.current_org_id RLS.
+//
+// The capability logins are NOINHERIT and hold no table grant of their own, so
+// the org GUC alone is not enough: the read runs as ibex_app for this
+// transaction, exactly like packages/billing. Without the role pin a capability
+// DSN fails the read with SQLSTATE 42501.
 func (s *ConfigStore) LoadOrg(ctx context.Context, orgID uuid.UUID) (OrgOverrideSet, error) {
 	set, err := s.loadOverrides(ctx, loadOverridesParams{
 		spanName: "ConfigStore.LoadOrg",
-		preQuery: `SELECT set_config('app.current_org_id', $1, true)`,
-		preArgs:  []any{orgID.String()},
-		preLabel: "set rls",
+		pre: []configStatement{
+			{label: "set tenant role", query: `SET LOCAL ROLE ibex_app`},
+			{
+				label: "set rls",
+				query: `SELECT set_config('app.current_org_id', $1, true)`,
+				args:  []any{orgID.String()},
+			},
+		},
 		query: `
 		SELECT org_id, agent_id::text, requests_per_minute
 		FROM ibex_core.rate_limit_overrides
@@ -97,9 +113,13 @@ func (s *ConfigStore) loadOverrides(ctx context.Context, p loadOverridesParams) 
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if p.preQuery != "" {
-		if _, err := tx.ExecContext(ctx, p.preQuery, p.preArgs...); err != nil {
-			return nil, recordConfigStoreErr(span, fmt.Errorf("ratelimit: %s: %w", p.preLabel, err))
+	if p.pre != nil {
+		for _, statement := range p.pre {
+			if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+				return nil, recordConfigStoreErr(
+					span, fmt.Errorf("ratelimit: %s: %w", statement.label, err),
+				)
+			}
 		}
 	}
 	set, err := scanOverrides(ctx, tx, p.query, p.queryArgs...)

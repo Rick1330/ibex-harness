@@ -286,6 +286,15 @@ ensure_env_file
 
 echo "env secrets:"
 set_secret POSTGRES_PASSWORD "$(gen_hex)"
+# Capability-login passwords. Their plaintext lives only in this .env and is
+# read by the one-shot `provision` service, which writes one SCRAM verifier per
+# role in a single transaction. Each must differ from POSTGRES_PASSWORD (the
+# owner credential) and from the others; provision refuses to commit otherwise,
+# so a collision fails the profile instead of silently weakening it.
+set_secret IBEX_RUNTIME_DB_PASSWORD "$(gen_hex)"
+set_secret IBEX_AUTH_DB_PASSWORD "$(gen_hex)"
+set_secret IBEX_WORKER_DB_PASSWORD "$(gen_hex)"
+set_secret IBEX_BOOTSTRAP_DB_PASSWORD "$(gen_hex)"
 set_secret REDIS_PASSWORD "$(gen_hex)"
 set_secret IBEX_CREDENTIALS_MASTER_KEY "$(openssl rand -base64 32 | tr -d '\n')"
 set_secret IBEX_AUTH_SERVICE_TOKEN "$(gen_hex)"

@@ -90,6 +90,7 @@ var roleStatements = map[string]string{
 	"ibex_runtime":        "SET LOCAL ROLE ibex_runtime",
 	"ibex_worker":         "SET LOCAL ROLE ibex_worker",
 	"ibex_bootstrap":      "SET LOCAL ROLE ibex_bootstrap",
+	"ibex_auth":           "SET LOCAL ROLE ibex_auth",
 	"ibex_evidence_relay": "SET LOCAL ROLE ibex_evidence_relay",
 }
 
@@ -126,6 +127,37 @@ func newTenancyFixture(t *testing.T) *tenancyFixture {
 	return f
 }
 
+// sub returns a copy of the fixture bound to a subtest, so a helper that fails
+// reports against the subtest instead of calling FailNow on the parent test.
+// t.Cleanup and the connection are shared through the copy.
+func (f *tenancyFixture) sub(t *testing.T) *tenancyFixture {
+	clone := *f
+	clone.t = t
+	return &clone
+}
+
+// rewindTo applies one-migration Down steps until the schema sits at floor.
+// Tests that need a pre-migration cluster state use it to reach the version
+// whose up file they are about to exercise against a hand-built shape.
+func rewindTo(t *testing.T, f *tenancyFixture, floor uint) {
+	t.Helper()
+	for {
+		version, dirty, err := Version(f.dsn)
+		if err != nil {
+			t.Fatalf("version while rewinding to %d: %v", floor, err)
+		}
+		if dirty {
+			t.Fatalf("cannot rewind to %d from a dirty migration state", floor)
+		}
+		if version <= floor {
+			return
+		}
+		if err := Down(f.dsn); err != nil {
+			t.Fatalf("down from %d: %v", version, err)
+		}
+	}
+}
+
 // seedTenant creates the primary org, user and agent and stores their ids.
 func (f *tenancyFixture) seedTenant(ctx context.Context) {
 	f.t.Helper()
@@ -133,41 +165,47 @@ func (f *tenancyFixture) seedTenant(ctx context.Context) {
 	f.orgID, f.userID, f.agentID = seed.orgID, seed.userID, seed.agentID
 }
 
-// seedTenantNamed creates one org, user and agent with a unique slug.
+// seedTenantNamed creates one org, one member user and one agent with a unique
+// slug.
 func (f *tenancyFixture) seedTenantNamed(ctx context.Context, slug string) tenantSeed {
 	f.t.Helper()
-	var seed tenantSeed
+	seed := tenantSeed{orgID: f.seedEmptyOrg(ctx, slug)}
+	seed.userID = f.seedUser(ctx, seed.orgID, slug, "member")
+	seed.agentID = f.seedAgent(ctx, seed.orgID, slug, sql.NullString{String: seed.userID, Valid: true})
+	return seed
+}
+
+// seedUser inserts one active user with userRole and returns its id.
+func (f *tenancyFixture) seedUser(ctx context.Context, orgID, slug, userRole string) string {
+	f.t.Helper()
+	var id string
 	if err := f.db.QueryRowContext(ctx, `
-		INSERT INTO ibex_core.organizations (name, slug)
-		VALUES ($1, $1) RETURNING id::text`, slug).Scan(&seed.orgID); err != nil {
-		f.t.Fatalf("seed org %s: %v", slug, err)
-	}
-	if err := f.db.QueryRowContext(ctx, `
-		INSERT INTO ibex_core.users (org_id, email, name)
-		VALUES ($1::uuid, $2, $3) RETURNING id::text`,
-		seed.orgID, slug+"@example.com", slug).Scan(&seed.userID); err != nil {
+		INSERT INTO ibex_core.users (org_id, email, name, role)
+		VALUES ($1::uuid, $2, $2, $3) RETURNING id::text`,
+		orgID, slug+"@example.com", userRole).Scan(&id); err != nil {
 		f.t.Fatalf("seed user %s: %v", slug, err)
 	}
+	return id
+}
+
+// seedAgent inserts one active agent and returns its id. createdBy is NULL when
+// it is not Valid, which is the agent-only shape.
+func (f *tenancyFixture) seedAgent(ctx context.Context, orgID, slug string, createdBy sql.NullString) string {
+	f.t.Helper()
+	var id string
 	if err := f.db.QueryRowContext(ctx, `
 		INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
-		VALUES ($1::uuid, $2::uuid, $3, $3) RETURNING id::text`,
-		seed.orgID, seed.userID, slug).Scan(&seed.agentID); err != nil {
+		VALUES ($1::uuid, $2, $3, $3) RETURNING id::text`,
+		orgID, createdBy, slug).Scan(&id); err != nil {
 		f.t.Fatalf("seed agent %s: %v", slug, err)
 	}
-	return seed
+	return id
 }
 
 // seedToken creates a token for the primary tenant.
 func (f *tenancyFixture) seedToken(ctx context.Context, seed tokenSeed) string {
 	f.t.Helper()
-	var id string
-	if err := f.db.QueryRowContext(ctx, `
-		INSERT INTO ibex_core.tokens (org_id, type, hash, prefix, name, permissions)
-		VALUES ($1::uuid, 'pat', $2, $3, 'reader', 0) RETURNING id::text`,
-		f.orgID, seed.hash, seed.prefix).Scan(&id); err != nil {
-		f.t.Fatalf("seed token: %v", err)
-	}
-	return id
+	return f.seedTokenFor(ctx, f.orgID, seed)
 }
 
 // withRole runs fn in a transaction as the spec's role, setting the org GUC
@@ -287,13 +325,38 @@ func (f *tenancyFixture) assertMembers(ctx context.Context, spec membershipSpec)
 		f.t.Fatalf("members of %s: %v", spec.role, err)
 	}
 	defer rows.Close()
-	got := scanStrings(f.t, rows)
-	if len(got) != len(spec.want) {
-		f.t.Fatalf("members of %s = %v, want %v", spec.role, got, spec.want)
+	requireRoleList(f.t, "members of "+spec.role, scanStrings(f.t, rows), spec.want)
+}
+
+// assertDirectMembers checks the roles granted directly to spec.role, without
+// recursion. A recursive walk of ibex_auth also returns ibex_runtime and
+// ibex_worker, because those are members of the ibex_app membership it holds,
+// so "no membership other than ibex_app" has to read the direct rows.
+func (f *tenancyFixture) assertDirectMembers(ctx context.Context, spec membershipSpec) {
+	f.t.Helper()
+	rows, err := f.db.QueryContext(ctx, `
+		SELECT granted.rolname
+		FROM pg_auth_members am
+		JOIN pg_roles granted ON granted.oid = am.roleid
+		JOIN pg_roles member ON member.oid = am.member
+		WHERE member.rolname = $1
+		ORDER BY granted.rolname`, spec.role)
+	if err != nil {
+		f.t.Fatalf("direct members of %s: %v", spec.role, err)
+	}
+	defer rows.Close()
+	requireRoleList(f.t, "direct members of "+spec.role, scanStrings(f.t, rows), spec.want)
+}
+
+// requireRoleList compares two ordered role name lists.
+func requireRoleList(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s = %v, want %v", label, got, want)
 	}
 	for i := range got {
-		if got[i] != spec.want[i] {
-			f.t.Fatalf("members of %s = %v, want %v", spec.role, got, spec.want)
+		if got[i] != want[i] {
+			t.Fatalf("%s = %v, want %v", label, got, want)
 		}
 	}
 }

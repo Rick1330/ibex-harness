@@ -110,6 +110,7 @@ func ResetCapabilityRoles(ctx context.Context, db *sql.DB) {
 		`DROP ROLE IF EXISTS ibex_runtime`,
 		`DROP ROLE IF EXISTS ibex_worker`,
 		`DROP ROLE IF EXISTS ibex_bootstrap`,
+		`DROP ROLE IF EXISTS ibex_auth`,
 	} {
 		// nosemgrep: go_sql_rule-concat-sqli -- the statement is a compile-time literal from a fixed allowlist; no caller input reaches the SQL text.
 		_, _ = db.ExecContext(ctx, statement)

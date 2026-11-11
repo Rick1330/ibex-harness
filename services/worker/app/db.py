@@ -1,36 +1,40 @@
-"""Async SQLAlchemy engine / session helpers for worker dead-letter persistence.
+"""Async SQLAlchemy engine / session helpers for worker data access.
 
-Two families of session helpers live here:
-
-* The shared ``ibex_idempotency`` scopes, re-exported under their historical
-  names. They are unchanged and are still used by callers that do not need a
-  capability role (dead-letter persistence, budget reservations, capture
-  redaction).
-* The capability-pinned scopes below, which run ``SET LOCAL ROLE`` inside the
-  transaction. The worker login is ``NOINHERIT`` (migration 000064), so a
-  tenant write needs ``ibex_app`` and the organization-deletion saga needs
-  ``ibex_purge``; neither identity is available implicitly. ``SET LOCAL`` (never
-  ``SET ROLE``) keeps the identity inside the transaction, so a pooled
-  connection cannot leak a role into the next task. The role is pinned *before*
-  the org GUC, in the same order as ``services/memory``, ``services/api`` and
-  ``services/mcp-operator``: one order across the four services means a copy of
-  this helper cannot diverge. The order is not load-bearing for RLS -- ``SET
-  ROLE`` preserves transaction-local GUCs and no role carries an ``app.*``
-  ``ALTER ROLE ... SET`` -- but a single order is one less thing to reason
-  about.
+Every worker transaction that touches a tenant table runs ``SET LOCAL ROLE``
+inside the transaction. The worker login is ``NOINHERIT`` (migration 000064)
+and holds no table grants itself, so a tenant read or write needs ``ibex_app``
+and the organization-deletion saga needs ``ibex_purge``; neither identity is
+available implicitly. ``SET LOCAL`` (never ``SET ROLE``) keeps the identity
+inside the transaction, so a pooled connection cannot leak a role into the next
+task. The role is pinned *before* the org GUC, in the same order as
+``services/memory``, ``services/api`` and ``services/mcp-operator``: one order
+across the four services means a copy of this helper cannot diverge. The order
+is not load-bearing for RLS -- ``SET ROLE`` preserves transaction-local GUCs and
+no role carries an ``app.*`` ``ALTER ROLE ... SET`` -- but a single order is one
+less thing to reason about.
 
 The pinned scopes deliberately do not write ``app.is_service_account``. That
 GUC stopped being read by any policy in migration 000063; setting it was a
 forgotten bypass, not a capability.
+
+Three scopes exist because there are three genuinely different identities:
+
+* ``session_as_app_org`` -- a tenant transaction: ``ibex_app`` plus the row's
+  org GUC.
+* ``session_as_purge_org`` -- the erasure saga: ``ibex_purge`` plus the org GUC.
+* ``session_as_app`` -- ``ibex_app`` with **no** org GUC. Used by capability
+  probes (the grant must be checked against the identity the process actually
+  writes as) and by the ``failed_tasks`` dead-letter insert (that table has no
+  RLS and a nullable ``org_id``; an org GUC there would imply an isolation the
+  table does not have).
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 from ibex_async_db import parse_async_database_url
-from ibex_idempotency.sessions import service_account_session, service_org_session
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -41,10 +45,6 @@ from sqlalchemy.ext.asyncio import (
 
 from app.config import Settings
 
-# Historical aliases retained for existing worker imports.
-session_as_service_account = service_account_session
-session_as_service_org = service_org_session
-
 # Only capability roles the worker is a member of are assignable. The strings
 # are constants, never caller input, and PostgreSQL cannot bind a role name.
 _PINNED_ROLE_SQL: dict[str, str] = {
@@ -54,12 +54,13 @@ _PINNED_ROLE_SQL: dict[str, str] = {
 _SET_ORG_SQL = "SELECT set_config('app.current_org_id', :org_id, true)"
 
 __all__ = [
+    "app_org_scope",
+    "app_probe_scope",
     "create_engine",
     "create_session_factory",
+    "session_as_app",
     "session_as_app_org",
     "session_as_purge_org",
-    "session_as_service_account",
-    "session_as_service_org",
     "session_unpinned",
 ]
 
@@ -131,6 +132,30 @@ async def session_unpinned(
 
 
 @asynccontextmanager
+async def session_as_app(
+    factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[AsyncSession]:
+    """Transactional session pinned to ``ibex_app`` with no tenant GUC.
+
+    Two callers, both deliberate:
+
+    * capability probes (``budget_ledger.ping`` and the enqueue
+      ``idempotency_ledger.ping``) run ``has_table_privilege(current_user, ...)``.
+      The probe must measure the identity the process writes as, so the pin has
+      to be inside the transaction; unpinned, ``current_user`` is
+      ``ibex_worker``, which holds no table grant, and the probe reports a false
+      "not ready".
+    * the ``failed_tasks`` dead-letter insert. That table has no RLS (000021),
+      ``org_id`` is nullable, and ``ibex_app`` holds INSERT only (000022 revoked
+      SELECT), so there is no tenant predicate to bind. An org GUC here would be
+      meaningless and would imply an isolation the table does not have.
+    """
+    async with _transaction(factory) as session:
+        await _pin_role(session, "ibex_app")
+        yield session
+
+
+@asynccontextmanager
 async def session_as_app_org(
     factory: async_sessionmaker[AsyncSession],
     org_id: str,
@@ -152,3 +177,28 @@ async def session_as_purge_org(
         await _pin_role(session, "ibex_purge")
         await _bind_org(session, org_id)
         yield session
+
+
+def app_org_scope(
+    factory: async_sessionmaker[AsyncSession],
+) -> Callable[[str], AbstractAsyncContextManager[AsyncSession]]:
+    """Bind ``session_as_app_org`` to *factory* for ``PostgresIdempotencyLedger``.
+
+    The shared ledger defaults to a platform scope that only writes the retired
+    ``app.is_service_account`` GUC, which under ``ibex_worker`` fails with
+    ``42501``. Injecting this scope at the worker's construction site keeps the
+    package default unchanged for its other caller (``services/memory``, which
+    already injects its own tenant scope).
+    """
+
+    def _scope(org_id: str) -> AbstractAsyncContextManager[AsyncSession]:
+        return session_as_app_org(factory, org_id)
+
+    return _scope
+
+
+def app_probe_scope(
+    factory: async_sessionmaker[AsyncSession],
+) -> Callable[[], AbstractAsyncContextManager[AsyncSession]]:
+    """Bind ``session_as_app`` to *factory* for the ledger's ``ping()`` probe."""
+    return lambda: session_as_app(factory)

@@ -17,8 +17,8 @@ import (
 )
 
 // isolationFixture holds two tenants and one row each for the repositories
-// under test. The repositories run on the ibex_runtime pool; the rows were
-// seeded through the owner pool.
+// under test. The repositories run on the ibex_auth pool; the rows were seeded
+// through the owner pool.
 type isolationFixture struct {
 	repo   *repository.TokensRepository
 	users  *repository.UsersRepository
@@ -26,9 +26,12 @@ type isolationFixture struct {
 	totp   *repository.TotpSecretRepo
 	creds  *repository.ProviderCredentialsRepository
 
-	// runtimeDB is the pool the repositories above were built on. The
+	// authDB is the pool the repositories above were built on. The
 	// RLS-versus-WHERE case needs to open its own transaction on it.
-	runtimeDB *sql.DB
+	authDB *sql.DB
+	// dsn is the owner DSN the fixture was built from, so a test can reopen the
+	// same database as another capability login.
+	dsn string
 
 	orgA, orgB     string
 	userA, userB   string
@@ -51,8 +54,8 @@ type isolationSeedRepos struct {
 }
 
 // newIsolationFixture seeds two organisations and their rows through the owner
-// pool, provisions the ibex_runtime login, and binds every repository under
-// test to a second pool opened as ibex_runtime.
+// pool, provisions the capability logins, and binds every repository under test
+// to a second pool opened as ibex_auth.
 func newIsolationFixture(t *testing.T) *isolationFixture {
 	t.Helper()
 	dsn, cleanup := testutil.SetupPostgres(t)
@@ -73,7 +76,7 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 	}
 	f := &isolationFixture{
 		orgA: orgA, orgB: orgB, userA: userA, userB: userB, agentB: agentB,
-		credName: "openai", credCiphertext: []byte("org-b-secret"),
+		credName: "openai", credCiphertext: []byte("org-b-secret"), dsn: dsn,
 	}
 	f.seedRows(t, &isolationSeedRepos{
 		tokens: repository.RequireTokensRepository(t, ownerDB, nil),
@@ -82,9 +85,9 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 	})
 
 	testutil.ProvisionCapabilityLogins(t, dsn)
-	runtimeDB := openIsolationRuntimeDB(t, dsn)
-	t.Cleanup(func() { _ = runtimeDB.Close() })
-	f.bindRuntimeRepos(t, runtimeDB)
+	authDB := openCapabilityDB(t, dsn, "ibex_auth", testutil.AuthLoginTestPassword)
+	t.Cleanup(func() { _ = authDB.Close() })
+	f.bindCapabilityRepos(t, authDB)
 	return f
 }
 
@@ -124,16 +127,16 @@ func (f *isolationFixture) seedRows(t *testing.T, seeds *isolationSeedRepos) {
 	}
 }
 
-// bindRuntimeRepos moves every repository under test onto the ibex_runtime
-// pool. The runtime login has no table grants, so each operation succeeds only
-// when withTenant pins ibex_app.
-func (f *isolationFixture) bindRuntimeRepos(t *testing.T, db *sql.DB) {
+// bindCapabilityRepos moves every repository under test onto the ibex_auth
+// pool. The capability login has no table grants of its own, so each operation
+// succeeds only when withTenant pins ibex_app.
+func (f *isolationFixture) bindCapabilityRepos(t *testing.T, db *sql.DB) {
 	t.Helper()
 	creds, err := repository.NewProviderCredentialsRepository(db, nil)
 	if err != nil {
-		t.Fatalf("NewProviderCredentialsRepository (runtime): %v", err)
+		t.Fatalf("NewProviderCredentialsRepository (auth): %v", err)
 	}
-	f.runtimeDB = db
+	f.authDB = db
 	f.repo = repository.RequireTokensRepository(t, db, nil)
 	f.users = repository.NewUsersRepository(db, nil)
 	f.agents = repository.NewAgentsRepository(db, nil)
@@ -141,30 +144,31 @@ func (f *isolationFixture) bindRuntimeRepos(t *testing.T, db *sql.DB) {
 	f.creds = creds
 }
 
-// openIsolationRuntimeDB connects with the ibex_runtime credential.
-func openIsolationRuntimeDB(t *testing.T, dsn string) *sql.DB {
+// openCapabilityDB connects to the fixture database as one capability login.
+// The caller owns the returned handle and closes it with t.Cleanup.
+func openCapabilityDB(t *testing.T, dsn, role, password string) *sql.DB {
 	t.Helper()
 	parsed, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatalf("parse test DSN: %v", err)
 	}
-	parsed.User = url.UserPassword("ibex_runtime", testutil.RuntimeLoginTestPassword)
+	parsed.User = url.UserPassword(role, password)
 	db, err := sql.Open("postgres", parsed.String())
 	if err != nil {
-		t.Fatalf("open runtime pool: %v", err)
+		t.Fatalf("open %s pool: %v", role, err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
-		t.Fatalf("connect as ibex_runtime: %v", err)
+		t.Fatalf("connect as %s: %v", role, err)
 	}
 	return db
 }
 
 // TestRepositoryCrossTenantNegatives runs every tenant operation on a pool
-// opened as ibex_runtime, the login the service uses in production. The
-// runtime login has no table grants and no EXECUTE on the privileged readers
-// beyond what migration 000065 grants, so each case succeeds only because
+// opened as ibex_auth, the login the service uses in production. The auth login
+// has no table grants and no EXECUTE on the privileged readers beyond what the
+// migrations grant, so each case succeeds only because
 // withTenant pins SET LOCAL ROLE ibex_app and app.current_org_id for that
 // transaction. The queries are pinned to org A while they name org B's rows, so
 // a miss is the expected answer. A SQLSTATE 42501 from any case means the pin
@@ -256,7 +260,7 @@ func crossTenantCases(ctx context.Context, f *isolationFixture) []crossTenantCas
 func assertRLSPolicyIgnoresNamedOrg(t *testing.T, f *isolationFixture) {
 	t.Helper()
 	ctx := context.Background()
-	tx, err := f.runtimeDB.BeginTx(ctx, nil)
+	tx, err := f.authDB.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("begin RLS probe: %v", err)
 	}
@@ -358,5 +362,25 @@ func assertNoPermissionError(t *testing.T, err error) {
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) && string(pqErr.Code) == "42501" {
 		t.Fatalf("operation failed with a permission error, not a tenant miss: %v", err)
+	}
+}
+
+// TestRepositoryTokenReaderRefusesRuntime is the negative half of migration
+// 000068. Every capability login here is a full tenant role through ibex_app,
+// so the split is only real if the token reader itself is refused to
+// ibex_runtime. The assertion names SQLSTATE 42501 on purpose: a miss or a
+// no-rows result would not prove the grant moved.
+func TestRepositoryTokenReaderRefusesRuntime(t *testing.T) {
+	f := newIsolationFixture(t)
+	// The reader grant was revoked from ibex_runtime, so the same probe runs
+	// from that login rather than from ibex_auth.
+	runtimeDB := openCapabilityDB(t, f.dsn, "ibex_runtime", testutil.RuntimeLoginTestPassword)
+	t.Cleanup(func() { _ = runtimeDB.Close() })
+	repo := repository.RequireTokensRepository(t, runtimeDB, nil)
+
+	_, err := repo.FindActiveByPrefix(context.Background(), f.tokenAPrefix)
+	var pqErr *pq.Error
+	if !errors.As(err, &pqErr) || string(pqErr.Code) != "42501" {
+		t.Fatalf("ibex_runtime FindActiveByPrefix error = %v, want SQLSTATE 42501", err)
 	}
 }

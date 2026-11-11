@@ -12,7 +12,7 @@ from sqlalchemy import text
 
 from app.celery_app import celery_app
 from app.config import get_settings
-from app.db import create_engine, create_session_factory, session_as_service_org
+from app.db import create_engine, create_session_factory, session_as_app_org
 from app.tasks.base import IbexTask
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 TASK_APPLY_CAPTURE_REDACTION = "ibex.privacy.apply_capture_redaction"
 _DEFAULT_MODE = "metadata_only"
 _STRIP_KEYS = frozenset({"raw", "content", "prompt"})
+_BIGINT_MAX = 2**63 - 1
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,39 @@ def _parse_job(kwargs: dict[str, Any]) -> _CaptureJob:
     )
 
 
+def _coerce_event_id(event_id: str | int | None) -> int | None:
+    """Coerce a Celery JSON string id into the bigint ``session_events.id``.
+
+    Celery serialises task kwargs as JSON, so ``event_id`` arrives as a string
+    even though the column is ``bigint``. Binding the raw string makes asyncpg
+    raise ``DataError``; coerce once here so a numeric string persists and a
+    non-numeric id fails with a clear ``ValueError``.
+    """
+    if event_id is None:
+        return None
+    return _require_bigint(_numeric_event_id(event_id), event_id)
+
+
+def _numeric_event_id(event_id: str | int) -> int:
+    """Return the integer value of a non-``None`` id, rejecting non-numeric types."""
+    if isinstance(event_id, bool):
+        raise TypeError(f"event_id must be an integer, got bool: {event_id!r}")
+    if isinstance(event_id, int):
+        return event_id
+    if isinstance(event_id, str) and event_id.strip().isdigit():
+        return int(event_id.strip())
+    raise ValueError(f"event_id must be a numeric string: {event_id!r}")
+
+
+def _require_bigint(value: int, event_id: str | int) -> int:
+    """Return ``value`` unchanged when it fits the ``bigint`` column, else fail."""
+    if not 0 <= value <= _BIGINT_MAX:
+        raise ValueError(f"event_id is outside the bigint range: {event_id!r}")
+    return value
+
+
 async def _run(job: _CaptureJob) -> dict[str, str]:
+    """Run one capture job through the tenant-pinned worker login."""
     settings = get_settings()
     if not settings.database_url:
         raise ValueError("database_url is required")
@@ -84,7 +117,7 @@ async def _run(job: _CaptureJob) -> dict[str, str]:
     factory = create_session_factory(engine)
     uploaded: list[str] = []
     try:
-        async with session_as_service_org(factory, job.org_id) as session:
+        async with session_as_app_org(factory, job.org_id) as session:
             parsed_agent = UUID(job.agent_id) if job.agent_id else None
             mode = await resolve_capture_mode(session, org_id=job.org_id, agent_id=parsed_agent)
             ctx = _RedactCtx(session=session, settings=settings, job=job, uploaded=uploaded)
@@ -129,7 +162,9 @@ async def resolve_capture_mode(session, *, org_id: str, agent_id: UUID | None) -
             SELECT mode FROM ibex_core.org_capture_policies
             WHERE org_id = CAST(:org_id AS uuid)
               AND (
-                    (:agent_id IS NULL AND agent_id IS NULL)
+                    -- CAST gives the parameter a type when it binds NULL;
+                    -- asyncpg rejects a bare `$n IS NULL`.
+                    (CAST(:agent_id AS text) IS NULL AND agent_id IS NULL)
                  OR (agent_id = CAST(:agent_id AS uuid))
                  OR (agent_id IS NULL)
               )
@@ -154,6 +189,7 @@ async def _persist_redacted(ctx: _RedactCtx, filtered: dict[str, Any]) -> None:
     job = ctx.job
     if not job.event_id:
         return
+    event_id = _coerce_event_id(job.event_id)
     await ctx.session.execute(
         text(
             """
@@ -164,7 +200,7 @@ async def _persist_redacted(ctx: _RedactCtx, filtered: dict[str, Any]) -> None:
             """
         ),
         {
-            "event_id": job.event_id,
+            "event_id": event_id,
             "org_id": job.org_id,
             "data": json.dumps(filtered),
         },
@@ -198,6 +234,7 @@ async def _archive_payload(ctx: _RedactCtx, payload: dict[str, Any]) -> None:
 
 
 async def _set_archived_to(session, job: _CaptureJob, uri: str) -> None:
+    event_id = _coerce_event_id(job.event_id)
     result = await session.execute(
         text(
             """
@@ -207,7 +244,7 @@ async def _set_archived_to(session, job: _CaptureJob, uri: str) -> None:
               AND org_id = CAST(:org_id AS uuid)
             """
         ),
-        {"event_id": job.event_id, "org_id": job.org_id, "uri": uri},
+        {"event_id": event_id, "org_id": job.org_id, "uri": uri},
     )
     if result.rowcount == 0:
         raise RuntimeError(

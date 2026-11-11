@@ -2,10 +2,12 @@ package postgres
 
 import (
 	"bytes"
+	"database/sql"
 	"errors"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestBuildProvisionStatementUsesSCRAM proves the emitted SQL carries a SCRAM
@@ -112,6 +114,88 @@ func TestSQLIdentifierQuoted(t *testing.T) {
 	}
 }
 
+// TestParseRoleValidUntil covers the four states a role expiry can have. The
+// sentinels are the regression: lib/pq hands `infinity` back as text, which a
+// SQLSTATE-clean migration run used to turn into an unsupported-Scan failure.
+func TestParseRoleValidUntil(t *testing.T) {
+	now := time.Date(2026, time.November, 11, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name        string
+		value       sql.NullString
+		wantExpired bool
+		wantDescr   string
+	}{
+		{"null", sql.NullString{}, false, "none"},
+		{"empty", sql.NullString{String: "", Valid: true}, false, "none"},
+		{"infinity", sql.NullString{String: "infinity", Valid: true}, false, "infinity"},
+		{"negative infinity", sql.NullString{String: "-infinity", Valid: true}, true, "-infinity"},
+		{
+			name:        "past instant",
+			value:       sql.NullString{String: "2020-01-01T00:00:00.000000Z", Valid: true},
+			wantExpired: true,
+			wantDescr:   "2020-01-01T00:00:00Z",
+		},
+		{
+			name:        "future instant",
+			value:       sql.NullString{String: "2030-01-01T00:00:00.000000Z", Valid: true},
+			wantExpired: false,
+			wantDescr:   "2030-01-01T00:00:00Z",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, err := parseRoleValidUntil(tc.value)
+			if err != nil {
+				t.Fatalf("parseRoleValidUntil(%q): %v", tc.value.String, err)
+			}
+			if got := parsed.expired(now); got != tc.wantExpired {
+				t.Fatalf("expired = %v, want %v", got, tc.wantExpired)
+			}
+			if got := parsed.describe(); got != tc.wantDescr {
+				t.Fatalf("describe = %q, want %q", got, tc.wantDescr)
+			}
+		})
+	}
+}
+
+// TestParseRoleValidUntilRejectsGarbage keeps an unparseable server value from
+// being read as "no expiry", which would pass the safe-role postcondition.
+func TestParseRoleValidUntilRejectsGarbage(t *testing.T) {
+	if _, err := parseRoleValidUntil(sql.NullString{String: "next tuesday", Valid: true}); err == nil {
+		t.Fatal("parseRoleValidUntil accepted an unparseable value")
+	}
+}
+
+// TestRoleAttributesInfinityIsSafe proves the whole postcondition, not just the
+// parser: a provisioned login whose credential never expires is safe.
+func TestRoleAttributesInfinityIsSafe(t *testing.T) {
+	attributes := roleAttributes{
+		login: true, connlimit: -1,
+		validUntil: roleValidUntil{unbounded: true},
+	}
+	if !attributes.safe(time.Now()) {
+		t.Fatalf("an infinity expiry was rejected as unsafe: %s", attributes.describe())
+	}
+	if got := attributes.describe(); !strings.Contains(got, "validuntil=infinity") {
+		t.Fatalf("describe = %q, want the infinity marker", got)
+	}
+}
+
+// TestRoleAttributesNegativeInfinityIsExpired proves '-infinity' fails closed
+// with the expiry message rather than the generic unsafe-attributes one.
+func TestRoleAttributesNegativeInfinityIsExpired(t *testing.T) {
+	attributes := roleAttributes{
+		login: true, connlimit: -1,
+		validUntil: roleValidUntil{beforeEpoch: true},
+	}
+	if !attributes.expired(time.Now()) {
+		t.Fatal("a -infinity expiry was not reported as expired")
+	}
+	if attributes.safe(time.Now()) {
+		t.Fatal("a -infinity expiry was accepted as safe")
+	}
+}
+
 // TestResolveProvisionSecrets enforces presence, ASCII, pairwise distinctness
 // and separation from the DSN credential.
 func TestResolveProvisionSecrets(t *testing.T) {
@@ -119,6 +203,7 @@ func TestResolveProvisionSecrets(t *testing.T) {
 		"IBEX_RUNTIME_DB_PASSWORD":   "runtime",
 		"IBEX_WORKER_DB_PASSWORD":    "worker",
 		"IBEX_BOOTSTRAP_DB_PASSWORD": "bootstrap",
+		"IBEX_AUTH_DB_PASSWORD":      "auth",
 	}
 	tests := []struct {
 		name    string
@@ -270,4 +355,44 @@ func TestRedaction(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestProvisionTargetsForbidPrivilegedForAuth locks the ibex_auth boundary.
+// The auth login resolves bearers through one SECURITY DEFINER reader, and a
+// membership in ibex_runtime or ibex_evidence_relay would let it act as that
+// identity instead. It already holds ibex_app today, so the reachability check
+// cannot catch the runtime membership by privilege alone; the forbidden list is
+// the control. The integration drift cases prove `provision` rejects both.
+func TestProvisionTargetsForbidPrivilegedForAuth(t *testing.T) {
+	target := provisionTargetFor(t, "ibex_auth")
+	for _, forbidden := range []string{"ibex_runtime", "ibex_evidence_relay"} {
+		if !containsRole(target.forbiddenRoles, forbidden) {
+			t.Fatalf("ibex_auth forbiddenRoles = %v, want %s present", target.forbiddenRoles, forbidden)
+		}
+		if containsRole(target.requiredRoles, forbidden) {
+			t.Fatalf("ibex_auth requiredRoles = %v must not contain %s", target.requiredRoles, forbidden)
+		}
+	}
+}
+
+// provisionTargetFor returns the target for role, failing when it is missing.
+func provisionTargetFor(t *testing.T, role string) provisionTarget {
+	t.Helper()
+	for _, target := range provisionTargets {
+		if target.role == role {
+			return target
+		}
+	}
+	t.Fatalf("provisionTargets has no %s target", role)
+	return provisionTarget{}
+}
+
+// containsRole reports whether the role list names role.
+func containsRole(roles []string, role string) bool {
+	for _, candidate := range roles {
+		if candidate == role {
+			return true
+		}
+	}
+	return false
 }

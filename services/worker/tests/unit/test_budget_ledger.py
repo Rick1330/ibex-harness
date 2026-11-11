@@ -121,13 +121,13 @@ def org_session(monkeypatch: pytest.MonkeyPatch):
         async def context(_factory, _org):
             yield session
 
-        monkeypatch.setattr(mod, "session_as_service_org", context)
+        monkeypatch.setattr(mod, "session_as_app_org", context)
 
     return install, sessions
 
 
 @pytest.fixture
-def service_session(monkeypatch: pytest.MonkeyPatch):
+def app_session(monkeypatch: pytest.MonkeyPatch):
     sessions: list[object] = []
 
     def install(session: object) -> None:
@@ -137,7 +137,7 @@ def service_session(monkeypatch: pytest.MonkeyPatch):
         async def context(_factory):
             yield session
 
-        monkeypatch.setattr(mod, "session_as_service_account", context)
+        monkeypatch.setattr(mod, "session_as_app", context)
 
     return install, sessions
 
@@ -719,8 +719,8 @@ def test_expire_stale_is_a_definer_call_not_a_tenant_update() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ping_probes_service_account_privileges(service_session) -> None:
-    install, _ = service_session
+async def test_ping_probes_the_pinned_app_privileges(app_session) -> None:
+    install, _ = app_session
     install(
         _Session(
             _Result(

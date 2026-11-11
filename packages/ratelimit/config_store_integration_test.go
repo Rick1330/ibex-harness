@@ -14,6 +14,47 @@ import (
 	"github.com/google/uuid"
 )
 
+// TestConfigStore_LoadOrg_AsRuntimeReturnsOrgOverrides is the positive control
+// for the per-org read. ibex_runtime holds no table grant of its own, so the
+// read succeeds only because LoadOrg pins ibex_app and the org GUC for its
+// transaction. A 42501 here means the pin is missing, not that the org has no
+// overrides.
+func TestConfigStore_LoadOrg_AsRuntimeReturnsOrgOverrides(t *testing.T) {
+	dsn := runtimeconn.DSN()
+	if err := migratepg.Up(dsn); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+
+	owner := runtimeconn.OpenDB(t, dsn)
+	defer func() { _ = owner.Close() }()
+
+	a := seedOrgAgent(t, owner, "Rate Limit Org Read")
+	b := seedOrgAgent(t, owner, "Rate Limit Org Other")
+	seedOverride(t, owner, overrideSeed{orgID: a.org, rpm: 111})
+	seedOverride(t, owner, overrideSeed{orgID: a.org, agentID: a.agent.String(), rpm: 222})
+	seedOverride(t, owner, overrideSeed{orgID: b.org, rpm: 333})
+
+	pgprovision.CapabilityLogins(t, dsn)
+	runtimeDB := runtimeconn.OpenRuntimeDB(t, dsn)
+	defer func() { _ = runtimeDB.Close() }()
+
+	store := newConfigStore(t, runtimeDB)
+	set, err := store.LoadOrg(context.Background(), a.org)
+	runtimeconn.RequireNoPermissionDenied(t, err, "LoadOrg")
+	if err != nil {
+		t.Fatalf("LoadOrg as ibex_runtime: %v", err)
+	}
+	if set.OrgRPM == nil || *set.OrgRPM != 111 {
+		t.Fatalf("org-level RPM=%v want 111", set.OrgRPM)
+	}
+	if got := set.AgentRPM[a.agent]; got != 222 {
+		t.Fatalf("agent RPM=%d want 222", got)
+	}
+	if _, ok := set.AgentRPM[b.agent]; ok {
+		t.Fatal("LoadOrg returned another org's agent override")
+	}
+}
+
 // TestConfigStore_LoadAll_AsRuntimeReturnsOverrides is the positive control for
 // the full override poll. ibex_runtime cannot read rate_limit_overrides across
 // tenants directly, so LoadAll must go through the

@@ -14,7 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from app.config import Settings
-from app.db import create_engine, create_session_factory, session_as_service_account
+from app.db import create_engine, create_session_factory, session_unpinned
 from app.extraction.provider import ExtractionLifecycleConflict
 from app.extraction.session_store import PostgresSessionStore
 
@@ -46,7 +46,7 @@ async def _seed_org_agent_session(
 ) -> None:
     slug_org = f"org-{seed.org_id.hex[:8]}"
     slug_agent = f"agent-{seed.agent_id.hex[:8]}"
-    async with session_as_service_account(factory) as session:
+    async with session_unpinned(factory) as session:
         await session.execute(
             _sql(
                 """
@@ -92,7 +92,7 @@ async def _seed_org_agent_session(
 async def _read_turn(
     factory: async_sessionmaker, session_id: UUID, org_id: UUID
 ) -> int:
-    async with session_as_service_account(factory) as session:
+    async with session_unpinned(factory) as session:
         row = (
             await session.execute(
                 _sql(

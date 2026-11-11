@@ -7,7 +7,6 @@ IBEX_WORKER_DATABASE_URL points at a migrated dedicated test database.
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
 import pytest
@@ -15,7 +14,6 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
-import app.budget_ledger as ledger_module
 from app.budget_ledger import (
     BudgetAdmissionDeniedError,
     BudgetClaimRequest,
@@ -26,7 +24,8 @@ from app.config import Settings
 from app.db import (
     create_engine,
     create_session_factory,
-    session_as_service_account,
+    session_as_app_org,
+    session_unpinned,
 )
 
 pytestmark = pytest.mark.integration
@@ -48,31 +47,10 @@ def _sql(statement: str):
     )
 
 
-@asynccontextmanager
-async def _session_as_app_org(factory: async_sessionmaker, org_id: str):
-    async with factory() as session, session.begin():
-        await session.execute(_sql("SET LOCAL ROLE ibex_app"))
-        await session.execute(
-            _sql("SELECT set_config('app.current_org_id', :org_id, true)"),
-            {"org_id": org_id},
-        )
-        await session.execute(_sql("SELECT set_config('app.is_service_account', 'false', true)"))
-        yield session
-
-
-@asynccontextmanager
-async def _session_as_app_service_account(factory: async_sessionmaker):
-    async with factory() as session, session.begin():
-        await session.execute(_sql("SET LOCAL ROLE ibex_app"))
-        await session.execute(_sql("SELECT set_config('app.is_service_account', 'true', true)"))
-        yield session
-
-
 @pytest_asyncio.fixture
-async def pg_factory(migrated_postgres: str, monkeypatch: pytest.MonkeyPatch):
+async def pg_factory(migrated_postgres: str):
     engine: AsyncEngine = create_engine(Settings(database_url=migrated_postgres))
     factory = create_session_factory(engine)
-    monkeypatch.setattr(ledger_module, "session_as_service_org", _session_as_app_org)
     try:
         yield factory
     finally:
@@ -80,7 +58,7 @@ async def pg_factory(migrated_postgres: str, monkeypatch: pytest.MonkeyPatch):
 
 
 async def _seed_org_agent(factory: async_sessionmaker, org_id: UUID, agent_id: UUID) -> None:
-    async with session_as_service_account(factory) as session:
+    async with session_unpinned(factory) as session:
         await session.execute(
             _sql(
                 """
@@ -114,7 +92,7 @@ async def _seed_budget_period(
     spent_cents: int = 0,
 ) -> UUID:
     period_id = uuid4()
-    async with session_as_service_account(factory) as session:
+    async with session_unpinned(factory) as session:
         await session.execute(
             _sql(
                 """
@@ -137,7 +115,7 @@ async def _seed_budget_period(
 
 async def _seed_rate_card(factory: async_sessionmaker, org_id: UUID) -> None:
     card_id = uuid4()
-    async with session_as_service_account(factory) as session:
+    async with session_unpinned(factory) as session:
         await session.execute(
             _sql(
                 """
@@ -160,7 +138,7 @@ async def _seed_rate_card(factory: async_sessionmaker, org_id: UUID) -> None:
 
 
 async def _delete_seed(factory: async_sessionmaker, org_id: UUID, agent_id: UUID) -> None:
-    async with session_as_service_account(factory) as session:
+    async with session_unpinned(factory) as session:
         await session.execute(
             _sql("DELETE FROM ibex_core.budget_reservations WHERE organization_id = :org_id"),
             {"org_id": org_id},
@@ -208,7 +186,8 @@ async def _claim(ledger: _AsyncBudgetLedger, org_id: UUID, agent_id: UUID, **ove
 
 
 async def _fetch_reservation(factory: async_sessionmaker, org_id: UUID, key: str) -> dict | None:
-    async with session_as_service_account(factory) as session:
+    """Read one reservation row on the owner login, or ``None`` when absent."""
+    async with session_unpinned(factory) as session:
         result = await session.execute(
             _sql(
                 """
@@ -228,7 +207,7 @@ async def _fetch_reservation(factory: async_sessionmaker, org_id: UUID, key: str
 async def _publish_rate_card_version(
     factory: async_sessionmaker, org_id: UUID, *, prices: list[dict]
 ) -> None:
-    async with session_as_service_account(factory) as session:
+    async with session_unpinned(factory) as session:
         await session.execute(
             _sql(
                 """
@@ -245,7 +224,7 @@ async def _publish_rate_card_version(
 
 async def _expire_lease(factory: async_sessionmaker, org_id: UUID, key: str) -> None:
     # created_at moves with the lease to satisfy the lease > created_at invariant.
-    async with session_as_service_account(factory) as session:
+    async with session_unpinned(factory) as session:
         await session.execute(
             _sql(
                 """
@@ -494,8 +473,9 @@ async def test_stale_key_reclaims_after_expiry(pg_factory) -> None:
 
 @pytest.mark.asyncio
 async def test_cross_tenant_isolation_and_service_account_sweep(
-    pg_factory, monkeypatch: pytest.MonkeyPatch
+    pg_factory,
 ) -> None:
+    """Each org sees only its own reservation; the definer sweep still expires both."""
     org_a, agent_a = await _seed_full_org(pg_factory, cap_cents=10_000)
     org_b, agent_b = await _seed_full_org(pg_factory, cap_cents=10_000)
     try:
@@ -503,7 +483,7 @@ async def test_cross_tenant_isolation_and_service_account_sweep(
         claim_a = await _claim(ledger, org_a, agent_a, key="extraction:shared")
         assert claim_a is not None
 
-        async with _session_as_app_org(pg_factory, str(org_a)) as session:
+        async with session_as_app_org(pg_factory, str(org_a)) as session:
             visible_a = (
                 await session.execute(
                     _sql(
@@ -513,7 +493,7 @@ async def test_cross_tenant_isolation_and_service_account_sweep(
                     {"org_a": org_a, "org_b": org_b},
                 )
             ).scalar_one()
-        async with _session_as_app_org(pg_factory, str(org_b)) as session:
+        async with session_as_app_org(pg_factory, str(org_b)) as session:
             visible_b = (
                 await session.execute(
                     _sql(
@@ -543,6 +523,5 @@ async def test_cross_tenant_isolation_and_service_account_sweep(
         assert row_a["state"] == "expired"
         assert row_b["state"] == "expired"
     finally:
-        monkeypatch.undo()
         await _delete_seed(pg_factory, org_a, agent_a)
         await _delete_seed(pg_factory, org_b, agent_b)

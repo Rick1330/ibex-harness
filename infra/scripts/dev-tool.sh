@@ -262,6 +262,24 @@ v1_migrate() {
   compose_with_mode v1 run --rm migrate "$@"
 }
 
+v1_provision() {
+  local do_build=1
+  if [[ "${IBEX_V1_SKIP_BUILD:-0}" == 1 ]]; then
+    do_build=0
+  fi
+  if [[ "${1:-}" == "--no-build" ]]; then
+    do_build=0
+    shift
+  fi
+  if (( do_build )); then
+    # Same Dockerfile as migrate: build both so `run` never hits a missing image.
+    compose_with_mode v1 build migrate provision
+  fi
+  # `run` honours depends_on, so a cold profile runs migrate first and the repair
+  # path works without a prior `up`.
+  compose_with_mode v1 run --rm provision "$@"
+}
+
 v1_down() {
   compose_with_mode v1 down "$@" || {
     echo 'v1 down reported a runtime cleanup error; retrying' >&2
@@ -358,7 +376,7 @@ case "${1:-help}" in
       '  compose-dev-up/down/reset/logs/ps  Manage development stack' \
       '  compose-test-up/down   Manage test stack' '  observability-up/down/smoke  Manage observability' \
       '  v1-secrets             Generate the v1-single-node .env and file secrets' \
-      '  v1-up/down/migrate/logs/ps  Manage the v1-single-node profile (use --no-build for rollback image reuse)' \
+      '  v1-up/down/migrate/provision/logs/ps  Manage the v1-single-node profile (use --no-build for rollback image reuse)' \
       '  db-migrate/down/version/seed  Manage Postgres migrations' \
       '  clickhouse-migrate/down/version  Manage ClickHouse migrations' \
       '  test-embedder/test-memory/test-memory-integration/test-worker/test-worker-integration/test-mcp-memory' \
@@ -422,6 +440,7 @@ case "${1:-help}" in
   v1-up) shift; v1_up "$@" ;;
   v1-down) shift; v1_down "$@" ;;
   v1-migrate) shift; v1_migrate "$@" ;;
+  v1-provision) shift; v1_provision "$@" ;;
   v1-logs) compose_with_mode v1 logs -f ;;
   v1-ps) compose_with_mode v1 ps ;;
   v1-secrets) bash "$ROOT_DIR/infra/scripts/gen-v1-secrets.sh" ;;
@@ -438,9 +457,10 @@ case "${1:-help}" in
       secrets) bash "$ROOT_DIR/infra/scripts/gen-v1-secrets.sh" ;;
       bootstrap-pat) v1_bootstrap_pat ;;
       migrate) v1_migrate "$@" ;;
+      provision) v1_provision "$@" ;;
       logs) compose_with_mode v1 logs -f "$@" ;;
       ps) compose_with_mode v1 ps "$@" ;;
-      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-logs|v1-ps|v1-bootstrap-pat or v1 build|up|down|stop|wait|url|secrets|bootstrap-pat|migrate|logs|ps' >&2; exit 2 ;;
+      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-provision|v1-logs|v1-ps|v1-bootstrap-pat or v1 build|up|down|stop|wait|url|secrets|bootstrap-pat|migrate|provision|logs|ps' >&2; exit 2 ;;
     esac ;;
   *) echo "unknown command: $1" >&2; echo 'run: make help' >&2; exit 2 ;;
 esac

@@ -1,4 +1,4 @@
-"""Positive controls for worker tenant paths under a non-superuser login.
+"""Positive controls for the worker billing and capture paths under a tenant pin.
 
 A test that runs as the migration owner (``ibex``, superuser) bypasses RLS and
 needs no role, so it cannot prove that ``SET LOCAL ROLE`` is doing anything.
@@ -8,171 +8,52 @@ SQLSTATE 42501 instead of silently succeeding.
 
 Red evidence for each test is recorded in the PR: removing the corresponding
 ``SET LOCAL ROLE`` makes it fail with ``permission denied``.
+
+The seeded helpers and the shared premise live in ``tenant_pinning_support``;
+sessions, dead letters and readiness are covered by
+``test_worker_tenant_pinning_readiness_postgres``, and the erasure saga by
+``test_worker_tenant_pinning_erasure_postgres``.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
 import pytest
-import pytest_asyncio
-from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import app.budget_ledger as budget_ledger_module
+from app.budget_ledger import (
+    COMPLETENESS_COMPLETE,
+    BudgetLedgerError,
+    BudgetLedgerUnavailableError,
+    _AsyncBudgetLedger,
+)
 from app.config import Settings
-from app.db import create_engine, create_session_factory, session_as_purge_org
-from app.tasks import org_deletion
+from app.db import session_unpinned
+from app.tasks import capture_redaction
 from app.tasks.billing_reconcile import SqlAlchemySpendStore
+from tests.integration.tenant_pinning_support import (
+    CapturePolicySeed,
+    SessionEventSeed,
+    SessionSeed,
+    assert_worker_login,
+    budget_request,
+    count_rows,
+    fetch_one,
+    seed_capture_policy,
+    seed_org,
+    seed_period,
+    seed_rate_card,
+    seed_session,
+    seed_session_event,
+    seed_tenant_rows,
+    sql_text,
+    sqlstate,
+)
 
 pytestmark = pytest.mark.integration
-
-
-def _sql(statement: str):
-    return text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-        statement
-    )
-
-
-@pytest_asyncio.fixture
-async def owner_factory(postgres_dsn: str) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """Session factory for the migration owner login (seeding and assertions)."""
-    engine = create_engine(Settings(database_url=postgres_dsn))
-    try:
-        yield create_session_factory(engine)
-    finally:
-        await engine.dispose()
-
-
-@pytest_asyncio.fixture
-async def worker_factory(
-    capability_worker_dsn: str,
-) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """Session factory that logs in as ``ibex_worker`` (never the owner)."""
-    engine = create_engine(Settings(database_url=capability_worker_dsn))
-    factory = create_session_factory(engine)
-    try:
-        async with factory() as session:
-            current_user = (await session.execute(_sql("SELECT current_user"))).scalar_one()
-        assert current_user == "ibex_worker", current_user
-        assert current_user != "ibex", "owner login would bypass RLS"
-        yield factory
-    finally:
-        await engine.dispose()
-
-
-async def _seed_org(
-    factory: async_sessionmaker[AsyncSession],
-    org_id: UUID,
-    *,
-    job_id: UUID | None = None,
-) -> None:
-    async with factory() as session, session.begin():
-        await session.execute(
-            _sql("INSERT INTO ibex_core.organizations (id, name, slug) VALUES (:id, :name, :slug)"),
-            {"id": org_id, "name": f"Pin {org_id.hex[:8]}", "slug": f"pin-{org_id.hex[:12]}"},
-        )
-        if job_id is not None:
-            await session.execute(
-                _sql(
-                    """
-                    INSERT INTO ibex_core.org_deletion_jobs (id, org_id, status)
-                    VALUES (:id, :org_id, 'pending')
-                    """
-                ),
-                {"id": job_id, "org_id": org_id},
-            )
-
-
-async def _seed_period(
-    factory: async_sessionmaker[AsyncSession],
-    org_id: UUID,
-    period_id: UUID,
-    *,
-    spent_cents: int = 0,
-) -> None:
-    async with factory() as session, session.begin():
-        await session.execute(
-            _sql(
-                """
-                INSERT INTO ibex_billing.budget_periods
-                    (id, org_id, period_start, period_end, cap_cents,
-                     spent_cents_cached, enforcement_mode)
-                VALUES (:id, :org_id, NOW() - interval '1 day', NOW() + interval '1 day',
-                        100000, :spent, 'hard_cap')
-                """
-            ),
-            {"id": period_id, "org_id": org_id, "spent": spent_cents},
-        )
-
-
-async def _seed_tenant_rows(
-    factory: async_sessionmaker[AsyncSession],
-    org_id: UUID,
-    *,
-    tag: str,
-) -> tuple[UUID, UUID]:
-    """Seed one agent + one user + one invite for ``org_id``; return user/agent ids."""
-    user_id = uuid4()
-    agent_id = uuid4()
-    async with factory() as session, session.begin():
-        await session.execute(
-            _sql(
-                """
-                INSERT INTO ibex_core.agents (id, org_id, name, slug)
-                VALUES (:id, :org_id, :name, :slug)
-                """
-            ),
-            {"id": agent_id, "org_id": org_id, "name": f"agent-{tag}", "slug": f"agent-{tag}"},
-        )
-        await session.execute(
-            _sql(
-                """
-                INSERT INTO ibex_core.users (id, org_id, email, name)
-                VALUES (:id, :org_id, :email, :name)
-                """
-            ),
-            {
-                "id": user_id,
-                "org_id": org_id,
-                "email": f"user-{tag}@example.test",
-                "name": f"user-{tag}",
-            },
-        )
-        await session.execute(
-            _sql(
-                """
-                INSERT INTO ibex_core.organization_invites
-                    (org_id, email, token_hash, expires_at)
-                VALUES (:org_id, :email, :token_hash, NOW() + interval '1 day')
-                """
-            ),
-            {
-                "org_id": org_id,
-                "email": f"invite-{tag}@example.test",
-                "token_hash": f"hash-{tag}",
-            },
-        )
-    return user_id, agent_id
-
-
-async def _count(factory: async_sessionmaker[AsyncSession], statement: str, **params: object) -> int:
-    async with factory() as session:
-        return int((await session.execute(_sql(statement), params)).scalar_one())
-
-
-async def _assert_worker_login(dsn: str) -> None:
-    """Fail unless the DSN really authenticates as the capability login."""
-    engine = create_engine(Settings(database_url=dsn))
-    try:
-        factory = create_session_factory(engine)
-        async with factory() as session:
-            current_user = (await session.execute(_sql("SELECT current_user"))).scalar_one()
-    finally:
-        await engine.dispose()
-    assert current_user == "ibex_worker", current_user
-    assert current_user != "ibex", "owner login would bypass RLS"
 
 
 # ---------------------------------------------------------------------------
@@ -189,13 +70,13 @@ async def test_list_active_periods_reads_via_definer_as_worker_login(
     """Raw SELECT is 42501 for ibex_worker; the definer returns the period."""
     org_id = uuid4()
     period_id = uuid4()
-    await _seed_org(owner_factory, org_id)
-    await _seed_period(owner_factory, org_id, period_id)
+    await seed_org(owner_factory, org_id)
+    await seed_period(owner_factory, org_id, period_id)
 
     # The worker login cannot read the table directly (no grant, RLS forced).
     async with worker_factory() as session:
         with pytest.raises(ProgrammingError) as denied:
-            await session.execute(_sql("SELECT 1 FROM ibex_billing.budget_periods LIMIT 1"))
+            await session.execute(sql_text("SELECT 1 FROM ibex_billing.budget_periods LIMIT 1"))
     assert getattr(denied.value.orig, "sqlstate", None) == "42501", denied.value
 
     store = SqlAlchemySpendStore(capability_worker_dsn)
@@ -213,13 +94,14 @@ async def test_update_period_spent_pins_the_rows_org_as_worker_login(
     owner_factory: async_sessionmaker[AsyncSession],
     capability_worker_dsn: str,
 ) -> None:
-    await _assert_worker_login(capability_worker_dsn)
+    """A pinned spend update moves its own row and cannot touch another org's."""
+    await assert_worker_login(capability_worker_dsn)
     org_a, org_b = uuid4(), uuid4()
     period_a, period_b = uuid4(), uuid4()
-    await _seed_org(owner_factory, org_a)
-    await _seed_org(owner_factory, org_b)
-    await _seed_period(owner_factory, org_a, period_a)
-    await _seed_period(owner_factory, org_b, period_b)
+    await seed_org(owner_factory, org_a)
+    await seed_org(owner_factory, org_b)
+    await seed_period(owner_factory, org_a, period_a)
+    await seed_period(owner_factory, org_b, period_b)
 
     store = SqlAlchemySpendStore(capability_worker_dsn)
     try:
@@ -231,7 +113,7 @@ async def test_update_period_spent_pins_the_rows_org_as_worker_login(
         await store.aclose()
 
     assert (
-        await _count(
+        await count_rows(
             owner_factory,
             "SELECT spent_cents_cached FROM ibex_billing.budget_periods WHERE id = :id",
             id=period_a,
@@ -239,7 +121,7 @@ async def test_update_period_spent_pins_the_rows_org_as_worker_login(
         == 4200
     )
     assert (
-        await _count(
+        await count_rows(
             owner_factory,
             "SELECT spent_cents_cached FROM ibex_billing.budget_periods WHERE id = :id",
             id=period_b,
@@ -249,169 +131,276 @@ async def test_update_period_spent_pins_the_rows_org_as_worker_login(
 
 
 # ---------------------------------------------------------------------------
-# Erasure saga: the purge identity, end to end, from the worker login.
+# Budget ledger: capability probe + claim/finalize/release as the worker login.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_deletion_saga_erases_one_org_as_worker_login(
-    owner_factory: async_sessionmaker[AsyncSession],
-    capability_worker_dsn: str,
-    require_redis: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    await _assert_worker_login(capability_worker_dsn)
-    org_a, org_b = uuid4(), uuid4()
-    job_id = uuid4()
-    await _seed_org(owner_factory, org_a, job_id=job_id)
-    await _seed_org(owner_factory, org_b)
-    await _seed_tenant_rows(owner_factory, org_a, tag=org_a.hex[:8])
-    await _seed_tenant_rows(owner_factory, org_b, tag=org_b.hex[:8])
-
-    settings = Settings(
-        database_url=capability_worker_dsn,
-        redis_url=require_redis,
-        org_deletion_deployed_stores="postgres",
-    )
-    monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
-
-    out = await org_deletion._run_delete(job_id=str(job_id), org_id=str(org_a))
-    assert out["status"] == "succeeded", out
-
-    org_row = (
-        await _one(
-            owner_factory,
-            "SELECT status, deleted_at FROM ibex_core.organizations WHERE id = :id",
-            id=org_a,
-        )
-    )
-    assert org_row[0] == "cancelled"
-    assert org_row[1] is not None
-
-    for table in ("agents", "users", "organization_invites"):
-        assert (
-            await _count(
-                owner_factory,
-                f"SELECT count(*) FROM ibex_core.{table} WHERE org_id = :org",
-                org=org_a,
-            )
-            == 0
-        ), table
-        assert (
-            await _count(
-                owner_factory,
-                f"SELECT count(*) FROM ibex_core.{table} WHERE org_id = :org",
-                org=org_b,
-            )
-            == 1
-        ), table
-
-    job_status = (
-        await _one(
-            owner_factory,
-            "SELECT status FROM ibex_core.org_deletion_jobs WHERE id = :id",
-            id=job_id,
-        )
-    )[0]
-    assert job_status == "succeeded"
-
-    receipts = {
-        row[0]: row[1]
-        for row in (
-            await _all(
-                owner_factory,
-                "SELECT store, status FROM ibex_core.deletion_store_receipts WHERE job_id = :id",
-                id=job_id,
-            )
-        )
-    }
-    assert receipts["postgres"] == "verified"
-    assert receipts["clickhouse"] == "not_applicable"
-
-
-# ---------------------------------------------------------------------------
-# Purge cannot overreach: the pin is real reach, scoped to one org.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_purge_pin_reaches_the_org_but_not_another_org(
-    owner_factory: async_sessionmaker[AsyncSession],
+async def test_budget_ping_reports_ready_as_worker_login(
     worker_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    org_a, org_b = uuid4(), uuid4()
-    await _seed_org(owner_factory, org_a)
-    await _seed_org(owner_factory, org_b)
-    user_a, _ = await _seed_tenant_rows(owner_factory, org_a, tag=org_a.hex[:8])
-    user_b, _ = await _seed_tenant_rows(owner_factory, org_b, tag=org_b.hex[:8])
+    """Unpinned the probe reads current_user=ibex_worker and reports not ready."""
+    await _AsyncBudgetLedger(worker_factory).ping()
 
-    async with session_as_purge_org(worker_factory, str(org_a)) as session:
-        overreach = await session.execute(
-            _sql("DELETE FROM ibex_core.users WHERE org_id = CAST(:org AS uuid)"),
-            {"org": str(org_b)},
-        )
-        assert overreach.rowcount == 0, "purge deleted another tenant's row"
-        own = await session.execute(
-            _sql("DELETE FROM ibex_core.users WHERE org_id = CAST(:org AS uuid)"),
-            {"org": str(org_a)},
-        )
-        assert own.rowcount == 1, "the pinned role must reach its own org"
 
-    assert (
-        await _count(
-            owner_factory, "SELECT count(*) FROM ibex_core.users WHERE id = :id", id=user_a
-        )
-        == 0
+@pytest.mark.asyncio
+async def test_budget_ping_without_the_pin_reports_not_ready(
+    worker_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        budget_ledger_module, "session_as_app", lambda factory: session_unpinned(factory)
     )
+    ledger = _AsyncBudgetLedger(worker_factory)
+    with pytest.raises(BudgetLedgerError, match="budget reservation ledger is not ready"):
+        await ledger.ping()
+
+
+@pytest.mark.asyncio
+async def test_budget_claim_finalize_release_pin_the_org_as_worker_login(
+    owner_factory: async_sessionmaker[AsyncSession],
+    worker_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+) -> None:
+    """Claim, finalize, and release all run as the worker login under the org pin."""
+    await assert_worker_login(capability_worker_dsn)
+    org_id = uuid4()
+    period_id = uuid4()
+    card_id = uuid4()
+    await seed_org(owner_factory, org_id)
+    _, agent_id = await seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
+    await seed_period(owner_factory, org_id, period_id)
+    await seed_rate_card(owner_factory, org_id, card_id)
+
+    ledger = _AsyncBudgetLedger(worker_factory)
+    claim = await ledger.claim(budget_request(org_id, agent_id, key="pinned-claim"))
+    assert claim is not None
+    assert claim.org_id == org_id
     assert (
-        await _count(
-            owner_factory, "SELECT count(*) FROM ibex_core.users WHERE id = :id", id=user_b
-        )
-        == 1
+        await ledger.finalize(claim, input_tokens=100, output_tokens=200)
+        == COMPLETENESS_COMPLETE
     )
 
+    released = await ledger.claim(budget_request(org_id, agent_id, key="pinned-release"))
+    assert released is not None
+    await ledger.release(released)
 
-async def _one(factory: async_sessionmaker[AsyncSession], statement: str, **params: object):
-    async with factory() as session:
-        return (await session.execute(_sql(statement), params)).one()
+    state = (
+        await fetch_one(
+            owner_factory,
+            "SELECT state FROM ibex_core.budget_reservations WHERE id = :id",
+            id=released.claim_id,
+        )
+    )[0]
+    assert state == "released"
 
 
-async def _all(factory: async_sessionmaker[AsyncSession], statement: str, **params: object):
-    async with factory() as session:
-        return (await session.execute(_sql(statement), params)).all()
+@pytest.mark.asyncio
+async def test_budget_claim_without_the_pin_is_42501(
+    owner_factory: async_sessionmaker[AsyncSession],
+    worker_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unpinned claim fails 42501 instead of writing."""
+    org_id = uuid4()
+    await seed_org(owner_factory, org_id)
+    _, agent_id = await seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
+    monkeypatch.setattr(
+        budget_ledger_module,
+        "session_as_app_org",
+        lambda factory, _org: session_unpinned(factory),
+    )
+    ledger = _AsyncBudgetLedger(worker_factory)
+    claim_request = budget_request(org_id, agent_id, key="unpinned-claim")
+    with pytest.raises(BudgetLedgerUnavailableError) as err:
+        await ledger.claim(claim_request)
+    assert sqlstate(err.value.__cause__) == "42501", err.value
 
 
 # ---------------------------------------------------------------------------
-# SET LOCAL, never SET ROLE: a pooled connection must not carry the identity.
+# Capture redaction: the policy read and the memory update as the worker login.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_pinned_role_does_not_leak_on_a_pooled_connection(
+async def test_capture_redaction_reads_the_policy_as_worker_login(
+    owner_factory: async_sessionmaker[AsyncSession],
     capability_worker_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With one pooled connection, the next transaction is the login again."""
-    from ibex_async_db import parse_async_database_url
-    from sqlalchemy.ext.asyncio import create_async_engine
-
-    target = parse_async_database_url(capability_worker_dsn)
-    engine = create_async_engine(
-        target.url,
-        pool_size=1,
-        max_overflow=0,
-        connect_args=dict(target.connect_args),
+    """The policy read succeeds on the pinned worker login (metadata-only path)."""
+    await assert_worker_login(capability_worker_dsn)
+    org_id = uuid4()
+    await seed_org(owner_factory, org_id)
+    await seed_capture_policy(owner_factory, CapturePolicySeed(org_id=org_id))
+    monkeypatch.setattr(
+        capture_redaction,
+        "get_settings",
+        lambda: Settings(database_url=capability_worker_dsn),
     )
-    factory = create_session_factory(engine)
-    try:
-        async with session_as_purge_org(factory, str(uuid4())) as session:
-            assert (
-                await session.execute(_sql("SELECT current_user"))
-            ).scalar_one() == "ibex_purge"
-        # Same pooled connection; SET LOCAL must have been rolled back.
-        async with factory() as session:
-            assert (
-                await session.execute(_sql("SELECT current_user"))
-            ).scalar_one() == "ibex_worker"
-    finally:
-        await engine.dispose()
+    out = await capture_redaction._run(capture_redaction._CaptureJob(org_id=str(org_id)))
+    assert out == {"status": "redacted", "mode": "metadata_only"}
 
+
+@pytest.mark.asyncio
+async def test_capture_redaction_agent_policy_wins_over_org_default_as_worker_login(
+    owner_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An agent-scoped row beats the org default even at a worse priority.
+
+    This is the only case that binds a non-NULL ``agent_id`` into
+    ``resolve_capture_mode``, so it exercises the ``CAST(:agent_id AS text)``
+    binding and the ``agent_id IS NOT NULL`` ordering. The agent row is given
+    the numerically larger (worse) priority on purpose: agent specificity, not
+    priority alone, must select it.
+    """
+    await assert_worker_login(capability_worker_dsn)
+    org_id = uuid4()
+    await seed_org(owner_factory, org_id)
+    _, agent_id = await seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
+    await seed_capture_policy(
+        owner_factory,
+        CapturePolicySeed(org_id=org_id, agent_id=None, mode="metadata_only", priority=0),
+    )
+    await seed_capture_policy(
+        owner_factory,
+        CapturePolicySeed(org_id=org_id, agent_id=agent_id, mode="redacted", priority=100),
+    )
+    monkeypatch.setattr(
+        capture_redaction,
+        "get_settings",
+        lambda: Settings(database_url=capability_worker_dsn),
+    )
+    out = await capture_redaction._run(
+        capture_redaction._CaptureJob(org_id=str(org_id), agent_id=str(agent_id))
+    )
+    assert out == {"status": "redacted", "mode": "redacted", "event_id": ""}
+
+
+@pytest.mark.asyncio
+async def test_capture_redaction_redacted_branch_persists_both_writes_as_worker_login(
+    owner_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ``redacted`` branch writes both columns through the pinned login.
+
+    The metadata-only cases return before touching a row, so they cannot see a
+    broken pin. This case seeds a real session event and forces ``redacted``:
+    ``_persist_redacted`` rewrites ``data`` and ``_set_archived_to`` rewrites
+    ``archived_to``, both inside ``session_as_app_org``. A pin that stopped
+    binding the org would either fail 42501 or match zero rows (which
+    ``_set_archived_to`` turns into an error), so the event cannot be lost
+    quietly. The event id is passed as a string, exactly as Celery delivers it.
+    """
+    await assert_worker_login(capability_worker_dsn)
+    org_id, session_id = uuid4(), uuid4()
+    await seed_org(owner_factory, org_id)
+    _, agent_id = await seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
+    await seed_session(
+        owner_factory,
+        SessionSeed(org_id=org_id, agent_id=agent_id, session_id=session_id),
+    )
+    await seed_capture_policy(
+        owner_factory, CapturePolicySeed(org_id=org_id, mode="redacted")
+    )
+    payload = {"prompt": "secret", "content": "secret", "raw": "secret", "meta": "keep"}
+    event_id = await seed_session_event(
+        owner_factory,
+        SessionEventSeed(org_id=org_id, session_id=session_id, data=payload),
+    )
+    archive_uri = f"s3://ibex-sessions/{org_id}/capture/redacted/{event_id}.json"
+    uploaded: list[tuple[dict[str, object], str]] = []
+
+    def fake_upload(_settings, _job, filtered, kind):
+        uploaded.append((filtered, kind))
+        return archive_uri
+
+    monkeypatch.setattr(capture_redaction, "_put_archive_blob", fake_upload)
+    monkeypatch.setattr(
+        capture_redaction,
+        "get_settings",
+        lambda: Settings(database_url=capability_worker_dsn),
+    )
+
+    out = await capture_redaction._run(
+        capture_redaction._CaptureJob(
+            org_id=str(org_id), event_id=str(event_id), payload=payload
+        )
+    )
+
+    # Celery serialises kwargs as JSON, so the task sees the id as a string.
+    assert out == {
+        "status": "redacted",
+        "mode": "redacted",
+        "event_id": str(event_id),
+    }
+    assert uploaded == [({"meta": "keep"}, "redacted")]
+    row = await fetch_one(
+        owner_factory,
+        "SELECT data, archived_to FROM ibex_core.session_events"
+        " WHERE id = :id AND org_id = :org",
+        id=event_id,
+        org=org_id,
+    )
+    assert row[0] == {"meta": "keep"}
+    assert row[1] == archive_uri
+
+
+@pytest.mark.asyncio
+async def test_capture_redaction_rejects_non_numeric_event_id(
+    owner_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-numeric id fails with a clear ``ValueError``, not a driver ``DataError``.
+
+    The column is ``bigint``; binding an arbitrary string would make asyncpg
+    raise ``DataError`` after the transaction has started. The task must reject
+    it at the boundary instead.
+    """
+    await assert_worker_login(capability_worker_dsn)
+    org_id = uuid4()
+    await seed_org(owner_factory, org_id)
+    await seed_capture_policy(
+        owner_factory, CapturePolicySeed(org_id=org_id, mode="redacted")
+    )
+    monkeypatch.setattr(
+        capture_redaction,
+        "get_settings",
+        lambda: Settings(database_url=capability_worker_dsn),
+    )
+
+    with pytest.raises(ValueError, match="event_id must be a numeric string"):
+        await capture_redaction._run(
+            capture_redaction._CaptureJob(
+                org_id=str(org_id), event_id="not-a-number", payload={"meta": "keep"}
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_capture_redaction_without_the_pin_is_42501(
+    owner_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unpinned policy read fails 42501."""
+    org_id = uuid4()
+    await seed_org(owner_factory, org_id)
+    await seed_capture_policy(owner_factory, CapturePolicySeed(org_id=org_id))
+    monkeypatch.setattr(
+        capture_redaction,
+        "get_settings",
+        lambda: Settings(database_url=capability_worker_dsn),
+    )
+    monkeypatch.setattr(
+        capture_redaction,
+        "session_as_app_org",
+        lambda factory, _org: session_unpinned(factory),
+    )
+    with pytest.raises(ProgrammingError) as err:
+        await capture_redaction._run(capture_redaction._CaptureJob(org_id=str(org_id)))
+    assert sqlstate(err.value) == "42501", err.value

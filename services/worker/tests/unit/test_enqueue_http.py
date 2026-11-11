@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from _enqueue_http_test_helpers import (
@@ -168,3 +170,90 @@ async def test_read_json_limited_stream_cap_and_no_content_length(
     mod._check_content_length(req)
     with pytest.raises(ValueError, match="payload_too_large"):
         await mod._read_json_limited(req)
+
+
+def _db_settings(**overrides: object) -> SimpleNamespace:
+    """Settings that make ``create_enqueue_app`` build its own ledger."""
+    settings = _settings(**overrides)
+    settings.database_url = "postgresql+asyncpg://worker@db/ibex"
+    return settings
+
+
+class _ScopeEntered(Exception):
+    """Sentinel proving the claim entered the injected session scope."""
+
+
+class _ScopeRecorder:
+    """Async context manager factory that records each call and stops there."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __call__(self, org_id: str):
+        self.calls.append(org_id)
+        return self._cm()
+
+    @asynccontextmanager
+    async def _cm(self):
+        raise _ScopeEntered()
+        yield  # pragma: no cover - the scope never yields in this test
+
+
+def test_create_enqueue_app_injects_pinned_ledger_scopes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production construction site hands the ledger both pinned scopes."""
+    from app import enqueue_http as mod
+
+    org_scope, probe_scope = object(), object()
+    captured: dict[str, object] = {}
+
+    class _SpyLedger:
+        def __init__(self, factory, *, session_scope=None, probe_scope=None):
+            captured["factory"] = factory
+            captured["session_scope"] = session_scope
+            captured["probe_scope"] = probe_scope
+
+    monkeypatch.setattr(mod, "create_engine", lambda _settings: "engine")
+    monkeypatch.setattr(mod, "create_session_factory", lambda engine: ("factory", engine))
+    monkeypatch.setattr(mod, "app_org_scope", lambda factory: org_scope)
+    monkeypatch.setattr(mod, "app_probe_scope", lambda factory: probe_scope)
+    monkeypatch.setattr(mod, "PostgresIdempotencyLedger", _SpyLedger)
+
+    app = mod.create_enqueue_app(_db_settings())
+
+    assert captured == {
+        "factory": ("factory", "engine"),
+        "session_scope": org_scope,
+        "probe_scope": probe_scope,
+    }
+    assert isinstance(app.state.ledger, _SpyLedger)
+
+
+@pytest.mark.asyncio
+async def test_claim_uses_the_injected_org_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A claimed job enters the injected org scope, not the package default."""
+    from app import enqueue_http as mod
+    from app.idempotency_ledger import PostgresIdempotencyLedger
+
+    org_scope = _ScopeRecorder()
+    probe_scope = _ScopeRecorder()
+    monkeypatch.setattr(mod, "create_engine", lambda _settings: "engine")
+    monkeypatch.setattr(mod, "create_session_factory", lambda _engine: "factory")
+    monkeypatch.setattr(mod, "app_org_scope", lambda _factory: org_scope)
+    monkeypatch.setattr(mod, "app_probe_scope", lambda _factory: probe_scope)
+
+    app = mod.create_enqueue_app(_db_settings())
+    ledger = app.state.ledger
+    assert isinstance(ledger, PostgresIdempotencyLedger)
+
+    org_id, agent_id = uuid4(), uuid4()
+    with pytest.raises(_ScopeEntered):
+        await ledger.claim(
+            org_id=org_id, agent_id=agent_id, key="claim-key", request_hash="digest"
+        )
+
+    assert org_scope.calls == [str(org_id)]
+    assert probe_scope.calls == []

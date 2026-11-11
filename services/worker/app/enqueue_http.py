@@ -18,7 +18,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from app.config import Settings, get_settings
-from app.db import create_engine, create_session_factory
+from app.db import app_org_scope, app_probe_scope, create_engine, create_session_factory
 from app.extraction.batch import TurnPayload, parse_turns
 from app.idempotency_ledger import ClaimOutcome, PostgresIdempotencyLedger, fingerprint_enqueue
 from app.task_names import TASK_EXTRACT_SESSION_MEMORIES
@@ -318,6 +318,7 @@ def create_enqueue_app(
     apply_async: Any | None = None,
     ledger: Any | None = None,
 ) -> Starlette:
+    """Build the worker enqueue ASGI app with its routes and pinned ledger scopes."""
     resolved_settings = settings or get_settings()
     app = Starlette(
         routes=[
@@ -330,7 +331,16 @@ def create_enqueue_app(
     app.state.apply_async = apply_async
     if ledger is None and getattr(resolved_settings, "database_url", None):
         engine = create_engine(resolved_settings)
-        ledger = PostgresIdempotencyLedger(create_session_factory(engine))
+        factory = create_session_factory(engine)
+        # The shared ledger defaults only write the retired
+        # app.is_service_account GUC; under the ibex_worker login that is 42501
+        # and ping() reports not-ready. Inject the worker's pinned scopes here
+        # so the package default stays as it is for the memory service.
+        ledger = PostgresIdempotencyLedger(
+            factory,
+            session_scope=app_org_scope(factory),
+            probe_scope=app_probe_scope(factory),
+        )
     app.state.ledger = ledger
     app.state.task_name = TASK_EXTRACT_SESSION_MEMORIES
     return app
