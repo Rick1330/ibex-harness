@@ -2,8 +2,10 @@
 #
 # One Compose project, one internal network, one published port: the edge HTTPS
 # terminator. Everything else is reachable only by service name on the bridge.
-# The one-shot `migrate` service gates every required application container;
-# a failed migration stops the profile rather than producing a partial start.
+# The one-shot `migrate` service gates every required application container, and
+# the one-shot `provision` service gates every container that authenticates with a
+# capability login. A failed migration or a failed provision stops the profile
+# rather than producing a partial start.
 #
 # Privileged inputs (never committed) are produced by `make v1-secrets`
 # (infra/scripts/gen-v1-secrets.sh) into infra/compose/v1-single-node/.env and
@@ -66,6 +68,42 @@ services:
     networks:
       - internal
 
+  # One-shot capability-login provisioning: one transaction that sets the SCRAM
+  # verifier and CONNECTION LIMIT for every capability role. It runs after the
+  # migrations because the roles must already exist.
+  #
+  # Failure mode is deliberately half-up: if this exits non-zero, Compose refuses
+  # to start the services that depend on it, so postgres, redis, the edge, the
+  # migrator and the one-shots are up while no application service connects. That
+  # is the safe half: nothing is serving, and `make v1-provision` retries the
+  # credential write without a teardown.
+  #
+  # The four secrets are required at start (`:?`) rather than defaulted. A default
+  # would be a shared credential, and the binary would still refuse it; failing
+  # here names the remedy instead of printing provision's redacted error.
+  provision:
+    build:
+      context: ../../..
+      dockerfile: infra/migrations/Dockerfile
+    environment:
+      # provision derives the owner credential from this DSN, so it must be the
+      # same owner DSN `migrate` uses. It also refuses any capability secret that
+      # equals the owner credential.
+      POSTGRES_MIGRATE_DSN: postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
+      IBEX_RUNTIME_DB_PASSWORD: ${IBEX_RUNTIME_DB_PASSWORD:?IBEX_RUNTIME_DB_PASSWORD is required; run make v1-secrets}
+      IBEX_AUTH_DB_PASSWORD: ${IBEX_AUTH_DB_PASSWORD:?IBEX_AUTH_DB_PASSWORD is required; run make v1-secrets}
+      IBEX_WORKER_DB_PASSWORD: ${IBEX_WORKER_DB_PASSWORD:?IBEX_WORKER_DB_PASSWORD is required; run make v1-secrets}
+      IBEX_BOOTSTRAP_DB_PASSWORD: ${IBEX_BOOTSTRAP_DB_PASSWORD:?IBEX_BOOTSTRAP_DB_PASSWORD is required; run make v1-secrets}
+    # The binary accepts a bare positional command (`migrate provision`), which is
+    # what the image entrypoint forwards here.
+    command: ["provision"]
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - internal
+
   # One-shot identity bootstrap: creates the org/user/agent, the memory service
   # token, and writes one admin PAT to the host bind mount (never to stdout).
   # Same image as auth, entrypoint overridden. Context and worker gate on it so
@@ -103,7 +141,7 @@ services:
       # ignored where SELinux is disabled.
       - ./bootstrap:/run/ibex:Z
     depends_on:
-      migrate:
+      provision:
         condition: service_completed_successfully
     networks:
       - internal
@@ -142,7 +180,7 @@ services:
       retries: 12
       start_period: 20s
     depends_on:
-      migrate:
+      provision:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -192,7 +230,7 @@ services:
       retries: 12
       start_period: 20s
     depends_on:
-      migrate:
+      provision:
         condition: service_completed_successfully
       auth:
         condition: service_healthy
@@ -244,7 +282,7 @@ services:
       retries: 12
       start_period: 20s
     depends_on:
-      migrate:
+      provision:
         condition: service_completed_successfully
       auth:
         condition: service_healthy
@@ -282,7 +320,7 @@ services:
         condition: service_healthy
       embedder:
         condition: service_healthy
-      migrate:
+      provision:
         condition: service_completed_successfully
     networks:
       - internal
@@ -378,7 +416,12 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      # provision already implies migrate (its own edge), but the explicit edge is
+      # kept: this change only adds the credential gate, it does not rewrite the
+      # ordering the worker already relied on.
       migrate:
+        condition: service_completed_successfully
+      provision:
         condition: service_completed_successfully
       memory:
         condition: service_healthy
