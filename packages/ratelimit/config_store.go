@@ -25,7 +25,8 @@ type OrgOverrideSet struct {
 	AgentRPM map[uuid.UUID]int64
 }
 
-// ConfigStore loads rate_limit_overrides with RLS org context or service account.
+// ConfigStore loads rate_limit_overrides: per-org under RLS, full poll through
+// the cross-tenant snapshot definer.
 type ConfigStore struct {
 	db     *sql.DB
 	tracer trace.Tracer
@@ -40,21 +41,21 @@ func NewConfigStore(db *sql.DB) (*ConfigStore, error) {
 }
 
 type loadOverridesParams struct {
-	spanName       string
-	setConfigSQL   string
-	setConfigArgs  []any
-	setConfigLabel string
-	query          string
-	queryArgs      []any
+	spanName  string
+	preQuery  string
+	preArgs   []any
+	preLabel  string
+	query     string
+	queryArgs []any
 }
 
 // LoadOrg returns overrides for one org under app.current_org_id RLS.
 func (s *ConfigStore) LoadOrg(ctx context.Context, orgID uuid.UUID) (OrgOverrideSet, error) {
 	set, err := s.loadOverrides(ctx, loadOverridesParams{
-		spanName:       "ConfigStore.LoadOrg",
-		setConfigSQL:   `SELECT set_config('app.current_org_id', $1, true)`,
-		setConfigArgs:  []any{orgID.String()},
-		setConfigLabel: "set rls",
+		spanName: "ConfigStore.LoadOrg",
+		preQuery: `SELECT set_config('app.current_org_id', $1, true)`,
+		preArgs:  []any{orgID.String()},
+		preLabel: "set rls",
 		query: `
 		SELECT org_id, agent_id::text, requests_per_minute
 		FROM ibex_core.rate_limit_overrides
@@ -67,15 +68,17 @@ func (s *ConfigStore) LoadOrg(ctx context.Context, orgID uuid.UUID) (OrgOverride
 	return set[orgID], nil
 }
 
-// LoadAll returns all overrides using app.is_service_account (full poll).
+// LoadAll returns all overrides for the full poll. It is genuinely
+// cross-tenant, so it reads through the ibex_core.rate_limit_overrides_snapshot
+// definer: the runtime login has EXECUTE on it and the tenant role does not.
+// No role pin is used, because a pin would drop the caller to ibex_app and
+// lose the definer's cross-tenant reach.
 func (s *ConfigStore) LoadAll(ctx context.Context) (map[uuid.UUID]OrgOverrideSet, error) {
 	return s.loadOverrides(ctx, loadOverridesParams{
-		spanName:       "ConfigStore.LoadAll",
-		setConfigSQL:   `SELECT set_config('app.is_service_account', 'true', true)`,
-		setConfigLabel: "set service account",
+		spanName: "ConfigStore.LoadAll",
 		query: `
-		SELECT org_id, agent_id::text, requests_per_minute
-		FROM ibex_core.rate_limit_overrides`,
+		SELECT org_id, agent_id, requests_per_minute
+		FROM ibex_core.rate_limit_overrides_snapshot()`,
 	})
 }
 
@@ -94,8 +97,10 @@ func (s *ConfigStore) loadOverrides(ctx context.Context, p loadOverridesParams) 
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, p.setConfigSQL, p.setConfigArgs...); err != nil {
-		return nil, recordConfigStoreErr(span, fmt.Errorf("ratelimit: %s: %w", p.setConfigLabel, err))
+	if p.preQuery != "" {
+		if _, err := tx.ExecContext(ctx, p.preQuery, p.preArgs...); err != nil {
+			return nil, recordConfigStoreErr(span, fmt.Errorf("ratelimit: %s: %w", p.preLabel, err))
+		}
 	}
 	set, err := scanOverrides(ctx, tx, p.query, p.queryArgs...)
 	if err != nil {

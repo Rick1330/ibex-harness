@@ -24,6 +24,8 @@ func NewStore(db *sql.DB) (*Store, error) {
 }
 
 // LoadOrg returns the active hard_cap period (if any) plus the latest published card.
+// It runs as ibex_app scoped to orgID, so a missing row is a real absence and
+// not an RLS bypass.
 func (s *Store) LoadOrg(ctx context.Context, orgID uuid.UUID) (BudgetSnapshot, error) {
 	if orgID == uuid.Nil {
 		return BudgetSnapshot{}, fmt.Errorf("billing: org_id is required")
@@ -34,8 +36,15 @@ func (s *Store) LoadOrg(ctx context.Context, orgID uuid.UUID) (BudgetSnapshot, e
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
-		return BudgetSnapshot{}, fmt.Errorf("billing: set service account: %w", err)
+	// The service pool logs in as a superuser, which bypasses RLS. Pin the
+	// tenant role for this transaction so the org GUC is actually enforced;
+	// otherwise a filtered-out budget row is indistinguishable from "no cap"
+	// and hard caps silently stop enforcing.
+	if _, err := tx.ExecContext(ctx, `SET LOCAL ROLE ibex_app`); err != nil {
+		return BudgetSnapshot{}, fmt.Errorf("billing: set tenant role: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID.String()); err != nil {
+		return BudgetSnapshot{}, fmt.Errorf("billing: set org rls: %w", err)
 	}
 
 	snap, err := loadActiveHardCap(ctx, tx, orgID)
