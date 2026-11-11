@@ -35,25 +35,34 @@ type provisionTarget struct {
 
 // provisionTargets is the complete capability-login model. ibex_worker is
 // deliberately allowed to reach ibex_purge; ibex_bootstrap is allowed no
-// membership at all.
+// membership at all; ibex_auth is allowed ibex_app but must never reach a
+// service, purge or bootstrap identity. Every target forbids every other
+// privileged role, so a stray GRANT is caught at provision time instead of
+// widening a login silently.
 var provisionTargets = []provisionTarget{
 	{
 		role:           "ibex_runtime",
 		envName:        "IBEX_RUNTIME_DB_PASSWORD",
-		forbiddenRoles: []string{"ibex_service", "ibex_purge", "ibex_bootstrap"},
+		forbiddenRoles: []string{"ibex_service", "ibex_purge", "ibex_bootstrap", "ibex_auth"},
 		requiredRoles:  []string{"ibex_app"},
 	},
 	{
 		role:           "ibex_worker",
 		envName:        "IBEX_WORKER_DB_PASSWORD",
-		forbiddenRoles: []string{"ibex_service", "ibex_bootstrap"},
+		forbiddenRoles: []string{"ibex_service", "ibex_bootstrap", "ibex_auth"},
 		requiredRoles:  []string{"ibex_app", "ibex_purge"},
 	},
 	{
 		role:           "ibex_bootstrap",
 		envName:        "IBEX_BOOTSTRAP_DB_PASSWORD",
-		forbiddenRoles: []string{"ibex_service", "ibex_purge", "ibex_app"},
+		forbiddenRoles: []string{"ibex_service", "ibex_purge", "ibex_app", "ibex_auth"},
 		requiredRoles:  nil,
+	},
+	{
+		role:           "ibex_auth",
+		envName:        "IBEX_AUTH_DB_PASSWORD",
+		forbiddenRoles: []string{"ibex_service", "ibex_purge", "ibex_bootstrap"},
+		requiredRoles:  []string{"ibex_app"},
 	},
 }
 
@@ -101,7 +110,7 @@ type redaction struct {
 	secret  string
 }
 
-// Provision sets the three capability-login passwords in one transaction and
+// Provision sets the four capability-login passwords in one transaction and
 // refuses to commit unless every role is safe, cannot reach a privileged
 // identity, and can assume the roles it requires. Each statement carries a
 // pre-computed SCRAM-SHA-256 verifier, never the plaintext.
@@ -264,7 +273,7 @@ func hmacSHA256(key, message []byte) []byte {
 type roleAttributes struct {
 	super, bypass, login, inherit, createdb, createrole bool
 	connlimit                                           int
-	validUntil                                          sql.NullTime
+	validUntil                                          roleValidUntil
 }
 
 // safe reports whether the role is a non-privileged, provisioned login.
@@ -273,33 +282,122 @@ func (a roleAttributes) safe(now time.Time) bool {
 		!a.createdb && !a.createrole && a.connlimit == -1 && !a.expired(now)
 }
 
-// expired reports whether the role has an explicit expiry in the past.
+// expired reports whether the role has an explicit expiry that has passed.
 func (a roleAttributes) expired(now time.Time) bool {
-	return a.validUntil.Valid && !a.validUntil.Time.After(now)
+	return a.validUntil.expired(now)
 }
 
 // describe renders the attributes for an actionable provisioning error.
 func (a roleAttributes) describe() string {
-	valid := "none"
-	if a.validUntil.Valid {
-		valid = a.validUntil.Time.UTC().Format(time.RFC3339)
-	}
 	return fmt.Sprintf(
 		"super=%v bypass=%v login=%v inherit=%v createdb=%v createrole=%v connlimit=%d validuntil=%s",
-		a.super, a.bypass, a.login, a.inherit, a.createdb, a.createrole, a.connlimit, valid,
+		a.super, a.bypass, a.login, a.inherit, a.createdb, a.createrole, a.connlimit,
+		a.validUntil.describe(),
 	)
+}
+
+// The PostgreSQL timestamp literals for "no expiry" and "expired before any
+// timestamp". They are not RFC 3339 and cannot be scanned into time.Time.
+const (
+	roleValidInfinity = "infinity"
+	roleValidNegInf   = "-infinity"
+	// roleValidUntilSQL renders `pg_roles.rolvaliduntil` as text with the two
+	// sentinels preserved.
+	//
+	// lib/pq only converts timestamps to time.Time when EnableInfinityTs has
+	// been called, and it never is: an operator who runs
+	// `ALTER ROLE … VALID UNTIL 'infinity'` otherwise makes a sql.NullTime scan
+	// fail with "unsupported Scan, storing driver.Value type []uint8 into type
+	// *time.Time". Normalising the column here keeps the two sentinels
+	// distinguishable in Go and pins the finite format to UTC, so the Go parser
+	// does not depend on the server's TimeZone setting.
+	roleValidUntilSQL = `
+		SELECT rolsuper, rolbypassrls, rolcanlogin, rolinherit,
+		       rolcreatedb, rolcreaterole, rolconnlimit,
+		       CASE
+		           WHEN rolvaliduntil IS NULL THEN NULL
+		           WHEN rolvaliduntil = 'infinity'::timestamptz THEN 'infinity'
+		           WHEN rolvaliduntil = '-infinity'::timestamptz THEN '-infinity'
+		           ELSE to_char(rolvaliduntil AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+		       END
+		FROM pg_roles WHERE rolname = $1`
+)
+
+// roleValidUntil is the parsed form of pg_roles.rolvaliduntil. The four states
+// are distinct: no expiry at all, an infinite expiry, an expiry before any
+// timestamp, and a finite instant.
+type roleValidUntil struct {
+	// at is the expiry when the value is a finite timestamp.
+	at time.Time
+	// bounded is true for a finite timestamp in at.
+	bounded bool
+	// unbounded is PostgreSQL 'infinity': the credential never expires.
+	unbounded bool
+	// beforeEpoch is PostgreSQL '-infinity': the credential is already expired.
+	beforeEpoch bool
+}
+
+// parseRoleValidUntil converts the normalised text into a roleValidUntil.
+func parseRoleValidUntil(value sql.NullString) (roleValidUntil, error) {
+	if !value.Valid || value.String == "" {
+		return roleValidUntil{}, nil
+	}
+	switch value.String {
+	case roleValidInfinity:
+		return roleValidUntil{unbounded: true}, nil
+	case roleValidNegInf:
+		return roleValidUntil{beforeEpoch: true}, nil
+	}
+	at, err := time.Parse(time.RFC3339Nano, value.String)
+	if err != nil {
+		return roleValidUntil{}, fmt.Errorf("unrecognised rolvaliduntil %q: %w", value.String, err)
+	}
+	return roleValidUntil{at: at, bounded: true}, nil
+}
+
+// expired reports whether the credential's validity has ended by now.
+func (v roleValidUntil) expired(now time.Time) bool {
+	switch {
+	case v.unbounded:
+		return false
+	case v.beforeEpoch:
+		return true
+	case v.bounded:
+		return !v.at.After(now)
+	default:
+		return false
+	}
+}
+
+// describe renders the expiry for an operator-facing provisioning error.
+func (v roleValidUntil) describe() string {
+	switch {
+	case v.unbounded:
+		return roleValidInfinity
+	case v.beforeEpoch:
+		return roleValidNegInf
+	case v.bounded:
+		return v.at.UTC().Format(time.RFC3339)
+	default:
+		return "none"
+	}
 }
 
 // loadRoleAttributes reads the postcondition columns for one role.
 func loadRoleAttributes(tx *sql.Tx, target provisionTarget) (roleAttributes, error) {
 	var a roleAttributes
-	err := tx.QueryRow(`
-		SELECT rolsuper, rolbypassrls, rolcanlogin, rolinherit,
-		       rolcreatedb, rolcreaterole, rolconnlimit, rolvaliduntil
-		FROM pg_roles WHERE rolname = $1`, target.role).
+	var validUntil sql.NullString
+	if err := tx.QueryRow(roleValidUntilSQL, target.role).
 		Scan(&a.super, &a.bypass, &a.login, &a.inherit, &a.createdb, &a.createrole,
-			&a.connlimit, &a.validUntil)
-	return a, err
+			&a.connlimit, &validUntil); err != nil {
+		return roleAttributes{}, err
+	}
+	parsed, err := parseRoleValidUntil(validUntil)
+	if err != nil {
+		return roleAttributes{}, err
+	}
+	a.validUntil = parsed
+	return a, nil
 }
 
 // assertSafeRoleAttributes fails closed on a role that is privileged, expired,
@@ -358,8 +456,8 @@ func roleReachable(tx *sql.Tx, role, target string) (bool, error) {
 	return reachable, err
 }
 
-// resolveProvisionSecrets reads the three passwords and enforces the safety
-// rules: present, printable ASCII without spaces, pairwise distinct, and
+// resolveProvisionSecrets reads every capability password and enforces the
+// safety rules: present, printable ASCII without spaces, pairwise distinct, and
 // different from the migration DSN credential.
 func resolveProvisionSecrets(getenv func(string) string, owner ownerCredential) (provisionSecrets, error) {
 	secrets := make(provisionSecrets, len(provisionTargets))

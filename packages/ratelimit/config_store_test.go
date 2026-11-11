@@ -37,11 +37,41 @@ func requireEmptyOverrideSet(t *testing.T, set OrgOverrideSet) {
 	}
 }
 
+// expectLoadOrgPin matches the two statements LoadOrg runs before its read: the
+// role pin that makes the capability login usable, then the tenant GUC that
+// scopes RLS.
+func expectLoadOrgPin(mock sqlmock.Sqlmock, org uuid.UUID) {
+	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
+func TestConfigStore_LoadOrg_RolePinError(t *testing.T) {
+	t.Parallel()
+	store, mock := newMockConfigStore(t)
+	org := uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnError(sql.ErrConnDone)
+	mock.ExpectRollback()
+
+	set, err := store.LoadOrg(context.Background(), org)
+	if err == nil {
+		t.Fatal("role-pin failure returned no error; the caller would see an empty override set")
+	}
+	if !strings.Contains(err.Error(), "set tenant role") {
+		t.Fatalf("error %q does not identify the role pin", err)
+	}
+	requireEmptyOverrideSet(t, set)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestConfigStore_LoadOrg_PinError(t *testing.T) {
 	t.Parallel()
 	store, mock := newMockConfigStore(t)
 	org := uuid.New()
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnError(sql.ErrConnDone)
 	mock.ExpectRollback()
 
@@ -63,7 +93,7 @@ func TestConfigStore_LoadOrg_ReturnsOrgOverrides(t *testing.T) {
 	store, mock := newMockConfigStore(t)
 	org, agent := uuid.New(), uuid.New()
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+	expectLoadOrgPin(mock, org)
 	mock.ExpectQuery(`rate_limit_overrides`).WithArgs(org).WillReturnRows(
 		overrideRows().
 			AddRow(org.String(), nil, int64(120)).
@@ -85,23 +115,93 @@ func TestConfigStore_LoadOrg_ReturnsOrgOverrides(t *testing.T) {
 	}
 }
 
-func TestConfigStore_LoadOrg_QueryError(t *testing.T) {
+// TestConfigStore_LoadOrg_NoOverrides proves a pinned read that finds nothing
+// returns an empty set rather than an error: "no override" is a valid answer.
+func TestConfigStore_LoadOrg_NoOverrides(t *testing.T) {
 	t.Parallel()
 	store, mock := newMockConfigStore(t)
 	org := uuid.New()
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery(`rate_limit_overrides`).WithArgs(org).WillReturnError(sql.ErrConnDone)
-	mock.ExpectRollback()
+	expectLoadOrgPin(mock, org)
+	mock.ExpectQuery(`rate_limit_overrides`).WithArgs(org).WillReturnRows(overrideRows())
+	mock.ExpectCommit()
 
 	set, err := store.LoadOrg(context.Background(), org)
-	if err == nil {
-		t.Fatal("query failure returned no error; the caller would see an empty override set")
+	if err != nil {
+		t.Fatalf("LoadOrg: %v", err)
 	}
 	requireEmptyOverrideSet(t, set)
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type loadOrgFailureSetup struct {
+	label     string
+	query     *sqlmock.Rows
+	queryErr  error
+	commitErr error
+}
+
+// runLoadOrgFailure drives one LoadOrg failure case after the two pins have
+// succeeded. The caller keeps its own test function, so a failure names the
+// case; this helper only shares the Query/Commit-or-Rollback plumbing.
+func runLoadOrgFailure(t *testing.T, setup loadOrgFailureSetup) {
+	t.Helper()
+	store, mock := newMockConfigStore(t)
+	org := uuid.New()
+	mock.ExpectBegin()
+	expectLoadOrgPin(mock, org)
+	query := mock.ExpectQuery(`rate_limit_overrides`)
+	if setup.queryErr != nil {
+		query.WillReturnError(setup.queryErr)
+	} else {
+		query.WillReturnRows(setup.query)
+	}
+	if setup.commitErr != nil {
+		mock.ExpectCommit().WillReturnError(setup.commitErr)
+	} else {
+		mock.ExpectRollback()
+	}
+
+	set, err := store.LoadOrg(context.Background(), org)
+	if err == nil {
+		t.Fatalf("%s: returned no error; the caller would see no overrides", setup.label)
+	}
+	requireEmptyOverrideSet(t, set)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConfigStore_LoadOrg_QueryError(t *testing.T) {
+	t.Parallel()
+	runLoadOrgFailure(t, loadOrgFailureSetup{label: "query failure", queryErr: sql.ErrConnDone})
+}
+
+func TestConfigStore_LoadOrg_ScanError(t *testing.T) {
+	t.Parallel()
+	runLoadOrgFailure(t, loadOrgFailureSetup{
+		label: "scan failure",
+		query: overrideRows().AddRow("not-a-uuid", nil, int64(111)),
+	})
+}
+
+func TestConfigStore_LoadOrg_RowsError(t *testing.T) {
+	t.Parallel()
+	runLoadOrgFailure(t, loadOrgFailureSetup{
+		label: "row iteration failure",
+		query: overrideRows().AddRow(uuid.New().String(), nil, int64(111)).RowError(0, sql.ErrConnDone),
+	})
+}
+
+func TestConfigStore_LoadOrg_CommitError(t *testing.T) {
+	t.Parallel()
+	runLoadOrgFailure(t, loadOrgFailureSetup{
+		label:     "commit failure",
+		query:     overrideRows().AddRow(uuid.New().String(), nil, int64(111)),
+		commitErr: sql.ErrTxDone,
+	})
 }
 
 // LoadAll intentionally has no pin: it reads the cross-tenant definer, so its

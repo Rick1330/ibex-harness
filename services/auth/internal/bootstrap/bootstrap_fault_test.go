@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
@@ -20,25 +21,29 @@ import (
 // mocking the code under test would not prove anything.
 var errInjected = errors.New("injected database fault")
 
+// faultRow is the one row the nth query returns. Queries past the end of
+// faultConfig.rows return no rows, so a test can satisfy a SELECT and then make
+// a later one come back empty.
+type faultRow struct {
+	columns []string
+	values  []driver.Value
+}
+
 type faultConfig struct {
 	begin  error
 	exec   error
 	query  error
 	ping   error
 	commit error
-	result error
 	// execAfter and queryAfter are the number of successful calls before the
 	// configured error fires, so a test can reach the second or third statement
 	// of an orchestrator.
 	execAfter  int
 	queryAfter int
-	// rowValue is returned by the first rowQueries queries, which lets a test
-	// satisfy a SELECT and then make a later one return no rows.
-	rowValue   string
-	rowQueries int
-	scan       bool
-	// rowsAffected is reported by a successful Exec.
-	rowsAffected int64
+	// rows holds the result of each query in order.
+	rows []faultRow
+	// scan writes a value the destination cannot accept.
+	scan bool
 }
 
 var (
@@ -88,37 +93,53 @@ func (faultConn) QueryContext(context.Context, string, []driver.NamedValue) (dri
 	if fault.query != nil && queryCalls > fault.queryAfter {
 		return nil, fault.query
 	}
-	return &faultRows{}, nil
+	return &faultRows{index: queryCalls}, nil
 }
 
 type faultResult struct{}
 
-func (faultResult) LastInsertId() (int64, error) { return 0, fault.result }
-func (faultResult) RowsAffected() (int64, error) { return fault.rowsAffected, fault.result }
+func (faultResult) LastInsertId() (int64, error) { return 0, nil }
+func (faultResult) RowsAffected() (int64, error) { return 0, nil }
 
 type faultRows struct {
-	sent bool
+	// index is the 1-based query number this result belongs to.
+	index int
+	sent  bool
 }
 
-func (*faultRows) Columns() []string { return []string{"id"} }
-func (*faultRows) Close() error      { return nil }
+func (r *faultRows) Columns() []string {
+	if row, ok := fault.rowAt(r.index); ok {
+		return row.columns
+	}
+	return []string{"id"}
+}
+
+func (r *faultRows) Close() error { return nil }
 
 func (r *faultRows) Next(dest []driver.Value) error {
 	if r.sent {
 		return io.EOF
 	}
-	switch {
-	case fault.scan:
+	if fault.scan {
 		r.sent = true
 		dest[0] = "not-a-uuid"
 		return nil
-	case fault.rowValue != "" && queryCalls <= fault.rowQueries:
-		r.sent = true
-		dest[0] = fault.rowValue
-		return nil
-	default:
+	}
+	row, ok := fault.rowAt(r.index)
+	if !ok {
 		return io.EOF
 	}
+	r.sent = true
+	copy(dest, row.values)
+	return nil
+}
+
+// rowAt returns the configured row for a 1-based query number.
+func (f faultConfig) rowAt(query int) (faultRow, bool) {
+	if query < 1 || query > len(f.rows) {
+		return faultRow{}, false
+	}
+	return f.rows[query-1], true
 }
 
 // openFaultDB returns a handle backed by the fault driver. The cleanup restores
@@ -179,6 +200,61 @@ func beginFaultTx(t *testing.T, db *sql.DB) *sql.Tx {
 	return tx
 }
 
+// firstRunRows is the row set a clean first-run bootstrap reads: the new
+// organization, the identity, and the memory-service outcome.
+func firstRunRows() []faultRow {
+	return []faultRow{
+		organizationRow(true, nil),
+		identityRow(),
+		serviceTokenRow(outcomeInserted, uuid.NewString()),
+	}
+}
+
+// organizationRow is the bootstrap_upsert_organization result.
+func organizationRow(created bool, deletedAt driver.Value) faultRow {
+	return faultRow{
+		columns: []string{"created", "org_id", "deleted_at"},
+		values:  []driver.Value{created, uuid.NewString(), deletedAt},
+	}
+}
+
+// identityRow is the bootstrap_create_identity result.
+func identityRow() faultRow {
+	return faultRow{
+		columns: []string{"user_id", "agent_id"},
+		values:  []driver.Value{uuid.NewString(), uuid.NewString()},
+	}
+}
+
+// subjectsRow is the bootstrap_lookup_subjects result. A nil id is the absent
+// owner or agent.
+func subjectsRow(owner, agent driver.Value) faultRow {
+	return faultRow{
+		columns: []string{"owner_id", "agent_id"},
+		values:  []driver.Value{owner, agent},
+	}
+}
+
+// lockRow is the bootstrap_lock_organization result.
+func lockRow(locked bool) faultRow {
+	return faultRow{
+		columns: []string{"bootstrap_lock_organization"},
+		values:  []driver.Value{locked},
+	}
+}
+
+// serviceTokenRow is the bootstrap_upsert_service_token result.
+func serviceTokenRow(outcome, tokenID string) faultRow {
+	var id driver.Value
+	if tokenID != "" {
+		id = tokenID
+	}
+	return faultRow{
+		columns: []string{"outcome", "token_id"},
+		values:  []driver.Value{outcome, id},
+	}
+}
+
 func TestBootstrapErrorPropagation(t *testing.T) {
 	cfg := testConfig(t)
 
@@ -197,14 +273,14 @@ func TestBootstrapErrorPropagation(t *testing.T) {
 		want string
 	}{
 		{
-			name: "session setup fails",
-			f:    faultConfig{exec: errInjected},
-			want: "set service-account session",
+			name: "commit fails",
+			f:    faultConfig{commit: errInjected, rows: firstRunRows()},
+			want: "commit bootstrap transaction",
 		},
 		{
-			name: "commit fails",
-			f:    faultConfig{commit: errInjected, rowsAffected: 1},
-			want: "commit bootstrap transaction",
+			name: "organization read fails",
+			f:    faultConfig{query: errInjected},
+			want: "insert organization",
 		},
 	}
 	for _, tc := range tests {
@@ -219,7 +295,7 @@ func TestBootstrapErrorPropagation(t *testing.T) {
 }
 
 func TestBootstrapInTxPropagatesOrganizationFailure(t *testing.T) {
-	db := openFaultDB(t, faultConfig{exec: errInjected})
+	db := openFaultDB(t, faultConfig{query: errInjected})
 	tx := beginFaultTx(t, db)
 	_, err := bootstrapInTx(context.Background(), tx, testConfig(t))
 	if err == nil || !strings.Contains(err.Error(), "insert organization") {
@@ -237,12 +313,52 @@ func TestCreateIdentityErrorPaths(t *testing.T) {
 		f    faultConfig
 		want string
 	}{
-		{"owner insert", faultConfig{exec: errInjected}, "insert owner user"},
-		{"agent insert", faultConfig{exec: errInjected, execAfter: 1}, "insert agent"},
-		{"policy insert", faultConfig{exec: errInjected, execAfter: 2}, "insert allow-all model policy"},
-		{"policy epoch insert", faultConfig{exec: errInjected, execAfter: 3}, "insert model policy epoch"},
-		{"bootstrap PAT insert", faultConfig{exec: errInjected, execAfter: 4}, "insert bootstrap PAT"},
-		{"memory token insert", faultConfig{exec: errInjected, execAfter: 6}, "insert memory service token"},
+		{
+			name: "identity insert",
+			f:    faultConfig{query: errInjected},
+			want: "insert owner user and default agent",
+		},
+		{
+			name: "identity scan",
+			f:    faultConfig{scan: true},
+			want: "insert owner user and default agent",
+		},
+		{
+			name: "model policy insert",
+			f:    faultConfig{exec: errInjected, rows: []faultRow{identityRow()}},
+			want: "insert allow-all model policy",
+		},
+		{
+			name: "bootstrap PAT insert",
+			f:    faultConfig{exec: errInjected, execAfter: 1, rows: []faultRow{identityRow()}},
+			want: "insert bootstrap PAT",
+		},
+		{
+			name: "memory token write fails",
+			f:    faultConfig{query: errInjected, queryAfter: 1, rows: []faultRow{identityRow()}},
+			want: "write memory service token",
+		},
+		{
+			name: "memory token prefix is taken",
+			f: faultConfig{rows: []faultRow{
+				identityRow(), serviceTokenRow(outcomePrefixConflict, ""),
+			}},
+			want: "already bound to another organization",
+		},
+		{
+			name: "memory token is revoked",
+			f: faultConfig{rows: []faultRow{
+				identityRow(), serviceTokenRow(outcomeRevokedRefused, uuid.NewString()),
+			}},
+			want: "revoked",
+		},
+		{
+			name: "memory token outcome is unknown",
+			f: faultConfig{rows: []faultRow{
+				identityRow(), serviceTokenRow("sideways", uuid.NewString()),
+			}},
+			want: "unrecognised outcome",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -256,7 +372,9 @@ func TestCreateIdentityErrorPaths(t *testing.T) {
 	}
 
 	t.Run("success writes the memory token", func(t *testing.T) {
-		db := openFaultDB(t, faultConfig{})
+		db := openFaultDB(t, faultConfig{rows: []faultRow{
+			identityRow(), serviceTokenRow(outcomeInserted, uuid.NewString()),
+		}})
 		tx := beginFaultTx(t, db)
 		result, err := createIdentity(context.Background(), tx, cfg, uuid.New())
 		if err != nil {
@@ -270,43 +388,81 @@ func TestCreateIdentityErrorPaths(t *testing.T) {
 
 func TestReconcileServiceTokenErrorPaths(t *testing.T) {
 	bearer := mustPAT(t)
-	agentID := uuid.NewString()
+	orgID := uuid.New()
 	tests := []struct {
 		name string
 		f    faultConfig
 		want string
 	}{
-		{"lock fails", faultConfig{query: errInjected}, "lock organization"},
-		{"no owner", faultConfig{rowValue: agentID, rowQueries: 1}, "no active owner"},
-		{"owner lookup fails", faultConfig{query: errInjected, queryAfter: 1, rowValue: agentID, rowQueries: 1}, "look up owner"},
-		{"no agent", faultConfig{rowValue: agentID, rowQueries: 2}, "no active agent"},
-		{"agent lookup fails", faultConfig{query: errInjected, queryAfter: 2, rowValue: agentID, rowQueries: 2}, "look up agent"},
+		{
+			name: "lock fails",
+			f:    faultConfig{query: errInjected},
+			want: "lock organization for memory token",
+		},
+		{
+			name: "organization is gone",
+			f:    faultConfig{rows: []faultRow{lockRow(false)}},
+			want: "missing or soft-deleted",
+		},
+		{
+			name: "no owner",
+			f: faultConfig{rows: []faultRow{
+				lockRow(true), subjectsRow(nil, uuid.NewString()),
+			}},
+			want: "no active owner",
+		},
+		{
+			name: "no agent",
+			f: faultConfig{rows: []faultRow{
+				lockRow(true), subjectsRow(uuid.NewString(), nil),
+			}},
+			want: "no active agent",
+		},
+		{
+			name: "subject lookup fails",
+			f: faultConfig{
+				query: errInjected, queryAfter: 1, rows: []faultRow{lockRow(true)},
+			},
+			want: "look up owner and agent",
+		},
+		{
+			name: "token write fails",
+			f: faultConfig{
+				query: errInjected, queryAfter: 2,
+				rows: []faultRow{lockRow(true), subjectsRow(uuid.NewString(), uuid.NewString())},
+			},
+			want: "write memory service token",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			db := openFaultDB(t, tc.f)
 			tx := beginFaultTx(t, db)
-			err := reconcileServiceToken(context.Background(), tx, uuid.New(), bearer)
+			err := reconcileServiceToken(context.Background(), tx, orgID, bearer)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("reconcileServiceToken error = %v, want %q", err, tc.want)
 			}
 		})
 	}
+
+	t.Run("success rebinds the managed row", func(t *testing.T) {
+		db := openFaultDB(t, faultConfig{rows: []faultRow{
+			lockRow(true),
+			subjectsRow(uuid.NewString(), uuid.NewString()),
+			serviceTokenRow(outcomeUpdated, uuid.NewString()),
+		}})
+		tx := beginFaultTx(t, db)
+		if err := reconcileServiceToken(context.Background(), tx, orgID, bearer); err != nil {
+			t.Fatalf("reconcileServiceToken: %v", err)
+		}
+	})
 }
 
 func TestOrganizationHelperErrors(t *testing.T) {
 	cfg := testConfig(t)
 	orgID := uuid.New()
 
-	t.Run("rows affected", func(t *testing.T) {
-		db := openFaultDB(t, faultConfig{result: errInjected})
-		tx := beginFaultTx(t, db)
-		if _, err := insertOrganization(context.Background(), tx, orgInput{id: orgID, cfg: cfg}); err == nil {
-			t.Fatal("insertOrganization returned no error")
-		}
-	})
-
-	t.Run("existing lookup", func(t *testing.T) {
+	t.Run("read fails", func(t *testing.T) {
 		db := openFaultDB(t, faultConfig{query: errInjected})
 		tx := beginFaultTx(t, db)
 		if _, err := insertOrganization(context.Background(), tx, orgInput{id: orgID, cfg: cfg}); err == nil {
@@ -315,7 +471,7 @@ func TestOrganizationHelperErrors(t *testing.T) {
 	})
 
 	t.Run("fresh insert", func(t *testing.T) {
-		db := openFaultDB(t, faultConfig{rowsAffected: 1})
+		db := openFaultDB(t, faultConfig{rows: []faultRow{organizationRow(true, nil)}})
 		tx := beginFaultTx(t, db)
 		result, err := insertOrganization(context.Background(), tx, orgInput{id: orgID, cfg: cfg})
 		if err != nil {
@@ -323,6 +479,36 @@ func TestOrganizationHelperErrors(t *testing.T) {
 		}
 		if result.AlreadyBootstrapped {
 			t.Fatal("insertOrganization reported an existing organization for a fresh insert")
+		}
+	})
+
+	t.Run("existing organization", func(t *testing.T) {
+		existing := uuid.New()
+		row := faultRow{
+			columns: []string{"created", "org_id", "deleted_at"},
+			values:  []driver.Value{false, existing.String(), nil},
+		}
+		db := openFaultDB(t, faultConfig{rows: []faultRow{row}})
+		tx := beginFaultTx(t, db)
+		result, err := insertOrganization(context.Background(), tx, orgInput{id: orgID, cfg: cfg})
+		if err != nil {
+			t.Fatalf("insertOrganization: %v", err)
+		}
+		if !result.AlreadyBootstrapped || result.OrgID != existing {
+			t.Fatalf("result = %+v, want already bootstrapped as %s", result, existing)
+		}
+	})
+
+	t.Run("soft-deleted organization", func(t *testing.T) {
+		row := faultRow{
+			columns: []string{"created", "org_id", "deleted_at"},
+			values:  []driver.Value{false, uuid.NewString(), time.Now().UTC()},
+		}
+		db := openFaultDB(t, faultConfig{rows: []faultRow{row}})
+		tx := beginFaultTx(t, db)
+		_, err := insertOrganization(context.Background(), tx, orgInput{id: orgID, cfg: cfg})
+		if err == nil || !strings.Contains(err.Error(), "soft-deleted") {
+			t.Fatalf("insertOrganization error = %v, want a soft-deleted refusal", err)
 		}
 	})
 }
@@ -335,18 +521,11 @@ func TestIdentityHelperErrors(t *testing.T) {
 		f    faultConfig
 		call func(context.Context, *sql.Tx) error
 	}{
-		{"owner insert", faultConfig{exec: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
-			_, _, err := insertIdentity(ctx, tx, identityInput{orgID: orgID, cfg: cfg})
-			return err
-		}},
-		{"agent insert", faultConfig{exec: errInjected, execAfter: 1}, func(ctx context.Context, tx *sql.Tx) error {
+		{"identity insert", faultConfig{query: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
 			_, _, err := insertIdentity(ctx, tx, identityInput{orgID: orgID, cfg: cfg})
 			return err
 		}},
 		{"model policy insert", faultConfig{exec: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
-			return insertModelPolicy(ctx, tx, orgID)
-		}},
-		{"model policy epoch", faultConfig{exec: errInjected, execAfter: 1}, func(ctx context.Context, tx *sql.Tx) error {
 			return insertModelPolicy(ctx, tx, orgID)
 		}},
 		{"bootstrap PAT insert", faultConfig{exec: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
@@ -368,37 +547,16 @@ func TestIdentityHelperErrors(t *testing.T) {
 
 func TestServiceTokenHelperErrors(t *testing.T) {
 	orgID := uuid.New()
-	row := serviceTokenRow{id: uuid.New(), orgID: orgID}
 	cases := []struct {
 		name string
 		f    faultConfig
 		call func(context.Context, *sql.Tx) error
 	}{
-		{"lookup", faultConfig{query: errInjected, queryAfter: 1}, func(ctx context.Context, tx *sql.Tx) error {
-			in := serviceTokenInput{orgID: orgID, bearer: mustPAT(t)}
-			return writeServiceToken(ctx, tx, in)
-		}},
-		{"prefix check", faultConfig{query: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
-			in := serviceTokenInput{orgID: orgID, bearer: mustPAT(t)}
-			err := writeServiceToken(ctx, tx, in)
-			if err == nil || !strings.Contains(err.Error(), "check memory token prefix") {
-				t.Fatalf("writeServiceToken error = %v, want a prefix-check failure", err)
-			}
-			return err
+		{"query", faultConfig{query: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
+			return writeServiceToken(ctx, tx, serviceTokenInput{orgID: orgID, bearer: mustPAT(t)})
 		}},
 		{"scan", faultConfig{scan: true}, func(ctx context.Context, tx *sql.Tx) error {
-			_, err := findServiceTokens(ctx, tx, orgID)
-			return err
-		}},
-		{"update", faultConfig{exec: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
-			return updateServiceToken(ctx, tx, row)
-		}},
-		{"insert", faultConfig{exec: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
-			in := serviceTokenInput{orgID: orgID, bearer: mustPAT(t)}
-			return insertServiceToken(ctx, tx, in, serviceTokenRow{})
-		}},
-		{"revoke duplicates", faultConfig{exec: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
-			return revokeDuplicateServiceTokens(ctx, tx, orgID, []serviceTokenRow{row})
+			return writeServiceToken(ctx, tx, serviceTokenInput{orgID: orgID, bearer: mustPAT(t)})
 		}},
 		{"malformed token", faultConfig{}, func(ctx context.Context, tx *sql.Tx) error {
 			return writeServiceToken(ctx, tx, serviceTokenInput{orgID: orgID, bearer: "not-a-pat"})
@@ -414,12 +572,16 @@ func TestServiceTokenHelperErrors(t *testing.T) {
 		})
 	}
 
-	t.Run("revoked duplicate is skipped", func(t *testing.T) {
-		db := openFaultDB(t, faultConfig{})
-		tx := beginFaultTx(t, db)
-		rows := []serviceTokenRow{{id: uuid.New(), revoked: true}}
-		if err := revokeDuplicateServiceTokens(context.Background(), tx, orgID, rows); err != nil {
-			t.Fatalf("revokeDuplicateServiceTokens: %v", err)
+	t.Run("inserted and updated are success", func(t *testing.T) {
+		for _, outcome := range []string{outcomeInserted, outcomeUpdated} {
+			db := openFaultDB(t, faultConfig{rows: []faultRow{
+				serviceTokenRow(outcome, uuid.NewString()),
+			}})
+			tx := beginFaultTx(t, db)
+			in := serviceTokenInput{orgID: orgID, bearer: mustPAT(t)}
+			if err := writeServiceToken(context.Background(), tx, in); err != nil {
+				t.Fatalf("%s outcome: %v", outcome, err)
+			}
 		}
 	})
 }

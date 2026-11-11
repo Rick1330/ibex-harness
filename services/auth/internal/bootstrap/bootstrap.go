@@ -100,39 +100,54 @@ type tokenInput struct {
 }
 
 type serviceTokenInput struct {
-	orgID   uuid.UUID
-	userID  uuid.NullUUID
-	agentID uuid.NullUUID
-	bearer  string
+	orgID  uuid.UUID
+	bearer string
 }
 
-type serviceTokenRow struct {
-	id        uuid.UUID
-	orgID     uuid.UUID
-	prefix    string
-	hash      string
-	userID    uuid.NullUUID
-	agentID   uuid.NullUUID
-	expiresAt sql.NullTime
-	revoked   bool
+// subjectIDs are the organization's current owner and default agent. Either may
+// be absent, which callers must not treat as a usable binding.
+type subjectIDs struct {
+	owner uuid.NullUUID
+	agent uuid.NullUUID
 }
 
+// The definer statements. Migration 000069 moved every write behind a
+// SECURITY DEFINER function owned by ibex_service, because 000063's tenant
+// policy admits current_user = 'ibex_service' and ibex_service is NOBYPASSRLS:
+// a bootstrap process that pins the least-privilege ibex_bootstrap login holds
+// no table privilege at all. Each definer returns data, or a named outcome,
+// rather than raising a business error, so the operator-facing text stays here.
 const (
-	ownerLookupSQL = `SELECT id FROM ibex_core.users
-		WHERE org_id = $1 AND role = 'owner'
-		  AND status = 'active' AND deleted_at IS NULL
-		ORDER BY created_at LIMIT 1`
-	agentLookupSQL = `SELECT id FROM ibex_core.agents
-		WHERE org_id = $1
-		  AND status = 'active' AND deleted_at IS NULL
-		ORDER BY created_at LIMIT 1`
-	serviceTokensLookupSQL = `SELECT id, is_revoked, user_id, agent_id, expires_at
-		FROM ibex_core.tokens
-		WHERE org_id = $1 AND type = 'service_token' AND name = 'memory-service'
-		ORDER BY created_at`
-	organizationLockSQL = `SELECT id FROM ibex_core.organizations
-		WHERE id = $1 AND deleted_at IS NULL
-		FOR UPDATE`
+	upsertOrganizationSQL = `
+		SELECT created, org_id, deleted_at
+		FROM ibex_core.bootstrap_upsert_organization($1, $2, $3)`
+	// lockOrganizationSQL returns whether a non-deleted row was locked.
+	lockOrganizationSQL = `SELECT ibex_core.bootstrap_lock_organization($1)`
+	lookupSubjectsSQL   = `
+		SELECT owner_id, agent_id
+		FROM ibex_core.bootstrap_lookup_subjects($1)`
+	createIdentitySQL = `
+		SELECT user_id, agent_id
+		FROM ibex_core.bootstrap_create_identity($1, $2, $3, $4, $5, $6, $7)`
+	// writeModelPolicySQL returns void; the result is not read.
+	writeModelPolicySQL = `SELECT ibex_core.bootstrap_write_model_policy($1)`
+	// insertPATSQL returns the token id Go already generated; it is not read.
+	insertPATSQL          = `SELECT ibex_core.bootstrap_insert_pat($1, $2, $3, $4, $5, $6, $7, $8)`
+	upsertServiceTokenSQL = `
+		SELECT outcome, token_id
+		FROM ibex_core.bootstrap_upsert_service_token($1, $2, $3, $4)`
+)
+
+// The named outcomes bootstrap_upsert_service_token reports.
+const (
+	// outcomeInserted means no managed row existed and one was created.
+	outcomeInserted = "inserted"
+	// outcomeUpdated means the managed row was re-bound to the new value.
+	outcomeUpdated = "updated"
+	// outcomePrefixConflict means another organization owns the prefix.
+	outcomePrefixConflict = "prefix_conflict"
+	// outcomeRevokedRefused means the managed row is revoked and must stay so.
+	outcomeRevokedRefused = "revoked_refused"
 )
 
 // Run executes the bootstrap command and returns a process exit code.
@@ -331,7 +346,10 @@ func bootstrapPermissions() int64 {
 	return permissions.Admin | permissions.SecretUse | permissions.OperatorMetadataRead
 }
 
-// bootstrap runs the identity, policy, PAT, and memory-token writes in one transaction.
+// bootstrap runs the identity, policy, PAT, and memory-token writes in one
+// transaction. Every statement is a SECURITY DEFINER call, so the command needs
+// no table privilege and no tenant GUC: inside the definer current_user is
+// ibex_service, which the tenant policy admits.
 func bootstrap(ctx context.Context, db *sql.DB, cfg bootstrapConfig) (bootstrapResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, bootstrapTimeout)
 	defer cancel()
@@ -341,10 +359,6 @@ func bootstrap(ctx context.Context, db *sql.DB, cfg bootstrapConfig) (bootstrapR
 		return bootstrapResult{}, fmt.Errorf("begin bootstrap transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
-		return bootstrapResult{}, fmt.Errorf("set service-account session: %w", err)
-	}
 
 	result, err := bootstrapInTx(ctx, tx, cfg)
 	if err != nil {
@@ -413,12 +427,7 @@ func createIdentity(
 	}
 	memoryManaged := false
 	if cfg.MemoryToken != "" {
-		in := serviceTokenInput{
-			orgID:   orgID,
-			userID:  uuid.NullUUID{UUID: userID, Valid: true},
-			agentID: uuid.NullUUID{UUID: agentID, Valid: true},
-			bearer:  cfg.MemoryToken,
-		}
+		in := serviceTokenInput{orgID: orgID, bearer: cfg.MemoryToken}
 		if err := writeServiceToken(ctx, tx, in); err != nil {
 			return bootstrapResult{}, err
 		}
@@ -434,67 +443,64 @@ func createIdentity(
 // scoped token without touching any PAT. It is used only for an already
 // bootstrapped organization.
 func reconcileServiceToken(ctx context.Context, tx *sql.Tx, orgID uuid.UUID, bearer string) error {
-	if err := lockOrganization(ctx, tx, orgID); err != nil {
+	locked, err := lockOrganization(ctx, tx, orgID)
+	if err != nil {
 		return fmt.Errorf("lock organization for memory token: %w", err)
 	}
-	userID, err := lookupOwner(ctx, tx, orgID)
-	if err != nil {
-		return fmt.Errorf("look up owner for memory token: %w", err)
+	if !locked {
+		return fmt.Errorf(
+			"lock organization for memory token: organization %s is missing or soft-deleted",
+			orgID,
+		)
 	}
-	if !userID.Valid {
+	subjects, err := lookupSubjects(ctx, tx, orgID)
+	if err != nil {
+		return fmt.Errorf("look up owner and agent for memory token: %w", err)
+	}
+	if !subjects.owner.Valid {
 		return fmt.Errorf(
 			"organization %s has no active owner; cannot bind the memory service token to a subject",
 			orgID,
 		)
 	}
-	agentID, err := lookupAgent(ctx, tx, orgID)
-	if err != nil {
-		return fmt.Errorf("look up agent for memory token: %w", err)
-	}
-	if !agentID.Valid {
+	if !subjects.agent.Valid {
 		return fmt.Errorf(
 			"organization %s has no active agent; create one before starting the profile, "+
 				"otherwise the memory service token would be accepted for any agent",
 			orgID,
 		)
 	}
-	in := serviceTokenInput{orgID: orgID, userID: userID, agentID: agentID, bearer: bearer}
-	return writeServiceToken(ctx, tx, in)
+	return writeServiceToken(ctx, tx, serviceTokenInput{orgID: orgID, bearer: bearer})
 }
 
-// lookupOwner returns the organization's first owner, or an invalid UUID when absent.
-func lookupOwner(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) (uuid.NullUUID, error) {
-	return scanNullableID(tx.QueryRowContext(ctx, ownerLookupSQL, orgID.String()))
-}
-
-// lookupAgent returns the organization's first agent, or an invalid UUID when absent.
-func lookupAgent(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) (uuid.NullUUID, error) {
-	return scanNullableID(tx.QueryRowContext(ctx, agentLookupSQL, orgID.String()))
-}
-
-// scanNullableID scans one nullable UUID and treats no rows as absent.
-func scanNullableID(row *sql.Row) (uuid.NullUUID, error) {
-	var id uuid.NullUUID
-	err := row.Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return uuid.NullUUID{}, nil
+// lookupSubjects returns the organization's active owner and default agent.
+func lookupSubjects(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) (subjectIDs, error) {
+	var subjects subjectIDs
+	if err := tx.QueryRowContext(ctx, lookupSubjectsSQL, orgID.String()).
+		Scan(&subjects.owner, &subjects.agent); err != nil {
+		return subjectIDs{}, err
 	}
-	if err != nil {
-		return uuid.NullUUID{}, err
-	}
-	return id, nil
+	return subjects, nil
 }
 
-// lockOrganization serializes memory-token reconciliation for one organization.
-func lockOrganization(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) error {
-	var id uuid.UUID
-	return tx.QueryRowContext(ctx, organizationLockSQL, orgID.String()).Scan(&id)
+// lockOrganization serializes memory-token reconciliation for one organization
+// and reports whether a non-deleted row exists to reconcile.
+func lockOrganization(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) (bool, error) {
+	var locked bool
+	if err := tx.QueryRowContext(ctx, lockOrganizationSQL, orgID.String()).Scan(&locked); err != nil {
+		return false, err
+	}
+	return locked, nil
 }
 
 // writeServiceToken inserts or updates the org's scoped memory service token.
 // The wire value is supplied by the operator/secret generator; only the
 // Argon2id hash is stored. Updating an existing row makes rotation effective
 // and invalidates the previous value.
+//
+// One definer performs the whole reconcile — prefix ownership, the managed-row
+// find, the update or insert, and the duplicate revoke — and reports which
+// branch it took, because the refusal text belongs to the operator, not to SQL.
 func writeServiceToken(ctx context.Context, tx *sql.Tx, in serviceTokenInput) error {
 	parsed, err := token.ParsePAT(in.bearer)
 	if err != nil {
@@ -504,218 +510,86 @@ func writeServiceToken(ctx context.Context, tx *sql.Tx, in serviceTokenInput) er
 	if err != nil {
 		return fmt.Errorf("hash memory service token: %w", err)
 	}
-	if err := ensurePrefixUnused(ctx, tx, in.orgID, parsed.Prefix); err != nil {
-		return err
+	perms := permissions.MemoryRead | permissions.MemoryWrite
+	var outcome string
+	var tokenID uuid.NullUUID
+	if err := tx.QueryRowContext(ctx, upsertServiceTokenSQL,
+		in.orgID.String(), hash, parsed.Prefix, perms,
+	).Scan(&outcome, &tokenID); err != nil {
+		return fmt.Errorf("write memory service token: %w", err)
 	}
-	rows, err := findServiceTokens(ctx, tx, in.orgID)
-	if err != nil {
-		return fmt.Errorf("look up memory service token: %w", err)
-	}
-	if len(rows) == 0 {
-		return insertServiceToken(ctx, tx, in, serviceTokenRow{prefix: parsed.Prefix, hash: hash})
-	}
-	row := rows[0]
-	row.prefix = parsed.Prefix
-	row.hash = hash
-	row.userID = in.userID
-	row.agentID = in.agentID
-	if err := updateServiceToken(ctx, tx, row); err != nil {
-		return err
-	}
-	return revokeDuplicateServiceTokens(ctx, tx, in.orgID, rows[1:])
+	return serviceTokenOutcome(outcome, in.orgID)
 }
 
-// ensurePrefixUnused rejects a bearer whose prefix already belongs to another
-// organization. The validator resolves a bearer by prefix alone, so a reused
-// value would make two organizations indistinguishable at authentication time.
-func ensurePrefixUnused(ctx context.Context, tx *sql.Tx, orgID uuid.UUID, prefix string) error {
-	// Serialize on the prefix for the rest of the transaction. Two concurrent
-	// bootstraps with the same bearer would otherwise both pass the check
-	// before either inserts. READ COMMITTED takes a fresh snapshot after the
-	// lock is granted, so the second transaction sees the committed row.
-	if _, err := tx.ExecContext(ctx,
-		`SELECT pg_advisory_xact_lock(hashtext($1))`, prefix,
-	); err != nil {
-		return fmt.Errorf("check memory token prefix: %w", err)
-	}
-	var owner uuid.UUID
-	err := tx.QueryRowContext(ctx,
-		`SELECT org_id FROM ibex_core.tokens WHERE prefix = $1 LIMIT 1`, prefix,
-	).Scan(&owner)
-	if errors.Is(err, sql.ErrNoRows) {
+// serviceTokenOutcome maps a definer outcome to the operator-facing error, or
+// nil for the two outcomes that wrote the row the operator asked for.
+func serviceTokenOutcome(outcome string, orgID uuid.UUID) error {
+	switch outcome {
+	case outcomeInserted, outcomeUpdated:
 		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("check memory token prefix: %w", err)
-	}
-	if owner != orgID {
+	case outcomePrefixConflict:
 		return errors.New(
 			"the memory service token is already bound to another organization; " +
 				"use a distinct IBEX_MEMORY_API_TOKEN",
 		)
-	}
-	return nil
-}
-
-// findServiceTokens returns every managed memory-service row for an organization.
-func findServiceTokens(
-	ctx context.Context,
-	tx *sql.Tx,
-	orgID uuid.UUID,
-) ([]serviceTokenRow, error) {
-	rows, err := tx.QueryContext(ctx, serviceTokensLookupSQL, orgID.String())
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []serviceTokenRow
-	for rows.Next() {
-		row := serviceTokenRow{orgID: orgID}
-		if err := rows.Scan(&row.id, &row.revoked, &row.userID, &row.agentID, &row.expiresAt); err != nil {
-			return nil, err
-		}
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-// updateServiceToken refreshes the hash, prefix, subject, and expiry of one managed row.
-func updateServiceToken(ctx context.Context, tx *sql.Tx, row serviceTokenRow) error {
-	if row.revoked {
+	case outcomeRevokedRefused:
 		// Never resurrect a credential the operator revoked. Failing the
 		// one-shot makes the state visible instead of silently re-enabling the
 		// old grant.
 		return fmt.Errorf(
 			"memory-service token for org %s is revoked; refusing to reactivate it; "+
 				"delete the row or issue a new token before starting the profile",
-			row.orgID,
+			orgID,
 		)
+	default:
+		return fmt.Errorf("write memory service token: unrecognised outcome %q", outcome)
 	}
-	perms := permissions.MemoryRead | permissions.MemoryWrite
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE ibex_core.tokens
-		SET hash = $2, prefix = $3, permissions = $4, user_id = $5, agent_id = $6,
-		    expires_at = NULL, updated_at = NOW()
-		WHERE id = $1 AND org_id = $7`,
-		row.id.String(), row.hash, row.prefix, perms, row.userID, row.agentID, row.orgID.String(),
-	); err != nil {
-		return fmt.Errorf("update memory service token: %w", err)
-	}
-	return nil
 }
 
-// revokeDuplicateServiceTokens disables managed rows beyond the first one.
-func revokeDuplicateServiceTokens(
-	ctx context.Context,
-	tx *sql.Tx,
-	orgID uuid.UUID,
-	rows []serviceTokenRow,
-) error {
-	for _, row := range rows {
-		if row.revoked {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE ibex_core.tokens
-			SET is_revoked = true, revoked_at = NOW(),
-			    revoke_reason = 'duplicate memory-service row', updated_at = NOW()
-			WHERE id = $1 AND org_id = $2`,
-			row.id.String(), orgID.String(),
-		); err != nil {
-			return fmt.Errorf("revoke duplicate memory service token: %w", err)
-		}
-	}
-	return nil
-}
-
-func insertServiceToken(
-	ctx context.Context,
-	tx *sql.Tx,
-	in serviceTokenInput,
-	row serviceTokenRow,
-) error {
-	perms := permissions.MemoryRead | permissions.MemoryWrite
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO ibex_core.tokens
-			(id, org_id, user_id, agent_id, type, hash, prefix, name,
-			 permissions, is_revoked, expires_at)
-		VALUES ($1, $2, $3, $4, 'service_token', $5, $6, 'memory-service',
-			$7, false, NULL)`,
-		uuid.New().String(), in.orgID.String(), in.userID, in.agentID,
-		row.hash, row.prefix, perms,
-	); err != nil {
-		return fmt.Errorf("insert memory service token: %w", err)
-	}
-	return nil
-}
-
-// insertOrganization uses ON CONFLICT (slug) DO NOTHING so two concurrent
-// bootstraps cannot create a second organization. It reports the existing ID
-// without touching a token when the slug is already present.
+// insertOrganization upserts by slug so two concurrent bootstraps cannot create
+// a second organization. It reports the existing ID without touching a token
+// when the slug is already present, and names a soft-deleted winner instead of
+// surfacing a bare no-rows error.
 func insertOrganization(
 	ctx context.Context,
 	tx *sql.Tx,
 	in orgInput,
 ) (bootstrapResult, error) {
-	result, err := tx.ExecContext(ctx, `
-		INSERT INTO ibex_core.organizations
-			(id, name, slug, tier, status,
-			 embedding_profile, embedding_dim, embedding_model_id)
-		VALUES ($1, $2, $3, 'free', 'active', 'gpu', 1024, 'BAAI/bge-m3')
-		ON CONFLICT (slug) DO NOTHING`,
-		in.id.String(), in.cfg.OrgName, in.cfg.OrgSlug)
-	if err != nil {
+	var created bool
+	var orgID uuid.UUID
+	var deletedAt sql.NullTime
+	if err := tx.QueryRowContext(ctx, upsertOrganizationSQL,
+		in.id.String(), in.cfg.OrgName, in.cfg.OrgSlug,
+	).Scan(&created, &orgID, &deletedAt); err != nil {
 		return bootstrapResult{}, fmt.Errorf("insert organization: %w", err)
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return bootstrapResult{}, fmt.Errorf("organization insert result: %w", err)
-	}
-	if rows > 0 {
+	if created {
 		return bootstrapResult{}, nil
-	}
-
-	var existing uuid.UUID
-	var deletedAt sql.NullTime
-	if err := tx.QueryRowContext(ctx,
-		`SELECT id, deleted_at FROM ibex_core.organizations WHERE slug = $1`, in.cfg.OrgSlug,
-	).Scan(&existing, &deletedAt); err != nil {
-		return bootstrapResult{}, fmt.Errorf("look up existing organization: %w", err)
 	}
 	if deletedAt.Valid {
 		return bootstrapResult{}, fmt.Errorf(
 			"organization slug %q belongs to a soft-deleted organization (%s); "+
 				"hard-delete it or choose another IBEX_BOOTSTRAP_ORG_SLUG",
-			in.cfg.OrgSlug, existing,
+			in.cfg.OrgSlug, orgID,
 		)
 	}
-	return bootstrapResult{AlreadyBootstrapped: true, OrgID: existing}, nil
+	return bootstrapResult{AlreadyBootstrapped: true, OrgID: orgID}, nil
 }
 
-// insertIdentity creates the owner user and the default agent in one helper so
-// the two inserts stay together and the first-run path stays short.
+// insertIdentity creates the owner user and the default agent in one definer
+// call, so the agent's created_by is the user created alongside it.
 func insertIdentity(
 	ctx context.Context,
 	tx *sql.Tx,
 	in identityInput,
 ) (uuid.UUID, uuid.UUID, error) {
 	userID := uuid.New()
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO ibex_core.users (id, org_id, email, name, role, status)
-		VALUES ($1, $2, $3, $4, 'owner', 'active')`,
-		userID.String(), in.orgID.String(), in.cfg.UserEmail, in.cfg.UserName,
-	); err != nil {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("insert owner user: %w", err)
-	}
-
 	agentID := uuid.New()
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO ibex_core.agents (id, org_id, created_by, name, slug, status)
-		VALUES ($1, $2, $3, $4, $5, 'active')`,
-		agentID.String(), in.orgID.String(), userID.String(), in.cfg.AgentName, in.cfg.AgentSlug,
-	); err != nil {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("insert agent: %w", err)
+	if err := tx.QueryRowContext(ctx, createIdentitySQL,
+		in.orgID.String(), userID.String(), in.cfg.UserEmail, in.cfg.UserName,
+		agentID.String(), in.cfg.AgentName, in.cfg.AgentSlug,
+	).Scan(&userID, &agentID); err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("insert owner user and default agent: %w", err)
 	}
 	return userID, agentID, nil
 }
@@ -723,19 +597,10 @@ func insertIdentity(
 // insertModelPolicy writes the allow-all fallback policy and its epoch, which
 // matches infra/scripts/seed_dev.sql.
 func insertModelPolicy(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) error {
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority)
-		VALUES ($1, '*', true, 1000)`,
-		orgID.String(),
-	); err != nil {
-		return fmt.Errorf("insert allow-all model policy: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO ibex_core.org_model_policy_meta (org_id, epoch)
-		VALUES ($1, 1)`,
-		orgID.String(),
-	); err != nil {
-		return fmt.Errorf("insert model policy epoch: %w", err)
+	// The definer returns void, so Exec is the right call: there is no value to
+	// read and no row count the caller uses.
+	if _, err := tx.ExecContext(ctx, writeModelPolicySQL, orgID.String()); err != nil {
+		return fmt.Errorf("insert allow-all model policy with its epoch: %w", err)
 	}
 	return nil
 }
@@ -754,11 +619,8 @@ func insertToken(
 	if err != nil {
 		return "", fmt.Errorf("hash bootstrap PAT: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO ibex_core.tokens
-			(id, org_id, user_id, agent_id, type, hash, prefix, name,
-			 permissions, is_revoked, expires_at)
-		VALUES ($1, $2, $3, $4, 'pat', $5, $6, $7, $8, false, NULL)`,
+	// The definer echoes the id Go generated; nothing reads it.
+	if _, err := tx.ExecContext(ctx, insertPATSQL,
 		rowID.String(), in.orgID.String(), in.userID.String(), in.agentID.String(),
 		hash, prefix, in.name, bootstrapPermissions(),
 	); err != nil {

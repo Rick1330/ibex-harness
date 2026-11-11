@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -453,6 +454,19 @@ func generatePAT(t *testing.T) string {
 	return pat
 }
 
+// openCapabilityDSN returns dsn rewritten to connect as one capability login.
+// Provision still reads the owner credential from the original DSN, so only the
+// pool under test carries the capability login.
+func openCapabilityDSN(t *testing.T, dsn, login, password string) string {
+	t.Helper()
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("parse test DSN: %v", err)
+	}
+	parsed.User = url.UserPassword(login, password)
+	return parsed.String()
+}
+
 func assertFirstRun(t *testing.T, result bootstrapResult) {
 	t.Helper()
 	if result.AlreadyBootstrapped {
@@ -817,7 +831,7 @@ func TestBootstrapIntegrationClosedDatabase(t *testing.T) {
 }
 
 // TestBootstrapIntegrationHelperErrorContract exercises every failure return of
-// the SQL helpers with a rolled-back transaction, so the error contract is
+// the definer helpers with a rolled-back transaction, so the error contract is
 // tested without a mock driver.
 func TestBootstrapIntegrationHelperErrorContract(t *testing.T) {
 	f := newBootstrapFixture(t)
@@ -829,8 +843,6 @@ func TestBootstrapIntegrationHelperErrorContract(t *testing.T) {
 		t.Fatalf("rollback: %v", err)
 	}
 	orgID := first.OrgID
-	in := serviceTokenInput{orgID: orgID, bearer: generatePAT(t)}
-	row := serviceTokenRow{id: uuid.New(), orgID: orgID}
 
 	checks := []struct {
 		name string
@@ -851,25 +863,17 @@ func TestBootstrapIntegrationHelperErrorContract(t *testing.T) {
 			})
 			return err
 		}()},
-		{"lookupOwner", func() error {
-			_, err := lookupOwner(ctx, tx, orgID)
+		{"lookupSubjects", func() error {
+			_, err := lookupSubjects(ctx, tx, orgID)
 			return err
 		}()},
-		{"lookupAgent", func() error {
-			_, err := lookupAgent(ctx, tx, orgID)
+		{"lockOrganization", func() error {
+			_, err := lockOrganization(ctx, tx, orgID)
 			return err
 		}()},
-		{"lockOrganization", lockOrganization(ctx, tx, orgID)},
-		{"findServiceTokens", func() error {
-			_, err := findServiceTokens(ctx, tx, orgID)
-			return err
-		}()},
-		{"writeServiceToken", writeServiceToken(ctx, tx, in)},
-		{"updateServiceToken", updateServiceToken(ctx, tx, row)},
-		{"insertServiceToken", insertServiceToken(ctx, tx, in, row)},
-		{"revokeDuplicateServiceTokens", revokeDuplicateServiceTokens(
-			ctx, tx, orgID, []serviceTokenRow{row},
-		)},
+		{"writeServiceToken", writeServiceToken(ctx, tx, serviceTokenInput{
+			orgID: orgID, bearer: generatePAT(t),
+		})},
 	}
 	for _, check := range checks {
 		if check.err == nil {
@@ -878,30 +882,64 @@ func TestBootstrapIntegrationHelperErrorContract(t *testing.T) {
 	}
 }
 
-// TestBootstrapIntegrationScanNullableID covers both branches of the nullable
-// scan: no rows, and one row.
-func TestBootstrapIntegrationScanNullableID(t *testing.T) {
-	f := newBootstrapFixture(t)
-	first := f.run()
+// TestBootstrapIntegrationAsBootstrapLogin is the positive control for
+// migration 000069: the command must work when it connects as the
+// least-privilege ibex_bootstrap login, which holds EXECUTE on the seven
+// definers and no table privilege at all. The owner pool is used only to
+// provision the logins and to verify the rows afterwards, because a superuser
+// bypasses RLS and would make a missing column grant invisible.
+func TestBootstrapIntegrationAsBootstrapLogin(t *testing.T) {
+	if os.Getenv("POSTGRES_TEST_DSN") == "" {
+		t.Skip("POSTGRES_TEST_DSN not set")
+	}
+	dsn, cleanup := testutil.SetupPostgres(t)
+	t.Cleanup(cleanup)
 
-	verifyCtx, verifyTx := f.begin()
-	missing, err := scanNullableID(verifyTx.QueryRowContext(verifyCtx,
-		`SELECT id FROM ibex_core.users WHERE org_id = $1`, uuid.New().String()))
+	ownerDB := testutil.OpenDB(t, dsn)
+	t.Cleanup(func() { _ = ownerDB.Close() })
+
+	cfg := bootstrapConfig{
+		PostgresDSN: openCapabilityDSN(t, dsn, "ibex_bootstrap", testutil.BootstrapLoginTestPassword),
+		OrgName:     "Bootstrap As Login",
+		OrgSlug:     uuid.NewString(),
+		UserEmail:   "login-owner@example.com",
+		UserName:    "Owner",
+		AgentName:   "Default Agent",
+		AgentSlug:   "default",
+		PATName:     "Bootstrap PAT",
+		PATFile:     filepath.Join(t.TempDir(), "bootstrap.pat"),
+		MemoryToken: generatePAT(t),
+	}
+	t.Cleanup(func() { cleanupBootstrapOrg(t, ownerDB, cfg.OrgSlug) })
+
+	testutil.ProvisionCapabilityLogins(t, dsn)
+	bootstrapDB, err := sql.Open("postgres", cfg.PostgresDSN)
 	if err != nil {
-		t.Fatalf("scanNullableID on no rows: %v", err)
+		t.Fatalf("open bootstrap pool: %v", err)
 	}
-	if missing.Valid {
-		t.Fatal("scanNullableID reported a value for no rows")
-	}
-	present, err := scanNullableID(verifyTx.QueryRowContext(verifyCtx,
-		`SELECT id FROM ibex_core.users WHERE id = $1 AND org_id = $2`,
-		first.UserID.String(), first.OrgID.String()))
+	t.Cleanup(func() { _ = bootstrapDB.Close() })
+
+	first, err := bootstrap(context.Background(), bootstrapDB, cfg)
 	if err != nil {
-		t.Fatalf("scanNullableID on a row: %v", err)
+		t.Fatalf("bootstrap as ibex_bootstrap: %v", err)
 	}
-	if !present.Valid || present.UUID != first.UserID {
-		t.Fatalf("scanNullableID = %v, want %s", present, first.UserID)
+	assertFirstRun(t, first)
+
+	ctx, tx := openServiceTx(t, ownerDB)
+	v := bootstrapVerifier{t: t, tx: tx, result: first}
+	v.organization(ctx)
+	v.ownerAndAgent(ctx)
+	v.modelPolicy(ctx)
+	v.pat(ctx)
+	v.memoryToken(ctx, cfg.MemoryToken)
+
+	// A re-run must reach the reconcile path, which locks the organization and
+	// re-reads the subjects through the definers.
+	rerun, err := bootstrap(context.Background(), bootstrapDB, cfg)
+	if err != nil {
+		t.Fatalf("rerun as ibex_bootstrap: %v", err)
 	}
+	assertAlreadyBootstrapped(t, rerun, true)
 }
 
 // failingWriter reports an error after the summary exceeds the buffer, so Run's
