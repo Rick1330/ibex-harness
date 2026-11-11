@@ -121,6 +121,7 @@ _CAPABILITY_PASSWORDS = {
     "IBEX_RUNTIME_DB_PASSWORD": "capability-test-only-runtime",
     "IBEX_WORKER_DB_PASSWORD": "capability-test-only-worker",
     "IBEX_BOOTSTRAP_DB_PASSWORD": "capability-test-only-bootstrap",
+    "IBEX_AUTH_DB_PASSWORD": "capability-test-only-auth",
 }
 _WORKER_LOGIN = "ibex_worker"
 

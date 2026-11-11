@@ -16,15 +16,16 @@ type readerGrant struct {
 	worker    bool
 	bootstrap bool
 	purge     bool
+	auth      bool
 }
 
 // readerGrants is the complete reader grant matrix.
 var readerGrants = []readerGrant{
-	{"auth token lookup", "ibex_core.auth_find_token_by_prefix(text)", true, false, false, false},
-	{"rate-limit snapshot", "ibex_core.rate_limit_overrides_snapshot()", true, false, false, false},
-	{"session sweep", "ibex_core.sessions_abandon_idle(timestamptz, integer)", true, false, false, false},
-	{"budget sweep", "ibex_core.budget_reservations_expire_stale(interval, integer)", false, true, false, false},
-	{"active periods", "ibex_billing.active_periods()", false, true, false, false},
+	{"auth token lookup", "ibex_core.auth_find_token_by_prefix(text)", false, false, false, false, true},
+	{"rate-limit snapshot", "ibex_core.rate_limit_overrides_snapshot()", true, false, false, false, false},
+	{"session sweep", "ibex_core.sessions_abandon_idle(timestamptz, integer)", true, false, false, false, false},
+	{"budget sweep", "ibex_core.budget_reservations_expire_stale(interval, integer)", false, true, false, false, false},
+	{"active periods", "ibex_billing.active_periods()", false, true, false, false, false},
 }
 
 // grantQuery is a role and a function signature for a privilege check.
@@ -58,7 +59,7 @@ func TestTenancyReaderGrantMatrix(t *testing.T) {
 	}
 }
 
-// assertReaderGrants checks the four capability roles and PUBLIC for one reader.
+// assertReaderGrants checks the five capability roles and PUBLIC for one reader.
 func assertReaderGrants(f *tenancyFixture, ctx context.Context, grant readerGrant) {
 	f.t.Helper()
 	checks := []struct {
@@ -69,6 +70,7 @@ func assertReaderGrants(f *tenancyFixture, ctx context.Context, grant readerGran
 		{"ibex_worker", grant.worker},
 		{"ibex_bootstrap", grant.bootstrap},
 		{"ibex_purge", grant.purge},
+		{"ibex_auth", grant.auth},
 	}
 	for _, check := range checks {
 		query := grantQuery{role: check.role, signature: grant.signature}

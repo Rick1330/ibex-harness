@@ -119,6 +119,7 @@ func TestResolveProvisionSecrets(t *testing.T) {
 		"IBEX_RUNTIME_DB_PASSWORD":   "runtime",
 		"IBEX_WORKER_DB_PASSWORD":    "worker",
 		"IBEX_BOOTSTRAP_DB_PASSWORD": "bootstrap",
+		"IBEX_AUTH_DB_PASSWORD":      "auth",
 	}
 	tests := []struct {
 		name    string

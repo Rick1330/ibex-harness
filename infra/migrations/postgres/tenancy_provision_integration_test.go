@@ -36,10 +36,10 @@ func TestProvisionSetsScramAndAllowsLogin(t *testing.T) {
 	assertRuntimeLogin(t, f, ctx, testcreds.RuntimeLoginTestPassword)
 }
 
-// assertCapabilityConnLimits checks all three login limits.
+// assertCapabilityConnLimits checks all four login limits.
 func assertCapabilityConnLimits(f *tenancyFixture, ctx context.Context, want int) {
 	f.t.Helper()
-	for _, name := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap"} {
+	for _, name := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_auth"} {
 		f.assertConnLimit(ctx, connLimitCheck{spec: role(name), want: want})
 	}
 }
@@ -149,12 +149,7 @@ func TestTenancyDownUpCycle(t *testing.T) {
 	f.assertVersion(ctx, versionCheck{want: want})
 	assertIndex(f, ctx, true)
 
-	for i := 0; i < 5; i++ {
-		if err := Down(f.dsn); err != nil {
-			t.Fatalf(downErrFormat, i+1, err)
-		}
-	}
-	f.assertVersion(ctx, versionCheck{want: want - 5})
+	rewindToPreServiceModel(t, f)
 	assertIndex(f, ctx, false)
 	assertServiceBypass(f, ctx, true)
 	assertCapabilityRoles(f, ctx, 0)
@@ -165,7 +160,27 @@ func TestTenancyDownUpCycle(t *testing.T) {
 	f.assertVersion(ctx, versionCheck{want: want})
 	assertIndex(f, ctx, true)
 	assertServiceBypass(f, ctx, false)
-	assertCapabilityRoles(f, ctx, 4)
+	assertCapabilityRoles(f, ctx, 5)
+}
+
+// preServiceModelVersion is the last migration before the service-role wave:
+// 000063-000069 create the capability roles, the privileged readers and the
+// bootstrap definers. The reversal and foreign-role tests have to land below
+// 000064 so the migration under test actually re-runs.
+const preServiceModelVersion = 62
+
+// rewindToPreServiceModel rolls the suite back to preServiceModelVersion.
+// The step count is derived from the embedded set so a new migration in the
+// wave cannot silently leave 000064 applied underneath a test that expects to
+// re-run it.
+func rewindToPreServiceModel(t *testing.T, f *tenancyFixture) {
+	t.Helper()
+	for version := maxEmbeddedMigrationVersion(t); version > preServiceModelVersion; version-- {
+		if err := Down(f.dsn); err != nil {
+			t.Fatalf(downErrFormat, version, err)
+		}
+	}
+	f.assertVersion(t.Context(), versionCheck{want: preServiceModelVersion})
 }
 
 // assertIndex checks the token-prefix index exists.
@@ -189,7 +204,7 @@ func assertServiceBypass(f *tenancyFixture, ctx context.Context, want bool) {
 // assertCapabilityRoles checks how many capability roles exist.
 func assertCapabilityRoles(f *tenancyFixture, ctx context.Context, want int) {
 	f.t.Helper()
-	got := f.roleCount(ctx, roleSet{names: []string{"ibex_purge", "ibex_runtime", "ibex_worker", "ibex_bootstrap"}})
+	got := f.roleCount(ctx, roleSet{names: []string{"ibex_purge", "ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_auth"}})
 	if got != want {
 		f.t.Fatalf("capability roles = %d, want %d", got, want)
 	}
@@ -271,11 +286,7 @@ func assertWorkerPurgeMembership(ctx context.Context, f *tenancyFixture) {
 func TestExistingProvisionedRoleKeepsLimit(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
-	for i := 0; i < 5; i++ {
-		if err := Down(f.dsn); err != nil {
-			t.Fatalf(downErrFormat, i+1, err)
-		}
-	}
+	rewindToPreServiceModel(t, f)
 	if _, err := f.db.ExecContext(ctx, `
 		CREATE ROLE ibex_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
 		NOBYPASSRLS NOINHERIT CONNECTION LIMIT -1`); err != nil {
@@ -335,11 +346,7 @@ func assertMigrationRejectsForeignWorker(t *testing.T, tc foreignWorkerCase) {
 	t.Helper()
 	f := newTenancyFixture(t)
 	ctx := t.Context()
-	for i := 0; i < 5; i++ {
-		if err := Down(f.dsn); err != nil {
-			t.Fatalf(downErrFormat, i+1, err)
-		}
-	}
+	rewindToPreServiceModel(t, f)
 	t.Cleanup(func() {
 		revokes := append(append([]string{}, workerTeardown...), tc.revokes...)
 		dropClusterRoles(context.Background(), f, revokes, tc.drops)
@@ -550,7 +557,7 @@ func (f *tenancyFixture) exec(ctx context.Context, query string) {
 // assertRolesUnprovisioned proves the rollback left every role inert.
 func assertRolesUnprovisioned(t *testing.T, f *tenancyFixture, ctx context.Context) {
 	t.Helper()
-	for _, name := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap"} {
+	for _, name := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_auth"} {
 		var hasPassword bool
 		if err := f.db.QueryRowContext(ctx,
 			`SELECT rolpassword IS NOT NULL FROM pg_authid WHERE rolname = $1`, name).Scan(&hasPassword); err != nil {

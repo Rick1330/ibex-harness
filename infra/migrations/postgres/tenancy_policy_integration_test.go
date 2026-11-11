@@ -44,6 +44,9 @@ func TestTenancyPolicyInvariants(t *testing.T) {
 	f.assertProsecdef(ctx, []string{
 		"auth_find_token_by_prefix", "rate_limit_overrides_snapshot", "sessions_abandon_idle",
 		"budget_reservations_expire_stale", "active_periods",
+		"bootstrap_upsert_organization", "bootstrap_lock_organization", "bootstrap_lookup_subjects",
+		"bootstrap_create_identity", "bootstrap_write_model_policy", "bootstrap_insert_pat",
+		"bootstrap_upsert_service_token",
 	}, true)
 }
 
@@ -94,21 +97,29 @@ func (f *tenancyFixture) assertProsecdef(ctx context.Context, names []string, wa
 	}
 }
 
-// TestTenancyDefinerReaderUnderRuntime asserts A7: the reader works as
-// ibex_runtime because its owner is ibex_service, and ibex_app is refused.
-func TestTenancyDefinerReaderUnderRuntime(t *testing.T) {
+// TestTenancyDefinerReaderUnderAuth asserts A7: the reader works as ibex_auth
+// because its owner is ibex_service, and ibex_app and ibex_runtime are refused
+// (the grant moved off the runtime login in 000068).
+func TestTenancyDefinerReaderUnderAuth(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
 	f.seedTenant(ctx)
 	tokenID := f.seedToken(ctx, tokenSeed{prefix: "ibex_pat_reader", hash: "hash-reader"})
 
-	row, err := readTokenAsRuntime(ctx, f, "ibex_pat_reader")
+	row, err := readTokenAsAuth(ctx, f, "ibex_pat_reader")
 	if err != nil {
-		t.Fatalf("reader as ibex_runtime: %v", err)
+		t.Fatalf("reader as ibex_auth: %v", err)
 	}
 	assertTokenRow(t, row, tokenWant{tokenID: tokenID, orgID: f.orgID, status: "active", hash: "hash-reader"})
 
-	err = f.withRole(ctx, role("ibex_app"), func(tx *sql.Tx) error {
+	assertDefinerRefused(t, f, ctx, role("ibex_app"))
+	assertDefinerRefused(t, f, ctx, role("ibex_runtime"))
+}
+
+// assertDefinerRefused asserts a role without EXECUTE is rejected with 42501.
+func assertDefinerRefused(t *testing.T, f *tenancyFixture, ctx context.Context, spec roleSpec) {
+	t.Helper()
+	err := f.withRole(ctx, spec, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
 			`SELECT * FROM ibex_core.auth_find_token_by_prefix($1)`, "ibex_pat_reader")
 		return err
@@ -139,7 +150,7 @@ func TestTenancyDefinerTokenFilters(t *testing.T) {
 		id := f.seedFilterToken(ctx, tokenFilter{
 			orgID: f.orgID, prefix: "filter-active", hash: "hash-active", createdAt: time.Now().UTC(),
 		})
-		row, err := readTokenAsRuntime(ctx, f, "filter-active")
+		row, err := readTokenAsAuth(ctx, f, "filter-active")
 		if err != nil {
 			t.Fatalf("active token: %v", err)
 		}
@@ -180,7 +191,7 @@ func TestTenancyDefinerTokenFilters(t *testing.T) {
 		newer := f.seedFilterToken(ctx, tokenFilter{
 			orgID: f.orgID, prefix: "filter-duplicate", hash: "hash-newer", createdAt: time.Now().UTC(),
 		})
-		row, err := readTokenAsRuntime(ctx, f, "filter-duplicate")
+		row, err := readTokenAsAuth(ctx, f, "filter-duplicate")
 		if err != nil {
 			t.Fatalf("duplicate prefix: %v", err)
 		}
@@ -213,7 +224,7 @@ func (f *tenancyFixture) seedFilterToken(ctx context.Context, filter tokenFilter
 // assertDefinerMiss asserts the reader returns zero rows for a filtered prefix.
 func assertDefinerMiss(t *testing.T, f *tenancyFixture, ctx context.Context, prefix string) {
 	t.Helper()
-	_, err := readTokenAsRuntime(ctx, f, prefix)
+	_, err := readTokenAsAuth(ctx, f, prefix)
 	if !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("%s: err = %v, want sql.ErrNoRows", prefix, err)
 	}
@@ -227,10 +238,10 @@ type tokenRow struct {
 	expiresAt                    sql.NullTime
 }
 
-// readTokenAsRuntime calls the auth reader as ibex_runtime with no org GUC.
-func readTokenAsRuntime(ctx context.Context, f *tenancyFixture, prefix string) (tokenRow, error) {
+// readTokenAsAuth calls the auth reader as ibex_auth with no org GUC.
+func readTokenAsAuth(ctx context.Context, f *tenancyFixture, prefix string) (tokenRow, error) {
 	var row tokenRow
-	err := f.withRole(ctx, role("ibex_runtime"), func(tx *sql.Tx) error {
+	err := f.withRole(ctx, role("ibex_auth"), func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
 			SELECT token_id, org_id, org_status, user_id, agent_id, permissions, expires_at, token_hash
 			FROM ibex_core.auth_find_token_by_prefix($1)`, prefix,

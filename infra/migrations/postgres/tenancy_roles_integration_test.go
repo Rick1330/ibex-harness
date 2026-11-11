@@ -30,16 +30,16 @@ func assertOnlyOwnerPrivileged(f *tenancyFixture, ctx context.Context) {
 	}
 }
 
-// assertCapabilityRoleAttributes checks the four capability roles.
+// assertCapabilityRoleAttributes checks the five capability roles.
 func assertCapabilityRoleAttributes(f *tenancyFixture, ctx context.Context) {
 	f.t.Helper()
-	for _, name := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_purge"} {
+	for _, name := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_purge", "ibex_auth"} {
 		flags := f.loadRoleFlags(ctx, role(name))
 		if flags.super || flags.bypass {
 			f.t.Fatalf("%s must not be superuser or BYPASSRLS", name)
 		}
 	}
-	for _, name := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap"} {
+	for _, name := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_auth"} {
 		flags := f.loadRoleFlags(ctx, role(name))
 		if !flags.login || flags.inherit {
 			f.t.Fatalf("%s must be a NOINHERIT login", name)
