@@ -94,6 +94,14 @@ async def create_memory(
     response: Response,
     ctx: Annotated[CreateMemoryContext, Depends(get_create_memory_context)],
 ) -> Any:
+    """Create one memory inside the validated token's organization.
+
+    The tenant is taken from the validated token, never from the request body, so
+    a caller cannot choose the org it writes to. A request carrying an idempotency
+    key replays the stored response; a keyed write whose slot cannot be claimed or
+    finalized fails with 503 rather than a false 201/202, and a failed write
+    releases the slot.
+    """
     start = time.perf_counter()
     idem = await begin_idempotency(
         ledger=ctx.idempotency_ledger,

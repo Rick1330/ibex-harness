@@ -154,6 +154,12 @@ def _cursor_clause() -> Any:
 
 
 def _list_filter_clauses(args: DirectiveListArgs, cursor: KeysetCursor) -> list[Any]:
+    """Clauses for a directive page: the org scope is unconditional.
+
+    The tenant predicate is always first, so no filter combination widens the
+    query across orgs. State and agent filters are added only when requested, and
+    the keyset predicate only when the cursor carries both of its parts.
+    """
     clauses: list[Any] = [_DIRECTIVES.c.org_id == bindparam("org_id")]
     if args.state == "active":
         clauses.append(_DIRECTIVES.c.is_active.is_(True))
