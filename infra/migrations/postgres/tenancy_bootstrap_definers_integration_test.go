@@ -319,6 +319,7 @@ func (e bootstrapEnv) upsertServiceTokenMask(call serviceTokenCall, mask any) (s
 // upsertServiceTokenTx runs the definer inside an existing transaction, so a
 // test can observe the locks it holds before COMMIT.
 func upsertServiceTokenTx(ctx context.Context, tx *sql.Tx, call serviceTokenCall, mask any) *sql.Row {
+	// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; every value is a bound parameter.
 	return tx.QueryRowContext(ctx, `
 		SELECT outcome, token_id::text
 		FROM ibex_core.bootstrap_upsert_service_token($1::uuid, $2, $3, $4::bigint)`,
