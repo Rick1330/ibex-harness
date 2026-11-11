@@ -143,7 +143,7 @@ def _live_version_number() -> Any:
     )
 
 
-def _cursor_clause(cursor: KeysetCursor) -> Any:
+def _cursor_clause() -> Any:
     return or_(
         _DIRECTIVES.c.updated_at < bindparam("cursor_updated_at"),
         and_(
@@ -162,7 +162,7 @@ def _list_filter_clauses(args: DirectiveListArgs, cursor: KeysetCursor) -> list[
     if args.agent_id is not None:
         clauses.append(_DIRECTIVES.c.agent_id == bindparam("agent_id"))
     if cursor.created_at is not None and cursor.row_id is not None:
-        clauses.append(_cursor_clause(cursor))
+        clauses.append(_cursor_clause())
     return clauses
 
 
