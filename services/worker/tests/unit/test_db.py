@@ -206,7 +206,7 @@ async def test_session_unpinned_rolls_back_when_the_body_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pinned scopes: bind the org, pin the role, roll back on any failure.
+# Pinned scopes: pin the role, bind the org, roll back on any failure.
 # ---------------------------------------------------------------------------
 
 _PINNED_SCOPES = [
@@ -217,13 +217,13 @@ _PINNED_SCOPES = [
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("scope", "role"), _PINNED_SCOPES)
-async def test_pinned_scope_binds_the_org_then_pins_the_role(scope: Any, role: str) -> None:
+async def test_pinned_scope_pins_the_role_then_binds_the_org(scope: Any, role: str) -> None:
     session = _FakeSession()
     async with scope(_factory(session), _ORG_ID) as scoped:
         assert scoped is session
-        assert session.statements == [_ORG_GUC, f"SET LOCAL ROLE {role}"]
-        assert session.params[0] == {"org_id": _ORG_ID}
-        assert session.params[1] is None
+        assert session.statements == [f"SET LOCAL ROLE {role}", _ORG_GUC]
+        assert session.params[0] is None
+        assert session.params[1] == {"org_id": _ORG_ID}
     assert "commit" in session.events
     assert "rollback" not in session.events
 
@@ -245,8 +245,9 @@ async def test_pinned_scope_rolls_back_when_the_role_switch_fails(scope: Any, ro
     with pytest.raises(SQLAlchemyError, match="simulated failure"):
         async with scope(_factory(session), _ORG_ID):
             pytest.fail("the body must not run after a failed pin")
-    # The binding ran; the pin is what failed.
-    assert session.statements == [_ORG_GUC, f"SET LOCAL ROLE {role}"]
+    # The pin is what failed; the GUC is never bound under the login role.
+    assert session.statements == [f"SET LOCAL ROLE {role}"]
+    assert not any("set_config" in sql for sql in session.statements)
     _assert_rolled_back(session)
 
 
@@ -257,9 +258,8 @@ async def test_pinned_scope_rolls_back_when_the_org_binding_fails(scope: Any, ro
     with pytest.raises(SQLAlchemyError, match="simulated failure"):
         async with scope(_factory(session), _ORG_ID):
             pytest.fail("the body must not run without an org binding")
-    # No role statement: the transaction is already dead.
-    assert session.statements == [_ORG_GUC]
-    assert not any(sql.startswith("SET LOCAL ROLE") for sql in session.statements)
+    # The role was pinned; the binding is what failed.
+    assert session.statements == [f"SET LOCAL ROLE {role}", _ORG_GUC]
     _assert_rolled_back(session)
     del role
 

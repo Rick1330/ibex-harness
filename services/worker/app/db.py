@@ -11,7 +11,13 @@ Two families of session helpers live here:
   tenant write needs ``ibex_app`` and the organization-deletion saga needs
   ``ibex_purge``; neither identity is available implicitly. ``SET LOCAL`` (never
   ``SET ROLE``) keeps the identity inside the transaction, so a pooled
-  connection cannot leak a role into the next task.
+  connection cannot leak a role into the next task. The role is pinned *before*
+  the org GUC, in the same order as ``services/memory``, ``services/api`` and
+  ``services/mcp-operator``: one order across the four services means a copy of
+  this helper cannot diverge. The order is not load-bearing for RLS -- ``SET
+  ROLE`` preserves transaction-local GUCs and no role carries an ``app.*``
+  ``ALTER ROLE ... SET`` -- but a single order is one less thing to reason
+  about.
 
 The pinned scopes deliberately do not write ``app.is_service_account``. That
 GUC stopped being read by any policy in migration 000063; setting it was a
@@ -131,8 +137,8 @@ async def session_as_app_org(
 ) -> AsyncIterator[AsyncSession]:
     """Transactional session pinned to ``ibex_app`` for one tenant."""
     async with _transaction(factory) as session:
-        await _bind_org(session, org_id)
         await _pin_role(session, "ibex_app")
+        await _bind_org(session, org_id)
         yield session
 
 
@@ -143,6 +149,6 @@ async def session_as_purge_org(
 ) -> AsyncIterator[AsyncSession]:
     """Transactional session pinned to ``ibex_purge`` for one tenant."""
     async with _transaction(factory) as session:
-        await _bind_org(session, org_id)
         await _pin_role(session, "ibex_purge")
+        await _bind_org(session, org_id)
         yield session
