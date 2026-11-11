@@ -80,10 +80,41 @@ profile a 1.0 claim may cite. Kubernetes, Helm and HA are outside the profile (�
 
 **One operator entry point.** `make v1-secrets` generates `infra/compose/v1-single-node/.env` (mode `0600`), the
 files under `infra/compose/v1-single-node/secrets/` (directory `0700`; the container copies are `0444` so uid 10001 can
-read them), and the `bootstrap/` directory (`0700`) that receives the one-time admin PAT. `make v1-up` rebuilds the
+read them), and the `bootstrap/` directory (`0700`) that receives the one-time admin PAT. The `.env` also carries the
+four capability-login passwords `IBEX_RUNTIME_DB_PASSWORD`, `IBEX_AUTH_DB_PASSWORD`, `IBEX_WORKER_DB_PASSWORD` and
+`IBEX_BOOTSTRAP_DB_PASSWORD`; `migrate provision` is their only writer. `make v1-up` rebuilds the
 application images, starts the profile, waits until every required service reports healthy (up to TEI's two-hour
 first-start window; override with `IBEX_V1_HEALTH_ATTEMPTS`), and prints the URL plus the PAT hint. `make v1-down` stops it without deleting volumes; `make v1-migrate` re-runs the one-shot migration
-service; `make v1-logs` and `make v1-ps` are the operator inspection commands.
+service and `make v1-provision` re-runs the one-shot capability-login provisioning service; `make v1-logs` and
+`make v1-ps` are the operator inspection commands.
+
+**Three one-shots, in start order: `migrate`, `provision`, `bootstrap`.** `provision` runs `migrate provision` from the
+same `infra/migrations/Dockerfile` and the same owner DSN as `migrate`. In one transaction it writes one SCRAM verifier
+per capability login — `ibex_runtime`, `ibex_auth`, `ibex_worker` and `ibex_bootstrap`, which the migrations create
+inert with no password and `CONNECTION LIMIT 0` — and lifts that connection limit. It reads the four secrets from the
+profile `.env` and fails the transaction when one is missing, not printable ASCII without spaces, not pairwise
+distinct, or equal to the owner credential, because credential reuse would silently collapse two roles into one. It
+then asserts the postcondition before committing: every one of the four is a non-superuser login with `NOBYPASSRLS`,
+`NOINHERIT`, `NO CREATEDB`, `NO CREATEROLE`, `CONNECTION LIMIT -1` and no expired validity; `ibex_runtime` and
+`ibex_auth` reach `ibex_app`, `ibex_worker` reaches `ibex_app` and `ibex_purge`, `ibex_bootstrap` reaches nothing, and
+every login is refused any role it does not require (`ibex_service`, `ibex_purge`, `ibex_bootstrap`, `ibex_auth`). A
+stray `GRANT` fails provisioning instead of widening a login. `bootstrap` (the identity one-shot) runs last.
+
+**A failed `provision` is a half-up profile, by design.** `bootstrap`, `auth`, `proxy`, `api`, `memory` and `worker`
+wait on `provision` completing rather than on `migrate` alone, so a non-zero exit leaves Postgres, Redis, the edge, the
+`migrate` one-shot and the console up — the published port is listening and the console has no upstream — while none
+of the six gated services started. That is the safe half: no request is answered and there is no partial identity. It
+is also the confusing half, because the datastores report healthy while the profile does nothing; read `make v1-ps`
+for the `provision` exit code before reading any other service's state. `make v1-provision` rebuilds the one-shot's
+image and re-runs it, honouring `depends_on`, so the credential write is repaired without a teardown.
+
+**The DSN cutover is not part of this profile state.** Every Compose DSN is still the owner login
+(`postgres://${POSTGRES_USER:-ibex}:…`), so `provision` makes the capability logins usable without making anything use
+them. Row-level security therefore applies only where a transaction pins `ibex_app` — `api`, `memory`, `auth`,
+`mcp-operator`, and the proxy and worker paths pinned in #1183/#1184 — and every other statement runs as the owner.
+The readiness audit recorded that login with `rolsuper=t`, so row-level security does not filter it
+(`27-v1-readiness-audit.md`, P0-06 row). Moving each service's DSN onto its capability login, and the proxy's remaining
+pins, are the next change; until they land this profile must not be described as running as capability logins.
 
 **One published port.** The Compose project publishes only the edge HTTPS port (`${IBEX_EDGE_PORT:-443}:8443`; rootless
 runtimes should set `IBEX_EDGE_PORT=8443`). Datastores, AuthService, context, memory, worker and MCP ports stay on the
@@ -94,7 +125,7 @@ and consumer; console API health; context gRPC health) are reachable only inside
 guide lists each check.
 
 **Component matrix and pins.** `services/{auth,proxy,api,memory,context,embedder,worker,console}` plus the one-shot
-`migrate` and `bootstrap` services, `pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d…`, `redis:7.4.2@sha256:fbdbaea4…`,
+`migrate`, `provision` and `bootstrap` services, `pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d…`, `redis:7.4.2@sha256:fbdbaea4…`,
 TEI `ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4@sha256:2538ea1c…` serving `BAAI/bge-m3` at revision
 `5617a9f61b028005a4858fdac845db406aefb181` (1024 dimensions), and the edge terminator
 `caddy:2.11.9-alpine@sha256:0bbb055b…`. The first start is gated on TEI: it downloads roughly 2.3 GB into the
@@ -129,8 +160,11 @@ Console surfaces; ClickHouse and MinIO/S3 projections, the reranker, and the obs
 off); multi-user authentication.
 
 **Upgrade and rollback.** Upgrade is a stop-the-stack operation: stop the stack, take a database snapshot, run the
-one-shot migration service, then start the new images by digest. Rollback restores the snapshot and starts the previous
-digests. Migrations are forward-only: starting an older image against the migrated schema is not a supported rollback.
+one-shot migration and provisioning services, then start the new images by digest. Rollback restores the snapshot and
+starts the previous digests. Migrations are forward-only: starting an older image against the migrated schema is not a
+supported rollback. The capability verifiers live in the database (`pg_authid`), so a restore reverts them to their
+snapshot state: a start after a restore must let `provision` run again — `make v1-up` does — before a service
+authenticates with a credential rotated after that snapshot.
 
 ---
 

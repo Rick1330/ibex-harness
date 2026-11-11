@@ -166,6 +166,30 @@ service, `seed` and `auth` gate on it with `service_completed_successfully`, and
 consistently to every required service, including the Console, proxy and context it adds. A failed migration stops the
 stack; there is no partial start. ClickHouse migrations run only when ClickHouse is enabled.
 
+> **Amendment 2026-11-11 — a second one-shot gate, `provision`.** The profile starts three one-shots in order:
+> `migrate`, `provision`, `bootstrap`. `provision` runs `migrate provision` from the same `infra/migrations/Dockerfile`
+> and the same owner DSN as `migrate`. In one transaction it writes one SCRAM verifier per capability login —
+> `ibex_runtime`, `ibex_auth`, `ibex_worker` and `ibex_bootstrap`, which the migrations create inert with no password
+> and `CONNECTION LIMIT 0` — and lifts that limit. A secret that is missing, not printable ASCII without spaces,
+> repeated, or equal to the owner credential fails the transaction instead of weakening a role, and the postcondition
+> is asserted before commit: each login is a non-superuser `NOBYPASSRLS`, `NOINHERIT`, `NO CREATEDB`, `NO CREATEROLE`
+> login with no connection limit and no expired validity, reaches only the roles it requires, and is refused every
+> other privileged identity (a stray `GRANT` fails provisioning). The gate is applied ahead of the cutover because the
+> migration that creates the logins and the first consumer of them are in the same release.
+>
+> `provision` gates every container that will authenticate with a capability login, not only the ones that do today:
+> `bootstrap`, `auth`, `proxy`, `api` and `memory` wait on it instead of on `migrate`, and `worker` keeps its `migrate`
+> and `bootstrap` edges and gains `provision`. A failed `provision` therefore stops the profile in the shape §7 already
+> sets — no partial identity, and none of the six gated services starts — with one difference worth stating: Postgres,
+> Redis, the edge, the migration one-shot and the console do come up, so the published port listens with no upstream
+> behind it and the datastores report healthy while nothing answers a request. `make v1-provision` re-runs the
+> one-shot, rebuilding its image and honouring `depends_on`, so the repair path works on a cold profile without a
+> teardown; it sits beside `make v1-migrate` as an operator entry point.
+>
+> **This amendment changes no DSN.** Every service still connects with the owner login, so the capability logins are
+> provisioned and unused, and row-level security applies only on the paths that pin `ibex_app`. The cutover of each
+> DSN, and the proxy's remaining pins, are a separate change and are not claimed here.
+
 **8. Data-plane pins, resolved once.**
 
 | Dependency | Supported pin | Why |
