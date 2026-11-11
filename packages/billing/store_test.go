@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +119,21 @@ func assertHappySnapshot(t *testing.T, snap BudgetSnapshot, periodID uuid.UUID) 
 	}
 	if len(snap.PublishedCard.Prices) != 1 {
 		t.Fatalf("prices=%d", len(snap.PublishedCard.Prices))
+	}
+}
+
+// assertZeroSnapshot proves a failed pin cannot be read as a budget result:
+// an empty snapshot with HasHardCap=false is exactly what "no cap" looks like.
+func assertZeroSnapshot(t *testing.T, snap BudgetSnapshot) {
+	t.Helper()
+	if snap.HasHardCap || snap.PeriodID != uuid.Nil {
+		t.Fatalf("failed pin reported an active period: %+v", snap)
+	}
+	if snap.CapCents != 0 || snap.SpentCents != 0 {
+		t.Fatalf("failed pin returned budget amounts: %+v", snap)
+	}
+	if snap.PublishedCard.Version != "" || len(snap.PublishedCard.Prices) != 0 {
+		t.Fatalf("failed pin returned a card %+v", snap.PublishedCard)
 	}
 }
 
@@ -236,17 +252,65 @@ func TestLoadOrg_BeginTxError(t *testing.T) {
 	}
 }
 
-func TestLoadOrg_SetConfigError(t *testing.T) {
+func TestLoadOrg_RolePinError(t *testing.T) {
 	t.Parallel()
 	store, mock := newMockStore(t)
+	org := uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnError(sql.ErrConnDone)
+	mock.ExpectRollback()
+
+	snap, err := store.LoadOrg(context.Background(), org)
+	if err == nil {
+		t.Fatal("role-pin failure returned no error; the caller would see an empty snapshot")
+	}
+	if !strings.Contains(err.Error(), "set tenant role") {
+		t.Fatalf("error %q does not identify the tenant-role pin", err)
+	}
+	assertZeroSnapshot(t, snap)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadOrg_OrgGUCError(t *testing.T) {
+	t.Parallel()
+	store, mock := newMockStore(t)
+	org := uuid.New()
 	mock.ExpectBegin()
 	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`SELECT set_config`).WillReturnError(sql.ErrConnDone)
 	mock.ExpectRollback()
-	_, err := store.LoadOrg(context.Background(), uuid.New())
-	if err == nil || err.Error() == "" {
-		t.Fatalf("expected set_config error, got %v", err)
+
+	snap, err := store.LoadOrg(context.Background(), org)
+	if err == nil {
+		t.Fatal("org-GUC failure returned no error; the caller would see an empty snapshot")
 	}
+	if !strings.Contains(err.Error(), "set org rls") {
+		t.Fatalf("error %q does not identify the org GUC", err)
+	}
+	assertZeroSnapshot(t, snap)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadOrg_PostPinFailureRollsBack(t *testing.T) {
+	t.Parallel()
+	store, mock := newMockStore(t)
+	org := uuid.New()
+	expectOrgTxBegin(mock, org)
+	mock.ExpectQuery(`budget_periods`).
+		WithArgs(org, sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+	// No ExpectCommit: committing after the failed read would be an unexpected call.
+	mock.ExpectRollback()
+
+	snap, err := store.LoadOrg(context.Background(), org)
+	if err == nil {
+		t.Fatal("post-pin read failure returned no error")
+	}
+	assertZeroSnapshot(t, snap)
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
