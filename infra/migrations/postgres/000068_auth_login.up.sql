@@ -98,6 +98,34 @@ $$;
 -- the shape this model produces yet still passes it; this statement is what
 -- returns such a row to the model. The regression test starts from a
 -- `WITH ADMIN TRUE, INHERIT TRUE` row and asserts the options below.
+--
+-- Normalizing the options is not enough on its own. A row granted WITH ADMIN
+-- TRUE may have let ibex_auth grant ibex_app onward, and those dependent rows
+-- carry grantor = ibex_auth. They are separate pg_auth_members rows, so the
+-- GRANT below clears admin_option without touching them, and ibex_auth keeps
+-- the delegated tenant identity it handed to another role (measured on
+-- PostgreSQL 16: the dependent row survives the option change). REVOKE ADMIN
+-- OPTION ... CASCADE removes exactly those rows, so it has to run BEFORE the
+-- GRANT: once admin_option is false there is no admin grant left to cascade
+-- from, and the dependent rows survive. The statement is a no-op when ibex_auth
+-- never held the admin option.
+--
+-- If the revoke is rejected (for example because this transaction is not the
+-- grantor and lacks ADMIN OPTION on ibex_app), stop with the repair instead of
+-- leaving the dependent rows in place and reporting success.
+DO $$
+BEGIN
+    BEGIN
+        REVOKE ADMIN OPTION FOR ibex_app FROM ibex_auth CASCADE;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE EXCEPTION
+            'ibex_auth holds dependent ibex_app grants that could not be withdrawn automatically (%); revoke the roles ibex_auth granted ibex_app to, then re-run this migration',
+            SQLERRM
+            USING ERRCODE = 'insufficient_privilege';
+    END;
+END
+$$;
+
 GRANT ibex_app TO ibex_auth WITH ADMIN FALSE, INHERIT FALSE, SET TRUE;
 
 -- Do not rely on absence: a future GRANT must not be able to turn the auth

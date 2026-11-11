@@ -16,26 +16,36 @@
 --
 -- `ibex_bootstrap` holding EXECUTE is NOT the same as "cannot reach another
 -- organization": every p_org_id below is a caller-chosen value, and inside the
--- definer `rls_org_visible` admits every organization's rows. Three bodies
+-- definer `rls_org_visible` admits every organization's rows. Four bodies
 -- therefore refuse the writes that would let a caller act on a tenant it does
--- not own. Each guard raises with a named rule:
+-- not own. The inventory below is the acceptance criterion: every refusal names
+-- its function, rule and SQLSTATE, and the integration suite asserts each row.
 --
---   bootstrap_create_identity       refuses an organization that already has a
---                                   users row: that is a re-run of an existing
---                                   install, not a first install. (The write
---                                   this closes is a forged owner user in a
---                                   tenant that already has its own.)
---   bootstrap_insert_pat            refuses a mask other than the fixed
---                                   bootstrap grant, a second `type = 'pat'`
---                                   row for the organization (bootstrap issues
---                                   exactly one PAT and never rotates it), and
---                                   a user/agent that is not that organization's
---                                   active owner / active agent.
---   bootstrap_upsert_service_token  refuses a mask other than the fixed
---                                   memory-service grant, and an organization
---                                   with no active owner and active agent,
---                                   instead of writing a credential with NULL
---                                   subjects or a caller-chosen permission set.
+--   function                        rule                                                SQLSTATE
+--   ------------------------------  --------------------------------------------------  --------
+--   bootstrap_create_identity       organization already has a users row                42501
+--   bootstrap_insert_pat            permissions is not the bootstrap PAT grant          23514
+--   bootstrap_insert_pat            organization already owns a pat row                  42501
+--   bootstrap_insert_pat            user is not an active owner of the organization      23514
+--   bootstrap_insert_pat            agent is not an active agent of the organization    23514
+--   bootstrap_upsert_service_token  permissions is not the memory-service grant         23514
+--   bootstrap_upsert_service_token  organization has no active owner or active agent    23514
+--   bootstrap_write_model_policy    organization already has a model policy or epoch    42501
+--
+-- The advisory locks are the second control, not a refusal: every body that
+-- performs a check-then-write takes the per-organization lock first
+-- (bootstrap_create_identity, bootstrap_insert_pat,
+-- bootstrap_upsert_service_token), and the service-token body takes the
+-- per-prefix lock after it. Lock order is org then prefix, so two definers
+-- cannot deadlock; the serialization test asserts both locks.
+--
+-- Guard-to-test map (tenancy_bootstrap_definers_integration_test.go):
+--
+--   identity re-run / existing organization   TestTenancyBootstrapCreateIdentityGuard
+--   PAT mask / second PAT / foreign subjects  TestTenancyBootstrapPATGuard
+--   service-token mask / missing subject      TestTenancyBootstrapServiceTokenGuard
+--   model-policy first install / configured   TestTenancyBootstrapModelPolicyGuard
+--   org-then-prefix lock order                TestTenancyBootstrapSerializesPerOrg
 --
 -- The seven functions map 1:1 to the old Go helpers:
 --
@@ -52,10 +62,12 @@
 -- The remaining cross-org capability is deliberate and bounded:
 -- bootstrap_upsert_organization can create a new organization, and
 -- bootstrap_lookup_subjects returns another organization's owner/agent ids
--- (ids only, no credential). bootstrap_write_model_policy can add the allow-all
--- fallback to an organization that has none — `ON CONFLICT DO NOTHING` never
--- changes an existing policy, but a caller can install one where an operator
--- deliberately left the table empty.
+-- (ids only, no credential). Those two create a tenant or read ids; neither
+-- writes into a tenant that already exists. bootstrap_write_model_policy used
+-- to be a third: `ON CONFLICT DO NOTHING` left existing rows alone but a caller
+-- could install the allow-all fallback where an operator deliberately left the
+-- table empty. It now refuses an organization that already has a policy or an
+-- epoch, so the fallback is a first-install write only.
 --
 -- Installation-scoped authorization is NOT expressible here, and no control
 -- below pretends otherwise. `ibex_bootstrap` is a one-shot command, not a
@@ -253,8 +265,16 @@ REVOKE ALL ON FUNCTION ibex_core.bootstrap_create_identity(uuid, uuid, text, tex
 -- 5. Default model policy
 -- ================================================================
 -- insertModelPolicy: the allow-all fallback (priority 1000) and epoch 1 that
--- mirror infra/scripts/seed_dev.sql. DO NOTHING keeps a re-run away from a
--- policy an operator already edited.
+-- mirror infra/scripts/seed_dev.sql.
+--
+-- Guard: this is a first-install write. Go calls it only on the create branch,
+-- directly after the organization and identity were created in the same
+-- transaction, so a configured organization has no supported path here. A
+-- caller that names an existing tenant must not be able to drop a wildcard
+-- allow row under a policy set an operator narrowed, so any existing
+-- org_model_policies or org_model_policy_meta row refuses the call. DO NOTHING
+-- is not enough: it protects an existing '*' row but still admits an allow-all
+-- fallback into a tenant whose policies simply omit the wildcard.
 CREATE OR REPLACE FUNCTION ibex_core.bootstrap_write_model_policy(p_org_id uuid)
 RETURNS void
 LANGUAGE plpgsql
@@ -262,6 +282,19 @@ SECURITY DEFINER
 SET search_path = ibex_core, pg_temp
 AS $$
 BEGIN
+    IF EXISTS (
+        SELECT 1 FROM ibex_core.org_model_policies p WHERE p.org_id = p_org_id
+    ) OR EXISTS (
+        SELECT 1 FROM ibex_core.org_model_policy_meta m WHERE m.org_id = p_org_id
+    ) THEN
+        RAISE EXCEPTION
+            'bootstrap_write_model_policy: organization % already has a model policy or epoch; the allow-all fallback is a first-install write only',
+            p_org_id
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    -- DO NOTHING remains the race guard: two first-install callers that both
+    -- pass the check above must still end with one fallback row, not an error.
     INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority)
     VALUES (p_org_id, '*', true, 1000)
     ON CONFLICT (org_id, model_pattern) DO NOTHING;

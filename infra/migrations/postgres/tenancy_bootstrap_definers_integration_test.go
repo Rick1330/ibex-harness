@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -59,10 +60,26 @@ type serviceTokenCall struct {
 	prefix string
 }
 
-// serviceTokenRow is the persisted subject binding a service token is asserted
-// on.
+// modelPolicyRow is the wildcard fallback and the epoch written with it.
+type modelPolicyRow struct {
+	allowed  bool
+	priority int
+	epoch    int
+}
+
+// modelPolicySeed is one policy row a test seeds.
+type modelPolicySeed struct {
+	pattern  string
+	allowed  bool
+	priority int
+}
+
+// serviceTokenRow is the persisted state a service token is asserted on: the
+// subject binding, the prefix, and the fields a rejected rotation must not
+// change.
 type serviceTokenRow struct {
-	userID, agentID, prefix string
+	userID, agentID, prefix, hash string
+	permissions                   int64
 }
 
 // bootstrapCase is one named subtest body. Cases share one migrated fixture but
@@ -106,6 +123,22 @@ func (f *tenancyFixture) seedEmptyOrg(ctx context.Context, slug string) string {
 		f.t.Fatalf("seed empty org %s: %v", slug, err)
 	}
 	return id
+}
+
+// seedOwnerOnlyOrg inserts an organization with an active owner and no agent.
+func (f *tenancyFixture) seedOwnerOnlyOrg(ctx context.Context, slug string) tenantSeed {
+	f.t.Helper()
+	seed := tenantSeed{orgID: f.seedEmptyOrg(ctx, slug)}
+	seed.userID = f.seedUser(ctx, seed.orgID, slug, "owner")
+	return seed
+}
+
+// seedAgentOnlyOrg inserts an organization with an active agent and no user.
+func (f *tenancyFixture) seedAgentOnlyOrg(ctx context.Context, slug string) tenantSeed {
+	f.t.Helper()
+	seed := tenantSeed{orgID: f.seedEmptyOrg(ctx, slug)}
+	seed.agentID = f.seedAgent(ctx, seed.orgID, slug, sql.NullString{})
+	return seed
 }
 
 // asBootstrap runs one callback in a transaction as the bootstrap login, which
@@ -538,13 +571,151 @@ func (f *tenancyFixture) seedVictimPAT(ctx context.Context, victim tenantSeed) {
 	}
 }
 
+// TestTenancyBootstrapModelPolicyGuard is the F1 lock for the model-policy
+// definer. The allow-all fallback is a first-install write: a caller that names
+// a tenant which already has a policy or an epoch must not be able to drop a
+// wildcard allow row under a set an operator narrowed.
+func TestTenancyBootstrapModelPolicyGuard(t *testing.T) {
+	f := newTenancyFixture(t)
+	runBootstrapCases(t, f, []bootstrapCase{
+		{"first install writes the fallback", bootstrapModelPolicyFirstInstall},
+		{"configured policy refused", bootstrapModelPolicyConfiguredRefused},
+		{"existing epoch refused", bootstrapModelPolicyEpochRefused},
+	})
+}
+
+// bootstrapModelPolicyFirstInstall proves the fallback and epoch a fresh
+// organization receives.
+func bootstrapModelPolicyFirstInstall(e bootstrapEnv) {
+	orgID := e.f.seedEmptyOrg(e.ctx, "policy-first-install")
+	if err := e.writeModelPolicy(orgID); err != nil {
+		e.t.Fatalf("write model policy: %v", err)
+	}
+	e.assertModelPolicy(orgID, modelPolicyRow{allowed: true, priority: 1000, epoch: 1})
+	if n := e.f.countModelPolicies(e.ctx, orgID); n != 1 {
+		e.t.Fatalf("model policy rows = %d, want 1", n)
+	}
+}
+
+// bootstrapModelPolicyConfiguredRefused proves a tenant with any policy row is
+// refused and its row is untouched.
+func bootstrapModelPolicyConfiguredRefused(e bootstrapEnv) {
+	orgID := e.f.seedEmptyOrg(e.ctx, "policy-configured")
+	seeded := modelPolicySeed{pattern: "gpt-*", allowed: false, priority: 10}
+	e.f.seedModelPolicy(e.ctx, orgID, seeded)
+	err := e.writeModelPolicy(orgID)
+	e.f.requireGuardError(err, sqlState{code: "42501"}, "already has a model policy or epoch")
+	if n := e.f.countModelPolicies(e.ctx, orgID); n != 1 {
+		e.t.Fatalf("model policy rows = %d, want the seeded 1", n)
+	}
+	e.assertSeededPolicy(orgID, seeded)
+}
+
+// bootstrapModelPolicyEpochRefused proves an epoch alone (the partial state a
+// previous write could leave) is enough to refuse, and writes no policy.
+func bootstrapModelPolicyEpochRefused(e bootstrapEnv) {
+	orgID := e.f.seedEmptyOrg(e.ctx, "policy-epoch")
+	e.f.seedPolicyEpoch(e.ctx, orgID, 7)
+	err := e.writeModelPolicy(orgID)
+	e.f.requireGuardError(err, sqlState{code: "42501"}, "already has a model policy or epoch")
+	if n := e.f.countModelPolicies(e.ctx, orgID); n != 0 {
+		e.t.Fatalf("refused call wrote %d model policies, want 0", n)
+	}
+	if epoch := e.f.readPolicyEpoch(e.ctx, orgID); epoch != 7 {
+		e.t.Fatalf("epoch = %d, want the seeded 7", epoch)
+	}
+}
+
+// writeModelPolicy calls bootstrap_write_model_policy as ibex_bootstrap.
+func (e bootstrapEnv) writeModelPolicy(orgID string) error {
+	e.t.Helper()
+	return e.f.asBootstrap(e.ctx, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; orgID is a bound parameter.
+		_, err := tx.ExecContext(e.ctx, `SELECT ibex_core.bootstrap_write_model_policy($1::uuid)`, orgID)
+		return err
+	})
+}
+
+// assertModelPolicy checks the wildcard fallback and its epoch.
+func (e bootstrapEnv) assertModelPolicy(orgID string, want modelPolicyRow) {
+	e.t.Helper()
+	var got modelPolicyRow
+	if err := e.f.db.QueryRowContext(e.ctx, `
+		SELECT p.allowed, p.priority, m.epoch
+		FROM ibex_core.org_model_policies p
+		JOIN ibex_core.org_model_policy_meta m ON m.org_id = p.org_id
+		WHERE p.org_id = $1::uuid AND p.model_pattern = '*'`, orgID).
+		Scan(&got.allowed, &got.priority, &got.epoch); err != nil {
+		e.t.Fatalf("read model policy: %v", err)
+	}
+	if got != want {
+		e.t.Fatalf("model policy = %+v, want %+v", got, want)
+	}
+}
+
+// assertSeededPolicy checks a seeded policy row is unchanged.
+func (e bootstrapEnv) assertSeededPolicy(orgID string, want modelPolicySeed) {
+	e.t.Helper()
+	var gotAllowed bool
+	var gotPriority int
+	if err := e.f.db.QueryRowContext(e.ctx, `
+		SELECT allowed, priority FROM ibex_core.org_model_policies
+		WHERE org_id = $1::uuid AND model_pattern = $2`, orgID, want.pattern).
+		Scan(&gotAllowed, &gotPriority); err != nil {
+		e.t.Fatalf("read seeded policy %s: %v", want.pattern, err)
+	}
+	if gotAllowed != want.allowed || gotPriority != want.priority {
+		e.t.Fatalf("seeded policy %s = allowed %v priority %d, want allowed %v priority %d",
+			want.pattern, gotAllowed, gotPriority, want.allowed, want.priority)
+	}
+}
+
+// seedModelPolicy inserts one policy row for orgID.
+func (f *tenancyFixture) seedModelPolicy(ctx context.Context, orgID string, seed modelPolicySeed) {
+	f.t.Helper()
+	// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; every value is a bound parameter.
+	if _, err := f.db.ExecContext(ctx, `
+		INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority)
+		VALUES ($1::uuid, $2, $3, $4)`, orgID, seed.pattern, seed.allowed, seed.priority); err != nil {
+		f.t.Fatalf("seed model policy %s: %v", seed.pattern, err)
+	}
+}
+
+// seedPolicyEpoch inserts one epoch row for orgID.
+func (f *tenancyFixture) seedPolicyEpoch(ctx context.Context, orgID string, epoch int) {
+	f.t.Helper()
+	if _, err := f.db.ExecContext(ctx, `
+		INSERT INTO ibex_core.org_model_policy_meta (org_id, epoch) VALUES ($1::uuid, $2)`,
+		orgID, epoch); err != nil {
+		f.t.Fatalf("seed policy epoch: %v", err)
+	}
+}
+
+// countModelPolicies counts orgID's policy rows.
+func (f *tenancyFixture) countModelPolicies(ctx context.Context, orgID string) int {
+	return f.countOne(ctx, "count model policies", `
+		SELECT COUNT(*) FROM ibex_core.org_model_policies WHERE org_id = $1::uuid`, orgID)
+}
+
+// readPolicyEpoch returns orgID's epoch.
+func (f *tenancyFixture) readPolicyEpoch(ctx context.Context, orgID string) int {
+	f.t.Helper()
+	var epoch int
+	if err := f.db.QueryRowContext(ctx, `
+		SELECT epoch FROM ibex_core.org_model_policy_meta WHERE org_id = $1::uuid`, orgID).Scan(&epoch); err != nil {
+		f.t.Fatalf("read policy epoch: %v", err)
+	}
+	return epoch
+}
+
 // TestTenancyBootstrapServiceTokenGuard is the F1 lock for the service-token
 // definer: an organization with no active owner or no active agent must be
 // refused instead of receiving a credential with NULL subjects.
 func TestTenancyBootstrapServiceTokenGuard(t *testing.T) {
 	f := newTenancyFixture(t)
 	runBootstrapCases(t, f, []bootstrapCase{
-		{"organization without subjects refused", bootstrapServiceTokenNoSubjectsRefused},
+		{"organization without owner refused", bootstrapServiceTokenNoOwnerRefused},
+		{"organization without agent refused", bootstrapServiceTokenNoAgentRefused},
 		{"non-service mask refused", bootstrapServiceTokenMaskRefused},
 		{"inserted then rotated", bootstrapServiceTokenRotates},
 		{"own prefix re-run is not a conflict", bootstrapServiceTokenOwnPrefixRerun},
@@ -553,36 +724,66 @@ func TestTenancyBootstrapServiceTokenGuard(t *testing.T) {
 }
 
 // bootstrapServiceTokenMaskRefused proves the rotation path rejects every mask
-// but MemoryRead | MemoryWrite before it writes. Without the guard the UPDATE
-// branch wrote p_permissions verbatim, so a caller could rotate the
-// organization's service credential into a full-admin grant.
+// but MemoryRead | MemoryWrite before it writes. A valid managed row exists
+// first, so each rejected call reaches the guard against the UPDATE branch;
+// without the guard that branch wrote p_permissions verbatim and a caller could
+// rotate the organization's service credential into a full-admin grant. The
+// row's hash, prefix and permissions must be byte-identical after every
+// rejection.
 func bootstrapServiceTokenMaskRefused(e bootstrapEnv) {
 	tenant := e.bootstrapTenant("service-token-mask")
-	for _, mask := range []any{
+	valid := serviceTokenCall{orgID: tenant.orgID, hash: "hash-mask-valid", prefix: "ibex_pat_service_mask_valid"}
+	tokenID := e.mustUpsertInserted(valid, "seed the managed service token")
+	before := e.readServiceToken(tokenID)
+	for i, mask := range []any{
 		int64(permissions.ProxyChatCompletion),
 		int64(permissions.Admin),
 		int64(serviceTokenMask | permissions.MemoryDelete),
 		nil,
 	} {
-		call := serviceTokenCall{orgID: tenant.orgID, hash: "hash-mask", prefix: "ibex_pat_service_mask"}
+		call := serviceTokenCall{
+			orgID:  tenant.orgID,
+			hash:   "hash-mask-" + strconv.Itoa(i),
+			prefix: "ibex_pat_service_mask_" + strconv.Itoa(i),
+		}
 		e.f.requireGuardError(e.upsertServiceTokenRejected(call, mask), sqlState{code: "23514"}, "is not the memory-service grant")
+		if after := e.readServiceToken(tokenID); after != before {
+			e.t.Fatalf("rejected mask %v changed the token: before %+v, after %+v", mask, before, after)
+		}
 	}
-	if n := e.f.countTokensFor(e.ctx, tenant.orgID, ""); n != 0 {
-		e.t.Fatalf("refused masks wrote %d tokens, want 0", n)
+	if n := e.f.countTokensFor(e.ctx, tenant.orgID, "service_token"); n != 1 {
+		e.t.Fatalf("service token rows = %d, want the single seeded row", n)
 	}
 }
 
-// bootstrapServiceTokenNoSubjectsRefused proves an organization with no owner
-// or agent is refused and writes no token.
-func bootstrapServiceTokenNoSubjectsRefused(e bootstrapEnv) {
-	orgID := e.f.seedEmptyOrg(e.ctx, "token-no-subjects")
-	call := serviceTokenCall{orgID: orgID, hash: "hash-no-subjects", prefix: "ibex_pat_no_subjects"}
+// bootstrapServiceTokenNoOwnerRefused proves an organization with an agent but
+// no owner is refused and writes no token.
+func bootstrapServiceTokenNoOwnerRefused(e bootstrapEnv) {
+	e.assertServiceTokenSubjectMissing(e.f.seedAgentOnlyOrg(e.ctx, "token-no-owner"), "no active owner user")
+}
+
+// bootstrapServiceTokenNoAgentRefused proves an organization with an owner but
+// no agent is refused and writes no token.
+func bootstrapServiceTokenNoAgentRefused(e bootstrapEnv) {
+	e.assertServiceTokenSubjectMissing(e.f.seedOwnerOnlyOrg(e.ctx, "token-no-agent"), "no active agent")
+}
+
+// assertServiceTokenSubjectMissing asserts the definer refuses the tenant on
+// the named missing subject and writes no token, so each subject guard is
+// proven on its own rather than both being absent at once.
+func (e bootstrapEnv) assertServiceTokenSubjectMissing(tenant tenantSeed, rule string) {
+	e.t.Helper()
+	call := serviceTokenCall{
+		orgID:  tenant.orgID,
+		hash:   "hash-missing-subject",
+		prefix: "ibex_pat_missing_" + tenant.orgID[:8],
+	}
 	outcome, tokenID, err := e.upsertServiceToken(call)
 	if err == nil {
 		e.t.Fatalf("expected a refusal, got outcome %q id %q", outcome, tokenID)
 	}
-	e.f.requireGuardError(err, sqlState{code: "23514"}, "no active owner user")
-	if n := e.f.countTokensFor(e.ctx, orgID, ""); n != 0 {
+	e.f.requireGuardError(err, sqlState{code: "23514"}, rule)
+	if n := e.f.countTokensFor(e.ctx, tenant.orgID, ""); n != 0 {
 		e.t.Fatalf("refused upsert wrote %d tokens, want 0", n)
 	}
 }
@@ -708,13 +909,15 @@ func (e bootstrapEnv) assertServiceTokenSubjects(tokenID string, tenant tenantSe
 	}
 }
 
-// readServiceToken returns one token row's subject binding and prefix.
+// readServiceToken returns one token row's subject binding, prefix, hash and
+// permissions, so a rejected rotation can be compared field by field.
 func (e bootstrapEnv) readServiceToken(tokenID string) serviceTokenRow {
 	e.t.Helper()
 	var row serviceTokenRow
 	if err := e.f.db.QueryRowContext(e.ctx, `
-		SELECT user_id::text, agent_id::text, prefix FROM ibex_core.tokens
-		WHERE id = $1::uuid`, tokenID).Scan(&row.userID, &row.agentID, &row.prefix); err != nil {
+		SELECT user_id::text, agent_id::text, prefix, hash, permissions
+		FROM ibex_core.tokens WHERE id = $1::uuid`, tokenID).
+		Scan(&row.userID, &row.agentID, &row.prefix, &row.hash, &row.permissions); err != nil {
 		e.t.Fatalf("read service token: %v", err)
 	}
 	return row

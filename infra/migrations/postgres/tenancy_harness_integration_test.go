@@ -165,28 +165,41 @@ func (f *tenancyFixture) seedTenant(ctx context.Context) {
 	f.orgID, f.userID, f.agentID = seed.orgID, seed.userID, seed.agentID
 }
 
-// seedTenantNamed creates one org, user and agent with a unique slug.
+// seedTenantNamed creates one org, one member user and one agent with a unique
+// slug.
 func (f *tenancyFixture) seedTenantNamed(ctx context.Context, slug string) tenantSeed {
 	f.t.Helper()
-	var seed tenantSeed
+	seed := tenantSeed{orgID: f.seedEmptyOrg(ctx, slug)}
+	seed.userID = f.seedUser(ctx, seed.orgID, slug, "member")
+	seed.agentID = f.seedAgent(ctx, seed.orgID, slug, sql.NullString{String: seed.userID, Valid: true})
+	return seed
+}
+
+// seedUser inserts one active user with userRole and returns its id.
+func (f *tenancyFixture) seedUser(ctx context.Context, orgID, slug, userRole string) string {
+	f.t.Helper()
+	var id string
 	if err := f.db.QueryRowContext(ctx, `
-		INSERT INTO ibex_core.organizations (name, slug)
-		VALUES ($1, $1) RETURNING id::text`, slug).Scan(&seed.orgID); err != nil {
-		f.t.Fatalf("seed org %s: %v", slug, err)
-	}
-	if err := f.db.QueryRowContext(ctx, `
-		INSERT INTO ibex_core.users (org_id, email, name)
-		VALUES ($1::uuid, $2, $3) RETURNING id::text`,
-		seed.orgID, slug+"@example.com", slug).Scan(&seed.userID); err != nil {
+		INSERT INTO ibex_core.users (org_id, email, name, role)
+		VALUES ($1::uuid, $2, $2, $3) RETURNING id::text`,
+		orgID, slug+"@example.com", userRole).Scan(&id); err != nil {
 		f.t.Fatalf("seed user %s: %v", slug, err)
 	}
+	return id
+}
+
+// seedAgent inserts one active agent and returns its id. createdBy is NULL when
+// it is not Valid, which is the agent-only shape.
+func (f *tenancyFixture) seedAgent(ctx context.Context, orgID, slug string, createdBy sql.NullString) string {
+	f.t.Helper()
+	var id string
 	if err := f.db.QueryRowContext(ctx, `
 		INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
-		VALUES ($1::uuid, $2::uuid, $3, $3) RETURNING id::text`,
-		seed.orgID, seed.userID, slug).Scan(&seed.agentID); err != nil {
+		VALUES ($1::uuid, $2, $3, $3) RETURNING id::text`,
+		orgID, createdBy, slug).Scan(&id); err != nil {
 		f.t.Fatalf("seed agent %s: %v", slug, err)
 	}
-	return seed
+	return id
 }
 
 // seedToken creates a token for the primary tenant.

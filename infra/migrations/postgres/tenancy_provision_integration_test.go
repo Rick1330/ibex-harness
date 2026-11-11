@@ -579,6 +579,14 @@ func driftCases() []driftCase {
 			f.exec(ctx, `GRANT ibex_runtime TO ibex_auth`)
 			undoOnCleanup(f, `REVOKE ibex_runtime FROM ibex_auth`)
 		}},
+		{"auth reaching evidence relay", func(ctx context.Context, f *tenancyFixture) {
+			// The relay identity claims the evidence outbox across
+			// organizations. The auth login resolves one bearer and must never
+			// carry that capability, so a stray membership is a provision-time
+			// failure rather than a silent widening.
+			f.exec(ctx, `GRANT ibex_evidence_relay TO ibex_auth`)
+			undoOnCleanup(f, `REVOKE ibex_evidence_relay FROM ibex_auth`)
+		}},
 	}
 }
 

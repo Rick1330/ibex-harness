@@ -357,25 +357,34 @@ func TestRedaction(t *testing.T) {
 	}
 }
 
-// TestProvisionTargetsForbidRuntimeForAuth locks the ibex_auth boundary: the
-// auth login resolves bearers through one SECURITY DEFINER reader, and a
-// membership in ibex_runtime would let it act as the runtime login instead.
-// Both hold ibex_app today, so the reachability check cannot catch this by
-// privilege alone; the forbidden list is the control.
-func TestProvisionTargetsForbidRuntimeForAuth(t *testing.T) {
-	for _, target := range provisionTargets {
-		if target.role != "ibex_auth" {
-			continue
+// TestProvisionTargetsForbidPrivilegedForAuth locks the ibex_auth boundary.
+// The auth login resolves bearers through one SECURITY DEFINER reader, and a
+// membership in ibex_runtime or ibex_evidence_relay would let it act as that
+// identity instead. It already holds ibex_app today, so the reachability check
+// cannot catch the runtime membership by privilege alone; the forbidden list is
+// the control. The integration drift cases prove `provision` rejects both.
+func TestProvisionTargetsForbidPrivilegedForAuth(t *testing.T) {
+	target := provisionTargetFor(t, "ibex_auth")
+	for _, forbidden := range []string{"ibex_runtime", "ibex_evidence_relay"} {
+		if !containsRole(target.forbiddenRoles, forbidden) {
+			t.Fatalf("ibex_auth forbiddenRoles = %v, want %s present", target.forbiddenRoles, forbidden)
 		}
-		if !containsRole(target.forbiddenRoles, "ibex_runtime") {
-			t.Fatalf("ibex_auth forbiddenRoles = %v, want ibex_runtime present", target.forbiddenRoles)
+		if containsRole(target.requiredRoles, forbidden) {
+			t.Fatalf("ibex_auth requiredRoles = %v must not contain %s", target.requiredRoles, forbidden)
 		}
-		if containsRole(target.requiredRoles, "ibex_runtime") {
-			t.Fatalf("ibex_auth requiredRoles = %v must not contain ibex_runtime", target.requiredRoles)
-		}
-		return
 	}
-	t.Fatal("provisionTargets has no ibex_auth target")
+}
+
+// provisionTargetFor returns the target for role, failing when it is missing.
+func provisionTargetFor(t *testing.T, role string) provisionTarget {
+	t.Helper()
+	for _, target := range provisionTargets {
+		if target.role == role {
+			return target
+		}
+	}
+	t.Fatalf("provisionTargets has no %s target", role)
+	return provisionTarget{}
 }
 
 // containsRole reports whether the role list names role.
