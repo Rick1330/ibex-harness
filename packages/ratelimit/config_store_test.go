@@ -133,83 +133,70 @@ func TestConfigStore_LoadAll_ReturnsAllOverrides(t *testing.T) {
 	}
 }
 
-func TestConfigStore_LoadAll_QueryError(t *testing.T) {
-	t.Parallel()
+type loadAllFailureSetup struct {
+	label     string
+	query     *sqlmock.Rows
+	queryErr  error
+	commitErr error
+}
+
+// runLoadAllFailure drives one LoadAll failure case. The caller keeps its own
+// test function, so a failure names the case; this helper only shares the
+// Begin/Query/Commit-or-Rollback plumbing the four cases have in common.
+func runLoadAllFailure(t *testing.T, setup loadAllFailureSetup) {
+	t.Helper()
 	store, mock := newMockConfigStore(t)
 	mock.ExpectBegin()
-	mock.ExpectQuery(`rate_limit_overrides_snapshot`).WillReturnError(sql.ErrConnDone)
-	mock.ExpectRollback()
+	query := mock.ExpectQuery(`rate_limit_overrides_snapshot`)
+	if setup.queryErr != nil {
+		query.WillReturnError(setup.queryErr)
+	} else {
+		query.WillReturnRows(setup.query)
+	}
+	if setup.commitErr != nil {
+		mock.ExpectCommit().WillReturnError(setup.commitErr)
+	} else {
+		mock.ExpectRollback()
+	}
 
 	all, err := store.LoadAll(context.Background())
 	if err == nil {
-		t.Fatal("query failure returned no error; the caller would see no overrides")
+		t.Fatalf("%s: returned no error; the caller would see no overrides", setup.label)
 	}
 	if all != nil {
-		t.Fatalf("failed query returned a map %#v; caller could read it as no overrides", all)
+		t.Fatalf("%s: returned a map %#v; caller could read it as no overrides", setup.label, all)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestConfigStore_LoadAll_QueryError(t *testing.T) {
+	t.Parallel()
+	runLoadAllFailure(t, loadAllFailureSetup{label: "query failure", queryErr: sql.ErrConnDone})
 }
 
 func TestConfigStore_LoadAll_ScanError(t *testing.T) {
 	t.Parallel()
-	store, mock := newMockConfigStore(t)
-	mock.ExpectBegin()
-	mock.ExpectQuery(`rate_limit_overrides_snapshot`).WillReturnRows(
-		overrideRows().AddRow("not-a-uuid", nil, int64(111)))
-	mock.ExpectRollback()
-
-	all, err := store.LoadAll(context.Background())
-	if err == nil {
-		t.Fatal("scan failure returned no error; the caller would see no overrides")
-	}
-	if all != nil {
-		t.Fatalf("failed scan returned a map %#v; caller could read it as no overrides", all)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
-	}
+	runLoadAllFailure(t, loadAllFailureSetup{
+		label: "scan failure",
+		query: overrideRows().AddRow("not-a-uuid", nil, int64(111)),
+	})
 }
 
 func TestConfigStore_LoadAll_RowsError(t *testing.T) {
 	t.Parallel()
-	store, mock := newMockConfigStore(t)
-	org := uuid.New()
-	mock.ExpectBegin()
-	mock.ExpectQuery(`rate_limit_overrides_snapshot`).WillReturnRows(
-		overrideRows().AddRow(org.String(), nil, int64(111)).RowError(0, sql.ErrConnDone))
-	mock.ExpectRollback()
-
-	all, err := store.LoadAll(context.Background())
-	if err == nil {
-		t.Fatal("row iteration failure returned no error; the caller would see no overrides")
-	}
-	if all != nil {
-		t.Fatalf("failed row iteration returned a map %#v; caller could read it as no overrides", all)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
-	}
+	runLoadAllFailure(t, loadAllFailureSetup{
+		label: "row iteration failure",
+		query: overrideRows().AddRow(uuid.New().String(), nil, int64(111)).RowError(0, sql.ErrConnDone),
+	})
 }
 
 func TestConfigStore_LoadAll_CommitError(t *testing.T) {
 	t.Parallel()
-	store, mock := newMockConfigStore(t)
-	org := uuid.New()
-	mock.ExpectBegin()
-	mock.ExpectQuery(`rate_limit_overrides_snapshot`).WillReturnRows(
-		overrideRows().AddRow(org.String(), nil, int64(111)))
-	mock.ExpectCommit().WillReturnError(sql.ErrTxDone)
-
-	all, err := store.LoadAll(context.Background())
-	if err == nil {
-		t.Fatal("commit failure returned no error; the caller would see a partial poll as success")
-	}
-	if all != nil {
-		t.Fatalf("failed commit returned a map %#v; caller could read it as no overrides", all)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
-	}
+	runLoadAllFailure(t, loadAllFailureSetup{
+		label:     "commit failure",
+		query:     overrideRows().AddRow(uuid.New().String(), nil, int64(111)),
+		commitErr: sql.ErrTxDone,
+	})
 }
