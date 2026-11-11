@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.db import create_engine, create_session_factory, session_as_service_account
+from app.db import create_engine, create_session_factory, session_unpinned
 from app.repositories.failed_tasks import FailedTaskRecord, insert_failed_task
 from app.task_names import TASK_MAINTENANCE_ALWAYS_FAIL
 
@@ -61,7 +61,7 @@ async def test_insert_failed_task_persists_row(
     )
     assert inserted is True
 
-    async with session_as_service_account(pg_session_factory) as session:
+    async with session_unpinned(pg_session_factory) as session:
         row = (
             await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
@@ -119,7 +119,8 @@ async def test_insert_failed_task_idempotent_on_duplicate_task_id(
 async def test_insert_failed_task_propagates_unknown_org_fk(
     pg_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    unknown_org = UUID("00000000-0000-0000-0000-000000000001")
+    # A random id: a fixed one can exist in a long-lived dev database.
+    unknown_org = uuid4()
     record = FailedTaskRecord(
         task_name=TASK_MAINTENANCE_ALWAYS_FAIL,
         task_id="unknown-org-task",

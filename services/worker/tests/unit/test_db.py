@@ -19,8 +19,11 @@ from app.config import Settings
 from app.db import (
     _bind_org,
     _pin_role,
+    app_org_scope,
+    app_probe_scope,
     create_engine,
     create_session_factory,
+    session_as_app,
     session_as_app_org,
     session_as_purge_org,
     session_unpinned,
@@ -203,6 +206,57 @@ async def test_session_unpinned_rolls_back_when_the_body_raises() -> None:
             raise _BodyError("body failed")
     _assert_rolled_back(session)
     assert session.events[-1] == "session_close"
+
+
+# ---------------------------------------------------------------------------
+# session_as_app: the identity pin with no tenant GUC.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_as_app_pins_the_role_without_an_org_guc() -> None:
+    """A capability probe and the no-RLS dead-letter insert bind no tenant."""
+    session = _FakeSession()
+    async with session_as_app(_factory(session)) as scoped:
+        assert scoped is session
+        assert session.statements == ["SET LOCAL ROLE ibex_app"]
+        assert session.params == [None]
+        assert not any("app.current_org_id" in sql for sql in session.statements)
+    assert "commit" in session.events
+    assert "rollback" not in session.events
+
+
+@pytest.mark.asyncio
+async def test_session_as_app_rolls_back_when_the_body_raises() -> None:
+    session = _FakeSession()
+    with pytest.raises(_BodyError):
+        async with session_as_app(_factory(session)):
+            raise _BodyError("body failed")
+    _assert_rolled_back(session)
+    assert session.events[-1] == "session_close"
+
+
+# ---------------------------------------------------------------------------
+# Scope factories: the pinned helpers the idempotency ledger is built with.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_app_org_scope_pins_app_and_binds_the_org() -> None:
+    session = _FakeSession()
+    async with app_org_scope(_factory(session))(_ORG_ID) as scoped:
+        assert scoped is session
+        assert session.statements == ["SET LOCAL ROLE ibex_app", _ORG_GUC]
+        assert session.params[1] == {"org_id": _ORG_ID}
+
+
+@pytest.mark.asyncio
+async def test_app_probe_scope_pins_app_without_an_org_guc() -> None:
+    session = _FakeSession()
+    async with app_probe_scope(_factory(session))() as scoped:
+        assert scoped is session
+        assert session.statements == ["SET LOCAL ROLE ibex_app"]
+        assert not any("set_config" in sql for sql in session.statements)
 
 
 # ---------------------------------------------------------------------------

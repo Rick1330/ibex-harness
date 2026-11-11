@@ -54,7 +54,7 @@ def _wire_run(
         async def __aexit__(self, *args):
             return None
 
-    monkeypatch.setattr(capture_redaction, "session_as_service_org", lambda _f, _org: _CM())
+    monkeypatch.setattr(capture_redaction, "session_as_app_org", lambda _f, _org: _CM())
     monkeypatch.setattr(
         capture_redaction,
         "resolve_capture_mode",
@@ -264,7 +264,7 @@ async def test_archive_compensates_when_session_commit_fails(
         async def __aexit__(self, *args):
             raise RuntimeError("commit failed")
 
-    monkeypatch.setattr(capture_redaction, "session_as_service_org", lambda _f, _org: _BoomCM())
+    monkeypatch.setattr(capture_redaction, "session_as_app_org", lambda _f, _org: _BoomCM())
     monkeypatch.setattr(
         capture_redaction, "resolve_capture_mode", AsyncMock(return_value="full")
     )

@@ -12,7 +12,7 @@ from sqlalchemy import text
 
 from app.celery_app import celery_app
 from app.config import get_settings
-from app.db import create_engine, create_session_factory, session_as_service_org
+from app.db import create_engine, create_session_factory, session_as_app_org
 from app.tasks.base import IbexTask
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ async def _run(job: _CaptureJob) -> dict[str, str]:
     factory = create_session_factory(engine)
     uploaded: list[str] = []
     try:
-        async with session_as_service_org(factory, job.org_id) as session:
+        async with session_as_app_org(factory, job.org_id) as session:
             parsed_agent = UUID(job.agent_id) if job.agent_id else None
             mode = await resolve_capture_mode(session, org_id=job.org_id, agent_id=parsed_agent)
             ctx = _RedactCtx(session=session, settings=settings, job=job, uploaded=uploaded)
@@ -129,7 +129,9 @@ async def resolve_capture_mode(session, *, org_id: str, agent_id: UUID | None) -
             SELECT mode FROM ibex_core.org_capture_policies
             WHERE org_id = CAST(:org_id AS uuid)
               AND (
-                    (:agent_id IS NULL AND agent_id IS NULL)
+                    -- CAST gives the parameter a type when it binds NULL;
+                    -- asyncpg rejects a bare `$n IS NULL`.
+                    (CAST(:agent_id AS text) IS NULL AND agent_id IS NULL)
                  OR (agent_id = CAST(:agent_id AS uuid))
                  OR (agent_id IS NULL)
               )

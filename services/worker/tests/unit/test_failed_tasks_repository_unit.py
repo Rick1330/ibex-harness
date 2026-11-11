@@ -33,10 +33,10 @@ def _session_with_nested() -> MagicMock:
 async def test_insert_failed_task_executes_insert() -> None:
     session = _session_with_nested()
     result = MagicMock()
-    result.first.return_value = ("row-id",)
+    result.rowcount = 1
     session.execute = AsyncMock(return_value=result)
 
-    with patch("app.repositories.failed_tasks.session_as_service_account") as ctx:
+    with patch("app.repositories.failed_tasks.session_as_app") as ctx:
         ctx.return_value.__aenter__.return_value = session
         ctx.return_value.__aexit__.return_value = None
         inserted = await insert_failed_task(
@@ -63,10 +63,10 @@ async def test_insert_failed_task_executes_insert() -> None:
 async def test_insert_failed_task_duplicate_returns_false() -> None:
     session = _session_with_nested()
     result = MagicMock()
-    result.first.return_value = None
+    result.rowcount = 0
     session.execute = AsyncMock(return_value=result)
 
-    with patch("app.repositories.failed_tasks.session_as_service_account") as ctx:
+    with patch("app.repositories.failed_tasks.session_as_app") as ctx:
         ctx.return_value.__aenter__.return_value = session
         ctx.return_value.__aexit__.return_value = None
         inserted = await insert_failed_task(

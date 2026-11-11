@@ -11,7 +11,7 @@ from celery.result import AsyncResult
 from sqlalchemy import text
 
 from app.config import Settings
-from app.db import create_engine, create_session_factory, session_as_service_account
+from app.db import create_engine, create_session_factory, session_unpinned
 from app.observability import (
     dead_letter_persist_failed_total_for_task,
     dead_letter_total_for_task,
@@ -35,7 +35,7 @@ async def _fetch_failed_task_row(settings: Settings, task_id: str) -> tuple[str,
     engine = create_engine(settings)
     try:
         factory = create_session_factory(engine)
-        async with session_as_service_account(factory) as session:
+        async with session_unpinned(factory) as session:
             row = (
                 await session.execute(
                     text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text

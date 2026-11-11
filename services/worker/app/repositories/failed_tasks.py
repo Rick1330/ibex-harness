@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db import session_as_service_account
+from app.db import session_as_app
 
 _MAX_TRACEBACK_CHARS = 65_536
 
@@ -36,8 +36,7 @@ INSERT INTO ibex_core.failed_tasks (
     :retry_count,
     :org_id
 )
-ON CONFLICT (task_id) DO NOTHING
-RETURNING id
+ON CONFLICT DO NOTHING
 """
 
 
@@ -82,10 +81,22 @@ async def insert_failed_task(
         "retry_count": record.retry_count,
         "org_id": str(record.org_id) if record.org_id else None,
     }
-    async with session_as_service_account(factory) as session, session.begin_nested():
+    # ibex_worker holds no table grant, so the INSERT runs as ibex_app. This
+    # table has no RLS (000021) and org_id is nullable, so there is no tenant
+    # predicate to bind: a GUC here would be meaningless and would imply an
+    # isolation the table does not have.
+    #
+    # ibex_app holds INSERT only (000022 revoked SELECT), which shapes two
+    # details: there is no RETURNING clause (reading the row back needs SELECT),
+    # and the conflict clause has no target. A target such as ``(task_id)``
+    # makes PostgreSQL infer the arbiter index and it then needs SELECT on those
+    # columns, so it fails with 42501. Untargeted ``DO NOTHING`` covers every
+    # unique constraint here (only task_id, besides the generated primary key)
+    # and rowcount still tells us whether the row landed.
+    async with session_as_app(factory) as session, session.begin_nested():
         result = await session.execute(
             text(_INSERT_SQL),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             params,
         )
-        inserted = result.first() is not None
+        inserted = result.rowcount == 1
     return inserted

@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from app.config import Settings
-from app.db import create_engine, create_session_factory, session_as_service_account
+from app.db import create_engine, create_session_factory, session_unpinned
 from app.extraction import session_store as session_store_mod
 from app.extraction.batch import BatchJob, TurnPayload, run_batch_extraction
 from app.extraction.memory_writer import HttpMemoryWriter, MemoryHttpConfig
@@ -40,7 +40,7 @@ class _Seed:
 
 
 async def _seed(factory: async_sessionmaker, seed: _Seed) -> None:
-    async with session_as_service_account(factory) as session:
+    async with session_unpinned(factory) as session:
         for org_id, slug in ((seed.org_a, "iso-a"), (seed.org_b, "iso-b")):
             await session.execute(
                 _sql(

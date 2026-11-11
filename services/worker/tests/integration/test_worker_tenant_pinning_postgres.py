@@ -12,18 +12,45 @@ Red evidence for each test is recorded in the PR: removing the corresponding
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import app.budget_ledger as budget_ledger_module
+import app.enqueue_http as enqueue_http_module
+import app.repositories.failed_tasks as failed_tasks_module
+from app.budget_ledger import (
+    COMPLETENESS_COMPLETE,
+    BudgetClaimRequest,
+    BudgetLedgerError,
+    BudgetLedgerUnavailableError,
+    _AsyncBudgetLedger,
+)
 from app.config import Settings
-from app.db import create_engine, create_session_factory, session_as_purge_org
-from app.tasks import org_deletion
+from app.db import (
+    app_org_scope,
+    app_probe_scope,
+    create_engine,
+    create_session_factory,
+    session_as_app,
+    session_as_app_org,
+    session_as_purge_org,
+    session_unpinned,
+)
+from app.enqueue_http import create_enqueue_app
+from app.extraction import session_store as session_store_module
+from app.extraction.session_store import PostgresSessionStore
+from app.idempotency_ledger import LedgerError, PostgresIdempotencyLedger
+from app.repositories.failed_tasks import FailedTaskRecord, insert_failed_task
+from app.tasks import capture_redaction, org_deletion
 from app.tasks.billing_reconcile import SqlAlchemySpendStore
 
 pytestmark = pytest.mark.integration
@@ -415,3 +442,480 @@ async def test_pinned_role_does_not_leak_on_a_pooled_connection(
     finally:
         await engine.dispose()
 
+
+
+# ---------------------------------------------------------------------------
+# Budget ledger: capability probe + claim/finalize/release as the worker login.
+# ---------------------------------------------------------------------------
+
+
+def _sqlstate(exc: BaseException | None) -> str | None:
+    return getattr(getattr(exc, "orig", None), "sqlstate", None)
+
+
+async def _seed_rate_card(
+    factory: async_sessionmaker[AsyncSession],
+    org_id: UUID,
+    card_id: UUID,
+) -> None:
+    prices = json.dumps(
+        [
+            {
+                "provider": "openai",
+                "model_pattern": "gpt-4o*",
+                "input_cents_per_1k": 10,
+                "output_cents_per_1k": 30,
+            }
+        ]
+    )
+    async with factory() as session, session.begin():
+        await session.execute(
+            _sql(
+                """
+                INSERT INTO ibex_billing.rate_cards (id, org_id, name, status)
+                VALUES (:id, :org, :name, 'published')
+                """
+            ),
+            {"id": card_id, "org": org_id, "name": f"card-{card_id.hex[:8]}"},
+        )
+        await session.execute(
+            _sql(
+                """
+                INSERT INTO ibex_billing.rate_card_versions
+                    (rate_card_id, org_id, version, prices)
+                VALUES (:id, :org, 1, CAST(:prices AS jsonb))
+                """
+            ),
+            {"id": card_id, "org": org_id, "prices": prices},
+        )
+
+
+def _budget_request(org_id: UUID, agent_id: UUID, *, key: str) -> BudgetClaimRequest:
+    return BudgetClaimRequest(
+        org_id=org_id,
+        agent_id=agent_id,
+        key=key,
+        request_hash="a" * 64,
+        provider="openai",
+        model="gpt-4o-mini",
+        input_tokens=100,
+        output_tokens=200,
+    )
+
+
+@pytest.mark.asyncio
+async def test_budget_ping_reports_ready_as_worker_login(
+    worker_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Unpinned the probe reads current_user=ibex_worker and reports not ready."""
+    await _AsyncBudgetLedger(worker_factory).ping()
+
+
+@pytest.mark.asyncio
+async def test_budget_ping_without_the_pin_reports_not_ready(
+    worker_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        budget_ledger_module, "session_as_app", lambda factory: session_unpinned(factory)
+    )
+    with pytest.raises(BudgetLedgerError, match="budget reservation ledger is not ready"):
+        await _AsyncBudgetLedger(worker_factory).ping()
+
+
+@pytest.mark.asyncio
+async def test_budget_claim_finalize_release_pin_the_org_as_worker_login(
+    owner_factory: async_sessionmaker[AsyncSession],
+    worker_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+) -> None:
+    await _assert_worker_login(capability_worker_dsn)
+    org_id = uuid4()
+    period_id = uuid4()
+    card_id = uuid4()
+    await _seed_org(owner_factory, org_id)
+    _, agent_id = await _seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
+    await _seed_period(owner_factory, org_id, period_id)
+    await _seed_rate_card(owner_factory, org_id, card_id)
+
+    ledger = _AsyncBudgetLedger(worker_factory)
+    claim = await ledger.claim(_budget_request(org_id, agent_id, key="pinned-claim"))
+    assert claim is not None
+    assert claim.org_id == org_id
+    assert (
+        await ledger.finalize(claim, input_tokens=100, output_tokens=200)
+        == COMPLETENESS_COMPLETE
+    )
+
+    released = await ledger.claim(_budget_request(org_id, agent_id, key="pinned-release"))
+    assert released is not None
+    await ledger.release(released)
+
+    state = (
+        await _one(
+            owner_factory,
+            "SELECT state FROM ibex_core.budget_reservations WHERE id = :id",
+            id=released.claim_id,
+        )
+    )[0]
+    assert state == "released"
+
+
+@pytest.mark.asyncio
+async def test_budget_claim_without_the_pin_is_42501(
+    owner_factory: async_sessionmaker[AsyncSession],
+    worker_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id = uuid4()
+    await _seed_org(owner_factory, org_id)
+    _, agent_id = await _seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
+    monkeypatch.setattr(
+        budget_ledger_module,
+        "session_as_app_org",
+        lambda factory, _org: session_unpinned(factory),
+    )
+    with pytest.raises(BudgetLedgerUnavailableError) as err:
+        await _AsyncBudgetLedger(worker_factory).claim(
+            _budget_request(org_id, agent_id, key="unpinned-claim")
+        )
+    assert _sqlstate(err.value.__cause__) == "42501", err.value
+
+
+# ---------------------------------------------------------------------------
+# Capture redaction: the policy read and the memory update as the worker login.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_capture_policy(
+    factory: async_sessionmaker[AsyncSession], org_id: UUID
+) -> None:
+    async with factory() as session, session.begin():
+        await session.execute(
+            _sql(
+                """
+                INSERT INTO ibex_core.org_capture_policies (org_id, agent_id, mode, priority)
+                VALUES (:org, NULL, 'metadata_only', 0)
+                """
+            ),
+            {"org": org_id},
+        )
+
+
+@pytest.mark.asyncio
+async def test_capture_redaction_reads_the_policy_as_worker_login(
+    owner_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _assert_worker_login(capability_worker_dsn)
+    org_id = uuid4()
+    await _seed_org(owner_factory, org_id)
+    await _seed_capture_policy(owner_factory, org_id)
+    monkeypatch.setattr(
+        capture_redaction,
+        "get_settings",
+        lambda: Settings(database_url=capability_worker_dsn),
+    )
+    out = await capture_redaction._run(capture_redaction._CaptureJob(org_id=str(org_id)))
+    assert out == {"status": "redacted", "mode": "metadata_only"}
+
+
+@pytest.mark.asyncio
+async def test_capture_redaction_without_the_pin_is_42501(
+    owner_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id = uuid4()
+    await _seed_org(owner_factory, org_id)
+    await _seed_capture_policy(owner_factory, org_id)
+    monkeypatch.setattr(
+        capture_redaction,
+        "get_settings",
+        lambda: Settings(database_url=capability_worker_dsn),
+    )
+    monkeypatch.setattr(
+        capture_redaction,
+        "session_as_app_org",
+        lambda factory, _org: session_unpinned(factory),
+    )
+    with pytest.raises(ProgrammingError) as err:
+        await capture_redaction._run(capture_redaction._CaptureJob(org_id=str(org_id)))
+    assert _sqlstate(err.value) == "42501", err.value
+
+
+# ---------------------------------------------------------------------------
+# Extraction pointer: SELECT/UPDATE ibex_core.sessions as the worker login.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_session(
+    factory: async_sessionmaker[AsyncSession],
+    org_id: UUID,
+    agent_id: UUID,
+    session_id: UUID,
+    *,
+    turn: int = 5,
+) -> None:
+    async with factory() as session, session.begin():
+        await session.execute(
+            _sql(
+                """
+                INSERT INTO ibex_core.sessions (
+                    id, org_id, agent_id, status, model, provider, last_extracted_turn
+                ) VALUES (
+                    :id, :org, :agent, 'completed', 'gpt-4o-mini', 'openai', :turn
+                )
+                """
+            ),
+            {"id": session_id, "org": org_id, "agent": agent_id, "turn": turn},
+        )
+
+
+@pytest.mark.asyncio
+async def test_session_store_pins_the_org_as_worker_login(
+    owner_factory: async_sessionmaker[AsyncSession],
+    worker_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+) -> None:
+    await _assert_worker_login(capability_worker_dsn)
+    org_id, session_id = uuid4(), uuid4()
+    await _seed_org(owner_factory, org_id)
+    _, agent_id = await _seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
+    await _seed_session(owner_factory, org_id, agent_id, session_id)
+
+    store = PostgresSessionStore(worker_factory)
+    snapshot = await store._load(org_id, session_id)
+    assert snapshot is not None and snapshot.last_extracted_turn == 5
+    await store._update(org_id, session_id, 9, expected_lifecycle_revision=1)
+    assert (
+        await _count(
+            owner_factory,
+            "SELECT last_extracted_turn FROM ibex_core.sessions WHERE id = :id",
+            id=session_id,
+        )
+        == 9
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_store_without_the_pin_is_42501(
+    owner_factory: async_sessionmaker[AsyncSession],
+    worker_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id, session_id = uuid4(), uuid4()
+    await _seed_org(owner_factory, org_id)
+    _, agent_id = await _seed_tenant_rows(owner_factory, org_id, tag=org_id.hex[:8])
+    await _seed_session(owner_factory, org_id, agent_id, session_id)
+    monkeypatch.setattr(
+        session_store_module,
+        "session_as_app_org",
+        lambda factory, _org: session_unpinned(factory),
+    )
+    with pytest.raises(ProgrammingError) as err:
+        await PostgresSessionStore(worker_factory)._load(org_id, session_id)
+    assert _sqlstate(err.value) == "42501", err.value
+
+
+# ---------------------------------------------------------------------------
+# Dead-letter store: no RLS, nullable org_id, INSERT-only grant, no org GUC.
+# ---------------------------------------------------------------------------
+
+
+def _failed_record(task_id: str) -> FailedTaskRecord:
+    return FailedTaskRecord(
+        task_name="ibex.worker.maintenance.always_fail",
+        task_id=task_id,
+        args=[],
+        kwargs={},
+        exception_type="RuntimeError",
+        exception_message="pinned dead letter",
+        traceback_text="traceback",
+        retry_count=3,
+        org_id=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_tasks_insert_uses_pinned_app_without_an_org_guc(
+    owner_factory: async_sessionmaker[AsyncSession],
+    worker_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+) -> None:
+    await _assert_worker_login(capability_worker_dsn)
+    task_id = f"pinned-{uuid4()}"
+    assert await insert_failed_task(worker_factory, _failed_record(task_id)) is True
+    row = await _one(
+        owner_factory,
+        "SELECT org_id, task_name FROM ibex_core.failed_tasks WHERE task_id = :id",
+        id=task_id,
+    )
+    assert row[0] is None
+    assert row[1] == "ibex.worker.maintenance.always_fail"
+    # A duplicate task_id is a skipped insert, not a second row and not an
+    # error; the untargeted ON CONFLICT keeps that working with INSERT only.
+    assert await insert_failed_task(worker_factory, _failed_record(task_id)) is False
+    assert (
+        await _count(
+            owner_factory,
+            "SELECT count(*) FROM ibex_core.failed_tasks WHERE task_id = :id",
+            id=task_id,
+        )
+        == 1
+    )
+
+    # The scope the insert uses binds no tenant: a GUC here would imply an
+    # isolation the table does not have.
+    async with session_as_app(worker_factory) as session:
+        unset = (
+            await session.execute(_sql("SELECT current_setting('app.current_org_id', true)"))
+        ).scalar_one()
+    assert unset is None
+
+
+@pytest.mark.asyncio
+async def test_failed_tasks_insert_without_the_pin_is_42501(
+    worker_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        failed_tasks_module, "session_as_app", lambda factory: session_unpinned(factory)
+    )
+    with pytest.raises(ProgrammingError) as err:
+        await insert_failed_task(worker_factory, _failed_record(f"unpinned-{uuid4()}"))
+    assert _sqlstate(err.value) == "42501", err.value
+
+
+# ---------------------------------------------------------------------------
+# Enqueue idempotency ledger: injected scopes, ping, and /ready on the login.
+# ---------------------------------------------------------------------------
+
+
+def _pinned_ledger(factory: async_sessionmaker[AsyncSession]) -> PostgresIdempotencyLedger:
+    return PostgresIdempotencyLedger(
+        factory,
+        session_scope=app_org_scope(factory),
+        probe_scope=app_probe_scope(factory),
+    )
+
+
+@pytest.mark.asyncio
+async def test_idempotency_ledger_ping_and_claim_with_injected_scopes(
+    owner_factory: async_sessionmaker[AsyncSession],
+    worker_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+) -> None:
+    await _assert_worker_login(capability_worker_dsn)
+    org_id, agent_id = uuid4(), uuid4()
+    await _seed_org(owner_factory, org_id)
+    async with owner_factory() as session, session.begin():
+        await session.execute(
+            _sql(
+                """
+                INSERT INTO ibex_core.agents (id, org_id, name, slug)
+                VALUES (:id, :org, :name, :slug)
+                """
+            ),
+            {
+                "id": agent_id,
+                "org": org_id,
+                "name": f"ledger-{agent_id.hex[:8]}",
+                "slug": f"ledger-{agent_id.hex[:12]}",
+            },
+        )
+
+    ledger = _pinned_ledger(worker_factory)
+    await ledger.ping()
+    claim = await ledger.claim(
+        org_id=org_id, agent_id=agent_id, key="pinned-key", request_hash="f" * 64
+    )
+    assert claim.kind == "owned" and claim.claim is not None
+    await ledger.finalize(claim.claim, status=202, response=b'{"task_id":"pinned"}')
+
+
+@pytest.mark.asyncio
+async def test_idempotency_ledger_default_scope_is_not_ready_on_worker_login(
+    worker_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The package default only writes the retired GUC; the pin is load-bearing."""
+    default_ledger = PostgresIdempotencyLedger(worker_factory)
+    with pytest.raises(LedgerError, match="idempotency ledger is not ready"):
+        await default_ledger.ping()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_ready_is_ready_on_the_worker_login(
+    capability_worker_dsn: str,
+    require_redis: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ping that quietly reports not-ready is the failure this guards."""
+    await _assert_worker_login(capability_worker_dsn)
+
+    async def _ready_broker(_url: str):
+        from starlette.responses import JSONResponse
+
+        return JSONResponse({"status": "ready", "service": "worker"})
+
+    monkeypatch.setattr("app.enqueue_http._ping_broker", _ready_broker)
+    settings = Settings(
+        database_url=capability_worker_dsn,
+        redis_url=require_redis,
+        enqueue_api_token=SecretStr("ready-token"),
+    )
+    created: dict[str, object] = {}
+    real_create_engine = enqueue_http_module.create_engine
+
+    def _capture_engine(settings_: Settings):
+        engine = real_create_engine(settings_)
+        created["engine"] = engine
+        return engine
+
+    monkeypatch.setattr(enqueue_http_module, "create_engine", _capture_engine)
+    # No ledger argument: the production construction site must inject the
+    # pinned scopes itself.
+    app = create_enqueue_app(settings)
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/ready")
+    finally:
+        await created["engine"].dispose()  # type: ignore[union-attr]
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "ready"
+
+
+# ---------------------------------------------------------------------------
+# SET LOCAL, never SET ROLE: the app identity must not outlive its transaction.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_app_scope_does_not_leak_on_a_pooled_connection(
+    capability_worker_dsn: str,
+) -> None:
+    from ibex_async_db import parse_async_database_url
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    target = parse_async_database_url(capability_worker_dsn)
+    engine = create_async_engine(
+        target.url,
+        pool_size=1,
+        max_overflow=0,
+        connect_args=dict(target.connect_args),
+    )
+    factory = create_session_factory(engine)
+    try:
+        async with session_as_app_org(factory, str(uuid4())) as session:
+            assert (
+                await session.execute(_sql("SELECT current_user"))
+            ).scalar_one() == "ibex_app"
+        # Same pooled connection; SET LOCAL must have been rolled back.
+        async with factory() as session:
+            assert (
+                await session.execute(_sql("SELECT current_user"))
+            ).scalar_one() == "ibex_worker"
+    finally:
+        await engine.dispose()

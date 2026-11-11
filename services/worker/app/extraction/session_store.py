@@ -15,6 +15,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.db import session_as_app_org
 from app.extraction.provider import ExtractionLifecycleConflict
 
 
@@ -94,8 +95,7 @@ class PostgresSessionStore:
         )
 
     async def _load(self, org_id: UUID, session_id: UUID) -> SessionSnapshot | None:
-        async with self._factory() as session, session.begin():
-            await _set_org_guc(session, org_id)
+        async with session_as_app_org(self._factory, str(org_id)) as session:
             result = await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                     """
@@ -120,8 +120,7 @@ class PostgresSessionStore:
         self, org_id: UUID, session_id: UUID, last_extracted_turn: int,
         expected_lifecycle_revision: int,
     ) -> None:
-        async with self._factory() as session, session.begin():
-            await _set_org_guc(session, org_id)
+        async with session_as_app_org(self._factory, str(org_id)) as session:
             result = await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                     """
@@ -144,12 +143,3 @@ class PostgresSessionStore:
                 raise ExtractionLifecycleConflict(
                     "session lifecycle changed before extraction progress commit"
                 )
-
-
-async def _set_org_guc(session: AsyncSession, org_id: UUID) -> None:
-    await session.execute(
-        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            "SELECT set_config('app.current_org_id', :org_id, true)"
-        ),
-        {"org_id": str(org_id)},
-    )

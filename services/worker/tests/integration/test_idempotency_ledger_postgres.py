@@ -6,7 +6,6 @@ IBEX_WORKER_DATABASE_URL points at a migrated dedicated test database.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,9 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from app.config import Settings
 from app.db import (
+    app_org_scope,
     create_engine,
     create_session_factory,
-    session_as_service_account,
+    session_as_app_org,
+    session_unpinned,
 )
 from app.idempotency_ledger import PostgresIdempotencyLedger
 
@@ -29,27 +30,6 @@ def _sql(statement: str):
     return text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         statement
     )
-
-
-@asynccontextmanager
-async def _session_as_app_org(factory: async_sessionmaker, org_id: str):
-    async with factory() as session, session.begin():
-        await session.execute(_sql("SET LOCAL ROLE ibex_app"))
-        await session.execute(
-            _sql("SELECT set_config('app.current_org_id', :org_id, true)"),
-            {"org_id": org_id},
-        )
-        await session.execute(_sql("SELECT set_config('app.is_service_account', 'false', true)"))
-        yield session
-
-
-def _app_org_scope(factory: async_sessionmaker):
-    """Bind the shared ledger's ``SessionScope`` signature (org_id only)."""
-
-    def _scope(org_id: str):
-        return _session_as_app_org(factory, org_id)
-
-    return _scope
 
 
 @pytest_asyncio.fixture
@@ -63,7 +43,7 @@ async def pg_factory(migrated_postgres: str):
 
 
 async def _seed_org_agent(factory: async_sessionmaker, org_id: UUID, agent_id: UUID) -> None:
-    async with session_as_service_account(factory) as session:
+    async with session_unpinned(factory) as session:
         await session.execute(
             _sql(
                 """
@@ -90,7 +70,7 @@ async def _seed_org_agent(factory: async_sessionmaker, org_id: UUID, agent_id: U
 
 
 async def _delete_seed(factory: async_sessionmaker, org_id: UUID, agent_id: UUID) -> None:
-    async with session_as_service_account(factory) as session:
+    async with session_unpinned(factory) as session:
         await session.execute(
             _sql(
                 "DELETE FROM ibex_core.idempotency_ledger "
@@ -115,7 +95,7 @@ async def test_ledger_real_postgres_isolates_organizations_and_allows_release(pg
     await _seed_org_agent(pg_factory, org_b, agent_b)
     try:
         ledger = PostgresIdempotencyLedger(
-            pg_factory, lease_seconds=30, session_scope=_app_org_scope(pg_factory)
+            pg_factory, lease_seconds=30, session_scope=app_org_scope(pg_factory)
         )
         hash_a = "a" * 64
         hash_b = "b" * 64
@@ -140,7 +120,7 @@ async def test_ledger_real_postgres_isolates_organizations_and_allows_release(pg
         assert claim_b.claim is not None
         await ledger.release(claim_b.claim)
 
-        async with _session_as_app_org(pg_factory, str(org_a)) as session:
+        async with session_as_app_org(pg_factory, str(org_a)) as session:
             visible_a = (
                 await session.execute(
                     _sql(
@@ -150,7 +130,7 @@ async def test_ledger_real_postgres_isolates_organizations_and_allows_release(pg
                     {"org_a": org_a, "org_b": org_b},
                 )
             ).scalar_one()
-        async with _session_as_app_org(pg_factory, str(org_b)) as session:
+        async with session_as_app_org(pg_factory, str(org_b)) as session:
             visible_b = (
                 await session.execute(
                     _sql(

@@ -14,17 +14,7 @@ from app.extraction.session_store import (
     PostgresSessionStore,
     SessionSnapshot,
     _run_coro,
-    _set_org_guc,
 )
-
-
-@pytest.mark.asyncio
-async def test_set_org_guc_binds_org_id() -> None:
-    session = AsyncMock()
-    org_id = uuid4()
-    await _set_org_guc(session, org_id)
-    bound = session.execute.await_args.args[1]
-    assert bound["org_id"] == str(org_id)
 
 
 def test_postgres_store_load_and_update_delegate(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,8 +129,11 @@ async def test_load_found_binds_org_and_session() -> None:
     store = PostgresSessionStore(_session_factory(execute))
     snap = await store._load(org_id, session_id)
     assert snap == SessionSnapshot(4, "completed", None, 3)
-    assert execute.await_count == 2
-    select_params = execute.await_args_list[1].args[1]
+    # SET LOCAL ROLE ibex_app, the org GUC, then the SELECT.
+    assert execute.await_count == 3
+    assert execute.await_args_list[0].args[0].text == "SET LOCAL ROLE ibex_app"
+    assert execute.await_args_list[1].args[1] == {"org_id": str(org_id)}
+    select_params = execute.await_args_list[2].args[1]
     assert select_params["org_id"] == org_id
     assert select_params["session_id"] == session_id
 
@@ -162,13 +155,13 @@ async def test_update_binds_turn_and_org() -> None:
     execute = AsyncMock(return_value=result)
     store = PostgresSessionStore(_session_factory(execute))
     await store._update(org_id, session_id, 11, 7)
-    assert execute.await_count == 2
-    update_params = execute.await_args_list[1].args[1]
+    assert execute.await_count == 3
+    update_params = execute.await_args_list[2].args[1]
     assert update_params == {
         "turn": 11,
         "session_id": session_id,
         "org_id": org_id,
         "expected_revision": 7,
     }
-    update_sql = execute.await_args_list[1].args[0].text
+    update_sql = execute.await_args_list[2].args[0].text
     assert "GREATEST(last_extracted_turn" in update_sql

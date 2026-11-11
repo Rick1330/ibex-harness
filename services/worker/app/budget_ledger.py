@@ -42,7 +42,7 @@ from app.budget_pricing import (
     estimate_prompt_tokens,
     fingerprint_extraction_call,
 )
-from app.db import session_as_service_account, session_as_service_org
+from app.db import session_as_app, session_as_app_org
 from app.extraction.session_store import _run_coro
 
 BUDGET_LEDGER_LEASE_SECONDS = 900.0
@@ -380,7 +380,10 @@ class _AsyncBudgetLedger:
         self._lease_seconds = max(1.0, lease_seconds)
 
     async def ping(self) -> None:
-        async with session_as_service_account(self._factory) as session:
+        # Probe as the identity the ledger actually writes as: ibex_worker
+        # holds no table grant, so an unpinned has_table_privilege(current_user)
+        # would report "not ready" on a healthy database.
+        async with session_as_app(self._factory) as session:
             result = await session.execute(
                 text(
                     """
@@ -398,7 +401,7 @@ class _AsyncBudgetLedger:
     async def claim(self, request: BudgetClaimRequest) -> BudgetClaim | None:
         _validate_claim(request)
         try:
-            async with session_as_service_org(self._factory, str(request.org_id)) as session:
+            async with session_as_app_org(self._factory, str(request.org_id)) as session:
                 await session.execute(text(_ADVISORY_LOCK_SQL), {"org_id": str(request.org_id)})
                 period = await self._load_active_period(session, request.org_id)
                 if period is None:
@@ -541,7 +544,7 @@ class _AsyncBudgetLedger:
 
     async def finalize(self, claim: BudgetClaim, *, input_tokens: int, output_tokens: int) -> str:
         try:
-            async with session_as_service_org(self._factory, str(claim.org_id)) as session:
+            async with session_as_app_org(self._factory, str(claim.org_id)) as session:
                 row = await self._load_claim_row(session, claim)
                 if row is None:
                     raise _claim_closed()
@@ -576,7 +579,7 @@ class _AsyncBudgetLedger:
 
     async def release(self, claim: BudgetClaim) -> None:
         try:
-            async with session_as_service_org(self._factory, str(claim.org_id)) as session:
+            async with session_as_app_org(self._factory, str(claim.org_id)) as session:
                 row = await self._load_claim_row(session, claim)
                 if row is None:
                     raise _claim_closed()
