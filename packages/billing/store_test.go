@@ -32,9 +32,16 @@ func newMockStore(t *testing.T) (*Store, sqlmock.Sqlmock) {
 	return store, mock
 }
 
-func expectOrgTxBegin(mock sqlmock.Sqlmock) {
+func expectOrgTxBegin(mock sqlmock.Sqlmock, org uuid.UUID) {
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
+	expectTenantPin(mock, org)
+}
+
+// expectTenantPin matches the two statements LoadOrg runs before its reads:
+// the role pin that makes RLS fire, then the tenant GUC it scopes to.
+func expectTenantPin(mock sqlmock.Sqlmock, org uuid.UUID) {
+	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
 func TestLoadOrg_NilOrgID(t *testing.T) {
@@ -80,7 +87,7 @@ func happyLoadFixtures(t *testing.T) (org, periodID uuid.UUID, prices []byte) {
 func expectHappyLoadQueries(mock sqlmock.Sqlmock, org, periodID uuid.UUID, prices []byte) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
-	expectOrgTxBegin(mock)
+	expectOrgTxBegin(mock, org)
 	mock.ExpectQuery(`budget_periods`).
 		WithArgs(org, sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -133,7 +140,7 @@ func runNoHardCapVariant(t *testing.T, prices any, wantVer string) {
 	t.Helper()
 	store, mock := newMockStore(t)
 	org := uuid.New()
-	expectOrgTxBegin(mock)
+	expectOrgTxBegin(mock, org)
 	expectNoActiveBudget(mock, org)
 	expectRateCardPrices(mock, org, prices)
 	mock.ExpectCommit()
@@ -202,7 +209,7 @@ func TestLoadOrg_RollbackFailures(t *testing.T) {
 			t.Parallel()
 			store, mock := newMockStore(t)
 			org := uuid.New()
-			expectOrgTxBegin(mock)
+			expectOrgTxBegin(mock, org)
 			tc.setup(mock, org)
 			mock.ExpectRollback()
 			_, err := store.LoadOrg(context.Background(), org)
@@ -233,6 +240,7 @@ func TestLoadOrg_SetConfigError(t *testing.T) {
 	t.Parallel()
 	store, mock := newMockStore(t)
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`SELECT set_config`).WillReturnError(sql.ErrConnDone)
 	mock.ExpectRollback()
 	_, err := store.LoadOrg(context.Background(), uuid.New())
@@ -248,7 +256,7 @@ func TestLoadOrg_CommitError(t *testing.T) {
 	t.Parallel()
 	store, mock := newMockStore(t)
 	org, periodID, prices := happyLoadFixtures(t)
-	expectOrgTxBegin(mock)
+	expectOrgTxBegin(mock, org)
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	mock.ExpectQuery(`budget_periods`).

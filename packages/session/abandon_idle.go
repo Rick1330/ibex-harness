@@ -22,24 +22,15 @@ const (
 
 const trySweepLockSQL = `SELECT pg_try_advisory_xact_lock($1)`
 
+// abandonIdleSQL calls the cross-tenant definer. It returns exactly the rows
+// it changed, so the caller never has to reconstruct which sessions moved.
 const abandonIdleSQL = `
-WITH victims AS (
-    SELECT id
-    FROM ibex_core.sessions
-    WHERE status = $1
-      AND deleted_at IS NULL
-      AND updated_at < $2
-    ORDER BY updated_at ASC
-    LIMIT $3
-    FOR UPDATE SKIP LOCKED
-)
-UPDATE ibex_core.sessions AS s
-SET status = $4, completed_at = NOW()
-FROM victims AS v
-WHERE s.id = v.id AND s.status = $1
-RETURNING s.id, s.org_id, s.agent_id, s.external_id`
+SELECT id, org_id, agent_id, external_id
+FROM ibex_core.sessions_abandon_idle($1, $2)`
 
-// AbandonIdle marks idle active sessions as abandoned under service-account RLS.
+// AbandonIdle marks idle active sessions as abandoned through the
+// ibex_core.sessions_abandon_idle definer (the runtime login cannot read the
+// sessions table cross-tenant directly).
 // Uses a transaction-scoped advisory lock so concurrent proxy replicas skip the tick.
 func (s *PostgresStore) AbandonIdle(ctx context.Context, p AbandonIdleParams) (AbandonIdleResult, error) {
 	ctx, span := s.tracer.Start(ctx, "PostgresStore.AbandonIdle",
@@ -77,9 +68,6 @@ func (s *PostgresStore) abandonIdle(ctx context.Context, p AbandonIdleParams) (A
 }
 
 func abandonIdleTx(ctx context.Context, tx *sql.Tx, idleBefore time.Time, limit int) (AbandonIdleResult, error) {
-	if err := setServiceAccountRLS(ctx, tx); err != nil {
-		return AbandonIdleResult{}, err
-	}
 	acquired, err := trySweepXactLock(ctx, tx)
 	if err != nil {
 		return AbandonIdleResult{}, err
@@ -132,8 +120,7 @@ func trySweepXactLock(ctx context.Context, tx *sql.Tx) (bool, error) {
 }
 
 func abandonIdleInTx(ctx context.Context, tx *sql.Tx, idleBefore time.Time, limit int) ([]AbandonedSession, error) {
-	rows, err := tx.QueryContext(ctx, abandonIdleSQL,
-		StatusActive, idleBefore.UTC(), limit, StatusAbandoned)
+	rows, err := tx.QueryContext(ctx, abandonIdleSQL, idleBefore.UTC(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("session: abandon idle query: %w", err)
 	}
