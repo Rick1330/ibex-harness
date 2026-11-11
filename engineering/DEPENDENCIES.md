@@ -413,12 +413,26 @@ and `ci-gate-security` blocks. Re-check on expiry; do not extend silently.
 
 | Advisory | Package | Severity | Reachability | Disposition | Expires |
 | --- | --- | --- | --- | --- | --- |
-| GHSA-g3hv-75wg-m249 (globparts amplification) | `minimatch` 3.1.5 / 5.1.9 / 10.2.6 | Moderate | Build and lint toolchain only (`eslint`, `@typescript-eslint`, `@nuxt/content`); never in a served request path | A patched `minimatch` is `>=11.0.1`. Forcing it breaks `eslint-plugin-import-x`, which imports `makeRe` from `minimatch` (verified: `pnpm --filter @ibex/console lint` fails with a module-export error). Wait for the upstream range bumps. The attack needs an attacker-chosen glob pattern; every pattern in the build comes from repository configuration. | 2026-12-01 |
 | GHSA-gcqx-w48m-w2h4 (prototype poisoning) | `deepmerge` 4.3.1 | Low | Build only (`@rollup/plugin-node-resolve` merging repo-owned rollup config) | No patched release exists (`patched_versions: <0.0.0`). Not reachable with untrusted input: the merged objects are the repository's own build config. Track upstream. | 2026-12-01 |
 | GHSA-mrhx-c7xc-m3w5 (memory exhaustion) | `zod` 3.25.76 | High | Build only, via `docus → @nuxt/content` | Patched `zod` is `>=4.6.6`; `@nuxt/content` 3.x pins zod 3. Adoption requires a `docus`/`@nuxt/content` major. Not reachable at runtime: the public site is static output and has no request-time validation path. | 2026-12-01 |
 
 `glob` (GHSA-3g3m-2fjr-6pw4) is **fixed**, not waived: `pnpm.overrides` in the root `package.json` pins
 `>=14.0.2` (resolves to 14.0.3), and the site and console builds are verified against it.
+
+`minimatch` (GHSA-g3hv-75wg-m249) is **fixed**, not waived: the scoped `pnpm.overrides` entry
+`"minimatch@>=7.0.0 <11.0.1": ">=11.0.1"` moves every importer inside the advisory range to minimatch 11.0.4. The
+only remaining copy is `5.1.9`, reached through `archiver → readdir-glob`, which is below the advisory's
+`introduced: 7.0.0` range and therefore not affected. The version scoping is what makes this safe: the earlier
+`makeRe` module-export breakage came from forcing an out-of-range major onto every importer, and
+`eslint-plugin-import-x` 4.18.0 (pinned by the same overrides block) now declares no `minimatch` dependency at all. The
+site build is verified against this resolution; if a future lockfile reintroduces minimatch `>=7.0.0 <11.0.1`,
+`osv-scan` must fail.
+
+`node-forge` (GHSA-6889-vf6x-f3g5, GHSA-6cv4-p8m7-4r25, GHSA-j8rw-jp99-435v, GHSA-w4xr-hqv8-ch44) is **fixed**, not
+waived: `pnpm.overrides` raises the floor to `>=1.4.3 <2`, which resolves 1.4.3 for the only importer,
+`node-forge <- listhen <- nitropack <- @nuxt/nitro-server`. Three of the four advisories are Moderate and one is Low;
+all four are fixed in 1.4.3. The package is not in the built Nitro output at all, so no deployed artifact carries it,
+and `node-forge` 1.4.3 declares no dependencies of its own, so the bump widens nothing transitively.
 
 ### 9.0.2 SAST remediation thresholds (OSPS-VM-06.01–06.02)
 
