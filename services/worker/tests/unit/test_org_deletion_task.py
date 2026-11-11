@@ -49,7 +49,7 @@ def _wire_delete_session(
 
     if session_factory is not None:
         monkeypatch.setattr(
-            org_deletion, "session_as_service_org", lambda _f, _org: session_factory()
+            org_deletion, "session_as_purge_org", lambda _f, _org: session_factory()
         )
         return
 
@@ -60,7 +60,7 @@ def _wire_delete_session(
         async def __aexit__(self, *args):
             return None
 
-    monkeypatch.setattr(org_deletion, "session_as_service_org", lambda _f, _org: _CM())
+    monkeypatch.setattr(org_deletion, "session_as_purge_org", lambda _f, _org: _CM())
 
 
 def _stub_stages(monkeypatch: pytest.MonkeyPatch) -> None:

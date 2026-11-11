@@ -531,9 +531,17 @@ async def test_sqlalchemy_spend_store_list_update_aclose(monkeypatch: Any) -> No
         ]
     )
     store = SqlAlchemySpendStore("postgresql+asyncpg://u:p@localhost/db")
-    with patch("app.tasks.billing_reconcile.session_as_service_account") as ctx:
-        ctx.return_value.__aenter__.return_value = session
-        ctx.return_value.__aexit__.return_value = None
+
+    def _cm(*_args: Any, **_kwargs: Any) -> MagicMock:
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=session)
+        cm.__aexit__ = AsyncMock(return_value=None)
+        return cm
+
+    with (
+        patch("app.tasks.billing_reconcile.session_unpinned", side_effect=_cm),
+        patch("app.tasks.billing_reconcile.session_as_app_org", side_effect=_cm) as app_org,
+    ):
         periods = await store.list_active_periods()
         assert periods == [
             BudgetPeriodWindow(
@@ -550,8 +558,10 @@ async def test_sqlalchemy_spend_store_list_update_aclose(monkeypatch: Any) -> No
             "org_id": row.org_id,
             "spent": 2500,
         }
-        assert "budget_periods" in str(session.execute.await_args_list[0].args[0])
+        assert "active_periods()" in str(session.execute.await_args_list[0].args[0])
         assert "spent_cents_cached" in str(session.execute.await_args_list[1].args[0])
+        # The tenant role is pinned per row, for the row's own org.
+        app_org.assert_called_once_with(store._factory, row.org_id)
     await store.aclose()
     engine.dispose.assert_awaited_once()
 

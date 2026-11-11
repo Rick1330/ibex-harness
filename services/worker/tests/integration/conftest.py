@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
+import subprocess
 from collections.abc import Iterator
-from urllib.parse import urlparse
+from pathlib import Path
+from urllib.parse import quote, urlparse, urlsplit, urlunsplit
 
 import pytest
 import redis as redis_sync
@@ -109,6 +112,61 @@ def require_redis() -> str:
 @pytest.fixture(scope="session")
 def require_postgres(postgres_dsn: str) -> str:
     return postgres_dsn
+
+
+# Capability-login secrets. These must match infra/testing/testcreds/creds.go:
+# the roles and their verifiers are cluster-global, so the Go integration
+# packages and this Python suite have to provision the same values.
+_CAPABILITY_PASSWORDS = {
+    "IBEX_RUNTIME_DB_PASSWORD": "capability-test-only-runtime",
+    "IBEX_WORKER_DB_PASSWORD": "capability-test-only-worker",
+    "IBEX_BOOTSTRAP_DB_PASSWORD": "capability-test-only-bootstrap",
+}
+_WORKER_LOGIN = "ibex_worker"
+
+
+def _capability_dsn(postgres_dsn: str, role: str) -> str:
+    """Return ``postgres_dsn`` with the userinfo replaced by a capability login."""
+    parts = urlsplit(postgres_dsn)
+    host = parts.hostname or "127.0.0.1"
+    port = f":{parts.port}" if parts.port else ""
+    password = quote(_CAPABILITY_PASSWORDS["IBEX_WORKER_DB_PASSWORD"], safe="")
+    netloc = f"{role}:{password}@{host}{port}"
+    return urlunsplit(parts._replace(netloc=netloc))
+
+
+@pytest.fixture(scope="session")
+def capability_worker_dsn(postgres_dsn: str) -> str:
+    """Provision and return a DSN that logs in as ``ibex_worker``.
+
+    The capability logins are created by migration 000064 with no password and
+    ``CONNECTION LIMIT 0``, so a test that needs a non-superuser login must run
+    the provisioning command first. ``migrate provision`` is the Go CLI for the
+    same routine the Go integration packages call.
+    """
+    repo_root = Path(__file__).resolve().parents[4]
+    go = shutil.which("go")
+    if go is None:
+        pytest.fail(
+            "go is required to provision the ibex_worker capability login "
+            "(migrate provision); install Go or run the Go migration tests first"
+        )
+    env = dict(os.environ)
+    env["POSTGRES_DSN"] = postgres_dsn
+    env.update(_CAPABILITY_PASSWORDS)
+    try:
+        subprocess.run(
+            [go, "run", "./infra/migrations/postgres/cmd/migrate", "-command", "provision"],
+            cwd=repo_root,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.CalledProcessError as exc:  # pragma: no cover - env failure path
+        pytest.fail(f"migrate provision failed: {exc.stderr.strip() or exc.stdout.strip()}")
+    return _capability_dsn(postgres_dsn, _WORKER_LOGIN)
 
 
 def _free_tcp_port() -> int:
