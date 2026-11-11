@@ -177,6 +177,7 @@ func (f *tenancyFixture) firstAgentID(ctx context.Context, orgID string) string 
 
 // createIdentity calls bootstrap_create_identity as the current role.
 func createIdentity(ctx context.Context, tx *sql.Tx, call identityCall) error {
+	// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; every value is a bound parameter.
 	_, err := tx.ExecContext(ctx, `
 		SELECT ibex_core.bootstrap_create_identity(
 			$1::uuid, $2::uuid, $3, $4, $5::uuid, $6, $7)`,
@@ -187,6 +188,7 @@ func createIdentity(ctx context.Context, tx *sql.Tx, call identityCall) error {
 
 // insertPAT calls bootstrap_insert_pat as the current role.
 func insertPAT(ctx context.Context, tx *sql.Tx, call patCall) error {
+	// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; every value is a bound parameter.
 	_, err := tx.ExecContext(ctx, `
 		SELECT ibex_core.bootstrap_insert_pat(
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, $7, $8::bigint)`,
@@ -526,6 +528,7 @@ func (e bootstrapEnv) assertBootstrapPAT(orgID, prefix string) {
 // the state every production tenant is in.
 func (f *tenancyFixture) seedVictimPAT(ctx context.Context, victim tenantSeed) {
 	f.t.Helper()
+	// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; every value is a bound parameter.
 	if _, err := f.db.ExecContext(ctx, `
 		INSERT INTO ibex_core.tokens (org_id, user_id, agent_id, type, hash, prefix, name, permissions)
 		VALUES ($1::uuid, $2::uuid, $3::uuid, 'pat', $4, $5, 'victim bootstrap', $6)`,
