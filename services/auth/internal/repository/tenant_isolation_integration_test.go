@@ -85,7 +85,7 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 	})
 
 	testutil.ProvisionCapabilityLogins(t, dsn)
-	authDB := openIsolationAuthDB(t, dsn)
+	authDB := openCapabilityDB(t, dsn, "ibex_auth", testutil.AuthLoginTestPassword)
 	t.Cleanup(func() { _ = authDB.Close() })
 	f.bindCapabilityRepos(t, authDB)
 	return f
@@ -144,22 +144,23 @@ func (f *isolationFixture) bindCapabilityRepos(t *testing.T, db *sql.DB) {
 	f.creds = creds
 }
 
-// openIsolationAuthDB connects with the ibex_auth credential.
-func openIsolationAuthDB(t *testing.T, dsn string) *sql.DB {
+// openCapabilityDB connects to the fixture database as one capability login.
+// The caller owns the returned handle and closes it with t.Cleanup.
+func openCapabilityDB(t *testing.T, dsn, role, password string) *sql.DB {
 	t.Helper()
 	parsed, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatalf("parse test DSN: %v", err)
 	}
-	parsed.User = url.UserPassword("ibex_auth", testutil.AuthLoginTestPassword)
+	parsed.User = url.UserPassword(role, password)
 	db, err := sql.Open("postgres", parsed.String())
 	if err != nil {
-		t.Fatalf("open auth pool: %v", err)
+		t.Fatalf("open %s pool: %v", role, err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
-		t.Fatalf("connect as ibex_auth: %v", err)
+		t.Fatalf("connect as %s: %v", role, err)
 	}
 	return db
 }
@@ -371,7 +372,10 @@ func assertNoPermissionError(t *testing.T, err error) {
 // no-rows result would not prove the grant moved.
 func TestRepositoryTokenReaderRefusesRuntime(t *testing.T) {
 	f := newIsolationFixture(t)
-	runtimeDB := openRuntimeDB(t, f.dsn)
+	// The reader grant was revoked from ibex_runtime, so the same probe runs
+	// from that login rather than from ibex_auth.
+	runtimeDB := openCapabilityDB(t, f.dsn, "ibex_runtime", testutil.RuntimeLoginTestPassword)
+	t.Cleanup(func() { _ = runtimeDB.Close() })
 	repo := repository.RequireTokensRepository(t, runtimeDB, nil)
 
 	_, err := repo.FindActiveByPrefix(context.Background(), f.tokenAPrefix)
@@ -379,26 +383,4 @@ func TestRepositoryTokenReaderRefusesRuntime(t *testing.T) {
 	if !errors.As(err, &pqErr) || string(pqErr.Code) != "42501" {
 		t.Fatalf("ibex_runtime FindActiveByPrefix error = %v, want SQLSTATE 42501", err)
 	}
-}
-
-// openRuntimeDB opens the same database as ibex_runtime, so the reader grant
-// can be probed from the login it was revoked from.
-func openRuntimeDB(t *testing.T, dsn string) *sql.DB {
-	t.Helper()
-	parsed, err := url.Parse(dsn)
-	if err != nil {
-		t.Fatalf("parse test DSN: %v", err)
-	}
-	parsed.User = url.UserPassword("ibex_runtime", testutil.RuntimeLoginTestPassword)
-	db, err := sql.Open("postgres", parsed.String())
-	if err != nil {
-		t.Fatalf("open runtime pool: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		t.Fatalf("connect as ibex_runtime: %v", err)
-	}
-	return db
 }

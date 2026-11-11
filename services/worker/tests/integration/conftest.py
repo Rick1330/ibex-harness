@@ -6,20 +6,22 @@ import os
 import shutil
 import socket
 import subprocess
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from urllib.parse import quote, urlparse, urlsplit, urlunsplit
 
 import pytest
+import pytest_asyncio
 import redis as redis_sync
 from celery import Celery
 from celery.contrib.testing.worker import start_worker
 from redis.exceptions import RedisError
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.celery_app import create_celery_app
 from app.config import Settings, get_settings
-from app.db import create_engine
+from app.db import create_engine, create_session_factory
 from app.observability import reset_observability_for_tests
 
 _REDIS_BASE = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
@@ -112,6 +114,39 @@ def require_redis() -> str:
 @pytest.fixture(scope="session")
 def require_postgres(postgres_dsn: str) -> str:
     return postgres_dsn
+
+
+@pytest_asyncio.fixture
+async def owner_factory(postgres_dsn: str) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """Session factory for the migration owner login (seeding and assertions)."""
+    engine = create_engine(Settings(database_url=postgres_dsn))
+    try:
+        yield create_session_factory(engine)
+    finally:
+        await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def worker_factory(
+    capability_worker_dsn: str,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """Session factory that logs in as ``ibex_worker`` (never the owner)."""
+    engine = create_engine(Settings(database_url=capability_worker_dsn))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            current_user = (
+                await session.execute(
+                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                        "SELECT current_user"
+                    )
+                )
+            ).scalar_one()
+        assert current_user == "ibex_worker", current_user
+        assert current_user != "ibex", "owner login would bypass RLS"
+        yield factory
+    finally:
+        await engine.dispose()
 
 
 # Capability-login secrets. These must match infra/testing/testcreds/creds.go:

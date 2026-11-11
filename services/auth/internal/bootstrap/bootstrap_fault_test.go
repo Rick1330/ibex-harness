@@ -210,11 +210,18 @@ func firstRunRows() []faultRow {
 	}
 }
 
-// organizationRow is the bootstrap_upsert_organization result.
+// organizationRow is the bootstrap_upsert_organization result for a newly
+// generated organization id.
 func organizationRow(created bool, deletedAt driver.Value) faultRow {
+	return organizationRowFor(created, uuid.New(), deletedAt)
+}
+
+// organizationRowFor is organizationRow with a caller-chosen id, so a test can
+// assert which organization the upsert reported back.
+func organizationRowFor(created bool, orgID uuid.UUID, deletedAt driver.Value) faultRow {
 	return faultRow{
 		columns: []string{"created", "org_id", "deleted_at"},
-		values:  []driver.Value{created, uuid.NewString(), deletedAt},
+		values:  []driver.Value{created, orgID.String(), deletedAt},
 	}
 }
 
@@ -458,25 +465,43 @@ func TestReconcileServiceTokenErrorPaths(t *testing.T) {
 	})
 }
 
-func TestOrganizationHelperErrors(t *testing.T) {
-	cfg := testConfig(t)
-	orgID := uuid.New()
+// runInsertOrganization drives insertOrganization once against f, so each
+// subtest only states its fault and its assertion.
+func runInsertOrganization(t *testing.T, f faultConfig) (bootstrapResult, error) {
+	t.Helper()
+	db := openFaultDB(t, f)
+	in := orgInput{id: uuid.New(), cfg: testConfig(t)}
+	return insertOrganization(context.Background(), beginFaultTx(t, db), in)
+}
 
+// requireInsertOrganizationError requires insertOrganization to fail with an
+// error naming want.
+func requireInsertOrganizationError(t *testing.T, f faultConfig, want string) {
+	t.Helper()
+	_, err := runInsertOrganization(t, f)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("insertOrganization error = %v, want it to name %q", err, want)
+	}
+}
+
+// mustInsertOrganization requires insertOrganization to succeed and returns its
+// result.
+func mustInsertOrganization(t *testing.T, f faultConfig) bootstrapResult {
+	t.Helper()
+	result, err := runInsertOrganization(t, f)
+	if err != nil {
+		t.Fatalf("insertOrganization: %v", err)
+	}
+	return result
+}
+
+func TestOrganizationHelperErrors(t *testing.T) {
 	t.Run("read fails", func(t *testing.T) {
-		db := openFaultDB(t, faultConfig{query: errInjected})
-		tx := beginFaultTx(t, db)
-		if _, err := insertOrganization(context.Background(), tx, orgInput{id: orgID, cfg: cfg}); err == nil {
-			t.Fatal("insertOrganization returned no error")
-		}
+		requireInsertOrganizationError(t, faultConfig{query: errInjected}, "insert organization")
 	})
 
 	t.Run("fresh insert", func(t *testing.T) {
-		db := openFaultDB(t, faultConfig{rows: []faultRow{organizationRow(true, nil)}})
-		tx := beginFaultTx(t, db)
-		result, err := insertOrganization(context.Background(), tx, orgInput{id: orgID, cfg: cfg})
-		if err != nil {
-			t.Fatalf("insertOrganization: %v", err)
-		}
+		result := mustInsertOrganization(t, faultConfig{rows: []faultRow{organizationRow(true, nil)}})
 		if result.AlreadyBootstrapped {
 			t.Fatal("insertOrganization reported an existing organization for a fresh insert")
 		}
@@ -484,32 +509,16 @@ func TestOrganizationHelperErrors(t *testing.T) {
 
 	t.Run("existing organization", func(t *testing.T) {
 		existing := uuid.New()
-		row := faultRow{
-			columns: []string{"created", "org_id", "deleted_at"},
-			values:  []driver.Value{false, existing.String(), nil},
-		}
-		db := openFaultDB(t, faultConfig{rows: []faultRow{row}})
-		tx := beginFaultTx(t, db)
-		result, err := insertOrganization(context.Background(), tx, orgInput{id: orgID, cfg: cfg})
-		if err != nil {
-			t.Fatalf("insertOrganization: %v", err)
-		}
+		row := organizationRowFor(false, existing, nil)
+		result := mustInsertOrganization(t, faultConfig{rows: []faultRow{row}})
 		if !result.AlreadyBootstrapped || result.OrgID != existing {
 			t.Fatalf("result = %+v, want already bootstrapped as %s", result, existing)
 		}
 	})
 
 	t.Run("soft-deleted organization", func(t *testing.T) {
-		row := faultRow{
-			columns: []string{"created", "org_id", "deleted_at"},
-			values:  []driver.Value{false, uuid.NewString(), time.Now().UTC()},
-		}
-		db := openFaultDB(t, faultConfig{rows: []faultRow{row}})
-		tx := beginFaultTx(t, db)
-		_, err := insertOrganization(context.Background(), tx, orgInput{id: orgID, cfg: cfg})
-		if err == nil || !strings.Contains(err.Error(), "soft-deleted") {
-			t.Fatalf("insertOrganization error = %v, want a soft-deleted refusal", err)
-		}
+		row := organizationRowFor(false, uuid.New(), time.Now().UTC())
+		requireInsertOrganizationError(t, faultConfig{rows: []faultRow{row}}, "soft-deleted")
 	})
 }
 

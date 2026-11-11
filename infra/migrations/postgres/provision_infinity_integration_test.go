@@ -3,10 +3,70 @@
 package postgres
 
 import (
+	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
 )
+
+// roleAttributeCase is one `VALID UNTIL` spelling and the role state it must
+// produce.
+type roleAttributeCase struct {
+	name        string
+	alter       string
+	wantExpired bool
+	wantDescr   string
+}
+
+// roleAttributeCases covers the three shapes lib/pq can hand back: the two
+// infinity sentinels as text, and a finite timestamp in a non-UTC offset.
+func roleAttributeCases() []roleAttributeCase {
+	return []roleAttributeCase{
+		{
+			name:      "infinity",
+			alter:     `ALTER ROLE ibex_provision_infinity_probe VALID UNTIL 'infinity'`,
+			wantDescr: "validuntil=infinity",
+		},
+		{
+			name:        "negative infinity",
+			alter:       `ALTER ROLE ibex_provision_infinity_probe VALID UNTIL '-infinity'`,
+			wantExpired: true,
+			wantDescr:   "validuntil=-infinity",
+		},
+		{
+			name:      "finite in a non-utc offset",
+			alter:     `ALTER ROLE ibex_provision_infinity_probe VALID UNTIL '2031-02-03 04:05:06.789012+02'`,
+			wantDescr: "validuntil=2031-02-03T02:05:06Z",
+		},
+	}
+}
+
+// check applies the case's `VALID UNTIL`, reloads the probe role, and asserts
+// the three derived states the provisioner relies on. It lives outside the test
+// function so the table body stays a single call and the case logic stays
+// readable on its own.
+func (tc roleAttributeCase) check(t *testing.T, ctx context.Context, tx *sql.Tx) {
+	t.Helper()
+	if _, err := tx.ExecContext(ctx, tc.alter); err != nil {
+		t.Fatalf("alter probe role: %v", err)
+	}
+	attributes, err := loadRoleAttributes(tx, provisionTarget{role: "ibex_provision_infinity_probe"})
+	if err != nil {
+		t.Fatalf("loadRoleAttributes: %v", err)
+	}
+	if got := attributes.expired(time.Now()); got != tc.wantExpired {
+		t.Fatalf("expired = %v, want %v", got, tc.wantExpired)
+	}
+	if !strings.Contains(attributes.describe(), tc.wantDescr) {
+		t.Fatalf("describe = %q, want it to contain %q", attributes.describe(), tc.wantDescr)
+	}
+	// The two non-expiring states pass the safe-role postcondition; an
+	// expired credential must fail it.
+	if got := attributes.safe(time.Now()); got == tc.wantExpired {
+		t.Fatalf("safe = %v with expired = %v", got, tc.wantExpired)
+	}
+}
 
 // TestLoadRoleAttributesReadsExpirySentinels is the database half of the
 // infinity fix: lib/pq hands `rolvaliduntil = 'infinity'` back as text, so the
@@ -35,49 +95,7 @@ func TestLoadRoleAttributesReadsExpirySentinels(t *testing.T) {
 		t.Fatalf("create probe role: %v", err)
 	}
 
-	tests := []struct {
-		name        string
-		alter       string
-		wantExpired bool
-		wantDescr   string
-	}{
-		{
-			name:      "infinity",
-			alter:     `ALTER ROLE ibex_provision_infinity_probe VALID UNTIL 'infinity'`,
-			wantDescr: "validuntil=infinity",
-		},
-		{
-			name:        "negative infinity",
-			alter:       `ALTER ROLE ibex_provision_infinity_probe VALID UNTIL '-infinity'`,
-			wantExpired: true,
-			wantDescr:   "validuntil=-infinity",
-		},
-		{
-			name:      "finite in a non-utc offset",
-			alter:     `ALTER ROLE ibex_provision_infinity_probe VALID UNTIL '2031-02-03 04:05:06.789012+02'`,
-			wantDescr: "validuntil=2031-02-03T02:05:06Z",
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := tx.ExecContext(ctx, tc.alter); err != nil {
-				t.Fatalf("alter probe role: %v", err)
-			}
-			attributes, err := loadRoleAttributes(tx, provisionTarget{role: "ibex_provision_infinity_probe"})
-			if err != nil {
-				t.Fatalf("loadRoleAttributes: %v", err)
-			}
-			if got := attributes.expired(time.Now()); got != tc.wantExpired {
-				t.Fatalf("expired = %v, want %v", got, tc.wantExpired)
-			}
-			if !strings.Contains(attributes.describe(), tc.wantDescr) {
-				t.Fatalf("describe = %q, want it to contain %q", attributes.describe(), tc.wantDescr)
-			}
-			// The two non-expiring states pass the safe-role postcondition; an
-			// expired credential must fail it.
-			if got := attributes.safe(time.Now()); got == tc.wantExpired {
-				t.Fatalf("safe = %v with expired = %v", got, tc.wantExpired)
-			}
-		})
+	for _, tc := range roleAttributeCases() {
+		t.Run(tc.name, func(t *testing.T) { tc.check(t, ctx, tx) })
 	}
 }
