@@ -14,7 +14,7 @@ from sqlalchemy import text
 
 from app.celery_app import celery_app
 from app.config import get_settings
-from app.db import create_engine, create_session_factory, session_as_service_org
+from app.db import create_engine, create_session_factory, session_as_purge_org
 from app.task_names import TASK_ORG_DELETE_ORGANIZATION
 from app.tasks import org_deletion_receipts as _rcpt
 from app.tasks import org_deletion_stores as _stores
@@ -214,9 +214,15 @@ class _PostPostgresArgs:
 async def _claim_and_purge_postgres(
     args: _ClaimPurgeArgs,
 ) -> tuple[dict[str, str] | None, list[str] | None]:
-    """Claim job + postgres purge in one txn. Returns (early_result, archived_uris)."""
+    """Claim job + postgres purge in one txn. Returns (early_result, archived_uris).
+
+    Every statement in this transaction runs as ``ibex_purge`` (``SET LOCAL``
+    inside the transaction) while ``app.current_org_id`` scopes RLS to one org:
+    the purge identity is deliberately not a member of ``ibex_service``, so the
+    tenant policies still apply.
+    """
     try:
-        async with session_as_service_org(args.factory, args.org_id) as session:
+        async with session_as_purge_org(args.factory, args.org_id) as session:
             ctx = _StageCtx(
                 job_id=args.job_id,
                 org_id=args.org_id,
@@ -241,7 +247,7 @@ async def _claim_and_purge_postgres(
             )
             return None, archived_uris
     except Exception as exc:
-        # Covers body failures and commit-on-exit from session_as_service_org.
+        # Covers body failures and commit-on-exit from session_as_purge_org.
         await _record_job_failed(
             args.factory,
             job_id=args.job_id,
@@ -266,7 +272,7 @@ async def _run_post_postgres(args: _PostPostgresArgs) -> dict[str, str]:
         raise
 
     try:
-        async with session_as_service_org(args.factory, args.org_id) as session:
+        async with session_as_purge_org(args.factory, args.org_id) as session:
             ctx = _StageCtx(
                 job_id=args.job_id,
                 org_id=args.org_id,
@@ -295,7 +301,7 @@ async def _record_job_failed(
 ) -> None:
     """Mark job failed in a fresh txn (safe after a closed/failed stage session)."""
     logger.exception("org deletion failed job_id=%s org_id=%s", job_id, org_id)
-    async with session_as_service_org(factory, org_id) as fail_session:
+    async with session_as_purge_org(factory, org_id) as fail_session:
         # Stage txn rolls back on raise — re-persist fail-closed unreachable receipts here.
         if isinstance(exc, StoreUnreachableError):
             await _upsert_receipt(

@@ -16,7 +16,12 @@ from sqlalchemy import text
 from app.budget_ledger import BudgetLedgerUnavailableError, PostgresBudgetLedger
 from app.celery_app import celery_app
 from app.config import get_settings
-from app.db import create_engine, create_session_factory, session_as_service_account
+from app.db import (
+    create_engine,
+    create_session_factory,
+    session_as_app_org,
+    session_unpinned,
+)
 from app.extraction.clickhouse_traces import _http_endpoint, shared_clickhouse_client
 from app.extraction.session_store import _run_coro
 from app.task_names import (
@@ -153,14 +158,14 @@ class SqlAlchemySpendStore:
         self._factory = create_session_factory(self._engine)
 
     async def list_active_periods(self) -> list[BudgetPeriodWindow]:
-        async with session_as_service_account(self._factory) as session:
+        # Cross-tenant reach comes from the SECURITY DEFINER owner of
+        # ibex_billing.active_periods() (migration 000065), not from a role pin.
+        async with session_unpinned(self._factory) as session:
             result = await session.execute(
                 text(
                     """
-                    SELECT id::text AS period_id, org_id::text AS org_id,
-                           period_start, period_end
-                    FROM ibex_billing.budget_periods
-                    WHERE period_start <= now() AND period_end > now()
+                    SELECT period_id, org_id, period_start, period_end
+                    FROM ibex_billing.active_periods()
                     """
                 )
             )
@@ -176,7 +181,9 @@ class SqlAlchemySpendStore:
         ]
 
     async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
-        async with session_as_service_account(self._factory) as session:
+        # One row, one org: pin the tenant role per row rather than once for a
+        # batch, so the org GUC can never cover a different tenant's period.
+        async with session_as_app_org(self._factory, org_id) as session:
             await session.execute(
                 text(
                     """

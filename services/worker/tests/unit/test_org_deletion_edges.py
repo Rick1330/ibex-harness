@@ -30,7 +30,7 @@ def _wire_run(monkeypatch: pytest.MonkeyPatch, session: AsyncMock) -> None:
         async def __aexit__(self, *args):
             return None
 
-    monkeypatch.setattr(org_deletion, "session_as_service_org", lambda _f, _org: _CM())
+    monkeypatch.setattr(org_deletion, "session_as_purge_org", lambda _f, _org: _CM())
 
 
 def _claimable_session_execute():
@@ -211,7 +211,7 @@ async def test_deployed_unconfigured_store_fails_closed(
     engine.dispose = AsyncMock()
     monkeypatch.setattr(org_deletion, "create_engine", lambda _s: engine)
     monkeypatch.setattr(org_deletion, "create_session_factory", lambda _e: MagicMock())
-    monkeypatch.setattr(org_deletion, "session_as_service_org", lambda _f, _org: _CM())
+    monkeypatch.setattr(org_deletion, "session_as_purge_org", lambda _f, _org: _CM())
     monkeypatch.delenv("CLICKHOUSE_DSN", raising=False)
     monkeypatch.delenv("IBEX_WORKER_CLICKHOUSE_DSN", raising=False)
 
