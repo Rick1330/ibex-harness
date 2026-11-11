@@ -14,14 +14,6 @@ reason = "Fix exists only in zod 4.6.6+; @nuxt/content 3.16.2 for the static Doc
 # the root package.json pins glob >=14.0.2, so the advisory no longer resolves.
 # If a future lockfile reintroduces glob <14, this gate must fail.
 
-# minimatch ReDoS advisory (GHSA-g3hv-75wg-m249): fixed only in minimatch 11,
-# a major that the build-time glob/archiver chains do not accept. Build-time
-# only; absent from the deployed Nitro output.
-[[IgnoredVulns]]
-id = "GHSA-g3hv-75wg-m249"
-ignoreUntil = 2026-12-01
-reason = "Fixed only in minimatch 11 (major); carried by build-time glob/archiver chains and absent from the deployed Nitro output. Re-audit when the parent packages upgrade."
-
 # deepmerge prototype-pollution advisory (GHSA-gcqx-w48m-w2h4): OSV reports no
 # fixed release. Carried by @rollup/plugin-node-resolve at build time only and
 # absent from the deployed Nitro output.

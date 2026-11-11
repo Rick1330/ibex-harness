@@ -1,5 +1,6 @@
 # Thin migrate image — compiled /ibex-migrate only (not the API uvicorn image).
-FROM golang@sha256:512690a5660563b57d37ecc31129e7f136e831db2aed24a1dbeb8ad7380dc0fa AS build
+# golang:1.26.11-alpine3.24 — bumped for GO-2026-6859 (net/http)
+FROM golang@sha256:ae52b5bc6ed045a9ed26ab03dc19327a802a9cc9aa8b27ed57f5c6b60579b0bb AS build
 WORKDIR /src
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
