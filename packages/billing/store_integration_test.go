@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	migratepg "github.com/Rick1330/ibex-harness/infra/migrations/postgres"
+	"github.com/Rick1330/ibex-harness/infra/testing/pgprovision"
+	"github.com/Rick1330/ibex-harness/infra/testing/runtimeconn"
 	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/google/uuid"
 )
@@ -19,71 +21,105 @@ import (
 // Before the pin, LoadOrg returned HasHardCap=false and a hard cap stopped
 // enforcing with no error.
 func TestStore_LoadOrg_AsRuntimeEnforcesHardCap(t *testing.T) {
-	dsn, cleanup := testutil.SetupPostgres(t)
-	defer cleanup()
+	dsn := runtimeconn.DSN()
+	if err := migratepg.Up(dsn); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
 
-	owner := testutil.OpenDB(t, dsn)
+	owner := runtimeconn.OpenDB(t, dsn)
 	defer func() { _ = owner.Close() }()
 
 	capOrg := seedOrg(t, owner, "Hard Cap")
 	noCapOrg := seedOrg(t, owner, "No Cap")
 	otherCapOrg := seedOrg(t, owner, "Other Cap")
 
-	wantPeriod := seedHardCapPeriod(t, owner, capOrg, 5000, 250)
-	seedHardCapPeriod(t, owner, otherCapOrg, 9999, 1)
+	want := hardCapSeed{org: capOrg, capCents: 5000, spentCents: 250}
+	wantPeriod := seedHardCapPeriod(t, owner, want)
+	seedHardCapPeriod(t, owner, hardCapSeed{org: otherCapOrg, capCents: 9999, spentCents: 1})
 
-	testutil.ProvisionCapabilityLogins(t, dsn)
-	runtimeDB := testutil.OpenRuntimeDB(t, dsn)
+	pgprovision.CapabilityLogins(t, dsn)
+	runtimeDB := runtimeconn.OpenRuntimeDB(t, dsn)
 	defer func() { _ = runtimeDB.Close() }()
 
-	store, err := billing.NewStore(runtimeDB)
+	store := newStore(t, runtimeDB)
+	assertHardCap(t, loadOrg(t, store, "capOrg", capOrg), wantPeriod, want)
+	assertNoHardCap(t, loadOrg(t, store, "noCapOrg", noCapOrg))
+}
+
+type hardCapSeed struct {
+	org        uuid.UUID
+	capCents   int64
+	spentCents int64
+}
+
+func newStore(t *testing.T, db *sql.DB) *billing.Store {
+	t.Helper()
+	store, err := billing.NewStore(db)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
+	return store
+}
 
-	got, err := store.LoadOrg(context.Background(), capOrg)
-	testutil.RequireNoPermissionDenied(t, err)
+func loadOrg(t *testing.T, store *billing.Store, label string, orgID uuid.UUID) billing.BudgetSnapshot {
+	t.Helper()
+	got, err := store.LoadOrg(context.Background(), orgID)
+	runtimeconn.RequireNoPermissionDenied(t, err, "LoadOrg("+label+")")
 	if err != nil {
-		t.Fatalf("LoadOrg(capOrg) as ibex_runtime: %v", err)
+		t.Fatalf("LoadOrg(%s) as ibex_runtime: %v", label, err)
 	}
+	return got
+}
+
+func assertHardCap(t *testing.T, got billing.BudgetSnapshot, periodID uuid.UUID, want hardCapSeed) {
+	t.Helper()
 	if !got.HasHardCap {
 		t.Fatal("HasHardCap=false: the hard-cap row was filtered out; RLS is still bypassed or the pin is wrong")
 	}
-	if got.PeriodID != wantPeriod {
-		t.Fatalf("PeriodID=%s want %s", got.PeriodID, wantPeriod)
+	if got.PeriodID != periodID {
+		t.Fatalf("PeriodID=%s want %s", got.PeriodID, periodID)
 	}
-	if got.CapCents != 5000 || got.SpentCents != 250 {
-		t.Fatalf("cap/spent=%d/%d want 5000/250", got.CapCents, got.SpentCents)
+	if got.CapCents != want.capCents || got.SpentCents != want.spentCents {
+		t.Fatalf("cap/spent=%d/%d want %d/%d", got.CapCents, got.SpentCents, want.capCents, want.spentCents)
 	}
+}
 
-	// Negative: an org with no period must not inherit another org's cap.
-	none, err := store.LoadOrg(context.Background(), noCapOrg)
-	testutil.RequireNoPermissionDenied(t, err)
-	if err != nil {
-		t.Fatalf("LoadOrg(noCapOrg) as ibex_runtime: %v", err)
-	}
-	if none.HasHardCap {
-		t.Fatalf("noCapOrg saw a hard cap: %+v", none)
+func assertNoHardCap(t *testing.T, got billing.BudgetSnapshot) {
+	t.Helper()
+	if got.HasHardCap {
+		t.Fatalf("no-cap org saw a hard cap: %+v", got)
 	}
 }
 
 func seedOrg(t *testing.T, db *sql.DB, name string) uuid.UUID {
 	t.Helper()
+	ctx := context.Background()
 	slug := "billing-" + uuid.NewString()[:8]
-	return uuid.MustParse(testutil.SeedOrganization(t, db, name, slug))
+	var id string
+	err := runtimeconn.WithOwnerTx(ctx, db, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; every value is a bound parameter.
+		return tx.QueryRowContext(ctx,
+			`INSERT INTO ibex_core.organizations (name, slug) VALUES ($1, $2) RETURNING id::text`,
+			name, slug).Scan(&id)
+	})
+	if err != nil {
+		t.Fatalf("seed organization: %v", err)
+	}
+	return uuid.MustParse(id)
 }
 
-func seedHardCapPeriod(t *testing.T, db *sql.DB, orgID uuid.UUID, capCents, spentCents int64) uuid.UUID {
+func seedHardCapPeriod(t *testing.T, db *sql.DB, seed hardCapSeed) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC()
 	var id uuid.UUID
-	err := testutil.WithServiceAccount(ctx, db, func(tx *sql.Tx) error {
+	err := runtimeconn.WithOwnerTx(ctx, db, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; every value is a bound parameter.
 		return tx.QueryRowContext(ctx, `
 			INSERT INTO ibex_billing.budget_periods
 				(org_id, period_start, period_end, cap_cents, spent_cents_cached, enforcement_mode)
 			VALUES ($1::uuid, $2, $3, $4, $5, 'hard_cap')
-			RETURNING id`, orgID, now.Add(-time.Hour), now.Add(time.Hour), capCents, spentCents).Scan(&id)
+			RETURNING id`, seed.org, now.Add(-time.Hour), now.Add(time.Hour), seed.capCents, seed.spentCents).Scan(&id)
 	})
 	if err != nil {
 		t.Fatalf("seed hard-cap period: %v", err)

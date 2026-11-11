@@ -7,7 +7,9 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	migratepg "github.com/Rick1330/ibex-harness/infra/migrations/postgres"
+	"github.com/Rick1330/ibex-harness/infra/testing/pgprovision"
+	"github.com/Rick1330/ibex-harness/infra/testing/runtimeconn"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/google/uuid"
 )
@@ -18,84 +20,144 @@ import (
 // ibex_core.rate_limit_overrides_snapshot definer. Before the fix the poll
 // returned an empty map and every per-org override was silently ignored.
 func TestConfigStore_LoadAll_AsRuntimeReturnsOverrides(t *testing.T) {
-	dsn, cleanup := testutil.SetupPostgres(t)
-	defer cleanup()
+	dsn := runtimeconn.DSN()
+	if err := migratepg.Up(dsn); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
 
-	owner := testutil.OpenDB(t, dsn)
+	owner := runtimeconn.OpenDB(t, dsn)
 	defer func() { _ = owner.Close() }()
 
-	orgA, agentA := seedOrgAgent(t, owner, "Rate Limit A")
-	orgB, _ := seedOrgAgent(t, owner, "Rate Limit B")
+	a := seedOrgAgent(t, owner, "Rate Limit A")
+	b := seedOrgAgent(t, owner, "Rate Limit B")
+	seedOverride(t, owner, overrideSeed{orgID: a.org, rpm: 111})
+	seedOverride(t, owner, overrideSeed{orgID: a.org, agentID: a.agent.String(), rpm: 222})
+	seedOverride(t, owner, overrideSeed{orgID: b.org, rpm: 333})
 
-	seedOverride(t, owner, orgA, "", 111)
-	seedOverride(t, owner, orgA, agentA.String(), 222)
-	seedOverride(t, owner, orgB, "", 333)
-
-	testutil.ProvisionCapabilityLogins(t, dsn)
-	runtimeDB := testutil.OpenRuntimeDB(t, dsn)
+	pgprovision.CapabilityLogins(t, dsn)
+	runtimeDB := runtimeconn.OpenRuntimeDB(t, dsn)
 	defer func() { _ = runtimeDB.Close() }()
 
-	store, err := ratelimit.NewConfigStore(runtimeDB)
+	all := loadAll(t, newConfigStore(t, runtimeDB))
+	requireRPM(t, all, rpmWant{orgID: a.org, want: 111})
+	requireRPM(t, all, rpmWant{orgID: a.org, agentID: &a.agent, want: 222})
+	requireRPM(t, all, rpmWant{orgID: b.org, want: 333})
+	requireNoBleed(t, all, a.org, 111)
+}
+
+type orgAgent struct {
+	org   uuid.UUID
+	agent uuid.UUID
+}
+
+type overrideSeed struct {
+	orgID   uuid.UUID
+	agentID string
+	rpm     int64
+}
+
+type rpmWant struct {
+	orgID   uuid.UUID
+	agentID *uuid.UUID
+	want    int64
+}
+
+func newConfigStore(t *testing.T, db *sql.DB) *ratelimit.ConfigStore {
+	t.Helper()
+	store, err := ratelimit.NewConfigStore(db)
 	if err != nil {
 		t.Fatalf("NewConfigStore: %v", err)
 	}
+	return store
+}
 
+func loadAll(t *testing.T, store *ratelimit.ConfigStore) map[uuid.UUID]ratelimit.OrgOverrideSet {
+	t.Helper()
 	all, err := store.LoadAll(context.Background())
-	testutil.RequireNoPermissionDenied(t, err)
+	runtimeconn.RequireNoPermissionDenied(t, err, "LoadAll")
 	if err != nil {
 		t.Fatalf("LoadAll as ibex_runtime: %v", err)
 	}
-
-	// Positive: both the org-level and agent-level rows for org A are visible.
-	requireRPM(t, all, orgA, nil, 111)
-	requireRPM(t, all, orgA, &agentA, 222)
-
-	// Cross-tenant reach is the contract of LoadAll, but each row must stay
-	// under its own org: org A must not absorb org B's 333.
-	requireRPM(t, all, orgB, nil, 333)
-	if got := all[orgA]; got.OrgRPM == nil || *got.OrgRPM != 111 {
-		t.Fatalf("org A org-level RPM=%v; org B's value bled into org A", got.OrgRPM)
-	}
+	return all
 }
 
-func requireRPM(t *testing.T, all map[uuid.UUID]ratelimit.OrgOverrideSet, orgID uuid.UUID, agentID *uuid.UUID, want int64) {
+func requireRPM(t *testing.T, all map[uuid.UUID]ratelimit.OrgOverrideSet, want rpmWant) {
 	t.Helper()
-	set, ok := all[orgID]
+	set, ok := all[want.orgID]
 	if !ok {
-		t.Fatalf("org %s missing from LoadAll result", orgID)
+		t.Fatalf("org %s missing from LoadAll result", want.orgID)
 	}
-	if agentID == nil {
-		if set.OrgRPM == nil || *set.OrgRPM != want {
-			t.Fatalf("org %s org-level RPM=%v want %d", orgID, set.OrgRPM, want)
-		}
+	if want.agentID == nil {
+		requireOrgRPM(t, want.orgID, set, want.want)
 		return
 	}
-	got, ok := set.AgentRPM[*agentID]
-	if !ok || got != want {
-		t.Fatalf("org %s agent %s RPM=%d/%v want %d", orgID, *agentID, got, ok, want)
+	got, ok := set.AgentRPM[*want.agentID]
+	if !ok || got != want.want {
+		t.Fatalf("org %s agent %s RPM=%d/%v want %d", want.orgID, *want.agentID, got, ok, want.want)
 	}
 }
 
-func seedOrgAgent(t *testing.T, db *sql.DB, name string) (uuid.UUID, uuid.UUID) {
+func requireOrgRPM(t *testing.T, orgID uuid.UUID, set ratelimit.OrgOverrideSet, want int64) {
 	t.Helper()
-	slug := "ratelimit-" + uuid.NewString()[:8]
-	orgID := testutil.SeedOrganization(t, db, name, slug)
-	userID := testutil.SeedUser(t, db, orgID, slug+"@example.com", name)
-	agentID := testutil.SeedAgent(t, db, orgID, userID, name+" Agent", "agent-"+slug)
-	return uuid.MustParse(orgID), uuid.MustParse(agentID)
+	if set.OrgRPM == nil || *set.OrgRPM != want {
+		t.Fatalf("org %s org-level RPM=%v want %d", orgID, set.OrgRPM, want)
+	}
 }
 
-func seedOverride(t *testing.T, db *sql.DB, orgID uuid.UUID, agentID string, rpm int64) {
+// requireNoBleed asserts that the cross-tenant poll keeps rows under their own
+// org: the value another org owns must never be attributed to orgID.
+func requireNoBleed(t *testing.T, all map[uuid.UUID]ratelimit.OrgOverrideSet, orgID uuid.UUID, want int64) {
+	t.Helper()
+	requireOrgRPM(t, orgID, all[orgID], want)
+}
+
+func seedOrgAgent(t *testing.T, db *sql.DB, name string) orgAgent {
+	t.Helper()
+	ctx := context.Background()
+	slug := "ratelimit-" + uuid.NewString()[:8]
+	var ids orgAgent
+	err := runtimeconn.WithOwnerTx(ctx, db, func(tx *sql.Tx) error {
+		var orgID, userID, agentID string
+		// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; every value is a bound parameter.
+		if err := tx.QueryRowContext(ctx,
+			`INSERT INTO ibex_core.organizations (name, slug) VALUES ($1, $2) RETURNING id::text`,
+			name, slug).Scan(&orgID); err != nil {
+			return err
+		}
+		// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; every value is a bound parameter.
+		if err := tx.QueryRowContext(ctx,
+			`INSERT INTO ibex_core.users (org_id, email, name) VALUES ($1::uuid, $2, $3) RETURNING id::text`,
+			orgID, slug+"@example.com", name).Scan(&userID); err != nil {
+			return err
+		}
+		// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; every value is a bound parameter.
+		if err := tx.QueryRowContext(ctx,
+			`INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
+			 VALUES ($1::uuid, $2::uuid, $3, $4) RETURNING id::text`,
+			orgID, userID, name+" Agent", "agent-"+slug).Scan(&agentID); err != nil {
+			return err
+		}
+		ids = orgAgent{org: uuid.MustParse(orgID), agent: uuid.MustParse(agentID)}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("seed org/agent: %v", err)
+	}
+	return ids
+}
+
+func seedOverride(t *testing.T, db *sql.DB, seed overrideSeed) {
 	t.Helper()
 	ctx := context.Background()
 	var agentArg any
-	if agentID != "" {
-		agentArg = agentID
+	if seed.agentID != "" {
+		agentArg = seed.agentID
 	}
-	err := testutil.WithServiceAccount(ctx, db, func(tx *sql.Tx) error {
+	err := runtimeconn.WithOwnerTx(ctx, db, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; every value is a bound parameter.
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO ibex_core.rate_limit_overrides (org_id, agent_id, requests_per_minute)
-			VALUES ($1::uuid, $2::uuid, $3)`, orgID, agentArg, rpm)
+			VALUES ($1::uuid, $2::uuid, $3)`, seed.orgID, agentArg, seed.rpm)
 		return err
 	})
 	if err != nil {
