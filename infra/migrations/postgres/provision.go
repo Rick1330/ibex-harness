@@ -36,9 +36,14 @@ type provisionTarget struct {
 // provisionTargets is the complete capability-login model. ibex_worker is
 // deliberately allowed to reach ibex_purge; ibex_bootstrap is allowed no
 // membership at all; ibex_auth is allowed ibex_app but must never reach a
-// service, purge or bootstrap identity. Every target forbids every other
-// privileged role, so a stray GRANT is caught at provision time instead of
-// widening a login silently.
+// service, purge, bootstrap or runtime identity. Every target forbids every
+// other privileged role, so a stray GRANT is caught at provision time instead
+// of widening a login silently.
+//
+// ibex_runtime is on ibex_auth's forbidden list even though both hold ibex_app
+// today. They are separate login identities: a membership would let the auth
+// login act as the runtime login, and would inherit whatever capability
+// ibex_runtime is granted in a later migration without a second review.
 var provisionTargets = []provisionTarget{
 	{
 		role:           "ibex_runtime",
@@ -61,7 +66,7 @@ var provisionTargets = []provisionTarget{
 	{
 		role:           "ibex_auth",
 		envName:        "IBEX_AUTH_DB_PASSWORD",
-		forbiddenRoles: []string{"ibex_service", "ibex_purge", "ibex_bootstrap"},
+		forbiddenRoles: []string{"ibex_service", "ibex_purge", "ibex_bootstrap", "ibex_runtime"},
 		requiredRoles:  []string{"ibex_app"},
 	},
 }

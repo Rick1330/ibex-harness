@@ -136,6 +136,28 @@ func (f *tenancyFixture) sub(t *testing.T) *tenancyFixture {
 	return &clone
 }
 
+// rewindTo applies one-migration Down steps until the schema sits at floor.
+// Tests that need a pre-migration cluster state use it to reach the version
+// whose up file they are about to exercise against a hand-built shape.
+func rewindTo(t *testing.T, f *tenancyFixture, floor uint) {
+	t.Helper()
+	for {
+		version, dirty, err := Version(f.dsn)
+		if err != nil {
+			t.Fatalf("version while rewinding to %d: %v", floor, err)
+		}
+		if dirty {
+			t.Fatalf("cannot rewind to %d from a dirty migration state", floor)
+		}
+		if version <= floor {
+			return
+		}
+		if err := Down(f.dsn); err != nil {
+			t.Fatalf("down from %d: %v", version, err)
+		}
+	}
+}
+
 // seedTenant creates the primary org, user and agent and stores their ids.
 func (f *tenancyFixture) seedTenant(ctx context.Context) {
 	f.t.Helper()

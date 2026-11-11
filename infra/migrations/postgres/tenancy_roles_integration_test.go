@@ -71,3 +71,80 @@ func assertAuthMemberships(f *tenancyFixture, ctx context.Context) {
 	f.t.Helper()
 	f.assertDirectMembers(ctx, membershipSpec{role: "ibex_auth", want: []string{"ibex_app"}})
 }
+
+// authLoginFloor is the last migration before the auth login (000068).
+const authLoginFloor = 67
+
+// membershipOptions is the pg_auth_members option triple for one row.
+type membershipOptions struct {
+	admin, inherit, set bool
+}
+
+// TestTenancyAuthMembershipNormalized is the 000068 option lock.
+//
+// A plain `GRANT ibex_app TO ibex_auth` leaves an existing pg_auth_members row
+// exactly as it found it (measured on PostgreSQL 16), so a login granted WITH
+// ADMIN TRUE or WITH INHERIT TRUE kept those options while the migration
+// reported success. The model emits ADMIN FALSE, INHERIT FALSE, SET TRUE only;
+// the provenance guard tests set_option, so it admits an ADMIN row that this
+// model never produces and the GRANT is what has to normalize it. Remove either
+// FALSE from the GRANT and the matching case below fails.
+//
+// The role carries a credential on purpose: that is the provisioned re-run the
+// provenance guard has to admit (a direct, SET-enabled row).
+func TestTenancyAuthMembershipNormalized(t *testing.T) {
+	cases := []struct {
+		name  string
+		grant string
+		pre   membershipOptions
+	}{
+		{
+			name:  "admin option",
+			grant: "WITH ADMIN TRUE",
+			pre:   membershipOptions{admin: true, set: true},
+		},
+		{
+			name:  "inherit option",
+			grant: "WITH INHERIT TRUE",
+			pre:   membershipOptions{inherit: true, set: true},
+		},
+		{
+			name:  "both options",
+			grant: "WITH ADMIN TRUE, INHERIT TRUE",
+			pre:   membershipOptions{admin: true, inherit: true, set: true},
+		},
+	}
+	f := newTenancyFixture(t)
+	ctx := t.Context()
+	t.Cleanup(func() { resetSchema(t, f.db) })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rewindTo(t, f, authLoginFloor)
+			f.exec(ctx, `CREATE ROLE ibex_auth LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT PASSWORD 'pre-normalization'`)
+			f.exec(ctx, `GRANT ibex_app TO ibex_auth `+tc.grant)
+			assertMembershipOptions(t, f, ctx, tc.pre)
+			if err := Up(f.dsn); err != nil {
+				t.Fatalf("up: %v", err)
+			}
+			assertMembershipOptions(t, f, ctx, membershipOptions{set: true})
+		})
+	}
+}
+
+// assertMembershipOptions reads ibex_auth's direct ibex_app row.
+func assertMembershipOptions(t *testing.T, f *tenancyFixture, ctx context.Context, want membershipOptions) {
+	t.Helper()
+	var got membershipOptions
+	if err := f.db.QueryRowContext(ctx, `
+		SELECT am.admin_option, am.inherit_option, am.set_option
+		FROM pg_auth_members am
+		JOIN pg_roles granted ON granted.oid = am.roleid
+		JOIN pg_roles member ON member.oid = am.member
+		WHERE granted.rolname = 'ibex_app' AND member.rolname = 'ibex_auth'`).
+		Scan(&got.admin, &got.inherit, &got.set); err != nil {
+		t.Fatalf("read ibex_auth membership options: %v", err)
+	}
+	if got != want {
+		t.Fatalf("ibex_auth membership options = %+v, want %+v", got, want)
+	}
+}

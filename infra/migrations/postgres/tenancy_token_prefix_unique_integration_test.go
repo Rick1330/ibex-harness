@@ -42,10 +42,17 @@ func TestTenancyTokenPrefixPrecheckRefusesDuplicates(t *testing.T) {
 		"tokens.prefix must be unique",
 		"ibex_pat_duplicate",
 		"more than one organization",
+		"delete the others",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("precheck error does not contain %q: %v", want, err)
 		}
+	}
+	// The repair must not suggest revocation: a revoked row keeps its prefix,
+	// so the unique index would still refuse to build and the operator would
+	// follow the instruction into the same failure.
+	if strings.Contains(err.Error(), "revoke or delete") {
+		t.Fatalf("repair guidance still offers revocation: %v", err)
 	}
 	if f.indexExists(ctx, indexName{qualified: "ibex_core.idx_tokens_prefix_unique"}) {
 		t.Fatal("idx_tokens_prefix_unique exists after the refused migration")
@@ -55,9 +62,55 @@ func TestTenancyTokenPrefixPrecheckRefusesDuplicates(t *testing.T) {
 // rewindBelowPrefixIndex rolls the suite back to precheckFloor.
 func rewindBelowPrefixIndex(t *testing.T, f *tenancyFixture) {
 	t.Helper()
-	for version := maxEmbeddedMigrationVersion(t); version > precheckFloor; version-- {
-		if err := Down(f.dsn); err != nil {
-			t.Fatalf("down from %d: %v", version, err)
-		}
+	rewindTo(t, f, precheckFloor)
+}
+
+// TestTenancyTokenPrefixPrecheckRefusesWrongShape proves 000070 refuses a
+// relation that 000071 would otherwise accept by name alone.
+//
+// `CREATE UNIQUE INDEX ... IF NOT EXISTS` resolves its name against pg_class,
+// so a table wearing the index name makes 000071 skip with a NOTICE and the
+// invariant stays unenforced. A unique index over (hash) or (prefix, org_id) is
+// a real index but does not make one prefix unique across organizations. Both
+// are refused by name instead of reported as success.
+func TestTenancyTokenPrefixPrecheckRefusesWrongShape(t *testing.T) {
+	cases := []struct {
+		name string
+		ddl  string
+		want string
+	}{
+		{
+			name: "table wearing the index name",
+			ddl:  `CREATE TABLE ibex_core.idx_tokens_prefix_unique (x int)`,
+			want: "is not an index",
+		},
+		{
+			name: "unique index on another column",
+			ddl:  `CREATE UNIQUE INDEX idx_tokens_prefix_unique ON ibex_core.tokens (hash)`,
+			want: "does not index exactly ibex_core.tokens (prefix)",
+		},
+		{
+			name: "unique index on prefix and org_id",
+			ddl:  `CREATE UNIQUE INDEX idx_tokens_prefix_unique ON ibex_core.tokens (prefix, org_id)`,
+			want: "does not index exactly ibex_core.tokens (prefix)",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTenancyFixture(t)
+			t.Cleanup(func() { resetSchema(t, f.db) })
+			rewindTo(t, f, precheckFloor)
+			f.exec(t.Context(), tc.ddl)
+			err := Up(f.dsn)
+			if err == nil {
+				t.Fatalf("expected 000070 to refuse %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("precheck error does not contain %q: %v", tc.want, err)
+			}
+			if !strings.Contains(err.Error(), "idx_tokens_prefix_unique") {
+				t.Fatalf("precheck error does not name the relation: %v", err)
+			}
+		})
 	}
 }

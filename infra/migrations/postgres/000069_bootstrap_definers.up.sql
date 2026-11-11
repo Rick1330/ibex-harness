@@ -31,9 +31,11 @@
 --                                   exactly one PAT and never rotates it), and
 --                                   a user/agent that is not that organization's
 --                                   active owner / active agent.
---   bootstrap_upsert_service_token  refuses an organization with no active
---                                   owner and active agent, instead of writing
---                                   a credential with NULL subjects.
+--   bootstrap_upsert_service_token  refuses a mask other than the fixed
+--                                   memory-service grant, and an organization
+--                                   with no active owner and active agent,
+--                                   instead of writing a credential with NULL
+--                                   subjects or a caller-chosen permission set.
 --
 -- The seven functions map 1:1 to the old Go helpers:
 --
@@ -54,6 +56,22 @@
 -- fallback to an organization that has none — `ON CONFLICT DO NOTHING` never
 -- changes an existing policy, but a caller can install one where an operator
 -- deliberately left the table empty.
+--
+-- Installation-scoped authorization is NOT expressible here, and no control
+-- below pretends otherwise. `ibex_bootstrap` is a one-shot command, not a
+-- per-request service: a definer sees `session_user = 'ibex_bootstrap'` and
+-- nothing else. Every installation that pins that login is indistinguishable
+-- from every other one, and a session GUC cannot supply the missing identity
+-- because the caller would set it itself — it is a claim, not evidence. There
+-- is also no row to derive an owner from: the organization this command exists
+-- to create has no users, agents or tokens yet, and ships no creator marker.
+-- The residual is therefore: a stolen `ibex_bootstrap` credential can create
+-- state for any organization. That is why the credential is never used by a
+-- long-running service, why it starts inert with CONNECTION LIMIT 0 until
+-- `migrate provision` activates it, and why every body below bounds what it can
+-- write per organization instead of trusting who is calling. The per-org guards
+-- are the control; they are what keeps a stolen credential from taking over an
+-- installation that already exists.
 --
 -- Every function is REVOKEd from PUBLIC and granted to `ibex_bootstrap` only.
 -- The caller-facing text for the paths Go already models stays in Go: those
@@ -183,6 +201,13 @@ REVOKE ALL ON FUNCTION ibex_core.bootstrap_lookup_subjects(uuid) FROM PUBLIC;
 -- then use bootstrap_insert_pat to mint that tenant a credential. `users` is
 -- visible across organizations here because the policy admits
 -- `current_user = 'ibex_service'`, so the EXISTS below sees every tenant.
+--
+-- The EXISTS and the two INSERTs are one check-then-write, and two concurrent
+-- calls for the same organization would both see no row and both insert. The
+-- per-organization advisory lock below serializes them; it is taken before the
+-- check and released at COMMIT, and the second caller re-reads under READ
+-- COMMITTED after the first commits. Lock order is org first, then prefix (see
+-- bootstrap_upsert_service_token), so two definers cannot deadlock.
 CREATE OR REPLACE FUNCTION ibex_core.bootstrap_create_identity(
     p_org_id      uuid,
     p_user_id     uuid,
@@ -200,6 +225,8 @@ SECURITY DEFINER
 SET search_path = ibex_core, pg_temp
 AS $$
 BEGIN
+    PERFORM pg_advisory_xact_lock(hashtext(p_org_id::text));
+
     IF EXISTS (
         SELECT 1 FROM ibex_core.users u WHERE u.org_id = p_org_id
     ) THEN
@@ -258,12 +285,15 @@ REVOKE ALL ON FUNCTION ibex_core.bootstrap_write_model_policy(uuid) FROM PUBLIC;
 -- `ibex_service` across organizations:
 --
 --   mask        the only PAT this function may write is the bootstrap PAT, so
---               the mask is fixed here instead of inserted verbatim. Without
+--               the mask is fixed here instead of inserted verbatim (NULL and
+--               every other value, supersets included, are refused). Without
 --               this a caller could mint a full-admin credential for itself and
 --               file it against another organization's subject ids.
 --   one PAT     bootstrap issues exactly one PAT per organization and never
 --               rotates it, so an existing `type = 'pat'` row means this is a
---               re-run, not a first install.
+--               re-run, not a first install. The per-organization advisory lock
+--               serializes the check against a concurrent call, which would
+--               otherwise let two bootstraps both see no row and both insert.
 --   subjects    the user must be that organization's active owner and the agent
 --               its active agent, so a PAT can never be bound across tenants.
 --
@@ -294,6 +324,8 @@ BEGIN
             p_permissions, c_bootstrap_permissions
             USING ERRCODE = 'check_violation';
     END IF;
+
+    PERFORM pg_advisory_xact_lock(hashtext(p_org_id::text));
 
     IF EXISTS (
         SELECT 1 FROM ibex_core.tokens t
@@ -360,7 +392,9 @@ REVOKE ALL ON FUNCTION ibex_core.bootstrap_insert_pat(uuid, uuid, uuid, uuid, te
 --
 -- The subjects are read and validated before either write: an organization
 -- with no active owner or no active agent cannot hold a service token, and the
--- old INSERT wrote NULL into both columns because only Go checked.
+-- old INSERT wrote NULL into both columns because only Go checked. The mask is
+-- fixed here too: the update branch below is a rotation, and without the guard a
+-- caller could rotate the service credential up to a full-admin grant.
 CREATE OR REPLACE FUNCTION ibex_core.bootstrap_upsert_service_token(
     p_org_id      uuid,
     p_hash        text,
@@ -375,11 +409,28 @@ SECURITY DEFINER
 SET search_path = ibex_core, pg_temp
 AS $$
 DECLARE
+    -- permissions.MemoryRead | permissions.MemoryWrite, the value Go's
+    -- writeServiceToken passes (services/auth/internal/bootstrap/bootstrap.go).
+    c_service_token_permissions constant bigint := 3;
     v_token_id uuid;
     v_revoked  boolean;
     v_user_id  uuid;
     v_agent_id uuid;
 BEGIN
+    IF p_permissions IS DISTINCT FROM c_service_token_permissions THEN
+        RAISE EXCEPTION
+            'bootstrap_upsert_service_token: permissions % is not the memory-service grant %; this function writes that mask only',
+            p_permissions, c_service_token_permissions
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- Lock order: org first, then prefix, in every body that takes either
+    -- (bootstrap_create_identity, bootstrap_insert_pat, and here). Two definers
+    -- that acquire the pair in one order cannot deadlock. Both keys come from
+    -- hashtext, so a collision between an org and a prefix only over-serializes;
+    -- it cannot invert the order.
+    PERFORM pg_advisory_xact_lock(hashtext(p_org_id::text));
+
     -- ensurePrefixUnused. The validator resolves a bearer by prefix alone and
     -- returns exactly one row, so a prefix shared by two organizations makes
     -- the older tenant's bearer stop validating: cross-tenant denial of

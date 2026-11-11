@@ -571,6 +571,14 @@ func driftCases() []driftCase {
 			f.exec(ctx, `GRANT ibex_app TO ibex_bootstrap`)
 			undoOnCleanup(f, `REVOKE ibex_app FROM ibex_bootstrap`)
 		}},
+		{"auth reaching runtime", func(ctx context.Context, f *tenancyFixture) {
+			// Both logins hold ibex_app, so privilege alone cannot distinguish
+			// them; the membership is refused because the capability model says
+			// the auth login is not the runtime login and must not inherit what
+			// ibex_runtime is granted later.
+			f.exec(ctx, `GRANT ibex_runtime TO ibex_auth`)
+			undoOnCleanup(f, `REVOKE ibex_runtime FROM ibex_auth`)
+		}},
 	}
 }
 

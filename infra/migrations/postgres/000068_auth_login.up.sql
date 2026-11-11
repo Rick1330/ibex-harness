@@ -80,7 +80,7 @@ BEGIN
        AND EXISTS (SELECT 1 FROM pg_authid WHERE rolname = 'ibex_auth' AND rolpassword IS NOT NULL)
        AND current_setting('ibex.auth_modelled', true) IS DISTINCT FROM 'true' THEN
         RAISE EXCEPTION
-            'ibex_auth pre-exists with a credential outside the capability role model (needs a direct, SET-enabled ibex_app membership); repair with GRANT ibex_app TO ibex_auth, or drop the foreign role, then re-run the migration';
+            'ibex_auth pre-exists with a credential outside the capability role model (needs a direct, SET-enabled ibex_app membership); repair with GRANT ibex_app TO ibex_auth WITH ADMIN FALSE, INHERIT FALSE, SET TRUE, or drop the foreign role, then re-run the migration';
     END IF;
 END
 $$;
@@ -88,7 +88,17 @@ $$;
 -- ================================================================
 -- Membership and explicit denials
 -- ================================================================
-GRANT ibex_app TO ibex_auth;
+-- Normalize the membership options on every run. A plain `GRANT` leaves an
+-- existing pg_auth_members row untouched (measured on PostgreSQL 16: re-granting
+-- a row granted WITH ADMIN TRUE keeps admin_option true), so a login that
+-- arrived with options this model never emits would keep them. The model's shape
+-- is ADMIN FALSE, INHERIT FALSE, SET TRUE: NOINHERIT means the tenant identity is
+-- usable only through SET ROLE, and no other option is ever set. The provenance
+-- guard above tests `set_option`, so a row that carries ADMIN or INHERIT is not
+-- the shape this model produces yet still passes it; this statement is what
+-- returns such a row to the model. The regression test starts from a
+-- `WITH ADMIN TRUE, INHERIT TRUE` row and asserts the options below.
+GRANT ibex_app TO ibex_auth WITH ADMIN FALSE, INHERIT FALSE, SET TRUE;
 
 -- Do not rely on absence: a future GRANT must not be able to turn the auth
 -- login into a service, purge, bootstrap, worker or relay identity silently.

@@ -356,3 +356,34 @@ func TestRedaction(t *testing.T) {
 		})
 	}
 }
+
+// TestProvisionTargetsForbidRuntimeForAuth locks the ibex_auth boundary: the
+// auth login resolves bearers through one SECURITY DEFINER reader, and a
+// membership in ibex_runtime would let it act as the runtime login instead.
+// Both hold ibex_app today, so the reachability check cannot catch this by
+// privilege alone; the forbidden list is the control.
+func TestProvisionTargetsForbidRuntimeForAuth(t *testing.T) {
+	for _, target := range provisionTargets {
+		if target.role != "ibex_auth" {
+			continue
+		}
+		if !containsRole(target.forbiddenRoles, "ibex_runtime") {
+			t.Fatalf("ibex_auth forbiddenRoles = %v, want ibex_runtime present", target.forbiddenRoles)
+		}
+		if containsRole(target.requiredRoles, "ibex_runtime") {
+			t.Fatalf("ibex_auth requiredRoles = %v must not contain ibex_runtime", target.requiredRoles)
+		}
+		return
+	}
+	t.Fatal("provisionTargets has no ibex_auth target")
+}
+
+// containsRole reports whether the role list names role.
+func containsRole(roles []string, role string) bool {
+	for _, candidate := range roles {
+		if candidate == role {
+			return true
+		}
+	}
+	return false
+}
