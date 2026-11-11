@@ -165,9 +165,9 @@ export const gates: Gate[] = [
     id: 'G0',
     title: 'Documentation and contract freeze',
     status: 'PROVISIONAL',
-    summary: 'Five contract shapes accepted 2026-10-10; four re-verified 2026-11-06, one expired 2026-11-10. Runtime seams remain provisional.',
+    summary: 'Five contract shapes accepted 2026-10-10; four re-verified 2026-11-06, one lapsed 2026-11-10 and renewed 2026-11-11. Runtime seams remain provisional.',
     evidence:
-      'Review/expiry 2027-02-06 for the four re-verified shapes. idempotency-operation.v1 was not renewed: its 2026-11-10 acceptance expired with no owner decision recorded, so that shape is expired pending renewal or downgrade (engineering/architecture-v2/33-idempotency-shape-lapse-record-2026-11-11.md). The nine provisional runtime rows were re-verified 2026-11-09 and re-dated to 2027-02-06. Acting owner across all roles; no independent reviewer named. See the 2026-11-06 G0 review record.',
+      'Review/expiry 2027-02-06 for all five shapes. idempotency-operation.v1 was not re-verified on 2026-11-06, lapsed on 2026-11-10 with no decision recorded, and was renewed by the owner on 2026-11-11 to the same date on the 2026-11-09 evidence packet plus the additive 409 IDEMPOTENCY_KEY_ERASED term (engineering/architecture-v2/33-idempotency-shape-lapse-record-2026-11-11.md). The nine provisional runtime rows were re-verified 2026-11-09 and carry 2027-02-06. Acting owner across all roles; no independent reviewer named. See the 2026-11-06 G0 review record.',
   },
   {
     id: 'G1',

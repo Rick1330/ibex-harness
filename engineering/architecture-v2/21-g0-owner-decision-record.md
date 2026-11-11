@@ -4,7 +4,9 @@
 
 **Decision date:** 2026-10-10
 
-**Next review:** **2027-02-06** for the four contract shapes re-verified on 2026-11-06. `idempotency-operation.v1` was not re-verified then, and its **2026-11-10** review/expiry passed with no renewal recorded, so its contract-shape acceptance is **expired** and its shape is `unknown` pending the owner's renewal or downgrade ([`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md)). Review happens earlier on any supported-profile, authority, key-set, retention-policy or evidence-semantics change. The scheduled 2026-11-10 review was performed early on 2026-11-06 when ADR-0097 selected a supported profile; its outcome is [`28-g0-review-record-2026-11-06.md`](28-g0-review-record-2026-11-06.md). This decision record is otherwise unchanged and still accepts contract shape only.
+**Renewal:** 2026-11-11 — `idempotency-operation.v1` re-accepted to 2027-02-06 by Elshaday Mengesha / Rick1330, acting across all G0 roles, on the evidence packet in [`32-ledger-review-2026-11-09.md`](32-ledger-review-2026-11-09.md) §4 plus the additive `409 IDEMPOTENCY_KEY_ERASED` term from PR #1152. Its acceptance had lapsed on 2026-11-10 with no decision recorded. The renewal covers contract shape and safety semantics only, exactly as at the 2026-10-10 acceptance: no runtime seam is promoted and no gap is closed ([`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md)).
+
+**Next review:** **2027-02-06 for all five contract shapes** — the four re-verified on 2026-11-06, and `idempotency-operation.v1`, which lapsed on 2026-11-10 and was renewed on 2026-11-11. Review happens earlier on any supported-profile, authority, key-set, retention-policy or evidence-semantics change. The scheduled 2026-11-10 review was performed early on 2026-11-06 when ADR-0097 selected a supported profile; its outcome is [`28-g0-review-record-2026-11-06.md`](28-g0-review-record-2026-11-06.md). This decision record is otherwise unchanged and still accepts contract shape only.
 
 **Scope:** Principal/agent binding, policy freshness, idempotency, evidence publication, privacy controls, and the memory historical-candidate boundary.
 
@@ -81,7 +83,7 @@ The following conditions are satisfied for contract-shape acceptance:
 
 This acceptance does not authorize runtime policy propagation, public API exposure of historical memory search, evidence relay enablement, a durable RunEnvelope, atomic budget reservation, provider expansion, MCP governance, control-plane side effects, or changes to cryptographic algorithms. The first implementation seams may be additive and are `provisional` until their required tests and evidence accumulate.
 
-No claim is made here that the contract is hosted, HA-capable, production-supported, or G1-G4 complete. The next review is **2027-02-06 for the four shapes re-verified on 2026-11-06**, or earlier on material contract/profile change; `idempotency-operation.v1`'s acceptance expired on 2026-11-10 with no renewal recorded and awaits the owner's renewal or downgrade ([`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md)); the review record is [`28-g0-review-record-2026-11-06.md`](28-g0-review-record-2026-11-06.md).
+No claim is made here that the contract is hosted, HA-capable, production-supported, or G1-G4 complete. The next review is **2027-02-06 for the four shapes re-verified on 2026-11-06** and for `idempotency-operation.v1`, renewed on 2026-11-11 after its 2026-11-10 lapse ([`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md)), or earlier on material contract/profile change; the review record is [`28-g0-review-record-2026-11-06.md`](28-g0-review-record-2026-11-06.md).
 
 ## 5. Evidence expected at review
 

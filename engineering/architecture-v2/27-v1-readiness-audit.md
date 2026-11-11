@@ -3,7 +3,7 @@
 **Title:** What must be fixed before IBEX Harness can honestly ship `v1.0.0`.
 **Description:** A domain-by-domain audit of architecture, security, data, AI/retrieval, product and operations at `6f12c96c`, merged into one prioritised gate list. It records what blocks 1.0, what should ship with it, and what may ship as a documented limitation.
 **Audience:** The maintainer/owner, the IBEX agent team, and any reviewer asked to approve a 1.0 tag.
-**Status:** Audit input only. It changes no status, closes no gap, and authorises no runtime work. **Amended 2026-11-06 at `b400070f`:** P0-22 added (surfaced by the profile review), P0-17 closed at the decision level by ADR-0097, P1-04 and P1-05 corrected against the tree, §6 updated. The two amendments change no status value and run no runtime work; they correct the record.
+**Status:** Audit input only. It changes no status, closes no gap, and authorises no runtime work. **Amended 2026-11-06 at `b400070f`:** P0-22 added (surfaced by the profile review), P0-17 closed at the decision level by ADR-0097, P1-04 and P1-05 corrected against the tree, §6 updated. **Amended 2026-11-11:** P0-16 closed after this audit — the nine `provisional` runtime rows were re-verified and re-dated to 2027-02-06 on 2026-11-09 ([`32-ledger-review-2026-11-09.md`](32-ledger-review-2026-11-09.md)), and the owner renewed the `idempotency-operation.v1` contract shape to 2027-02-06 on 2026-11-11 ([`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md)). The amendments change no other status value and run no runtime work; they correct the record.
 **Base:** `main` at `6f12c96c` (2026-11-05). **Method:** six independent read-only domain audits, then a lead merge.
 
 ## 1. The bar this document applies
@@ -31,10 +31,12 @@ closes the decision, not the profile. The two that dominate everything else:
 - **There is no deployable profile that serves the product.** `memory-context` is data-plane only; `services/context` has no Dockerfile at all; the Console has no image; the Helm chart self-declares as lint scaffolding with sentinel digests; and the documented critical path spans services that no single profile starts.
 - **Tenant isolation is not enforced at the database for most services, and the bypass survives role pinning.** Memory, worker, proxy and the shared Go packages set the org GUC but connect as the superuser `ibex`, so RLS never applies; only the API and mcp-operator pin `ibex_app`. And `set_service_org` sets `app.is_service_account='true'` on every memory read and write, which the RLS policy treats as "allow every row" — so pinning the role alone does not produce cross-tenant isolation.
 
-A third, on a timer — now partly defused, not resolved: **the packet no longer wholly expires on 2026-11-10**. The
+A third, on a timer — now resolved: **the packet no longer wholly expires on 2026-11-10**. The
 2026-11-06 review re-verified the four `accepted` contract shapes with new evidence and moved only those rows to
-2027-02-06. Every `provisional` runtime row still expires 2026-11-10 and is re-verified by the wave that owns it, because
-re-dating those before the profile runs would be a promotion in disguise.
+2027-02-06. At this audit's base every `provisional` runtime row still expired 2026-11-10 and had to be re-verified by
+the wave that owned it, because re-dating those before the profile ran would have been a promotion in disguise; that
+wave ran on 2026-11-09 and re-dated the nine rows to 2027-02-06, and the owner renewed the fifth contract shape on
+2026-11-11.
 
 ## 3. P0 — blocks 1.0
 
@@ -70,7 +72,7 @@ A 1.0 claim would be false, unsafe, or undeliverable without these.
 | P0-13 | ibex-platform-engineer | **The OpenAPI snapshot is freshness-checked, not breaking-checked.** Regenerating it in the same PR legalises any `/v1` change across 75 routes. | `.github/scripts/check-openapi-snapshot.sh:9-16` | `oasdiff`-style breaking gate against a pinned release baseline |
 | P0-14 | ibex-architect | **GAP-003: the contract registry covers 5 shapes while 75 REST routes, 3 gRPC services and 8 MCP tools ship.** A compatibility policy cannot bind unregistered surfaces. | `18-gap-register.md:9`; `03-contract-registry.md:120-186`; `route_inventory.json` | Registry complete with owner/version/compat class; CI fails on an unregistered route or tool |
 | P0-15 | owner | **The release pipeline is blocked.** `VERSION_RELEASE_TOKEN` is unset; no release since v0.1.9 (2026-10-04) across 93 commits. | `version-release-pr.yml:51-56`; `release.yml:38-46`; `.version-release-manifest.json` | Green Version Release run → release PR → signed tag |
-| P0-16 | owner | **The `provisional` runtime rows still expire 2026-11-10.** The 2026-11-06 review renewed only the four `accepted` contract shapes; a 1.0 sign-off that cites any runtime row after that date rests on a lapsed claim. | `00-status-and-evidence.md:3` and its "When a claim expires" rule; `28-g0-review-record-2026-11-06.md` §4 | Each runtime row re-verified under the selected profile by the wave that owns it, or downgraded per the ledger rule |
+| P0-16 | owner | **The `provisional` runtime rows still expired 2026-11-10 at this audit's base.** The 2026-11-06 review renewed only the four `accepted` contract shapes; a 1.0 sign-off citing any runtime row after that date would have rested on a lapsed claim. **Closed after this audit (2026-11-11):** the nine runtime rows were re-verified and re-dated to 2027-02-06 on 2026-11-09 ([`32-ledger-review-2026-11-09.md`](32-ledger-review-2026-11-09.md)), and the owner renewed the fifth shape, `idempotency-operation.v1`, to 2027-02-06 on 2026-11-11 ([`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md)). | `00-status-and-evidence.md:3` and its "When a claim expires" rule; `28-g0-review-record-2026-11-06.md` §4 | Each runtime row re-verified under the selected profile by the wave that owns it, or downgraded per the ledger rule |
 | P0-17 | owner | **The supported profile is unselected (D5).** Every registry row says "Profile not selected", so no certification gate applies. **Closed at the decision level 2026-11-06** by ADR-0097; the profile itself is still not startable (P0-01, P0-02, P0-22). | `26-g0-review-packet.md:134`; `03-contract-registry.md:129,139,149,169,179`; `adr/0097-v1-supported-profile.md` | ~~Signed decision naming one profile and its exclusions~~ — satisfied by ADR-0097; remaining work is acceptance evidence, not a decision |
 
 ### 3.4 Security and observability

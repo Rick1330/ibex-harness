@@ -20,9 +20,9 @@ The audit was written at `6f12c96c` (2026-11-05). Two waves have landed since an
   **P0-06**.
 
 The audit's wave order (W4 recovery, W5 contracts, …) still holds for what is left, but two things moved: the tenancy
-wave is **half done**, not done, and one P0 is now a **dated** obligation (`P0-16`: the nine runtime rows were
-re-verified on 2026-11-09, but the `idempotency-operation.v1` contract shape was not renewed and its 2026-11-10 acceptance
-has expired pending the owner's decision — [`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md)). A plan that does not
+wave is **half done**, not done, and one P0 became a **dated** obligation (`P0-16`: the nine runtime rows were
+re-verified on 2026-11-09, and the `idempotency-operation.v1` contract shape lapsed on 2026-11-10 and was renewed by the
+owner on 2026-11-11 — [`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md)). A plan that does not
 say that would repeat the audit's mistake of scoring the tree from stale evidence.
 
 ---
@@ -48,7 +48,7 @@ Every row was checked against the tree, not against the previous document.
 | P0-13 | OpenAPI is freshness-checked only | **Open** | no `oasdiff` anywhere in `.github/` or `infra/scripts/` |
 | P0-14 | Contract registry covers 5 of 75 routes | **Open** | no registry-completeness check in CI |
 | P0-15 | Release pipeline blocked | **Open — owner action** | `.version-release-manifest.json` = `0.1.9`; 121 commits since `v0.1.9`; `release.yml`/`release-docker.yml` require `VERSION_RELEASE_TOKEN`; #1068 |
-| P0-16 | Provisional rows expire 2026-11-10 | **Runtime rows re-verified 2026-11-09; one owner act left** | the nine runtime rows now read `2027-02-06` with their suites re-run at `df15390d` (`32-ledger-review-2026-11-09.md`). The `idempotency-operation.v1` **contract shape** was not renewed and its 2026-11-10 acceptance expired with no decision recorded; it can still only be renewed or downgraded by the owner ([`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md)) |
+| P0-16 | Provisional rows expire 2026-11-10 | **Closed by owner decision 2026-11-11** | the nine runtime rows read `2027-02-06` with their suites re-run at `df15390d` (`32-ledger-review-2026-11-09.md`). The `idempotency-operation.v1` **contract shape** lapsed on 2026-11-10 with no decision recorded, and the owner renewed it to 2027-02-06 on 2026-11-11 on that §4 packet plus the additive `409 IDEMPOTENCY_KEY_ERASED` term (PR #1152) ([`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md)) |
 | P0-17 | The supported profile is unselected (D5) | **Closed at the decision level** | ADR-0097 selects `v1-single-node` and §10 states the exclusions; the profile now starts (`29-v1-single-node-start-record-2026-11-07.md`). The remaining acceptance evidence is tracked by P0-01 and P0-22, not by this row |
 | P0-20 | Published latency is not reproducible | **Open** | the HNSW artifact carries no runner CPU/RAM, and `baseline-modes.json` records a run URL but no commit, gold-set hash or seed; the gate compares corpus names. W10.1 closes it |
 | P0-18 | Exception text reaches spans and logs | **Closed** | `services/worker/app/observability.py:95-111` starts the span with `record_exception=False` and sets only the exception type name; `services/api/app/errors.py:188-198` logs type, `request_id` and frame `file:line` only, never the message; sentinel tests cover both — `services/worker/tests/unit/test_traced_task.py:48-69` and `services/api/tests/unit/test_error_handlers.py:151-159` |
@@ -79,7 +79,7 @@ surface, contracts are mechanical, and the release wave needs the owner's secret
 
 | # | Work | Acceptance evidence |
 |---|---|---|
-| 0.1 | Resolve the nine rows that expire 2026-11-10 | **Landing.** Every row was re-verified at `df15390d` by running its own evidence suite and re-dated to 2027-02-06 with status and limitations unchanged — see [`32-ledger-review-2026-11-09.md`](32-ledger-review-2026-11-09.md) §2. The `idempotency-operation.v1` **contract shape** is the one act this could not perform; §4 holds the evidence packet for the owner, and the shape's acceptance has since expired (P0-16, [`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md)) |
+| 0.1 | Resolve the nine rows that expire 2026-11-10 | **Done.** Every row was re-verified at `df15390d` by running its own evidence suite and re-dated to 2027-02-06 with status and limitations unchanged — see [`32-ledger-review-2026-11-09.md`](32-ledger-review-2026-11-09.md) §2. The `idempotency-operation.v1` **contract shape** was the one act that review could not perform; it then lapsed on 2026-11-10 and the owner renewed it on 2026-11-11 (P0-16, [`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md)) |
 | 0.2 | Point P0-03 at the exclusion and record the chart's status | **Done.** ADR-0097 §10 already excludes "Kubernetes, Helm and any HA topology" in release-note words; the chart README calls its values render/lint scaffolding; the live guard is `check-helm-deployable.sh` |
 | 0.3 | Land the two carried-over items | **Landing.** The plan-gate determinism fix passes three consecutive runs (4m13s / 4m11s / 4m59s) and the ledger-scope unit coverage brings `ledger_scope.py`, `db.py` and `erased_response.py` to 100%; both are in PR #1164 |
 
@@ -188,7 +188,7 @@ the `deprecation-days-beta` / `deprecation-days-stable` defaults are the paramet
 | D-B | Confirm ADR-0097 §10 is the final word on Kubernetes/Helm for 1.0 (already stated there) | it is recorded, but the chart still exists and needs a stated fate | the row stays cited to §10 and the chart is marked non-shipping |
 | D-C | Console 1.0: login + mutations, or login + declared read-only | changes W9 by roughly a week and changes P0-05's acceptance | read-only, stated |
 | D-D | Which **off-host** backup repository `v1-single-node` requires (S3/MinIO or an external POSIX target) and the RPO/RTO to sign | a host-local repository cannot survive host loss, so its choice is a release decision, not a default | S3/MinIO if available, else an external POSIX target; RPO ≤ 5 min, RTO ≤ 60 min, both drill-measured |
-| D-E | `idempotency-operation.v1`: renew the contract shape to 2027-02-06 on the evidence packet in `32-ledger-review-2026-11-09.md` §4, or downgrade it | the shape's 2026-11-10 acceptance expired with no decision recorded (P0-16); the runtime slices are already re-verified | the shape stays expired and the ledger records it |
+| D-E | `idempotency-operation.v1`: renew the contract shape to 2027-02-06 on the evidence packet in `32-ledger-review-2026-11-09.md` §4, or downgrade it | **Decided 2026-11-11: renewed to 2027-02-06** on that packet plus the additive `409 IDEMPOTENCY_KEY_ERASED` term (the shape had lapsed 2026-11-10; P0-16) | the ledger and registry record the renewed review date |
 | D-F | Confirm hosted/HA stays out of 1.0 and approve the reworded claims | P1-51/52 and the README | reword to what is measured |
 
 ---
