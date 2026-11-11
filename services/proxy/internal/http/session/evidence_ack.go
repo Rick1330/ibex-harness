@@ -94,11 +94,7 @@ func reconcileEvidenceFailure(ctx context.Context, p EvidencePersister, in evide
 // row; unknown, failed, and unproved uncertified outcomes all fail closed to 503.
 func EvidenceAckHTTP(out EvidencePersistOutcome) (int, apierror.Code) {
 	switch out.Status {
-	case EvidenceAckDurable:
-		if validPersistResult(out.Result) {
-			return http.StatusOK, ""
-		}
-	case EvidenceAckReplay:
+	case EvidenceAckDurable, EvidenceAckReplay:
 		if validPersistResult(out.Result) {
 			return http.StatusOK, ""
 		}

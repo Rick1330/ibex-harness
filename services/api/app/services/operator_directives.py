@@ -143,7 +143,7 @@ def _live_version_number() -> Any:
     )
 
 
-def _cursor_clause(cursor: KeysetCursor) -> Any:
+def _cursor_clause() -> Any:
     return or_(
         _DIRECTIVES.c.updated_at < bindparam("cursor_updated_at"),
         and_(
@@ -154,6 +154,12 @@ def _cursor_clause(cursor: KeysetCursor) -> Any:
 
 
 def _list_filter_clauses(args: DirectiveListArgs, cursor: KeysetCursor) -> list[Any]:
+    """Clauses for a directive page: the org scope is unconditional.
+
+    The tenant predicate is always first, so no filter combination widens the
+    query across orgs. State and agent filters are added only when requested, and
+    the keyset predicate only when the cursor carries both of its parts.
+    """
     clauses: list[Any] = [_DIRECTIVES.c.org_id == bindparam("org_id")]
     if args.state == "active":
         clauses.append(_DIRECTIVES.c.is_active.is_(True))
@@ -162,7 +168,7 @@ def _list_filter_clauses(args: DirectiveListArgs, cursor: KeysetCursor) -> list[
     if args.agent_id is not None:
         clauses.append(_DIRECTIVES.c.agent_id == bindparam("agent_id"))
     if cursor.created_at is not None and cursor.row_id is not None:
-        clauses.append(_cursor_clause(cursor))
+        clauses.append(_cursor_clause())
     return clauses
 
 

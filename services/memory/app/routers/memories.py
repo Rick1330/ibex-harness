@@ -94,6 +94,14 @@ async def create_memory(
     response: Response,
     ctx: Annotated[CreateMemoryContext, Depends(get_create_memory_context)],
 ) -> Any:
+    """Create one memory inside the validated token's organization.
+
+    The tenant is taken from the validated token, never from the request body, so
+    a caller cannot choose the org it writes to. A request carrying an idempotency
+    key replays the stored response; a keyed write whose slot cannot be claimed or
+    finalized fails with 503 rather than a false 201/202, and a failed write
+    releases the slot.
+    """
     start = time.perf_counter()
     idem = await begin_idempotency(
         ledger=ctx.idempotency_ledger,
@@ -123,7 +131,7 @@ async def create_memory(
         raise http_error_for_write(exc) from exc
     except Exception as exc:
         await release_idempotency(idem)
-        logger.error(  # NOSONAR: exception text can include bound memory content
+        logger.error(
             "memory write failed org_id=%s agent_id=%s error_class=%s",
             ctx.token.org_id,
             command.agent_id,

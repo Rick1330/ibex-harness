@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,8 @@ func TestPHCVectorConsistency(t *testing.T) {
 	}
 }
 
+// TestVerifyTimingSmoke asserts that a wrong secret is not rejected before the
+// Argon2id evaluation; the band and its rationale are in the body.
 func TestVerifyTimingSmoke(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing smoke is advisory; skipped in -short")
@@ -72,19 +75,135 @@ func TestVerifyTimingSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	samples := collectVerifyTimingSamples(t, hash, p)
+	assertVerifySamplesMeasured(t, samples)
+	medians := medianVerifyTiming(samples)
+	ratio := float64(medians.all.wrong) / float64(medians.all.correct)
+	// Both paths run exactly one Argon2id evaluation, so a wrong secret must cost
+	// about as much as the correct one. A ratio below 0.5 means the mismatch was
+	// rejected before hashing; the wide upper bound tolerates scheduler noise on a
+	// loaded runner while still catching a doubled hashing pass. The per-order
+	// medians are reported so an order-dependent bias cannot pass as a timing
+	// difference.
+	if ratio < 0.5 || ratio > 3.0 {
+		t.Fatalf("wrong-secret verify is not comparable to correct-secret verify: ratio=%.2f all(wrong=%v correct=%v) wrong-first(wrong=%v correct=%v) correct-first(wrong=%v correct=%v)",
+			ratio,
+			medians.all.wrong, medians.all.correct,
+			medians.wrongFirst.wrong, medians.wrongFirst.correct,
+			medians.correctFirst.wrong, medians.correctFirst.correct,
+		)
+	}
+}
+
+// timingSample pairs one wrong-secret and one correct-secret measurement with the
+// order they ran in. Keeping the label beside the durations means a difference
+// caused by measurement order cannot be mistaken for a timing difference.
+type timingSample struct {
+	order   string
+	wrong   time.Duration
+	correct time.Duration
+}
+
+// timingPair is a wrong/correct median pair.
+type timingPair struct {
+	wrong   time.Duration
+	correct time.Duration
+}
+
+// timingMedians holds medians over every sample plus medians for each measurement
+// order, which is what makes an order-dependent bias visible.
+type timingMedians struct {
+	all          timingPair
+	wrongFirst   timingPair
+	correctFirst timingPair
+}
+
+// collectVerifyTimingSamples measures both verify paths seven times, alternating
+// which path runs first so a warm cache or a frequency change cannot bias one
+// side of the comparison.
+func collectVerifyTimingSamples(t *testing.T, hash string, p Argon2Params) []timingSample {
+	t.Helper()
+	const sampleCount = 7
+	samples := make([]timingSample, sampleCount)
+	for i := range samples {
+		samples[i] = measureTimingSample(t, hash, p, i%2 == 0)
+	}
+	return samples
+}
+
+// measureTimingSample measures both paths once in the requested order and records
+// each duration against its path.
+func measureTimingSample(t *testing.T, hash string, p Argon2Params, wrongFirst bool) timingSample {
+	t.Helper()
+	sample := timingSample{order: "correct-first"}
+	if wrongFirst {
+		sample.order = "wrong-first"
+		sample.wrong = measureVerify(t, "wrong", hash, p)
+		sample.correct = measureVerify(t, "test-password", hash, p)
+		return sample
+	}
+	sample.correct = measureVerify(t, "test-password", hash, p)
+	sample.wrong = measureVerify(t, "wrong", hash, p)
+	return sample
+}
+
+// assertVerifySamplesMeasured fails on any zero duration: a zero means that path
+// did not run, which is the regression this test exists to catch.
+func assertVerifySamplesMeasured(t *testing.T, samples []timingSample) {
+	t.Helper()
+	for i, sample := range samples {
+		if sample.wrong == 0 || sample.correct == 0 {
+			t.Fatalf("verify sample %d (%s) is unmeasurable: wrong=%v correct=%v", i, sample.order, sample.wrong, sample.correct)
+		}
+	}
+}
+
+// medianVerifyTiming reduces the samples to medians for all samples and for each
+// measurement order.
+func medianVerifyTiming(samples []timingSample) timingMedians {
+	return timingMedians{
+		all:          medianTimingPair(samples),
+		wrongFirst:   medianTimingPair(selectTimingOrder(samples, "wrong-first")),
+		correctFirst: medianTimingPair(selectTimingOrder(samples, "correct-first")),
+	}
+}
+
+// selectTimingOrder returns the samples measured in the given order.
+func selectTimingOrder(samples []timingSample, order string) []timingSample {
+	selected := make([]timingSample, 0, len(samples))
+	for _, sample := range samples {
+		if sample.order == order {
+			selected = append(selected, sample)
+		}
+	}
+	return selected
+}
+
+// medianTimingPair returns the median wrong and correct duration, or a zero pair
+// when the group is empty.
+func medianTimingPair(samples []timingSample) timingPair {
+	if len(samples) == 0 {
+		return timingPair{}
+	}
+	wrongs := make([]time.Duration, len(samples))
+	corrects := make([]time.Duration, len(samples))
+	for i, sample := range samples {
+		wrongs[i] = sample.wrong
+		corrects[i] = sample.correct
+	}
+	slices.Sort(wrongs)
+	slices.Sort(corrects)
+	return timingPair{wrong: wrongs[len(wrongs)/2], correct: corrects[len(corrects)/2]}
+}
+
+// measureVerify times one VerifySecret call and fails if the hash is malformed.
+func measureVerify(t *testing.T, plaintext, hash string, p Argon2Params) time.Duration {
+	t.Helper()
 	start := time.Now()
-	_, _ = VerifySecret("wrong", hash, p)
-	wrongDuration := time.Since(start)
-	start = time.Now()
-	_, _ = VerifySecret("test-password", hash, p)
-	correctDuration := time.Since(start)
-	if correctDuration == 0 {
-		t.Skip("correct duration too small to compare")
+	if _, err := VerifySecret(plaintext, hash, p); err != nil {
+		t.Fatalf("verify %q: %v", plaintext, err)
 	}
-	ratio := float64(wrongDuration) / float64(correctDuration)
-	if ratio < 0.5 || ratio > 2.0 {
-		t.Logf("advisory timing ratio=%.2f (wrong=%v correct=%v)", ratio, wrongDuration, correctDuration)
-	}
+	return time.Since(start)
 }
 
 func min(a, b int) int {

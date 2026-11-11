@@ -78,7 +78,7 @@ func assertUnauthenticated(t *testing.T, v *token.Validator, bearer string) {
 func assertTimingParity(t *testing.T, missDur, wrongDur time.Duration) {
 	t.Helper()
 	if wrongDur == 0 {
-		t.Skip("wrong-secret duration too small to compare")
+		t.Fatalf("wrong-secret duration is zero: the Argon2 control did not run, so timing parity is unproven")
 	}
 	ratio := float64(missDur) / float64(wrongDur)
 	// The wrong-secret path is the control: it must verify the hash. The security
