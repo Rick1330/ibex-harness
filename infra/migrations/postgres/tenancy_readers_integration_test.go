@@ -5,27 +5,62 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"slices"
+	"strings"
 	"testing"
+
+	"github.com/lib/pq"
 )
 
-// readerGrant is one row of the function→role EXECUTE matrix.
+// readerGrant is one row of the function→role EXECUTE matrix: the function's
+// signature and the only capability roles allowed to execute it.
 type readerGrant struct {
 	name      string
 	signature string
-	runtime   bool
-	worker    bool
-	bootstrap bool
-	purge     bool
-	auth      bool
+	allowed   []string
 }
 
-// readerGrants is the complete reader grant matrix.
-var readerGrants = []readerGrant{
-	{"auth token lookup", "ibex_core.auth_find_token_by_prefix(text)", false, false, false, false, true},
-	{"rate-limit snapshot", "ibex_core.rate_limit_overrides_snapshot()", true, false, false, false, false},
-	{"session sweep", "ibex_core.sessions_abandon_idle(timestamptz, integer)", true, false, false, false, false},
-	{"budget sweep", "ibex_core.budget_reservations_expire_stale(interval, integer)", false, true, false, false, false},
-	{"active periods", "ibex_billing.active_periods()", false, true, false, false, false},
+// capabilityRoles is every least-privilege login plus the two NOLOGIN roles, so
+// a grant that leaks to one of them fails the matrix instead of being missed.
+var capabilityRoles = []string{
+	"ibex_app", "ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_purge", "ibex_auth",
+}
+
+// bootstrapDefiners are the seven SECURITY DEFINER functions 000069 creates.
+// They are on this matrix for the same reason the five readers are: EXECUTE on a
+// definer that runs as `ibex_service` is a capability, so it must be granted to
+// exactly one role.
+var bootstrapDefiners = []string{
+	"ibex_core.bootstrap_upsert_organization(uuid, text, text)",
+	"ibex_core.bootstrap_lock_organization(uuid)",
+	"ibex_core.bootstrap_lookup_subjects(uuid)",
+	"ibex_core.bootstrap_create_identity(uuid, uuid, text, text, uuid, text, text)",
+	"ibex_core.bootstrap_write_model_policy(uuid)",
+	"ibex_core.bootstrap_insert_pat(uuid, uuid, uuid, uuid, text, text, text, bigint)",
+	"ibex_core.bootstrap_upsert_service_token(uuid, text, text, bigint)",
+}
+
+// bootstrapDefinerGrants is the matrix rows for the seven definers: only
+// ibex_bootstrap may execute them.
+func bootstrapDefinerGrants() []readerGrant {
+	grants := make([]readerGrant, 0, len(bootstrapDefiners))
+	for _, signature := range bootstrapDefiners {
+		grants = append(grants, readerGrant{
+			name: signature, signature: signature, allowed: []string{"ibex_bootstrap"},
+		})
+	}
+	return grants
+}
+
+// readerGrants is the complete function→role grant matrix.
+func readerGrants() []readerGrant {
+	return append([]readerGrant{
+		{"auth token lookup", "ibex_core.auth_find_token_by_prefix(text)", []string{"ibex_auth"}},
+		{"rate-limit snapshot", "ibex_core.rate_limit_overrides_snapshot()", []string{"ibex_runtime"}},
+		{"session sweep", "ibex_core.sessions_abandon_idle(timestamptz, integer)", []string{"ibex_runtime"}},
+		{"budget sweep", "ibex_core.budget_reservations_expire_stale(interval, integer)", []string{"ibex_worker"}},
+		{"active periods", "ibex_billing.active_periods()", []string{"ibex_worker"}},
+	}, bootstrapDefinerGrants()...)
 }
 
 // grantQuery is a role and a function signature for a privilege check.
@@ -45,42 +80,82 @@ type readerSeeds struct {
 	claimedReservationA string
 }
 
-// TestTenancyReaderGrantMatrix asserts each reader is executable by exactly the
-// intended role and never by PUBLIC.
+// TestTenancyReaderGrantMatrix asserts each function is executable by exactly
+// the intended role and never by PUBLIC.
 func TestTenancyReaderGrantMatrix(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
-	for _, grant := range readerGrants {
+	for _, grant := range readerGrants() {
 		t.Run(grant.name, func(t *testing.T) {
-			sub := *f
-			sub.t = t
-			assertReaderGrants(&sub, ctx, grant)
+			assertReaderGrants(f.sub(t), ctx, grant)
 		})
 	}
 }
 
-// assertReaderGrants checks the five capability roles and PUBLIC for one reader.
+// assertReaderGrants checks every capability role and PUBLIC for one function.
 func assertReaderGrants(f *tenancyFixture, ctx context.Context, grant readerGrant) {
 	f.t.Helper()
-	checks := []struct {
-		role string
-		want bool
-	}{
-		{"ibex_runtime", grant.runtime},
-		{"ibex_worker", grant.worker},
-		{"ibex_bootstrap", grant.bootstrap},
-		{"ibex_purge", grant.purge},
-		{"ibex_auth", grant.auth},
-	}
-	for _, check := range checks {
-		query := grantQuery{role: check.role, signature: grant.signature}
-		if got := f.hasFunctionPrivilege(ctx, query); got != check.want {
-			f.t.Fatalf("%s EXECUTE on %s = %v, want %v", check.role, grant.signature, got, check.want)
+	for _, role := range capabilityRoles {
+		want := slices.Contains(grant.allowed, role)
+		query := grantQuery{role: role, signature: grant.signature}
+		if got := f.hasFunctionPrivilege(ctx, query); got != want {
+			f.t.Fatalf("%s EXECUTE on %s = %v, want %v", role, grant.signature, got, want)
 		}
 	}
 	if f.publicCanExecute(ctx, functionRef{signature: grant.signature}) {
 		f.t.Fatalf("PUBLIC must not execute %s", grant.signature)
 	}
+}
+
+// definerAttribute is the owner and pinned search_path of one definer.
+type definerAttribute struct {
+	owner, searchPath string
+	definer           bool
+}
+
+// TestTenancyBootstrapDefinerAttributes asserts every bootstrap definer is
+// owned by ibex_service, is SECURITY DEFINER, and pins search_path.
+//
+// A CREATE OR REPLACE that forgets ALTER OWNER leaves the function owned by
+// whoever ran the migration — a superuser — and the definer then runs with
+// BYPASSRLS and full table rights. The grant matrix cannot see that: the
+// privilege still belongs to ibex_bootstrap. The owner and proconfig checks are
+// what makes that mistake fail CI.
+func TestTenancyBootstrapDefinerAttributes(t *testing.T) {
+	f := newTenancyFixture(t)
+	ctx := t.Context()
+	for _, signature := range bootstrapDefiners {
+		attributes := f.loadDefinerAttributes(ctx, functionRef{signature: signature})
+		if attributes.owner != "ibex_service" {
+			t.Fatalf("%s owner = %s, want ibex_service", signature, attributes.owner)
+		}
+		if !attributes.definer {
+			t.Fatalf("%s is not SECURITY DEFINER", signature)
+		}
+		if attributes.searchPath != "search_path=ibex_core, pg_temp" {
+			t.Fatalf("%s proconfig = %q, want the pinned search_path", signature, attributes.searchPath)
+		}
+	}
+}
+
+// loadDefinerAttributes reads owner, security mode and the search_path pin.
+func (f *tenancyFixture) loadDefinerAttributes(ctx context.Context, ref functionRef) definerAttribute {
+	f.t.Helper()
+	var attributes definerAttribute
+	var config []string
+	if err := f.db.QueryRowContext(ctx, `
+		SELECT pg_get_userbyid(p.proowner), p.prosecdef, COALESCE(p.proconfig, '{}'::text[])
+		FROM pg_proc p
+		WHERE p.oid = $1::regprocedure`, ref.signature).
+		Scan(&attributes.owner, &attributes.definer, pq.Array(&config)); err != nil {
+		f.t.Fatalf("definer attributes for %s: %v", ref.signature, err)
+	}
+	for _, entry := range config {
+		if strings.HasPrefix(entry, "search_path=") {
+			attributes.searchPath = entry
+		}
+	}
+	return attributes
 }
 
 // hasFunctionPrivilege checks one role's EXECUTE privilege.

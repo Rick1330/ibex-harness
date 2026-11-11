@@ -148,9 +148,11 @@ func TestTenancyDownUpCycle(t *testing.T) {
 	want := maxEmbeddedMigrationVersion(t)
 	f.assertVersion(ctx, versionCheck{want: want})
 	assertIndex(f, ctx, true)
+	assertUniquePrefixIndex(f, ctx, true)
 
 	rewindToPreServiceModel(t, f)
 	assertIndex(f, ctx, false)
+	assertUniquePrefixIndex(f, ctx, false)
 	assertServiceBypass(f, ctx, true)
 	assertCapabilityRoles(f, ctx, 0)
 
@@ -159,6 +161,7 @@ func TestTenancyDownUpCycle(t *testing.T) {
 	}
 	f.assertVersion(ctx, versionCheck{want: want})
 	assertIndex(f, ctx, true)
+	assertUniquePrefixIndex(f, ctx, true)
 	assertServiceBypass(f, ctx, false)
 	assertCapabilityRoles(f, ctx, 5)
 }
@@ -189,6 +192,31 @@ func assertIndex(f *tenancyFixture, ctx context.Context, want bool) {
 	got := f.indexExists(ctx, indexName{qualified: "ibex_core.idx_tokens_prefix"})
 	if got != want {
 		f.t.Fatalf("idx_tokens_prefix exists = %v, want %v", got, want)
+	}
+}
+
+// assertUniquePrefixIndex checks the unique prefix index (000071) exists, is
+// valid, and is unique. The down/up cycle is the only place both directions of
+// that migration are exercised.
+func assertUniquePrefixIndex(f *tenancyFixture, ctx context.Context, want bool) {
+	f.t.Helper()
+	if !f.indexExists(ctx, indexName{qualified: "ibex_core.idx_tokens_prefix_unique"}) {
+		if want {
+			f.t.Fatal("idx_tokens_prefix_unique is missing")
+		}
+		return
+	}
+	if !want {
+		f.t.Fatal("idx_tokens_prefix_unique survived the rollback")
+	}
+	var valid, unique bool
+	if err := f.db.QueryRowContext(ctx, `
+		SELECT i.indisvalid, i.indisunique FROM pg_index i
+		WHERE i.indexrelid = to_regclass('ibex_core.idx_tokens_prefix_unique')`).Scan(&valid, &unique); err != nil {
+		f.t.Fatalf("read idx_tokens_prefix_unique flags: %v", err)
+	}
+	if !valid || !unique {
+		f.t.Fatalf("idx_tokens_prefix_unique valid=%v unique=%v, want both", valid, unique)
 	}
 }
 

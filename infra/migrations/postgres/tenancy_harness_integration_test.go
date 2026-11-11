@@ -127,6 +127,15 @@ func newTenancyFixture(t *testing.T) *tenancyFixture {
 	return f
 }
 
+// sub returns a copy of the fixture bound to a subtest, so a helper that fails
+// reports against the subtest instead of calling FailNow on the parent test.
+// t.Cleanup and the connection are shared through the copy.
+func (f *tenancyFixture) sub(t *testing.T) *tenancyFixture {
+	clone := *f
+	clone.t = t
+	return &clone
+}
+
 // seedTenant creates the primary org, user and agent and stores their ids.
 func (f *tenancyFixture) seedTenant(ctx context.Context) {
 	f.t.Helper()
@@ -161,14 +170,7 @@ func (f *tenancyFixture) seedTenantNamed(ctx context.Context, slug string) tenan
 // seedToken creates a token for the primary tenant.
 func (f *tenancyFixture) seedToken(ctx context.Context, seed tokenSeed) string {
 	f.t.Helper()
-	var id string
-	if err := f.db.QueryRowContext(ctx, `
-		INSERT INTO ibex_core.tokens (org_id, type, hash, prefix, name, permissions)
-		VALUES ($1::uuid, 'pat', $2, $3, 'reader', 0) RETURNING id::text`,
-		f.orgID, seed.hash, seed.prefix).Scan(&id); err != nil {
-		f.t.Fatalf("seed token: %v", err)
-	}
-	return id
+	return f.seedTokenFor(ctx, f.orgID, seed)
 }
 
 // withRole runs fn in a transaction as the spec's role, setting the org GUC
@@ -288,13 +290,38 @@ func (f *tenancyFixture) assertMembers(ctx context.Context, spec membershipSpec)
 		f.t.Fatalf("members of %s: %v", spec.role, err)
 	}
 	defer rows.Close()
-	got := scanStrings(f.t, rows)
-	if len(got) != len(spec.want) {
-		f.t.Fatalf("members of %s = %v, want %v", spec.role, got, spec.want)
+	requireRoleList(f.t, "members of "+spec.role, scanStrings(f.t, rows), spec.want)
+}
+
+// assertDirectMembers checks the roles granted directly to spec.role, without
+// recursion. A recursive walk of ibex_auth also returns ibex_runtime and
+// ibex_worker, because those are members of the ibex_app membership it holds,
+// so "no membership other than ibex_app" has to read the direct rows.
+func (f *tenancyFixture) assertDirectMembers(ctx context.Context, spec membershipSpec) {
+	f.t.Helper()
+	rows, err := f.db.QueryContext(ctx, `
+		SELECT granted.rolname
+		FROM pg_auth_members am
+		JOIN pg_roles granted ON granted.oid = am.roleid
+		JOIN pg_roles member ON member.oid = am.member
+		WHERE member.rolname = $1
+		ORDER BY granted.rolname`, spec.role)
+	if err != nil {
+		f.t.Fatalf("direct members of %s: %v", spec.role, err)
+	}
+	defer rows.Close()
+	requireRoleList(f.t, "direct members of "+spec.role, scanStrings(f.t, rows), spec.want)
+}
+
+// requireRoleList compares two ordered role name lists.
+func requireRoleList(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s = %v, want %v", label, got, want)
 	}
 	for i := range got {
-		if got[i] != spec.want[i] {
-			f.t.Fatalf("members of %s = %v, want %v", spec.role, got, spec.want)
+		if got[i] != want[i] {
+			t.Fatalf("%s = %v, want %v", label, got, want)
 		}
 	}
 }

@@ -21,6 +21,13 @@ type roleAttributeCase struct {
 
 // roleAttributeCases covers the three shapes lib/pq can hand back: the two
 // infinity sentinels as text, and a finite timestamp in a non-UTC offset.
+//
+// The offset in the third case is in the INPUT, which PostgreSQL normalises to
+// an instant; what the reader renders depends on the session TimeZone. The
+// fixture pins that TimeZone away from UTC, so this case fails if the
+// `AT TIME ZONE 'UTC'` in roleValidUntilSQL is dropped: a server west of UTC
+// would then render 2031-02-02T21:05:06 and an expired role could parse as
+// unexpired.
 func roleAttributeCases() []roleAttributeCase {
 	return []roleAttributeCase{
 		{
@@ -93,6 +100,14 @@ func TestLoadRoleAttributesReadsExpirySentinels(t *testing.T) {
 	if _, err := tx.ExecContext(ctx,
 		`CREATE ROLE ibex_provision_infinity_probe LOGIN NOINHERIT CONNECTION LIMIT -1`); err != nil {
 		t.Fatalf("create probe role: %v", err)
+	}
+
+	// Pin the session TimeZone away from UTC for the probe transaction. Without
+	// it the fixture runs at UTC, where to_char(rolvaliduntil) and
+	// to_char(rolvaliduntil AT TIME ZONE 'UTC') render the same text and the
+	// finite case cannot detect the normalisation being removed.
+	if _, err := tx.ExecContext(ctx, `SET LOCAL TimeZone = 'America/New_York'`); err != nil {
+		t.Fatalf("pin probe TimeZone: %v", err)
 	}
 
 	for _, tc := range roleAttributeCases() {

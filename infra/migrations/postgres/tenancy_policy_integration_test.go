@@ -139,8 +139,8 @@ type tokenFilter struct {
 
 // TestTenancyDefinerTokenFilters proves auth_find_token_by_prefix enforces the
 // same filters the deleted SQL did: revoked and expired rows and rows of a
-// soft-deleted organization are excluded, and a duplicate prefix resolves to
-// the newest row.
+// soft-deleted organization are excluded, and a duplicate prefix cannot be
+// written at all (a unique index on tokens.prefix, 000071).
 func TestTenancyDefinerTokenFilters(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
@@ -183,39 +183,43 @@ func TestTenancyDefinerTokenFilters(t *testing.T) {
 		assertDefinerMiss(t, f, ctx, "filter-deleted")
 	})
 
-	t.Run("newest duplicate prefix wins", func(t *testing.T) {
-		older := f.seedFilterToken(ctx, tokenFilter{
-			orgID: f.orgID, prefix: "filter-duplicate", hash: "hash-older",
-			createdAt: time.Now().UTC().Add(-time.Hour),
+	t.Run("duplicate prefix refused", func(t *testing.T) {
+		f := f.sub(t)
+		// 000071 makes tokens.prefix unique. The reader used to resolve two
+		// rows sharing a prefix by "newest wins"; that state is now impossible,
+		// so the invariant is asserted where it lives — at the write.
+		f.seedFilterToken(ctx, tokenFilter{
+			orgID: f.orgID, prefix: "filter-duplicate", hash: "hash-first", createdAt: time.Now().UTC(),
 		})
-		newer := f.seedFilterToken(ctx, tokenFilter{
-			orgID: f.orgID, prefix: "filter-duplicate", hash: "hash-newer", createdAt: time.Now().UTC(),
+		_, err := f.insertFilterToken(ctx, tokenFilter{
+			orgID: f.orgID, prefix: "filter-duplicate", hash: "hash-second", createdAt: time.Now().UTC(),
 		})
-		row, err := readTokenAsAuth(ctx, f, "filter-duplicate")
-		if err != nil {
-			t.Fatalf("duplicate prefix: %v", err)
-		}
-		if row.tokenID == older {
-			t.Fatalf("reader returned the older token %s, want %s", older, newer)
-		}
-		assertTokenRow(t, row, tokenWant{tokenID: newer, orgID: f.orgID, status: "active", hash: "hash-newer"})
+		f.requireSQLSTATE(err, sqlState{code: "23505"})
 	})
 }
 
-// seedFilterToken inserts one token directly so each filter can be set.
-func (f *tenancyFixture) seedFilterToken(ctx context.Context, filter tokenFilter) string {
-	f.t.Helper()
+// insertFilterToken inserts one token directly and returns its error, for the
+// cases that must observe the failure.
+func (f *tenancyFixture) insertFilterToken(ctx context.Context, filter tokenFilter) (string, error) {
 	var expiresAt any
 	if filter.expired {
 		expiresAt = time.Now().UTC().Add(-time.Hour)
 	}
 	var id string
-	if err := f.db.QueryRowContext(ctx, `
+	err := f.db.QueryRowContext(ctx, `
 		INSERT INTO ibex_core.tokens (org_id, type, hash, prefix, name, permissions, is_revoked, expires_at, created_at)
 		VALUES ($1::uuid, 'pat', $2, $3, 'filter', 0, $4, $5, $6)
 		RETURNING id::text`,
 		filter.orgID, filter.hash, filter.prefix, filter.revoked, expiresAt, filter.createdAt,
-	).Scan(&id); err != nil {
+	).Scan(&id)
+	return id, err
+}
+
+// seedFilterToken inserts one token directly so each filter can be set.
+func (f *tenancyFixture) seedFilterToken(ctx context.Context, filter tokenFilter) string {
+	f.t.Helper()
+	id, err := f.insertFilterToken(ctx, filter)
+	if err != nil {
 		f.t.Fatalf("seed filter token %s: %v", filter.prefix, err)
 	}
 	return id

@@ -1,0 +1,23 @@
+-- P0-06 follow-up: make the token-prefix invariant structural.
+--
+-- 000069's bootstrap_upsert_service_token refuses a prefix another
+-- organization already owns, but that guard is one writer. `tokens.prefix` is
+-- still a non-unique index (000066), so any other insert path can hand two
+-- tenants the same prefix, and `auth_find_token_by_prefix` returns exactly one
+-- row: the older tenant's bearer silently resolves to the newer tenant's row
+-- and the older tenant is denied authentication.
+--
+-- Single statement on purpose: golang-migrate sends one file through one
+-- ExecContext, and a multi-statement string is an implicit transaction, in
+-- which CREATE INDEX CONCURRENTLY is illegal (same pattern as 000066).
+-- CONCURRENTLY keeps token writes unblocked. 000070 has already refused
+-- duplicate prefixes and an invalid same-named index, so a failed build here
+-- leaves an INVALID index that 000070 reports on the next run instead of a
+-- silent IF NOT EXISTS no-op.
+--
+-- The non-unique idx_tokens_prefix from 000066 is kept: token writes are
+-- bootstrap/rotation events, not a hot path, so one extra index maintenance per
+-- write costs nothing measurable, and 000067's validity guard still protects
+-- the lookup it was added for.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_tokens_prefix_unique
+    ON ibex_core.tokens (prefix);

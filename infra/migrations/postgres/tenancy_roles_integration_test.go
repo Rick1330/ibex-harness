@@ -52,11 +52,22 @@ func assertCapabilityRoleAttributes(f *tenancyFixture, ctx context.Context) {
 }
 
 // TestTenancyMemberships asserts A3: ibex_service has exactly ibex, ibex_purge
-// has exactly ibex_worker, and ibex_bootstrap holds no membership.
+// has exactly ibex_worker, ibex_bootstrap holds no membership, and ibex_auth
+// holds exactly its ibex_app membership.
 func TestTenancyMemberships(t *testing.T) {
 	f := newTenancyFixture(t)
 	ctx := t.Context()
 	f.assertMembers(ctx, membershipSpec{role: "ibex_service", want: []string{"ibex"}})
 	f.assertMembers(ctx, membershipSpec{role: "ibex_purge", want: []string{"ibex_worker"}})
 	f.assertNoMemberships(ctx, role("ibex_bootstrap"))
+	assertAuthMemberships(f, ctx)
+}
+
+// assertAuthMemberships is the F4 lock. 000068 revokes every other capability
+// from ibex_auth on the theory that absence is not a control; this asserts the
+// revocation landed, so a future GRANT cannot turn the auth login into a
+// second worker, purge, bootstrap, service or relay identity without failing.
+func assertAuthMemberships(f *tenancyFixture, ctx context.Context) {
+	f.t.Helper()
+	f.assertDirectMembers(ctx, membershipSpec{role: "ibex_auth", want: []string{"ibex_app"}})
 }

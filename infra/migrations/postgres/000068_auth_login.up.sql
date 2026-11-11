@@ -91,10 +91,12 @@ $$;
 GRANT ibex_app TO ibex_auth;
 
 -- Do not rely on absence: a future GRANT must not be able to turn the auth
--- login into a service, purge or bootstrap identity silently.
+-- login into a service, purge, bootstrap, worker or relay identity silently.
 REVOKE ibex_service FROM ibex_auth;
 REVOKE ibex_purge FROM ibex_auth;
 REVOKE ibex_bootstrap FROM ibex_auth;
+REVOKE ibex_worker FROM ibex_auth;
+REVOKE ibex_evidence_relay FROM ibex_auth;
 
 -- Needed to resolve the schema-qualified reader as the login. Tenant queries
 -- run inside SET ROLE ibex_app and use ibex_app's grants.
@@ -103,9 +105,18 @@ GRANT USAGE ON SCHEMA ibex_core TO ibex_auth;
 -- ================================================================
 -- Token lookup moves from ibex_runtime to ibex_auth
 -- ================================================================
--- Order matters. A rolling deploy keeps an old ibex_runtime process and a new
--- ibex_auth process alive at the same time; if the REVOKE ran first there would
--- be a window in which neither login could resolve a bearer, and every request
--- in that window fails closed. Grant first, revoke second, one transaction.
+-- The order (grant, then revoke) is not an atomicity device. This file is one
+-- transaction, so both ACL changes become visible together at COMMIT and
+-- swapping the statements would change nothing.
+--
+-- What the order describes is the intended two-release cutover: grant the
+-- reader to ibex_auth in the release that introduces the auth login, and revoke
+-- it from ibex_runtime only once no ibex_runtime process still reads it. Both
+-- land here, so that cutover is collapsed into one commit: the moment this
+-- transaction commits, an ibex_runtime process from the previous release loses
+-- EXECUTE and fails with `42501 permission denied for function
+-- auth_find_token_by_prefix` — a hard error on every bearer it tries to resolve,
+-- not a clean deny. Drain the ibex_runtime fleet before this migration runs, or
+-- move the REVOKE into its own later migration.
 GRANT EXECUTE ON FUNCTION ibex_core.auth_find_token_by_prefix(text) TO ibex_auth;
 REVOKE EXECUTE ON FUNCTION ibex_core.auth_find_token_by_prefix(text) FROM ibex_runtime;
