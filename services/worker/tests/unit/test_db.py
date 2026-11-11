@@ -230,8 +230,9 @@ async def test_session_as_app_pins_the_role_without_an_org_guc() -> None:
 async def test_session_as_app_rolls_back_when_the_body_raises() -> None:
     """A body error rolls the transaction back instead of committing the pin."""
     session = _FakeSession()
+    scope = session_as_app(_factory(session))
     with pytest.raises(_BodyError):
-        async with session_as_app(_factory(session)):
+        async with scope:
             raise _BodyError("body failed")
     _assert_rolled_back(session)
     assert session.events[-1] == "session_close"

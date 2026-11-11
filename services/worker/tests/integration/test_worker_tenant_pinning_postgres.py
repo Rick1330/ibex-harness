@@ -151,8 +151,9 @@ async def test_budget_ping_without_the_pin_reports_not_ready(
     monkeypatch.setattr(
         budget_ledger_module, "session_as_app", lambda factory: session_unpinned(factory)
     )
+    ledger = _AsyncBudgetLedger(worker_factory)
     with pytest.raises(BudgetLedgerError, match="budget reservation ledger is not ready"):
-        await _AsyncBudgetLedger(worker_factory).ping()
+        await ledger.ping()
 
 
 @pytest.mark.asyncio
@@ -209,10 +210,10 @@ async def test_budget_claim_without_the_pin_is_42501(
         "session_as_app_org",
         lambda factory, _org: session_unpinned(factory),
     )
+    ledger = _AsyncBudgetLedger(worker_factory)
+    claim_request = budget_request(org_id, agent_id, key="unpinned-claim")
     with pytest.raises(BudgetLedgerUnavailableError) as err:
-        await _AsyncBudgetLedger(worker_factory).claim(
-            budget_request(org_id, agent_id, key="unpinned-claim")
-        )
+        await ledger.claim(claim_request)
     assert sqlstate(err.value.__cause__) == "42501", err.value
 
 

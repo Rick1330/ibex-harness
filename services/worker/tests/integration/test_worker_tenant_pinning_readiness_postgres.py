@@ -71,7 +71,8 @@ async def test_session_store_pins_the_org_as_worker_login(
 
     store = PostgresSessionStore(worker_factory)
     snapshot = await store._load(org_id, session_id)
-    assert snapshot is not None and snapshot.last_extracted_turn == 5
+    assert snapshot is not None
+    assert snapshot.last_extracted_turn == 5
     await store._update(org_id, session_id, 9, expected_lifecycle_revision=1)
     assert (
         await count_rows(
@@ -102,8 +103,9 @@ async def test_session_store_without_the_pin_is_42501(
         "session_as_app_org",
         lambda factory, _org: session_unpinned(factory),
     )
+    store = PostgresSessionStore(worker_factory)
     with pytest.raises(ProgrammingError) as err:
-        await PostgresSessionStore(worker_factory)._load(org_id, session_id)
+        await store._load(org_id, session_id)
     assert sqlstate(err.value) == "42501", err.value
 
 
@@ -200,7 +202,8 @@ async def test_idempotency_ledger_ping_and_claim_with_injected_scopes(
     claim = await ledger.claim(
         org_id=org_id, agent_id=agent_id, key="pinned-key", request_hash="f" * 64
     )
-    assert claim.kind == "owned" and claim.claim is not None
+    assert claim.kind == "owned"
+    assert claim.claim is not None
     await ledger.finalize(claim.claim, status=202, response=b'{"task_id":"pinned"}')
 
 
