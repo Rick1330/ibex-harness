@@ -331,13 +331,8 @@ func TestCreateIdentityErrorPaths(t *testing.T) {
 			want: "insert owner user and default agent",
 		},
 		{
-			name: "model policy insert",
-			f:    faultConfig{exec: errInjected, rows: []faultRow{identityRow()}},
-			want: "insert allow-all model policy",
-		},
-		{
 			name: "bootstrap PAT insert",
-			f:    faultConfig{exec: errInjected, execAfter: 1, rows: []faultRow{identityRow()}},
+			f:    faultConfig{exec: errInjected, rows: []faultRow{identityRow()}},
 			want: "insert bootstrap PAT",
 		},
 		{
@@ -533,9 +528,6 @@ func TestIdentityHelperErrors(t *testing.T) {
 		{"identity insert", faultConfig{query: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
 			_, _, err := insertIdentity(ctx, tx, identityInput{orgID: orgID, cfg: cfg})
 			return err
-		}},
-		{"model policy insert", faultConfig{exec: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
-			return insertModelPolicy(ctx, tx, orgID)
 		}},
 		{"bootstrap PAT insert", faultConfig{exec: errInjected}, func(ctx context.Context, tx *sql.Tx) error {
 			in := tokenInput{orgID: orgID, userID: uuid.New(), agentID: uuid.New(), name: cfg.PATName}

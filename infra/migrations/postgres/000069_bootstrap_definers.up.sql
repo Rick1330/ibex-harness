@@ -14,9 +14,15 @@
 -- definer so `ibex_bootstrap` needs EXECUTE only — no table privilege and no
 -- membership.
 --
+-- One write has no definer of its own. The default model policy (the allow-all
+-- fallback and its epoch) is inserted by bootstrap_upsert_organization, in the
+-- same statement that creates the organization row, because the policy belongs
+-- to the moment of creation. Authorization for it is structural, not state
+-- based; section 1 states the change and the trade-off.
+--
 -- `ibex_bootstrap` holding EXECUTE is NOT the same as "cannot reach another
 -- organization": every p_org_id below is a caller-chosen value, and inside the
--- definer `rls_org_visible` admits every organization's rows. Four bodies
+-- definer `rls_org_visible` admits every organization's rows. Three bodies
 -- therefore refuse the writes that would let a caller act on a tenant it does
 -- not own. The inventory below is the acceptance criterion: every refusal names
 -- its function, rule and SQLSTATE, and the integration suite asserts each row.
@@ -30,7 +36,10 @@
 --   bootstrap_insert_pat            agent is not an active agent of the organization    23514
 --   bootstrap_upsert_service_token  permissions is not the memory-service grant         23514
 --   bootstrap_upsert_service_token  organization has no active owner or active agent    23514
---   bootstrap_write_model_policy    organization already has a model policy or epoch    42501
+--
+-- The model policy has no refusal row because it has no call to refuse: it is
+-- written only on the `created` branch of bootstrap_upsert_organization, so an
+-- organization that already exists cannot receive it whatever its policy state.
 --
 -- The advisory locks are the second control, not a refusal: every body that
 -- performs a check-then-write takes the per-organization lock first
@@ -44,16 +53,15 @@
 --   identity re-run / existing organization   TestTenancyBootstrapCreateIdentityGuard
 --   PAT mask / second PAT / foreign subjects  TestTenancyBootstrapPATGuard
 --   service-token mask / missing subject      TestTenancyBootstrapServiceTokenGuard
---   model-policy first install / configured   TestTenancyBootstrapModelPolicyGuard
+--   policy on create / existing organization  TestTenancyBootstrapModelPolicyGuard
 --   org-then-prefix lock order                TestTenancyBootstrapSerializesPerOrg
 --
--- The seven functions map 1:1 to the old Go helpers:
+-- The six functions map 1:1 to the old Go helpers:
 --
---   bootstrap_upsert_organization   insertOrganization
+--   bootstrap_upsert_organization   insertOrganization + insertModelPolicy
 --   bootstrap_lock_organization     lockOrganization
 --   bootstrap_lookup_subjects       lookupOwner / lookupAgent
 --   bootstrap_create_identity       insertIdentity
---   bootstrap_write_model_policy    insertModelPolicy
 --   bootstrap_insert_pat            insertToken
 --   bootstrap_upsert_service_token  ensurePrefixUnused / findServiceTokens /
 --                                   updateServiceToken / revokeDuplicate* /
@@ -63,11 +71,40 @@
 -- bootstrap_upsert_organization can create a new organization, and
 -- bootstrap_lookup_subjects returns another organization's owner/agent ids
 -- (ids only, no credential). Those two create a tenant or read ids; neither
--- writes into a tenant that already exists. bootstrap_write_model_policy used
--- to be a third: `ON CONFLICT DO NOTHING` left existing rows alone but a caller
--- could install the allow-all fallback where an operator deliberately left the
--- table empty. It now refuses an organization that already has a policy or an
--- epoch, so the fallback is a first-install write only.
+-- writes into a tenant that already exists.
+--
+-- The model policy used to be a third. bootstrap_write_model_policy accepted
+-- any organization id and refused only when that organization already had a
+-- policy row or an epoch row. That is a state check, not an authorization: an
+-- existing organization with neither row was indistinguishable from a fresh
+-- install, so the allow-all fallback could be installed into a tenant an
+-- operator had deliberately left unconfigured, and nothing in the call could
+-- tell the caller's own new installation from somebody else's empty
+-- organization. The write now sits inside the `IF created` branch of
+-- bootstrap_upsert_organization, in the statement that inserts the organization
+-- row: the definer already knows whether it created the tenant, so the policy
+-- is written exactly when the tenant is, and there is no separate call to
+-- authorize.
+--
+-- The function was dropped rather than left un-granted. It is owned by
+-- `ibex_service`, and a role that can SET ROLE ibex_service (the `ibex`
+-- migration login, 000064:140) executes an owner's function whatever the ACL
+-- says, so removing the GRANT would have hidden the capability rather than
+-- removed it. Dropping the function removes both paths, and the inventory above
+-- no longer has to describe a rule nothing calls.
+--
+-- The trade-off is deliberate: the allow-all fallback now commits with the
+-- organization, so an operator cannot create an organization through bootstrap
+-- without it. That is the intended bootstrap state — a new tenant with no
+-- policy is unusable until someone grants one — and every later policy change
+-- is an operator action on the console/API, not a bootstrap one.
+--
+-- Deploy order: apply this migration with the bootstrap binary from the same
+-- commit. An older binary calls the dropped function after the organization
+-- insert, receives 42883 (undefined_function) and rolls the whole bootstrap
+-- back, so a stale binary fails loudly instead of leaving a half-built
+-- installation; a re-run against an existing organization never reached that
+-- call and is unaffected.
 --
 -- Installation-scoped authorization is NOT expressible here, and no control
 -- below pretends otherwise. `ibex_bootstrap` is a one-shot command, not a
@@ -97,11 +134,25 @@
 SET LOCAL lock_timeout = '5s';
 
 -- ================================================================
--- 1. Organization
+-- 1. Organization, and the default model policy it is born with
 -- ================================================================
--- insertOrganization. The tier/status/embedding literals are the values the Go
--- bootstrap wrote; they stay here so the definer is the only writer and a
--- caller cannot smuggle a different profile into a tenant.
+-- insertOrganization + insertModelPolicy. The tier/status/embedding literals are
+-- the values the Go bootstrap wrote; they stay here so the definer is the only
+-- writer and a caller cannot smuggle a different profile into a tenant.
+--
+-- The default model policy (allow-all fallback at priority 1000) and its epoch 1
+-- mirror infra/scripts/seed_dev.sql. They are written only when this statement
+-- inserted the organization row, which is the entire authorization for the
+-- write: `created` is a fact about this call, not a property of the target. An
+-- organization that already exists keeps whatever policy state its operator
+-- chose — including none — and a caller naming an existing slug gets
+-- created = false and no policy row. There is no separate definer to authorize,
+-- so a bootstrap credential cannot add the fallback to a tenant it did not
+-- create, and the empty-tenant case cannot be mistaken for a first install.
+--
+-- Both policy inserts are ON CONFLICT DO NOTHING: `created` is the only gate,
+-- but a value already present (a retried statement, a seeded row) must still
+-- leave exactly one fallback row and one epoch rather than raise.
 CREATE OR REPLACE FUNCTION ibex_core.bootstrap_upsert_organization(
     p_id   uuid,
     p_name text,
@@ -115,6 +166,11 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ibex_core, pg_temp
 AS $$
+-- The OUT parameter `org_id` shares its name with the policy tables' tenant
+-- column, and a bare `org_id` in the INSERT lists below would be ambiguous
+-- (42702). Every bare name in this body is a column; the function's inputs are
+-- all p_-prefixed.
+#variable_conflict use_column
 DECLARE
     v_inserted bigint;
 BEGIN
@@ -125,6 +181,20 @@ BEGIN
         (p_id, p_name, p_slug, 'free', 'active', 'gpu', 1024, 'BAAI/bge-m3')
     ON CONFLICT (slug) DO NOTHING;
     GET DIAGNOSTICS v_inserted = ROW_COUNT;
+
+    -- The policy belongs to the moment of creation, so it commits or fails with
+    -- the organization. If either insert raises, this statement aborts and the
+    -- organization above goes with it: there is no path that leaves a tenant
+    -- without its fallback.
+    IF v_inserted > 0 THEN
+        INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority)
+        VALUES (p_id, '*', true, 1000)
+        ON CONFLICT (org_id, model_pattern) DO NOTHING;
+
+        INSERT INTO ibex_core.org_model_policy_meta (org_id, epoch)
+        VALUES (p_id, 1)
+        ON CONFLICT (org_id) DO NOTHING;
+    END IF;
 
     -- The conflict path re-reads the winner by slug: Go needs the existing org
     -- id, and `deleted_at` so its error can tell the operator to hard-delete the
@@ -262,54 +332,7 @@ ALTER FUNCTION ibex_core.bootstrap_create_identity(uuid, uuid, text, text, uuid,
 REVOKE ALL ON FUNCTION ibex_core.bootstrap_create_identity(uuid, uuid, text, text, uuid, text, text) FROM PUBLIC;
 
 -- ================================================================
--- 5. Default model policy
--- ================================================================
--- insertModelPolicy: the allow-all fallback (priority 1000) and epoch 1 that
--- mirror infra/scripts/seed_dev.sql.
---
--- Guard: this is a first-install write. Go calls it only on the create branch,
--- directly after the organization and identity were created in the same
--- transaction, so a configured organization has no supported path here. A
--- caller that names an existing tenant must not be able to drop a wildcard
--- allow row under a policy set an operator narrowed, so any existing
--- org_model_policies or org_model_policy_meta row refuses the call. DO NOTHING
--- is not enough: it protects an existing '*' row but still admits an allow-all
--- fallback into a tenant whose policies simply omit the wildcard.
-CREATE OR REPLACE FUNCTION ibex_core.bootstrap_write_model_policy(p_org_id uuid)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = ibex_core, pg_temp
-AS $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM ibex_core.org_model_policies p WHERE p.org_id = p_org_id
-    ) OR EXISTS (
-        SELECT 1 FROM ibex_core.org_model_policy_meta m WHERE m.org_id = p_org_id
-    ) THEN
-        RAISE EXCEPTION
-            'bootstrap_write_model_policy: organization % already has a model policy or epoch; the allow-all fallback is a first-install write only',
-            p_org_id
-            USING ERRCODE = 'insufficient_privilege';
-    END IF;
-
-    -- DO NOTHING remains the race guard: two first-install callers that both
-    -- pass the check above must still end with one fallback row, not an error.
-    INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority)
-    VALUES (p_org_id, '*', true, 1000)
-    ON CONFLICT (org_id, model_pattern) DO NOTHING;
-
-    INSERT INTO ibex_core.org_model_policy_meta (org_id, epoch)
-    VALUES (p_org_id, 1)
-    ON CONFLICT (org_id) DO NOTHING;
-END;
-$$;
-
-ALTER FUNCTION ibex_core.bootstrap_write_model_policy(uuid) OWNER TO ibex_service;
-REVOKE ALL ON FUNCTION ibex_core.bootstrap_write_model_policy(uuid) FROM PUBLIC;
-
--- ================================================================
--- 6. Bootstrap PAT
+-- 5. Bootstrap PAT
 -- ================================================================
 -- insertToken. The id, prefix and Argon2id hash are generated by Go; only the
 -- hash reaches the database.
@@ -416,7 +439,7 @@ ALTER FUNCTION ibex_core.bootstrap_insert_pat(uuid, uuid, uuid, uuid, text, text
 REVOKE ALL ON FUNCTION ibex_core.bootstrap_insert_pat(uuid, uuid, uuid, uuid, text, text, text, bigint) FROM PUBLIC;
 
 -- ================================================================
--- 7. Memory service token
+-- 6. Memory service token
 -- ================================================================
 -- The reconcile path: ensurePrefixUnused + findServiceTokens + update/insert +
 -- revokeDuplicateServiceTokens, in one call. Returns a named outcome so the
@@ -593,7 +616,6 @@ GRANT EXECUTE ON FUNCTION ibex_core.bootstrap_upsert_organization(uuid, text, te
 GRANT EXECUTE ON FUNCTION ibex_core.bootstrap_lock_organization(uuid) TO ibex_bootstrap;
 GRANT EXECUTE ON FUNCTION ibex_core.bootstrap_lookup_subjects(uuid) TO ibex_bootstrap;
 GRANT EXECUTE ON FUNCTION ibex_core.bootstrap_create_identity(uuid, uuid, text, text, uuid, text, text) TO ibex_bootstrap;
-GRANT EXECUTE ON FUNCTION ibex_core.bootstrap_write_model_policy(uuid) TO ibex_bootstrap;
 GRANT EXECUTE ON FUNCTION ibex_core.bootstrap_insert_pat(uuid, uuid, uuid, uuid, text, text, text, bigint) TO ibex_bootstrap;
 GRANT EXECUTE ON FUNCTION ibex_core.bootstrap_upsert_service_token(uuid, text, text, bigint) TO ibex_bootstrap;
 
@@ -648,7 +670,8 @@ GRANT UPDATE (hash, prefix, permissions, user_id, agent_id, expires_at,
               updated_at, is_revoked, revoked_at, revoke_reason)
     ON ibex_core.tokens TO ibex_service;
 
--- insertModelPolicy column list.
+-- The policy inserts in bootstrap_upsert_organization: insertModelPolicy's column
+-- list, now part of the organization body.
 GRANT INSERT (org_id, model_pattern, allowed, priority)
     ON ibex_core.org_model_policies TO ibex_service;
 GRANT INSERT (org_id, epoch)
@@ -657,6 +680,7 @@ GRANT INSERT (org_id, epoch)
 -- Measured on PostgreSQL 16: an explicit `ON CONFLICT (org_id, model_pattern)`
 -- requires SELECT on both arbiter columns even for DO NOTHING, and
 -- `ON CONFLICT (org_id)` requires SELECT on org_id. Without these,
--- bootstrap_write_model_policy fails with "permission denied for table".
+-- bootstrap_upsert_organization fails with "permission denied for table" on a
+-- fresh install, which is the only path that writes a policy.
 GRANT SELECT (org_id, model_pattern) ON ibex_core.org_model_policies TO ibex_service;
 GRANT SELECT (org_id) ON ibex_core.org_model_policy_meta TO ibex_service;

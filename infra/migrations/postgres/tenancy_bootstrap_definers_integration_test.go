@@ -61,6 +61,14 @@ type serviceTokenCall struct {
 	prefix string
 }
 
+// orgCall is the argument set for ibex_core.bootstrap_upsert_organization. The
+// id is caller-generated, so a test can assert that an id the database never
+// accepted received no rows.
+type orgCall struct {
+	id   string
+	slug string
+}
+
 // modelPolicyRow is the wildcard fallback and the epoch written with it.
 type modelPolicyRow struct {
 	allowed  bool
@@ -152,7 +160,7 @@ func (f *tenancyFixture) seedAgentOnlyOrg(ctx context.Context, slug string) tena
 }
 
 // asBootstrap runs one callback in a transaction as the bootstrap login, which
-// is the only role allowed to execute the seven definers.
+// is the only role allowed to execute the six definers.
 func (f *tenancyFixture) asBootstrap(ctx context.Context, fn func(*sql.Tx) error) error {
 	return f.withRole(ctx, role("ibex_bootstrap"), fn)
 }
@@ -582,69 +590,199 @@ func (f *tenancyFixture) seedVictimPAT(ctx context.Context, victim tenantSeed) {
 	}
 }
 
-// TestTenancyBootstrapModelPolicyGuard is the F1 lock for the model-policy
-// definer. The allow-all fallback is a first-install write: a caller that names
-// a tenant which already has a policy or an epoch must not be able to drop a
-// wildcard allow row under a set an operator narrowed.
+// TestTenancyBootstrapModelPolicyGuard is the F1 lock for the default model
+// policy. The allow-all fallback is written by bootstrap_upsert_organization, in
+// the statement that creates the organization, so the control is structural: an
+// organization that already exists cannot receive it, whether it holds a policy,
+// only an epoch, or neither.
 func TestTenancyBootstrapModelPolicyGuard(t *testing.T) {
 	f := newTenancyFixture(t)
 	runBootstrapCases(t, f, []bootstrapCase{
-		{"first install writes the fallback", bootstrapModelPolicyFirstInstall},
-		{"configured policy refused", bootstrapModelPolicyConfiguredRefused},
-		{"existing epoch refused", bootstrapModelPolicyEpochRefused},
+		{"create writes one policy and one epoch", bootstrapModelPolicyCreate},
+		{"re-run keeps one policy and one epoch", bootstrapModelPolicyRerun},
+		{"existing organization without a policy gets none", bootstrapModelPolicyEmptyExistingOrg},
+		{"configured policy untouched", bootstrapModelPolicyConfiguredUntouched},
+		{"existing epoch untouched", bootstrapModelPolicyEpochUntouched},
+		{"standalone writer is gone", bootstrapModelPolicyStandaloneGone},
 	})
 }
 
-// bootstrapModelPolicyFirstInstall proves the fallback and epoch a fresh
-// organization receives.
-func bootstrapModelPolicyFirstInstall(e bootstrapEnv) {
-	orgID := e.f.seedEmptyOrg(e.t.Context(), "policy-first-install")
-	if err := e.writeModelPolicy(orgID); err != nil {
-		e.t.Fatalf("write model policy: %v", err)
-	}
+// bootstrapModelPolicyCreate proves the create path writes the fallback and its
+// epoch exactly once, in the same call that creates the organization.
+func bootstrapModelPolicyCreate(e bootstrapEnv) {
+	orgID := e.mustCreateOrg("policy-create")
 	e.assertModelPolicy(orgID, modelPolicyRow{allowed: true, priority: 1000, epoch: 1})
-	if n := e.f.countModelPolicies(e.t.Context(), orgID); n != 1 {
-		e.t.Fatalf("model policy rows = %d, want 1", n)
-	}
+	e.assertOnePolicyAndEpoch(orgID)
 }
 
-// bootstrapModelPolicyConfiguredRefused proves a tenant with any policy row is
-// refused and its row is untouched.
-func bootstrapModelPolicyConfiguredRefused(e bootstrapEnv) {
-	orgID := e.f.seedEmptyOrg(e.t.Context(), "policy-configured")
+// bootstrapModelPolicyRerun proves the create path is idempotent by slug: a
+// second call reports the existing organization and leaves the single fallback
+// row and epoch the first call wrote.
+func bootstrapModelPolicyRerun(e bootstrapEnv) {
+	orgID := e.mustCreateOrg("policy-rerun")
+	created, reported, err := e.upsertOrganization(newOrgCall("policy-rerun"))
+	if err != nil {
+		e.t.Fatalf("re-run the organization insert: %v", err)
+	}
+	if created {
+		e.t.Fatal("re-run reported a create for a slug it had already inserted")
+	}
+	if reported != orgID {
+		e.t.Fatalf("re-run reported organization = %s, want the original %s", reported, orgID)
+	}
+	e.assertOnePolicyAndEpoch(orgID)
+}
+
+// bootstrapModelPolicyEmptyExistingOrg is the finding this guard was rewritten
+// for. An organization with neither a policy row nor an epoch row is not
+// evidence of a fresh install: it is a tenant whose operator has not configured
+// one, or left it open on purpose. Naming its slug must not install the
+// allow-all fallback, and the caller's own organization id must receive nothing
+// either.
+func bootstrapModelPolicyEmptyExistingOrg(e bootstrapEnv) {
+	slug := "policy-empty-existing"
+	orgID := e.f.seedEmptyOrg(e.t.Context(), slug)
+	call := newOrgCall(slug)
+	created, reported, err := e.upsertOrganization(call)
+	if err != nil {
+		e.t.Fatalf("upsert an existing organization: %v", err)
+	}
+	if created {
+		e.t.Fatal("bootstrap_upsert_organization reported a create for an existing slug")
+	}
+	if reported != orgID {
+		e.t.Fatalf("reported organization = %s, want the existing %s", reported, orgID)
+	}
+	e.assertNoModelPolicy(orgID, call.id)
+}
+
+// bootstrapModelPolicyConfiguredUntouched proves a tenant with a policy row is
+// left exactly as its operator set it: no wildcard allow row is added, the
+// existing row keeps its values, and the fallback epoch is not written.
+func bootstrapModelPolicyConfiguredUntouched(e bootstrapEnv) {
+	slug := "policy-configured"
+	orgID := e.f.seedEmptyOrg(e.t.Context(), slug)
 	seeded := modelPolicySeed{pattern: "gpt-*", allowed: false, priority: 10}
 	e.f.seedModelPolicy(e.t.Context(), orgID, seeded)
-	err := e.writeModelPolicy(orgID)
-	e.f.requireGuardError(err, sqlState{code: "42501"}, "already has a model policy or epoch")
+	created, _, err := e.upsertOrganization(newOrgCall(slug))
+	if err != nil {
+		e.t.Fatalf("upsert a configured organization: %v", err)
+	}
+	if created {
+		e.t.Fatal("bootstrap_upsert_organization reported a create for an existing slug")
+	}
 	if n := e.f.countModelPolicies(e.t.Context(), orgID); n != 1 {
 		e.t.Fatalf("model policy rows = %d, want the seeded 1", n)
 	}
 	e.assertSeededPolicy(orgID, seeded)
+	if n := e.f.countPolicyEpochs(e.t.Context(), orgID); n != 0 {
+		e.t.Fatalf("epoch rows = %d, want the seeded policy's 0", n)
+	}
 }
 
-// bootstrapModelPolicyEpochRefused proves an epoch alone (the partial state a
-// previous write could leave) is enough to refuse, and writes no policy.
-func bootstrapModelPolicyEpochRefused(e bootstrapEnv) {
-	orgID := e.f.seedEmptyOrg(e.t.Context(), "policy-epoch")
+// bootstrapModelPolicyEpochUntouched proves an epoch alone (the partial state a
+// previous write could leave) is enough to keep the write away, and that the
+// epoch the operator has is not replaced by 1.
+func bootstrapModelPolicyEpochUntouched(e bootstrapEnv) {
+	slug := "policy-epoch"
+	orgID := e.f.seedEmptyOrg(e.t.Context(), slug)
 	e.f.seedPolicyEpoch(e.t.Context(), orgID, 7)
-	err := e.writeModelPolicy(orgID)
-	e.f.requireGuardError(err, sqlState{code: "42501"}, "already has a model policy or epoch")
-	if n := e.f.countModelPolicies(e.t.Context(), orgID); n != 0 {
-		e.t.Fatalf("refused call wrote %d model policies, want 0", n)
+	created, _, err := e.upsertOrganization(newOrgCall(slug))
+	if err != nil {
+		e.t.Fatalf("upsert an organization with an epoch: %v", err)
 	}
+	if created {
+		e.t.Fatal("bootstrap_upsert_organization reported a create for an existing slug")
+	}
+	e.assertNoPolicyRows(orgID)
 	if epoch := e.f.readPolicyEpoch(e.t.Context(), orgID); epoch != 7 {
 		e.t.Fatalf("epoch = %d, want the seeded 7", epoch)
 	}
 }
 
-// writeModelPolicy calls bootstrap_write_model_policy as ibex_bootstrap.
-func (e bootstrapEnv) writeModelPolicy(orgID string) error {
-	e.t.Helper()
-	return e.f.asBootstrap(e.t.Context(), func(tx *sql.Tx) error {
-		// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; orgID is a bound parameter.
-		_, err := tx.ExecContext(e.t.Context(), `SELECT ibex_core.bootstrap_write_model_policy($1::uuid)`, orgID)
-		return err
+// bootstrapModelPolicyStandaloneGone proves the removed definer cannot be
+// reached at all. 42883 (undefined_function) is the assertion: the migration
+// drops the function rather than leaving it un-granted, because a function owned
+// by ibex_service is executable by any role that can SET ROLE ibex_service, so a
+// grant removal alone would have hidden the capability instead of removing it.
+func bootstrapModelPolicyStandaloneGone(e bootstrapEnv) {
+	err := e.f.asBootstrap(e.t.Context(), func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; the id is a bound parameter.
+		_, callErr := tx.ExecContext(e.t.Context(),
+			`SELECT ibex_core.bootstrap_write_model_policy($1::uuid)`, uuid.NewString())
+		return callErr
 	})
+	e.f.requireGuardError(err, sqlState{code: "42883"}, "bootstrap_write_model_policy")
+}
+
+// newOrgCall is one bootstrap_upsert_organization argument set with a fresh
+// caller-generated organization id, so a test can assert that an id the
+// database never accepted received no rows.
+func newOrgCall(slug string) orgCall {
+	return orgCall{id: uuid.NewString(), slug: slug}
+}
+
+// mustCreateOrg creates a fresh organization through the definer and returns the
+// id it reported.
+func (e bootstrapEnv) mustCreateOrg(slug string) string {
+	e.t.Helper()
+	created, orgID, err := e.upsertOrganization(newOrgCall(slug))
+	if err != nil {
+		e.t.Fatalf("create organization %s: %v", slug, err)
+	}
+	if !created {
+		e.t.Fatalf("bootstrap_upsert_organization did not create the fresh slug %s", slug)
+	}
+	return orgID
+}
+
+// upsertOrganization calls bootstrap_upsert_organization as ibex_bootstrap and
+// returns whether it created the organization, plus the id it reported.
+func (e bootstrapEnv) upsertOrganization(call orgCall) (bool, string, error) {
+	e.t.Helper()
+	var created bool
+	var orgID string
+	var deletedAt sql.NullTime
+	err := e.f.asBootstrap(e.t.Context(), func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- static test fixture SQL; every value is a bound parameter.
+		return tx.QueryRowContext(e.t.Context(), `
+			SELECT created, org_id::text, deleted_at
+			FROM ibex_core.bootstrap_upsert_organization($1::uuid, $2, $3)`,
+			call.id, call.slug, call.slug).Scan(&created, &orgID, &deletedAt)
+	})
+	return created, orgID, err
+}
+
+// assertOnePolicyAndEpoch asserts the organization holds exactly one policy row
+// and exactly one epoch row.
+func (e bootstrapEnv) assertOnePolicyAndEpoch(orgID string) {
+	e.t.Helper()
+	if n := e.f.countModelPolicies(e.t.Context(), orgID); n != 1 {
+		e.t.Fatalf("model policy rows = %d, want 1", n)
+	}
+	if n := e.f.countPolicyEpochs(e.t.Context(), orgID); n != 1 {
+		e.t.Fatalf("epoch rows = %d, want 1", n)
+	}
+}
+
+// assertNoModelPolicy asserts each named organization holds neither a policy nor
+// an epoch row, so a write that did not run left the policy state untouched.
+func (e bootstrapEnv) assertNoModelPolicy(orgIDs ...string) {
+	e.t.Helper()
+	for _, orgID := range orgIDs {
+		e.assertNoPolicyRows(orgID)
+		if n := e.f.countPolicyEpochs(e.t.Context(), orgID); n != 0 {
+			e.t.Fatalf("organization %s has %d epoch rows, want 0", orgID, n)
+		}
+	}
+}
+
+// assertNoPolicyRows asserts the organization holds no model policy row.
+func (e bootstrapEnv) assertNoPolicyRows(orgID string) {
+	e.t.Helper()
+	if n := e.f.countModelPolicies(e.t.Context(), orgID); n != 0 {
+		e.t.Fatalf("organization %s has %d model policies, want 0", orgID, n)
+	}
 }
 
 // assertModelPolicy checks the wildcard fallback and its epoch.
@@ -706,6 +844,12 @@ func (f *tenancyFixture) seedPolicyEpoch(ctx context.Context, orgID string, epoc
 func (f *tenancyFixture) countModelPolicies(ctx context.Context, orgID string) int {
 	return f.countOne(ctx, "count model policies", `
 		SELECT COUNT(*) FROM ibex_core.org_model_policies WHERE org_id = $1::uuid`, orgID)
+}
+
+// countPolicyEpochs counts orgID's epoch rows.
+func (f *tenancyFixture) countPolicyEpochs(ctx context.Context, orgID string) int {
+	return f.countOne(ctx, "count policy epochs", `
+		SELECT COUNT(*) FROM ibex_core.org_model_policy_meta WHERE org_id = $1::uuid`, orgID)
 }
 
 // readPolicyEpoch returns orgID's epoch.

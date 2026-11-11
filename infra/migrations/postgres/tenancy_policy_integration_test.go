@@ -45,7 +45,7 @@ func TestTenancyPolicyInvariants(t *testing.T) {
 		"auth_find_token_by_prefix", "rate_limit_overrides_snapshot", "sessions_abandon_idle",
 		"budget_reservations_expire_stale", "active_periods",
 		"bootstrap_upsert_organization", "bootstrap_lock_organization", "bootstrap_lookup_subjects",
-		"bootstrap_create_identity", "bootstrap_write_model_policy", "bootstrap_insert_pat",
+		"bootstrap_create_identity", "bootstrap_insert_pat",
 		"bootstrap_upsert_service_token",
 	}, true)
 }

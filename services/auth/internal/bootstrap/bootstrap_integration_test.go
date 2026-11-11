@@ -267,8 +267,27 @@ func (v bootstrapVerifier) ownerAndAgent(ctx context.Context) {
 	}
 }
 
+// modelPolicy asserts the create path left exactly one allow-all policy and one
+// epoch: both are written by bootstrap_upsert_organization, in the statement
+// that creates the organization, so no bootstrap call can add a second pair.
 func (v bootstrapVerifier) modelPolicy(ctx context.Context) {
 	v.t.Helper()
+	v.assertFallbackPolicy(ctx)
+	v.assertPolicyEpoch(ctx)
+}
+
+// assertFallbackPolicy checks the organization holds one policy row: the
+// allow-all fallback at priority 1000.
+func (v bootstrapVerifier) assertFallbackPolicy(ctx context.Context) {
+	v.t.Helper()
+	var rows int
+	mustScan(v.t, v.tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ibex_core.org_model_policies WHERE org_id = $1`, v.result.OrgID.String()),
+		&rows)
+	if rows != 1 {
+		v.t.Fatalf("model policy rows = %d, want exactly the fallback", rows)
+	}
+
 	var pattern string
 	var allowed bool
 	var priority int
@@ -284,6 +303,18 @@ func (v bootstrapVerifier) modelPolicy(ctx context.Context) {
 	}
 	if priority != 1000 {
 		v.t.Fatalf("model policy priority = %d", priority)
+	}
+}
+
+// assertPolicyEpoch checks the organization holds one epoch row, at 1.
+func (v bootstrapVerifier) assertPolicyEpoch(ctx context.Context) {
+	v.t.Helper()
+	var rows int
+	mustScan(v.t, v.tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ibex_core.org_model_policy_meta WHERE org_id = $1`, v.result.OrgID.String()),
+		&rows)
+	if rows != 1 {
+		v.t.Fatalf("model policy epoch rows = %d, want 1", rows)
 	}
 
 	var epoch int64
@@ -856,7 +887,6 @@ func TestBootstrapIntegrationHelperErrorContract(t *testing.T) {
 			_, _, err := insertIdentity(ctx, tx, identityInput{orgID: orgID, cfg: f.cfg})
 			return err
 		}()},
-		{"insertModelPolicy", insertModelPolicy(ctx, tx, orgID)},
 		{"insertToken", func() error {
 			_, err := insertToken(ctx, tx, tokenInput{
 				orgID: orgID, userID: first.UserID, agentID: first.AgentID, name: f.cfg.PATName,
@@ -884,7 +914,7 @@ func TestBootstrapIntegrationHelperErrorContract(t *testing.T) {
 
 // TestBootstrapIntegrationAsBootstrapLogin is the positive control for
 // migration 000069: the command must work when it connects as the
-// least-privilege ibex_bootstrap login, which holds EXECUTE on the seven
+// least-privilege ibex_bootstrap login, which holds EXECUTE on the six
 // definers and no table privilege at all. The owner pool is used only to
 // provision the logins and to verify the rows afterwards, because a superuser
 // bypasses RLS and would make a missing column grant invisible.

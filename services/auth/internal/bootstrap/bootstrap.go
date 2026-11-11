@@ -1,7 +1,10 @@
 // Package bootstrap creates the first v1-single-node organization, owner user,
 // default agent, allow-all model policy, and a bootstrap PAT in one transaction.
-// It is idempotent per organization slug, never rotates the PAT, and reconciles
-// the scoped memory service token without reactivating a revoked row.
+// The model policy is written by the organization definer, in the same statement
+// that creates the organization, so it cannot be installed into a tenant that
+// already exists. It is idempotent per organization slug, never rotates the PAT,
+// and reconciles the scoped memory service token without reactivating a revoked
+// row.
 package bootstrap
 
 import (
@@ -118,6 +121,10 @@ type subjectIDs struct {
 // no table privilege at all. Each definer returns data, or a named outcome,
 // rather than raising a business error, so the operator-facing text stays here.
 const (
+	// upsertOrganizationSQL creates the organization and, on the created branch,
+	// its allow-all model policy and epoch. Both are written by this one definer:
+	// the policy belongs to the moment of creation, so a caller that names an
+	// existing slug receives created = false and no policy row.
 	upsertOrganizationSQL = `
 		SELECT created, org_id, deleted_at
 		FROM ibex_core.bootstrap_upsert_organization($1, $2, $3)`
@@ -129,8 +136,6 @@ const (
 	createIdentitySQL = `
 		SELECT user_id, agent_id
 		FROM ibex_core.bootstrap_create_identity($1, $2, $3, $4, $5, $6, $7)`
-	// writeModelPolicySQL returns void; the result is not read.
-	writeModelPolicySQL = `SELECT ibex_core.bootstrap_write_model_policy($1)`
 	// insertPATSQL returns the token id Go already generated; it is not read.
 	insertPATSQL          = `SELECT ibex_core.bootstrap_insert_pat($1, $2, $3, $4, $5, $6, $7, $8)`
 	upsertServiceTokenSQL = `
@@ -405,7 +410,9 @@ func reconcileExisting(
 	return result, nil
 }
 
-// createIdentity writes the first-run user, agent, model policy, PAT, and memory token.
+// createIdentity writes the first-run user, agent, PAT, and memory token. The
+// allow-all model policy is not written here: insertOrganization writes it in
+// the statement that created the organization.
 func createIdentity(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -414,9 +421,6 @@ func createIdentity(
 ) (bootstrapResult, error) {
 	userID, agentID, err := insertIdentity(ctx, tx, identityInput{orgID: orgID, cfg: cfg})
 	if err != nil {
-		return bootstrapResult{}, err
-	}
-	if err := insertModelPolicy(ctx, tx, orgID); err != nil {
 		return bootstrapResult{}, err
 	}
 	plaintext, err := insertToken(ctx, tx, tokenInput{
@@ -547,9 +551,13 @@ func serviceTokenOutcome(outcome string, orgID uuid.UUID) error {
 }
 
 // insertOrganization upserts by slug so two concurrent bootstraps cannot create
-// a second organization. It reports the existing ID without touching a token
-// when the slug is already present, and names a soft-deleted winner instead of
-// surfacing a bare no-rows error.
+// a second organization. On the created branch the same definer writes the
+// allow-all model policy and epoch 1: the policy is part of the creation, so a
+// caller that names an existing slug receives created = false and no policy row,
+// and a policy failure fails this call and rolls the transaction back. It
+// reports the existing ID without touching a token when the slug is already
+// present, and names a soft-deleted winner instead of surfacing a bare no-rows
+// error.
 func insertOrganization(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -592,17 +600,6 @@ func insertIdentity(
 		return uuid.Nil, uuid.Nil, fmt.Errorf("insert owner user and default agent: %w", err)
 	}
 	return userID, agentID, nil
-}
-
-// insertModelPolicy writes the allow-all fallback policy and its epoch, which
-// matches infra/scripts/seed_dev.sql.
-func insertModelPolicy(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) error {
-	// The definer returns void, so Exec is the right call: there is no value to
-	// read and no row count the caller uses.
-	if _, err := tx.ExecContext(ctx, writeModelPolicySQL, orgID.String()); err != nil {
-		return fmt.Errorf("insert allow-all model policy with its epoch: %w", err)
-	}
-	return nil
 }
 
 // insertToken writes the bootstrap PAT and returns its one-time wire value.
