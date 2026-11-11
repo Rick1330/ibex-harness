@@ -211,6 +211,12 @@ async def _aclose_backend(backend: object) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Build the embedding backend on startup and close it on shutdown.
+
+    A startup failure leaves the app not-ready rather than raising, so the
+    process still answers ``/ready`` with the reason. The close runs in a
+    ``finally`` so a consumer exception cannot leak the backend or its cache.
+    """
     state = AppState()
     app.state.embedder = state
     profile = "unknown"
@@ -230,11 +236,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         state.ready_error = str(exc) or "invalid startup configuration"
         logger.exception("embedder startup configuration error profile=%s", profile)
 
-    yield
-
-    if state.backend is not None:
-        await _aclose_backend(state.backend)
-        logger.info("embedding backend closed backend=%s", state.backend.name)
+    try:
+        yield
+    finally:
+        if state.backend is not None:
+            await _aclose_backend(state.backend)
+            logger.info("embedding backend closed backend=%s", state.backend.name)
 
 
 def create_app() -> FastAPI:

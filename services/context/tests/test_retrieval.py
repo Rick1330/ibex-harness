@@ -179,7 +179,9 @@ async def test_retrieve_all_fail_non_crashing() -> None:
     assert result.directive is None
     assert result.history_tokens > 0
     assert result.hot_outcome.status == "error"
+    assert result.hot_outcome.detail == "hot down"
     assert result.cold_outcome.status == "timeout"
+    assert result.cold_outcome.detail == "cold_http_timeout"
     assert result.directive_outcome.status == "error"
 
 

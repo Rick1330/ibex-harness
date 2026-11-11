@@ -115,6 +115,13 @@ async def _memory_service_lifespan(
     cfg: Settings,
     validator: TokenValidator | None,
 ) -> AsyncGenerator[None, None]:
+    """Yield either the not-ready app or a fully wired service, and tear down.
+
+    Missing database configuration takes the short path: the app answers 503 and
+    never builds an engine. Otherwise the engine, store, PII service, Redis,
+    embedding and rerank clients are constructed, readiness is refreshed, and
+    ``_shutdown_memory`` releases them on the way out.
+    """
     logger.info("memory service starting port=%s", cfg.port)
     configure_tracing(cfg.otel_endpoint)
     auth = validator or GRPCTokenValidator(
@@ -128,10 +135,25 @@ async def _memory_service_lifespan(
         state.ready = False
         state.ready_error = "IBEX_MEMORY_DATABASE_URL not set"
         logger.error("memory not ready: %s", state.ready_error)
-        yield
-        await auth.aclose()
-        # The not-ready path never reaches _shutdown_memory, so flush here.
-        shutdown_tracing()
+        # The not-ready path never reaches _shutdown_memory, so flush here; the
+        # gRPC channel and the exporter must be released on every exit shape,
+        # including a consumer exception thrown into this generator.
+        try:
+            yield
+        finally:
+            # ADR-0019 §8: flush the exporter before dependency teardown, and
+            # before anything that can raise — a close failure must not swallow
+            # the flush.
+            #
+            # The flush is nested so a raising exporter (timeout, collector
+            # down) cannot skip the close and leak the gRPC channel. If both
+            # fail, the close error propagates with the flush error chained as
+            # its __context__: the caller sees the later failure, and the
+            # flush fault stays in the traceback instead of being discarded.
+            try:
+                shutdown_tracing()
+            finally:
+                await auth.aclose()
         return
 
     engine = create_engine(cfg)

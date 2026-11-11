@@ -30,7 +30,6 @@ from app.clients.memory import (
     LineageEdge,
     MemoryHttpClient,
     MemoryHttpError,
-    MemoryHttpTimeout,
     SearchHit,
 )
 from app.errors import (
@@ -371,10 +370,15 @@ def _require_client(client: MemoryHttpClient | None) -> MemoryHttpClient:
 
 
 async def _call_memory[T](op: Callable[[], Awaitable[T]]) -> T:
+    """Run one memory-service call and map transport failures to MCP errors.
+
+    Every failure is raised as an ``MCPServiceError`` so FastMCP returns a
+    structured tool error instead of a stack trace. ``MemoryHttpTimeout`` needs
+    no clause of its own: it carries no status code, so the mapper turns it into
+    ``BackendUnavailableError`` with the same type, message and cause.
+    """
     try:
         return await op()
-    except MemoryHttpTimeout as exc:
-        raise BackendUnavailableError(str(exc)) from exc
     except MemoryHttpError as exc:
         raise _map_memory_http_error(exc) from exc
 

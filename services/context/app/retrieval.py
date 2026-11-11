@@ -272,15 +272,24 @@ class ParallelRetriever:
         timeout_ms: float,
         fetch,
     ) -> _BranchResult:
+        """Fetch one source's memories within its own deadline.
+
+        Every outcome is a ``_BranchResult``: a timeout, a transport error and a
+        cancelled sibling all become a non-raising result, because context
+        assembly is fail-open (ADR-0071, ADR-0096). The caller merges whatever
+        arrived.
+        """
         timeout_s = timeout_ms / 1000.0
         started = time.perf_counter()
         try:
             hits = await asyncio.wait_for(fetch(timeout_s), timeout=timeout_s)
         except TimeoutError:
             return _timeout_memories(name, started, f"{name}_timeout")
-        except MemoryHttpTimeout:
-            return _timeout_memories(name, started, f"{name}_http_timeout")
         except MemoryHttpError as exc:
+            # A memory HTTP timeout carries no status code but is still a timeout
+            # outcome, not an error, so it keeps its own detail and its own shape.
+            if isinstance(exc, MemoryHttpTimeout):
+                return _timeout_memories(name, started, f"{name}_http_timeout")
             return _error_memories(name, started, str(exc))
         except Exception as exc:  # noqa: BLE001 — fail-open
             return _error_memories(name, started, type(exc).__name__)

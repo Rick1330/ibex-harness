@@ -4,7 +4,7 @@
 # Callers must pass -count=1 (no retries) for accurate flake detection.
 set -euo pipefail
 
-if [ "$#" -lt 3 ] || [ "$2" != "--" ]; then
+if [[ "$#" -lt 3 ]] || [[ "$2" != "--" ]]; then
   echo "usage: $0 <junit-out> -- [go test args...]" >&2
   exit 2
 fi
