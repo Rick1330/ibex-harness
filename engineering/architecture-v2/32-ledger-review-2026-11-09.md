@@ -55,6 +55,10 @@ acceptance act, not a test result; this review instead prepares the evidence for
 **Recommendation:** the owner renews `idempotency-operation.v1` to 2027-02-06 with the four items above as the
 evidence, or downgrades it — either decision has to be recorded on or before 2026-11-10.
 
+**Outcome (annotated 2026-11-11):** no renewal and no downgrade was recorded on or before 2026-11-10, so the
+contract-shape acceptance lapsed — [`33-idempotency-shape-lapse-record-2026-11-11.md`](33-idempotency-shape-lapse-record-2026-11-11.md).
+This section is left as the recommendation it was.
+
 ## 5. Effect on the ledger
 
 Nine rows: `Verified` gains `2026-11-09`, `Review` moves to `2027-02-06`, status and limitations unchanged. The
