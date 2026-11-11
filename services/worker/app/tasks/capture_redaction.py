@@ -87,14 +87,22 @@ def _coerce_event_id(event_id: str | int | None) -> int | None:
     """
     if event_id is None:
         return None
+    return _require_bigint(_numeric_event_id(event_id), event_id)
+
+
+def _numeric_event_id(event_id: str | int) -> int:
+    """Return the integer value of a non-``None`` id, rejecting non-numeric types."""
     if isinstance(event_id, bool):
         raise TypeError(f"event_id must be an integer, got bool: {event_id!r}")
     if isinstance(event_id, int):
-        value = event_id
-    elif isinstance(event_id, str) and event_id.strip().isdigit():
-        value = int(event_id.strip())
-    else:
-        raise ValueError(f"event_id must be a numeric string: {event_id!r}")
+        return event_id
+    if isinstance(event_id, str) and event_id.strip().isdigit():
+        return int(event_id.strip())
+    raise ValueError(f"event_id must be a numeric string: {event_id!r}")
+
+
+def _require_bigint(value: int, event_id: str | int) -> int:
+    """Return ``value`` unchanged when it fits the ``bigint`` column, else fail."""
     if not 0 <= value <= _BIGINT_MAX:
         raise ValueError(f"event_id is outside the bigint range: {event_id!r}")
     return value
