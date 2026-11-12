@@ -64,7 +64,9 @@ interrupted run cannot truncate the registry.
 or support claim; accepted and supported status stays with
 ``engineering/architecture-v2/00-status-and-evidence.md``.
 
-No network access, no third-party dependency, deterministic output.
+No network access, no third-party dependency, deterministic output. The
+contract-ID grammar (candidate validation and document extraction) lives in
+``contract_ids.py`` beside this script.
 """
 
 from __future__ import annotations
@@ -78,6 +80,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
+
+from contract_ids import documented_contract_ids
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[3]
 
@@ -115,7 +119,6 @@ ACTION_VERBS: Final = frozenset(
 SCAFFOLD_OWNER: Final = "UNASSIGNED"
 SCAFFOLD_STABILITY: Final = "internal"
 DEFAULT_EVIDENCE: Final = "services/api/app/main.py"
-DOC_ID_PATTERN: Final = re.compile(r"[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*\.v1")
 PROTO_PACKAGE_PATTERN: Final = re.compile(r"^package\s+([\w.]+)\s*;", re.MULTILINE)
 PROTO_SERVICE_PATTERN: Final = re.compile(r"^service\s+(\w+)\s*\{", re.MULTILINE)
 
@@ -280,10 +283,6 @@ def load_registry(path: Path) -> tuple[dict[str, object], list[str]]:
     if not isinstance(payload, dict):
         return {}, [f"invalid-registry: {path} must be a JSON object"]
     return payload, []
-
-
-def documented_contract_ids(text: str) -> frozenset[str]:
-    return frozenset(DOC_ID_PATTERN.findall(text))
 
 
 def _display_path(path: Path) -> str:
@@ -634,13 +633,14 @@ def _route_row_failures(
 
 
 def _unsorted_failures(routes: list[object]) -> list[str]:
+    """Report the first row that is out of order, naming what it is and what belongs there."""
     keys = [str(row.get("key", "")) for row in routes if isinstance(row, dict)]
-    for expected_index, key in enumerate(sorted(keys)):
-        if keys[expected_index] != key:
+    for index, expected in enumerate(sorted(keys)):
+        if keys[index] != expected:
             return [
                 (
-                    f"unsorted-registry: routes[{expected_index}] is {key!r}; "
-                    f"expected {keys[expected_index]!r} (rows are sorted by key)"
+                    f"unsorted-registry: routes[{index}] is {keys[index]!r}; "
+                    f"expected {expected!r} (rows are sorted by key)"
                 )
             ]
     return []

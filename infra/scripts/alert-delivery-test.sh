@@ -68,6 +68,9 @@ RUN_NONCE="$(od -An -v -N16 -tx1 /dev/urandom | tr -d ' \n')"
 COMPOSE_UP=0
 COMPOSE_CMD=()
 RUNTIME=()
+# Set by podman_engine(): plain `podman`, or `sudo -n podman` for the rootful
+# store. Declared here so every reader sees the same name as COMPOSE_CMD.
+PODMAN_BIN=()
 
 
 compose_down() {
@@ -94,11 +97,9 @@ cleanup() {
     # Rootless podman intermittently fails the first stop of a rootless netns
     # ("kill network process: permission denied"). Retry once before reporting.
     local down_out
-    if ! down_out="$(compose_down 2>&1)"; then
-      if ! down_out="$(compose_down 2>&1)"; then
-        echo "alert-delivery-test: compose down failed twice:" >&2
-        printf '%s\n' "$down_out" | sed 's/^/  down| /' >&2
-      fi
+    if ! down_out="$(compose_down 2>&1)" && ! down_out="$(compose_down 2>&1)"; then
+      echo "alert-delivery-test: compose down failed twice:" >&2
+      printf '%s\n' "$down_out" | sed 's/^/  down| /' >&2
     fi
     if [[ -n "$(leftover_containers)" ]]; then
       echo "alert-delivery-test: containers from this test are still present: $(leftover_containers | tr '\n' ' ')" >&2
@@ -111,12 +112,44 @@ cleanup() {
   rm -rf "$TMP_DIR"
   exit "$status"
 }
-trap cleanup EXIT INT TERM
+# Teardown is bound to EXIT only, so it runs for every path: success, failure,
+# and the signal handlers below. The handlers must not let the script fall
+# through to the assertions (which could still pass and exit 0): each exits with
+# the conventional status, and that exit runs the EXIT trap, so cleanup still
+# happens exactly once.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [[ "${#RUN_NONCE}" -ne 32 ]]; then
   echo "alert-delivery-test: could not generate a run nonce (got '${RUN_NONCE}')" >&2
   exit 2
 fi
+
+# podman_engine sets PODMAN_BIN to the invocation that owns the containers:
+# plain podman for a rootless install, `sudo -n podman` when the rootful store
+# is requested with IBEX_PODMAN_SUDO=1. Every engine call in this script
+# (compose, run, ps) must use the same choice, or it looks in the wrong store.
+#
+# Rootful selection is opt-in only. The scripts that share this lever
+# (dev-tool.sh, observability-up.sh, observability-down.sh) also guess the store
+# from a rootless/rootful probe; this test does not, because it starts the
+# containers it inspects, so there is no pre-existing store to match and
+# IBEX_PODMAN_SUDO=1 is the single, explicit lever.
+podman_engine() {
+  if [[ "${IBEX_PODMAN_SUDO:-0}" == 1 ]]; then
+    PODMAN_BIN=(sudo -n podman)
+  else
+    PODMAN_BIN=(podman)
+  fi
+}
+
+# no_runtime is the single message for "nothing here can run compose": one exit
+# path, one status, and the caller never has to guess which probe failed.
+no_runtime() {
+  echo "alert-delivery-test: no usable Docker or Podman compose runtime" >&2
+  exit 2
+}
 
 detect_compose() {
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
@@ -124,27 +157,40 @@ detect_compose() {
     RUNTIME=(docker)
     return
   fi
-  if command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
-    RUNTIME=(podman)
-    if podman compose version >/dev/null 2>&1; then
-      COMPOSE_CMD=(podman compose)
-      return
+  command -v podman >/dev/null 2>&1 || no_runtime
+  podman_engine
+  # Probe the engine that was selected, not whichever store the current user
+  # happens to reach.
+  if ! "${PODMAN_BIN[@]}" info >/dev/null 2>&1; then
+    if [[ "${IBEX_PODMAN_SUDO:-0}" == 1 ]]; then
+      echo "alert-delivery-test: IBEX_PODMAN_SUDO=1 selects the rootful podman store, but 'sudo -n podman info' failed; passwordless sudo is required for that store" >&2
+      exit 2
     fi
-    if command -v podman-compose >/dev/null 2>&1; then
-      COMPOSE_CMD=(podman-compose)
-      return
-    fi
+    no_runtime
   fi
-  echo "alert-delivery-test: no usable Docker or Podman compose runtime" >&2
-  exit 2
+  RUNTIME=("${PODMAN_BIN[@]}")
+  if "${PODMAN_BIN[@]}" compose version >/dev/null 2>&1; then
+    COMPOSE_CMD=("${PODMAN_BIN[@]}" compose)
+    return
+  fi
+  command -v podman-compose >/dev/null 2>&1 || no_runtime
+  # podman-compose has no lever for `sudo -n podman`: it would run Compose in
+  # the rootless store while this script inspects and tears down the rootful
+  # one. Refuse the combination instead of splitting the run across two stores.
+  if ((${#PODMAN_BIN[@]} > 1)); then
+    echo "alert-delivery-test: refusing podman-compose with the rootful podman store (IBEX_PODMAN_SUDO=1): podman-compose cannot target that store. Install the podman compose provider or unset IBEX_PODMAN_SUDO" >&2
+    exit 2
+  fi
+  COMPOSE_CMD=(podman-compose)
 }
 
 render_config() {
-  # Documented render step: replace the in-network placeholder base with the
-  # receiver base for this environment. Scheme+host+port only, paths are kept.
-  # The host is the sink service on the test network, and SINK_PORT keeps the
-  # substitution non-trivial so the mechanism itself is exercised.
-  sed "s|http://alert-receiver:8080|http://alert-receiver:${SINK_PORT}|g" \
+  # Documented render step: replace the in-network placeholder host:port with
+  # the receiver host:port for this environment. Scheme and paths are kept as
+  # written in the committed file. The host is the sink service on the test
+  # network, and SINK_PORT keeps the substitution non-trivial so the mechanism
+  # itself is exercised.
+  sed "s|alert-receiver:8080|alert-receiver:${SINK_PORT}|g" \
     "$AM_CONFIG" >"$RENDERED_AM"
   if [[ "$SINK_PORT" != "8080" ]] && grep -q "alert-receiver:8080" "$RENDERED_AM"; then
     echo "alert-delivery-test: render step left the placeholder base in place" >&2
@@ -214,7 +260,7 @@ start_sink() {
   local deadline=$((SECONDS + 60))
   while ((SECONDS < deadline)); do
     if [[ -s "$SINK_READY" ]]; then
-      echo "ok: sink listening on http://alert-receiver:${SINK_PORT} (compose network only)"
+      echo "ok: sink listening on alert-receiver:${SINK_PORT} (compose network only)"
       return
     fi
     sleep 0.5
@@ -274,9 +320,10 @@ fail_with_state() {
 }
 
 # assert_delivery [--quiet] <alertname> <expected path>
-# Passes only when a sink record for <alertname> arrived on <expected path> AND
-# carries this run's nonce. A record without the nonce is not evidence: a peer
-# that can reach the sink cannot guess it.
+# Passes only when a sink record for <alertname> arrived on <expected path>,
+# carries this run's nonce, and no other path carries the same nonce. A record
+# without the nonce is not evidence: a peer that can reach the sink cannot guess
+# it. Repeated deliveries on the expected path are allowed.
 assert_delivery() {
   local quiet=0 alertname="" expected_path=""
   while (($#)); do
@@ -328,6 +375,17 @@ if not nonce_paths:
     sys.exit(1)
 if expected not in nonce_paths:
     print(f"  {alertname}: delivered to {nonce_paths} not {expected}", file=sys.stderr)
+    sys.exit(1)
+# The set of paths carrying this run's nonce must be exactly {expected}:
+# repeated deliveries on the expected path are fine, a second nonce-bearing
+# path is not. A record on the expected path does not license a copy elsewhere.
+extra_paths = sorted(set(nonce_paths) - {expected})
+if extra_paths:
+    print(
+        f"  {alertname}: delivered to {expected} and also {extra_paths} with this run's nonce "
+        f"(prefix {nonce[:8]}...); only {expected} may carry it",
+        file=sys.stderr,
+    )
     sys.exit(1)
 if not quiet:
     print(f"ok: {alertname} -> {expected} (run nonce {nonce[:8]}... present)")

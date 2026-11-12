@@ -18,10 +18,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_contract_registry.py"
+# The script imports its sibling ``contract_ids`` module the way it does when run
+# directly (the script directory is on ``sys.path``); mirror that for the import below.
+sys.path.insert(0, str(_SCRIPT.parent))
 _ROUTER_SOURCE = "services/api/app/routers/agents.py"
 _PROTO_SOURCE = """syntax = "proto3";
 
@@ -173,11 +177,52 @@ def test_committed_registry_covers_every_mounted_route(registry_check: ModuleTyp
     for row in rows:
         assert row["status"] == "shipped"
         assert row["stability"] in registry_check.STABILITIES
-        assert row["owner"] and row["evidence"] and row["contract_id"]
+        assert row["owner"]
+        assert row["evidence"]
+        assert row["contract_id"]
         assert row["owner"] != registry_check.SCAFFOLD_OWNER
         assert (registry_check.REPO_ROOT / row["evidence"]).exists()
         method, _, path = row["key"].partition(" ")
         assert row["contract_id"] == registry_check.derive_contract_id(method, path)
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "management.agents.read.v1",
+        "principal-context.v1",
+        "operator.platform.health.v1",
+        "a.v1",
+        "a.1.v1",
+    ],
+)
+def test_contract_id_language_accepts_the_documented_shape(
+    registry_check: ModuleType, candidate: str
+) -> None:
+    assert registry_check.documented_contract_ids(f"`{candidate}`") == {candidate}
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "management.agents.read",
+        "management.agents.read.v2",
+        "management..read.v1",
+        "management.agents.read.v1x",
+        ".v1",
+        "management.agents.read_v1",
+    ],
+)
+def test_contract_id_language_rejects_near_misses(
+    registry_check: ModuleType, candidate: str
+) -> None:
+    assert registry_check.documented_contract_ids(f"`{candidate}`") == frozenset()
+
+
+def test_contract_ids_are_extracted_from_prose(registry_check: ModuleType) -> None:
+    """The document is prose plus tables; the ID is picked out of either."""
+    text = "The route `management.agents.read.v1` is documented; see also v1 (not an ID)."
+    assert registry_check.documented_contract_ids(text) == {"management.agents.read.v1"}
 
 
 def test_check_flag_is_accepted_and_passes_on_the_committed_registry(
@@ -410,6 +455,24 @@ def _checked_rows(tmp_path: Path, module: ModuleType, spec: _WorkspaceSpec) -> l
     return module.check(_workspace(tmp_path, module, [("GET", "/v1/agents")], spec))
 
 
+def _registry_paths(tmp_path: Path, module: ModuleType) -> tuple[object, dict[str, Any]]:
+    """Build the passing baseline workspace and return it with its parsed registry."""
+    paths = _workspace(tmp_path, module, [("GET", "/v1/agents")])
+    return paths, json.loads(paths.registry.read_text(encoding="utf-8"))
+
+
+def _save_registry(paths: object, registry: dict[str, Any]) -> None:
+    """Persist an edited registry so the next ``check`` reads it back."""
+    paths.registry.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+
+
+def _grpc_block(registry: dict[str, Any]) -> dict[str, Any]:
+    """The ``out_of_scope.grpc`` object, asserted to exist in the baseline workspace."""
+    grpc = registry["out_of_scope"]["grpc"]
+    assert isinstance(grpc, dict)
+    return grpc
+
+
 def test_invented_contract_id_fails(tmp_path: Path, registry_check: ModuleType) -> None:
     row = _row(registry_check, _RowSpec("GET", "/v1/agents"))
     row["contract_id"] = "management.agents.invented.v1"
@@ -441,6 +504,66 @@ def test_duplicate_key_fails(tmp_path: Path, registry_check: ModuleType) -> None
     assert any(failure.startswith("duplicate-key: GET /v1/agents ") for failure in failures)
 
 
+def test_unknown_schema_fails(tmp_path: Path, registry_check: ModuleType) -> None:
+    """The registry declares its own schema version; a different one is not read as this format."""
+    paths, registry = _registry_paths(tmp_path, registry_check)
+    registry["schema"] = "ibex.contract-registry.v2"
+    _save_registry(paths, registry)
+    assert registry_check.check(paths) == [
+        (
+            "unknown-enum: registry schema is 'ibex.contract-registry.v2'; "
+            f"expected {registry_check.SCHEMA!r}"
+        )
+    ]
+
+
+def test_unsorted_registry_names_the_actual_and_expected_key(
+    tmp_path: Path, registry_check: ModuleType
+) -> None:
+    """The message must say what the row is and what belongs in that position, in that order."""
+    paths = _workspace(tmp_path, registry_check, [("GET", "/v1/agents"), ("POST", "/v1/agents")])
+    registry = json.loads(paths.registry.read_text(encoding="utf-8"))
+    registry["routes"] = list(reversed(registry["routes"]))
+    _save_registry(paths, registry)
+
+    failures = registry_check.check(paths)
+    assert len(failures) == 1, failures
+    message = failures[0]
+    assert message.startswith("unsorted-registry: routes[0] ")
+    # routes[0] holds POST and the sorted expectation for that position is GET.
+    assert "is 'POST /v1/agents'" in message
+    assert "expected 'GET /v1/agents'" in message
+
+
+def test_two_methods_on_one_action_verb_path_collide_on_the_contract_id(
+    tmp_path: Path, registry_check: ModuleType
+) -> None:
+    """``GET`` and ``POST`` on ``.../activate`` derive one ID; the check fails closed.
+
+    The derivation is deliberately not changed to dodge this: it would rewrite the
+    committed IDs and the document. This test pins both halves of that decision —
+    the collision is reported, and the committed registry still holds 75 distinct
+    IDs, so a derivation change that rewrites them cannot pass unnoticed.
+    """
+    collision = "management.agents.activate.v1"
+    activate = "/v1/agents/{agent_id}/activate"
+    assert registry_check.derive_contract_id("GET", activate) == collision
+    assert registry_check.derive_contract_id("POST", activate) == collision
+
+    paths = _workspace(tmp_path, registry_check, [("GET", activate), ("POST", activate)])
+    failures = registry_check.check(paths)
+    assert len(failures) == 1, failures
+    message = failures[0]
+    assert message.startswith(f"duplicate-contract: {collision} is claimed by ")
+    assert f"GET {activate}" in message
+    assert f"POST {activate}" in message
+
+    committed = json.loads(registry_check.RegistryPaths.registry.read_text(encoding="utf-8"))
+    rows = committed["routes"]
+    assert len(rows) == 75
+    assert len({row["contract_id"] for row in rows}) == 75
+
+
 def test_unaccounted_proto_service_fails(tmp_path: Path, registry_check: ModuleType) -> None:
     paths = _workspace(tmp_path, registry_check, [("GET", "/v1/agents")])
     registry = json.loads(paths.registry.read_text(encoding="utf-8"))
@@ -450,6 +573,78 @@ def test_unaccounted_proto_service_fails(tmp_path: Path, registry_check: ModuleT
         failure.startswith("unaccounted-proto-service: ibex.test.v1.TestService ")
         for failure in registry_check.check(paths)
     )
+
+
+def test_stale_proto_registration_fails(tmp_path: Path, registry_check: ModuleType) -> None:
+    """A registered service that the proto tree does not define is a stale claim."""
+    paths, registry = _registry_paths(tmp_path, registry_check)
+    _grpc_block(registry)["registered_services"].append(
+        {
+            "service": "ibex.test.v1.GhostService",
+            "contract_id": "principal-context.v1",
+            "owner": "api",
+        }
+    )
+    _save_registry(paths, registry)
+    assert registry_check.check(paths) == [
+        (
+            "stale-proto-registration: ibex.test.v1.GhostService is registered but no such "
+            "service exists under packages/proto/proto"
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("tracked_by", "expected"),
+    [
+        (
+            "",
+            [
+                "empty-field: out_of_scope.grpc.tracked_by must name the owner item",
+                "unknown-enum: out_of_scope.grpc.tracked_by is ''; expected 'P0-12'",
+            ],
+        ),
+        ("W5.1", ["unknown-enum: out_of_scope.grpc.tracked_by is 'W5.1'; expected 'P0-12'"]),
+    ],
+)
+def test_invalid_grpc_tracked_by_fails(
+    tmp_path: Path, registry_check: ModuleType, tracked_by: str, expected: list[str]
+) -> None:
+    """`tracked_by` must name the live owner item; empty and unknown values both fail."""
+    paths, registry = _registry_paths(tmp_path, registry_check)
+    _grpc_block(registry)["tracked_by"] = tracked_by
+    _save_registry(paths, registry)
+    assert sorted(registry_check.check(paths)) == sorted(expected)
+
+
+def test_declared_out_accepts_a_proto_service_that_is_not_registered(
+    tmp_path: Path, registry_check: ModuleType
+) -> None:
+    """`declared_out` is the one explicit alternative to registering a service."""
+    paths, registry = _registry_paths(tmp_path, registry_check)
+    grpc = _grpc_block(registry)
+    grpc["registered_services"] = []
+    _save_registry(paths, registry)
+
+    failures = registry_check.check(paths)
+    assert len(failures) == 1, failures
+    assert failures[0].startswith("unaccounted-proto-service: ibex.test.v1.TestService ")
+    assert failures[0].endswith("out_of_scope.grpc.declared_out")
+
+    grpc["declared_out"] = ["ibex.test.v1.TestService"]
+    _save_registry(paths, registry)
+    assert registry_check.check(paths) == []
+
+
+@pytest.mark.parametrize("field", ["registered_services", "declared_out"])
+def test_non_list_grpc_field_fails(tmp_path: Path, registry_check: ModuleType, field: str) -> None:
+    """Both arrays are required; a scalar or object in their place is a missing field."""
+    paths, registry = _registry_paths(tmp_path, registry_check)
+    _grpc_block(registry)[field] = {"not": "a list"}
+    _save_registry(paths, registry)
+    assert registry_check.check(paths) == [
+        f"missing-field: out_of_scope.grpc.{field} must be an array"
+    ]
 
 
 def test_scaffold_row_invents_nothing(registry_check: ModuleType) -> None:

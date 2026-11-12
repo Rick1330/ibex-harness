@@ -47,18 +47,24 @@ Rules are being migrated incrementally. Today (verified by `python3 infra/script
 
 The gate fails when a rule carries a severity that no route matches, when a route names a receiver that is not defined,
 when a receiver has no `webhook_configs`, when an alert has no severity label, when a direct child of the root route has
-no severity matcher, or when `local-null` reappears.
+no severity matcher, when a route selects on a label other than `severity` as well as a severity, or when `local-null`
+reappears.
 
 Two rules keep the gate honest:
 
 - **Severity is read only from the `labels:` block.** A `severity:` line under `annotations:` is prose: Alertmanager
   never routes on it, so it does not count and the alert is reported as unlabelled.
-- **Only a severity matcher makes a severity routed.** A route that selects on other labels (`service=proxy` and
-  nothing else) cannot make a severity look routed, because the gate cannot evaluate those labels. Such a route is
-  reported instead of being treated as a catch-all.
+- **Only a severity matcher makes a severity routed, and only on a route the gate can evaluate in full.** A route that
+  selects on other labels (`service=proxy` and nothing else) cannot make a severity look routed, because the gate cannot
+  evaluate those labels. Neither can a route that selects on `service=proxy` *as well as* `severity=page`: that route
+  may exclude the alert, so the gate fails closed, names the matcher it cannot evaluate, and does not count the
+  severity as routed. Such a route is reported instead of being treated as a catch-all.
 
-The gate also self-tests four fixtures on every run (one positive control, one unrouted severity, one `service=`-only
-route, one severity in an annotation), so a gate that has stopped failing is caught by the gate itself.
+The gate also self-tests six cases on every run (one positive control, one unrouted severity, one `service=`-only
+route, one severity route carrying an extra `service=` matcher, one severity in an annotation, one `..` path that must be
+refused with exit 2), so a gate that has stopped failing is caught by the gate itself. It confines `--rules` and
+`--config` to the working directory before reading either: a `..` segment, or a path resolving outside that root, is
+refused with exit 2; set `IBEX_ALERT_ROUTING_ALLOW_ROOT` to run it against a tree elsewhere.
 
 ---
 
@@ -126,10 +132,12 @@ URL and the substitution happens when the file is rendered, before Alertmanager 
 
 ```bash
 # ALERT_RECEIVER_BASE is scheme://host[:port] with no path; the /alerts/page and
-# /alerts/digest paths stay as they are.
-ALERT_RECEIVER_BASE="https://<receiver-host>" \
-  sed "s|http://alert-receiver:8080|${ALERT_RECEIVER_BASE}|g" \
-    infra/monitoring/alertmanager/alertmanager.yml > /run/alertmanager/alertmanager.yml
+# /alerts/digest paths stay as they are. Assign it on its own line first: in a
+# command-prefix assignment (`VAR=... sed "s|...|${VAR}|g"`) the shell expands
+# ${VAR} before the assignment applies, so the substitution would be empty.
+ALERT_RECEIVER_BASE="https://<receiver-host>"
+sed "s|http://alert-receiver:8080|${ALERT_RECEIVER_BASE}|g" \
+  infra/monitoring/alertmanager/alertmanager.yml > /run/alertmanager/alertmanager.yml
 
 amtool check-config /run/alertmanager/alertmanager.yml   # must exit 0 before the restart
 ```
@@ -158,7 +166,8 @@ make alert-delivery-test   # renders the config and rules, proves both paths, te
 The test starts the sink as the compose service `alert-receiver` on the test network, with **no published host port**,
 and renders a random `run_nonce` label into a temporary copy of the probe rules
 (`infra/monitoring/prometheus/rules/test/ibex-alert-delivery-probe.yml`, committed file unchanged). A delivery counts
-only when the sink record carries both the expected `alertname` and that run's nonce.
+only when the sink record carries both the expected `alertname` and that run's nonce **and no other path carries
+that nonce** — a run that fans one alert out to a second receiver is a routing bug, not a pass.
 
 Exposure, stated precisely — the sink is not isolated by its bind address:
 
@@ -202,7 +211,7 @@ podman run --rm --label ibex.probe=1 --network podman \
 | Static routing | `python3 infra/scripts/check-alert-routing.py` | Every rule severity has a route; no `local-null`; every receiver is a webhook. Runs in `make repo-guards`. |
 | Config validity | `amtool check-config alertmanager.yml` (host, or the pinned image) | The tree parses and every receiver is well formed. |
 | Live delivery | `make alert-delivery-test` | A `page` probe and a `ticket` probe each reached their own webhook path, recorded in a JSONL sink with the run's nonce label. Operator-run, not a CI gate: no CI job starts containers. |
-| Served config | `make observability-smoke` | The running Alertmanager serves a config that can deliver: `webhook_configs` present, no `local-null`. This is the configuration shape, not a delivery — the base stack has no `alert-receiver` service, so the host does not resolve the webhook URL. |
+| Served config | `make observability-smoke` | The running Alertmanager serves a config that can deliver: no `local-null`, and `ibex-page` and `ibex-digest` each carry their own `webhook_configs` (checked per receiver, so one receiver's webhook cannot satisfy the check for another). This is the configuration shape, not a delivery — the base stack has no `alert-receiver` service, so the host does not resolve the webhook URL. |
 
 ---
 

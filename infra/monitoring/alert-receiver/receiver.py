@@ -29,6 +29,10 @@ connection refused/timeout). The bind address is not what protects it:
 network namespace, and under **rootful Docker** the container IP can be reachable
 from the host or a routed peer.
 
+Cleartext HTTP is a deliberate accepted risk: the sink publishes no host port,
+carries no credential, and TLS would need a certificate the test Alertmanager does
+not have, which would change what the delivery test proves.
+
 Forgery is blocked at the assertion, not at the socket: the delivery test renders
 a per-run ``run_nonce`` label into its probe rules and refuses a record that does
 not carry it. That defeats a peer which can reach only the sink. It does **not**
@@ -304,9 +308,13 @@ class AlertSinkHandler(BaseHTTPRequestHandler):
             return
         self._respond(200, {"status": "recorded", "alerts": len(record["alerts"])})
 
-    def log_message(self, fmt: str, *args) -> None:
+    # The parameter must be named `format` to match
+    # BaseHTTPRequestHandler.log_message; renaming it raises pylint W0221
+    # (arguments-differ), so the builtin shadowing is required here.
+    # pylint: disable-next=redefined-builtin
+    def log_message(self, format: str, *args: object) -> None:
         # No payloads, no headers: only method/path/status reach stderr.
-        sys.stderr.write("receiver: %s\n" % (fmt % args))
+        sys.stderr.write("receiver: %s\n" % (format % args))
 
 
 class AlertSinkServer(ThreadingHTTPServer):

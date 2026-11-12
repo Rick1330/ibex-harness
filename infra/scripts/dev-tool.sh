@@ -414,6 +414,7 @@ case "${1:-help}" in
   observability-up) compose_with_mode observability up -d ;;
   observability-down) compose_with_mode observability down ;;
   observability-smoke) bash "$ROOT_DIR/infra/scripts/observability-smoke.sh" ;;
+  alert-delivery-test) bash "$ROOT_DIR/infra/scripts/alert-delivery-test.sh" ;;
   db-migrate) bash "$DB_MIGRATE" up ;;
   db-migrate-down) bash "$DB_MIGRATE" down ;;
   db-version) bash "$DB_MIGRATE" version ;;

@@ -79,26 +79,122 @@ echo "ok: prometheus targets API"
 # alert-receiver service, so nothing here proves the webhook URL resolves.
 check_200 "alertmanager ready" "${ALERTMANAGER_URL}/-/ready"
 am_status="$(curl -fsS --connect-timeout 5 --max-time "$CURL_MAX_TIME" "${ALERTMANAGER_URL}/api/v2/status" || true)"
-if ! grep -q 'webhook_configs' <<<"$am_status"; then
-  echo "observability-smoke failed: alertmanager config has no webhook_configs (alerts would be dropped)"
-  exit 1
-fi
 if grep -q 'local-null' <<<"$am_status"; then
   echo "observability-smoke failed: alertmanager still routes to the null receiver (local-null)"
   exit 1
 fi
-# A webhook shape check passes for any receiver. Assert the two receivers this
-# routing tree actually names, so a renamed or dropped receiver is caught here
-# instead of surfacing as an alert that was never sent. Alertmanager serialises
-# the served config into a JSON string, so match the receiver definition
-# (`name: <receiver>`) without anchoring to a line.
-for receiver in ibex-page ibex-digest; do
-  if ! grep -qE "name: ['\"]?${receiver}['\"]?([^a-zA-Z0-9_-]|$)" <<<"$am_status"; then
-    echo "observability-smoke failed: alertmanager config defines no receiver named ${receiver} (expected ibex-page for page, ibex-digest for ticket)"
-    exit 1
+
+# A webhook shape check passes for any receiver, and one global grep for
+# `webhook_configs` lets an ibex-page webhook satisfy the check for ibex-digest.
+# Receiver names are checked per receiver, so a renamed or dropped receiver is
+# caught here instead of surfacing as an alert that was never sent.
+ALERT_RECEIVERS=(ibex-page ibex-digest)
+
+# Print one line per receiver in $1 that cannot deliver, and exit 1 when there
+# is one. Alertmanager serialises the served config into the JSON string
+# `.config.original` (escaped `\n`, URLs redacted to `<secret>`), so decode it,
+# split it into receiver blocks, and require each named receiver to own a
+# `webhook_configs:` entry. The URL itself cannot be checked here: the served
+# copy redacts it, and this is a shape check, not a delivery check.
+# python3 parses the JSON because it is already required by `make repo-guards`
+# (check-alert-routing.py) and by the sibling observability-live-verify.sh; jq is
+# not used by any other infra/scripts/*.sh. A missing python3 fails closed below.
+alertmanager_receiver_problems() {
+  AM_STATUS_TEXT="$1" python3 - "${ALERT_RECEIVERS[@]}" <<'PY'
+"""Require each named Alertmanager receiver to carry its own webhook_configs."""
+import json
+import os
+import re
+import sys
+
+ITEM_RE = re.compile(r"^- name:\s*(?P<name>.+?)\s*$")
+
+
+def receiver_blocks(config):
+    """Map receiver name -> the stripped body lines of that receiver.
+
+    Handles both shapes: the committed file indents the sequence under
+    `receivers:`, while Alertmanager re-serialises it with `- name:` at the
+    same column as the key.
+    """
+    blocks = {}
+    in_receivers = False
+    item_indent = None
+    current = None
+    for raw in config.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        if indent == 0 and not stripped.startswith("-"):
+            # A top-level key; only `receivers:` opens the block read here.
+            in_receivers = stripped.startswith("receivers:")
+            item_indent, current = None, None
+            continue
+        if not in_receivers:
+            continue
+        item = ITEM_RE.match(stripped)
+        if item is not None and (item_indent is None or indent <= item_indent):
+            item_indent = indent
+            current = item.group("name").strip("'\"")
+            blocks[current] = []
+            continue
+        if current is not None:
+            blocks[current].append(stripped)
+    return blocks
+
+
+def config_text(status_text):
+    """The served config, or None when the status body does not carry it."""
+    try:
+        status = json.loads(status_text)
+    except json.JSONDecodeError:
+        return None
+    config = status.get("config") if isinstance(status, dict) else None
+    original = config.get("original") if isinstance(config, dict) else None
+    return original if isinstance(original, str) and original.strip() else None
+
+
+def receiver_problems(required, blocks):
+    """One line per required receiver that is missing or has no webhook_configs."""
+    problems = []
+    for name in required:
+        block = blocks.get(name)
+        if block is None:
+            problems.append(
+                f"alertmanager config defines no receiver named {name} "
+                "(expected ibex-page for page, ibex-digest for ticket)"
+            )
+        elif not any(line.startswith("webhook_configs:") for line in block):
+            problems.append(
+                f"receiver {name} has no webhook_configs of its own (its alerts would be dropped)"
+            )
+    return problems
+
+
+served = config_text(os.environ.get("AM_STATUS_TEXT", ""))
+if served is None:
+    print("could not read .config.original from /api/v2/status")
+    sys.exit(1)
+found = receiver_problems(sys.argv[1:], receiver_blocks(served))
+for problem in found:
+    print(problem)
+sys.exit(1 if found else 0)
+PY
+}
+
+if ! am_problems="$(alertmanager_receiver_problems "$am_status")"; then
+  while IFS= read -r problem; do
+    if [[ -n "$problem" ]]; then
+      echo "observability-smoke failed: $problem"
+    fi
+  done <<<"$am_problems"
+  if [[ -z "$am_problems" ]]; then
+    echo "observability-smoke failed: could not check the served alertmanager config (see the error above)"
   fi
-done
-echo "ok: alertmanager config shape (webhook_configs present, no local-null, ibex-page + ibex-digest defined)"
+  exit 1
+fi
+echo "ok: alertmanager config shape (no local-null, ibex-page + ibex-digest each carry webhook_configs)"
 echo "note: deliverability not asserted; the base stack has no alert-receiver service (use make alert-delivery-test)"
 
 if [[ "$REQUIRE_IBEX_SERIES" == "1" ]]; then
