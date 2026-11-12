@@ -66,6 +66,8 @@ type ProxyRegistry struct {
 	responsePipelineStageDuration *prometheus.HistogramVec
 	responsePipelineFailOpenTotal *prometheus.CounterVec
 	contextAssembleFallbackTotal  *prometheus.CounterVec
+	proxyOverheadSeconds          prometheus.Histogram
+	contextAssembleSeconds        prometheus.Histogram
 	extractionEnqueueTotal        *prometheus.CounterVec
 	providerFallbacksTotal        *prometheus.CounterVec
 	policySnapshotTotal           *prometheus.CounterVec

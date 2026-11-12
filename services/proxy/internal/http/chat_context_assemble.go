@@ -30,11 +30,19 @@ type contextAssembler interface {
 	Assemble(ctx context.Context, req contextclient.AssembleParams) contextclient.AssembleResult
 }
 
+// proxyOverheadRecorder records one request's enforcement overhead. It is
+// satisfied by *metrics.ProxyRegistry; a nil recorder is a no-op.
+type proxyOverheadRecorder interface {
+	ObserveProxyOverheadSeconds(seconds float64)
+}
+
 // contextAssembleMeta records whether Assemble was attempted and its outcome.
 // Attempted=false means Phase 2 only (flag off, nil client, or Skip-Memory) —
 // response writers omit the three X-IBEX-Context-* headers so Phase 2 responses
 // stay header-identical to pre-D.2 behavior. AssemblyMs is measured around the
 // Assemble RPC for the embedded `ibex` block (3.5.D.3); unused for headers.
+// overhead is the handler's recorder, carried here because the metadata write
+// happens in a context-only helper that no longer has the handler in scope.
 type contextAssembleMeta struct {
 	Attempted        bool
 	MemoriesInjected int32
@@ -43,6 +51,7 @@ type contextAssembleMeta struct {
 	AssemblyMs       int64
 	ScoreSchema      string
 	EvidenceExtras   httpsession.EvidenceExtras
+	overhead         proxyOverheadRecorder
 }
 
 type messageInjectionOutcome struct {
@@ -60,7 +69,7 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 	messages []provider.Message,
 ) messageInjectionOutcome {
 	if !h.shouldAssemble(r) {
-		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
+		return h.phase2Outcome(ctx, messages)
 	}
 	assembleCtx, endSpan := ensureAssembleTraceContext(ctx)
 	defer endSpan()
@@ -72,13 +81,34 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 		// response-header contract is unchanged (Attempted stays false).
 		h.warnMissingPrincipal(ctx)
 		h.recordAssembleFallback(principalMissingFallbackReason)
-		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
+		return h.phase2Outcome(ctx, messages)
 	}
 	params, ok := assembleParamsFromRequest(assembleCtx, model, messages)
 	if !ok {
-		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
+		return h.phase2Outcome(ctx, messages)
 	}
 	return h.injectAssembledOrDirective(ctx, assembleCtx, messages, params)
+}
+
+// phase2Outcome is the directive-only outcome used whenever Assemble is skipped.
+// Attempted stays false, so the response headers stay identical to pre-D.2
+// behavior, but the recorder travels with it: a request that never assembles
+// context still contributes a proxy-overhead sample to the SLO histogram.
+func (h chatCompletionHandler) phase2Outcome(ctx context.Context, messages []provider.Message) messageInjectionOutcome {
+	return messageInjectionOutcome{
+		Messages: applyDirectiveInjection(ctx, messages),
+		Meta:     contextAssembleMeta{overhead: h.enforcementRecorder()},
+	}
+}
+
+// enforcementRecorder narrows h.metrics to the recorder the metadata write
+// needs, or returns nil when metrics are not wired (tests). The explicit nil
+// check keeps a typed-nil *metrics.ProxyRegistry out of the interface.
+func (h chatCompletionHandler) enforcementRecorder() proxyOverheadRecorder {
+	if h.metrics == nil {
+		return nil
+	}
+	return h.metrics
 }
 
 // warnMissingPrincipal logs the skipped assemble once per request.
@@ -96,6 +126,8 @@ func (h chatCompletionHandler) injectAssembledOrDirective(
 ) messageInjectionOutcome {
 	assembleStart := time.Now()
 	result := h.contextClient.Assemble(assembleCtx, params)
+	assembleElapsed := time.Since(assembleStart)
+	h.observeContextAssemble(assembleElapsed)
 	extras := evidenceExtrasFromAssemble(result)
 	extras.AssembleSpanID = spanIDFromContext(assembleCtx)
 	meta := contextAssembleMeta{
@@ -103,9 +135,10 @@ func (h chatCompletionHandler) injectAssembledOrDirective(
 		MemoriesInjected: result.MemoriesIncluded,
 		ContextTokens:    result.TokensUsed,
 		Fallback:         result.Fallback,
-		AssemblyMs:       time.Since(assembleStart).Milliseconds(),
+		AssemblyMs:       assembleElapsed.Milliseconds(),
 		ScoreSchema:      result.ScoreSchema,
 		EvidenceExtras:   extras,
+		overhead:         h.enforcementRecorder(),
 	}
 	if result.Fallback || strings.TrimSpace(result.AssembledContext) == "" {
 		if !meta.Fallback {
@@ -119,6 +152,17 @@ func (h chatCompletionHandler) injectAssembledOrDirective(
 	}
 	injected := injection.Inject(messages, result.AssembledContext, injection.ModeSystemFirst)
 	return messageInjectionOutcome{Messages: injected, Meta: meta}
+}
+
+// observeContextAssemble records the Assemble RPC wall time. Fail-open results
+// are included on purpose: a timed-out or empty assemble is exactly what the
+// context-assembly SLO panel has to show, and this is the only place the proxy
+// sees that latency.
+func (h chatCompletionHandler) observeContextAssemble(elapsed time.Duration) {
+	if h.metrics == nil {
+		return
+	}
+	h.metrics.ObserveContextAssembleSeconds(elapsed.Seconds())
 }
 
 func ensureAssembleTraceContext(ctx context.Context) (context.Context, func()) {
@@ -323,9 +367,16 @@ func setContextAssembleResponseHeaders(w http.ResponseWriter, ctx context.Contex
 // attachIbexMetadataForPipeline copies D.2 assemble outcome + request timings into
 // responsepipeline context for IBEXMetadataStage. No-op when Assemble was not
 // attempted so the stage leaves Bytes() dirty=false (verbatim upstream body).
+// It is also the single place the proxy-overhead histogram is observed, using
+// the same proxyOverheadMs value the embedded block reports.
 func attachIbexMetadataForPipeline(ctx context.Context) context.Context {
 	meta, ok := contextAssembleMetaFromContext(ctx)
-	if !ok || !meta.Attempted {
+	if !ok {
+		return ctx
+	}
+	overheadMs := proxyOverheadMs(ctx)
+	observeProxyOverhead(meta, overheadMs)
+	if !meta.Attempted {
 		return ctx
 	}
 	return responsepipeline.WithIbexMetadata(ctx, responsepipeline.IbexMetadata{
@@ -334,8 +385,20 @@ func attachIbexMetadataForPipeline(ctx context.Context) context.Context {
 		MemoriesInjected:  meta.MemoriesInjected,
 		ContextTokensUsed: meta.ContextTokens,
 		ContextAssemblyMs: meta.AssemblyMs,
-		ProxyOverheadMs:   proxyOverheadMs(ctx),
+		ProxyOverheadMs:   overheadMs,
 	})
+}
+
+// observeProxyOverhead records the enforcement overhead once, in seconds, from
+// the same millisecond value written to the ibex block, so the histogram and the
+// response header/body cannot disagree. proxyOverheadMs truncates to whole
+// milliseconds, so samples have 1 ms granularity — enough for the 1/2.5/5/10/20 ms
+// SLO boundaries, and not worth a second, differently-rounded measurement.
+func observeProxyOverhead(meta contextAssembleMeta, overheadMs int64) {
+	if meta.overhead == nil {
+		return
+	}
+	meta.overhead.ObserveProxyOverheadSeconds((time.Duration(overheadMs) * time.Millisecond).Seconds())
 }
 
 func sessionIDForIbexMetadata(ctx context.Context) string {

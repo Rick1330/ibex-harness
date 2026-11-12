@@ -191,6 +191,10 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.IncIdempotency(IdempotencyHit)
 	reg.IncIdempotency("not-a-real-result")
 	reg.ObserveIdempotencyDurationSeconds(0.001)
+	reg.ObserveProxyOverheadSeconds(0.012)
+	reg.ObserveContextAssembleSeconds(0.008)
+	(*ProxyRegistry)(nil).ObserveProxyOverheadSeconds(0.001)
+	(*ProxyRegistry)(nil).ObserveContextAssembleSeconds(0.001)
 }
 
 func TestUnit_BoundSessionResult(t *testing.T) {

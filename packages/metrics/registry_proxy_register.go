@@ -20,6 +20,7 @@ func (r *ProxyRegistry) register(serviceName string) {
 	r.initTokenizerMetrics()
 	r.initResponsePipelineMetrics()
 	r.initContextAssembleMetrics()
+	r.initEnforcementOverheadMetrics()
 	r.initExtractionEnqueueMetrics()
 	r.initProviderFallbackMetrics()
 	r.initPolicySnapshotMetrics()
@@ -38,7 +39,17 @@ func (r *ProxyRegistry) prometheusCollectors() []prometheus.Collector {
 	out = append(out, r.providerAndStreamCollectors()...)
 	out = append(out, r.authAndSessionCollectors()...)
 	out = append(out, r.storageAndTokenizerCollectors()...)
+	out = append(out, r.enforcementOverheadCollectors()...)
 	return out
+}
+
+// enforcementOverheadCollectors are the in-proxy, provider-time-excluded
+// latency histograms that back the proxy overhead and context assembly SLOs.
+func (r *ProxyRegistry) enforcementOverheadCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
+		r.proxyOverheadSeconds,
+		r.contextAssembleSeconds,
+	}
 }
 
 func (r *ProxyRegistry) httpAndRateCollectors() []prometheus.Collector {
