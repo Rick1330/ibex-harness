@@ -186,11 +186,11 @@ PY
 if ! am_problems="$(alertmanager_receiver_problems "$am_status")"; then
   while IFS= read -r problem; do
     if [[ -n "$problem" ]]; then
-      echo "observability-smoke failed: $problem"
+      echo "observability-smoke failed: $problem" >&2
     fi
   done <<<"$am_problems"
   if [[ -z "$am_problems" ]]; then
-    echo "observability-smoke failed: could not check the served alertmanager config (see the error above)"
+    echo "observability-smoke failed: could not check the served alertmanager config (see the error above)" >&2
   fi
   exit 1
 fi
