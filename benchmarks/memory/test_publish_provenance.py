@@ -27,6 +27,7 @@ from publish_quality_common import (
     RANKING_PROVENANCE_FIELDS,
     REQUIRED_PROVENANCE_FIELDS,
     merge_ranking_quality_entry,
+    permitted_provenance_fields,
 )
 from publish_quality_common import (
     RunMeta as QualityRunMeta,
@@ -41,19 +42,20 @@ _RECORDED: dict[str, Any] = {
     "runner_cpu_count": 4,
     "runner_ram_mib": 8192,
     "corpus_hash_algo": "sha256",
-    "corpus_manifest": "pgvector|synth.py=0|corpus.py=0|dim=1024,active=64",
     "corpus_status": "current",
     "dirty": False,
 }
 # The two publishers measure different corpora, and the schemas require different identity
 # fields for them: the ranking schema also needs the gold set, because there the gold set is the
-# corpus. The fixtures therefore start from the corpus each publisher actually measures.
+# corpus. The fixtures therefore start from the corpus each publisher actually measures, and the
+# identity fields (`corpus_hash`, `corpus_manifest`) are read from the checkout: a fixture that
+# hard-coded them would pass a restatement nobody can re-derive.
 
 
 def _provenance(**overrides: Any) -> dict[str, Any]:
     """A complete recorded block for the HNSW corpus in this checkout."""
-    record = dict(_RECORDED)
-    record["corpus_hash"] = provenance.corpus_identity("hnsw")[0]
+    corpus_hash, manifest = provenance.corpus_identity("hnsw")
+    record = dict(_RECORDED, corpus_hash=corpus_hash, corpus_manifest=manifest)
     record.update(overrides)
     return record
 
@@ -111,13 +113,35 @@ def _recorded_requirements(schema_name: str) -> set[str]:
     return {"status", *then["required"]}
 
 
+def _declared_keys(schema_name: str) -> set[str]:
+    """Every provenance key a schema declares, which is every key it will accept."""
+    schema = json.loads((_SCHEMA_DIR / schema_name).read_text(encoding="utf-8"))
+    return set(schema["properties"]["runs"]["items"]["properties"]["provenance"]["properties"])
+
+
 class TestHnswPublisher:
     def test_the_raw_provenance_is_published(self) -> None:
-        record = _provenance(dirty=True)
+        record = _provenance()
 
         entry = _merge_entry(_raw(record), _meta())
 
         assert entry["provenance"] == record
+
+    def test_a_run_measured_on_a_modified_tree_is_refused(self) -> None:
+        # `dirty` is written by the one fail-closed implementation, so `true` means the code that
+        # produced the number may not be the code the sha names. The offline checker refuses the
+        # same flag, so publishing it would write a claim the project's own gate rejects.
+        raw = _raw(_provenance(dirty=True))
+        meta = _meta()
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "dirty is true; a run measured on a modified tree cannot be reproduced from its"
+                " commit; re-run the bench on a clean checkout"
+            ),
+        ):
+            _merge_entry(raw, meta)
 
     def test_a_raw_artifact_without_provenance_is_refused(self) -> None:
         raw = _raw(include=False)
@@ -158,14 +182,24 @@ class TestHnswPublisher:
         assert entry["provenance"]["corpus_hash"] == "0" * 64
 
     def test_the_status_follows_the_hash_both_ways(self) -> None:
-        # The one rule a reader can re-derive: current exactly when the hash is the corpus here.
-        # A run that recorded "stale" before its corpus was committed is published as current,
-        # because the bytes it hashed are the bytes in this checkout; the run's own `dirty` flag
-        # still records the state of the tree it was measured on.
+        # The one rule a reader can re-derive: current exactly when the recorded identity is the
+        # corpus here. A run that recorded "stale" before its corpus was committed is published
+        # as current, because the bytes it hashed are the bytes in this checkout; the run's own
+        # `dirty` flag still records the state of the tree it was measured on.
         entry = _merge_entry(_raw(_provenance(corpus_status="stale")), _meta())
 
         assert entry["provenance"]["corpus_status"] == "current"
         assert entry["provenance"]["dirty"] is False
+
+    def test_a_matching_hash_under_a_different_manifest_is_published_as_stale(self) -> None:
+        # The hash alone is not the corpus: the manifest states what the hash covers, and the
+        # offline checker compares both. Restating "current" from the hash would write a claim the
+        # project's own checker refuses.
+        record = _provenance(corpus_manifest="pgvector|synth.py=x|corpus.py=y|dim=1024,active=64")
+
+        entry = _merge_entry(_raw(record), _meta())
+
+        assert entry["provenance"]["corpus_status"] == "stale"
 
     def test_the_published_entry_still_carries_the_gate_result(self) -> None:
         entry = _merge_entry(_raw(), _meta())
@@ -186,11 +220,12 @@ class TestHnswPublisher:
 
 
 class TestProvenanceValues:
-    """A required field with an impossible value is refused, not published.
+    """A checked field with an impossible value is refused, not published.
 
     Presence is not evidence: ``runner_cpu_count = 0``, ``corpus_hash = "bad"`` and
     ``dirty = "false"`` all fill the block while describing a run nobody can reproduce, and a
-    published number nobody can reproduce is not evidence.
+    published number nobody can reproduce is not evidence. An optional field is checked the same
+    way once a record carries it, because the schema's type rules apply to it then too.
     """
 
     @pytest.mark.parametrize(
@@ -206,6 +241,8 @@ class TestProvenanceValues:
             ({"corpus_hash_algo": "md5"}, "corpus_hash_algo must be 'sha256'"),
             ({"corpus_status": "unknown"}, "corpus_status must be 'current' or 'stale'"),
             ({"dirty": "false"}, "dirty must be a boolean"),
+            ({"seed": "123"}, "seed must be an integer"),
+            ({"seed": True}, "seed must be an integer"),
         ],
     )
     def test_an_impossible_value_is_refused(self, overrides: dict[str, Any], expected: str) -> None:
@@ -214,6 +251,24 @@ class TestProvenanceValues:
 
         with pytest.raises(RuntimeError, match=re.escape(expected)):
             _merge_entry(raw, meta)
+
+    def test_a_declared_optional_field_is_published(self) -> None:
+        # `seed` is declared by both schemas, so it may be written -- and an integer one is the
+        # only form the schema accepts.
+        entry = _merge_entry(_raw(_provenance(seed=1234)), _meta())
+
+        assert entry["provenance"]["seed"] == 1234
+
+    def test_an_undeclared_field_is_refused(self) -> None:
+        # The schema closes the block with `additionalProperties: false`, so a publisher that
+        # copied an unknown key would write a file the offline checker cannot validate.
+        raw = _raw(_provenance(turbo=True))
+        meta = _meta()
+
+        with pytest.raises(RuntimeError, match="has undeclared field\\(s\\) turbo") as caught:
+            _merge_entry(raw, meta)
+
+        assert "published schema rejects a key it does not declare" in str(caught.value)
 
     def test_every_invalid_field_is_named_at_once(self) -> None:
         raw = _raw(_provenance(runner_cpu_count=0, dirty="false"))
@@ -308,6 +363,30 @@ class TestRankingPublisher:
         assert entry["provenance"]["corpus_status"] == "stale"
         assert entry["provenance"]["corpus_hash"] == "0" * 64
 
+    def test_a_gold_set_hash_that_disagrees_with_the_corpus_is_published_as_stale(self) -> None:
+        # On this benchmark the gold set is the corpus, so the offline checker refuses a record
+        # that states two hashes for it. Restating "current" from `corpus_hash` alone would write
+        # exactly that record.
+        record = _gold_provenance(gold_set_hash="0" * 64)
+
+        entry = merge_ranking_quality_entry(self._latest(record), self._gate(), self._meta())
+
+        assert entry["provenance"]["corpus_status"] == "stale"
+
+    def test_a_run_measured_on_a_modified_tree_is_refused(self) -> None:
+        latest = self._latest(_gold_provenance(dirty=True))
+        gate = self._gate()
+        meta = self._meta()
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "dirty is true; a run measured on a modified tree cannot be reproduced from its"
+                " commit; re-run the bench on a clean checkout"
+            ),
+        ):
+            merge_ranking_quality_entry(latest, gate, meta)
+
     def test_a_locally_modified_gold_set_is_published_as_stale(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -337,6 +416,17 @@ class TestRankingPublisher:
             "ranking-quality-benchmark-data.schema.json"
         )
 
+    def test_the_publishers_permit_exactly_what_the_schemas_declare(self) -> None:
+        # The schema closes the block, so its property set is the whole of what may be written.
+        # A permitted key that the schema does not declare would publish an invalid file, and a
+        # declared key the publisher refuses would refuse a valid one.
+        assert permitted_provenance_fields(REQUIRED_PROVENANCE_FIELDS) == _declared_keys(
+            "hnsw-benchmark-data.schema.json"
+        )
+        assert permitted_provenance_fields(RANKING_PROVENANCE_FIELDS) == _declared_keys(
+            "ranking-quality-benchmark-data.schema.json"
+        )
+
 
 def _validator(schema_name: str) -> Any:
     jsonschema = pytest.importorskip("jsonschema", reason="schema contract tests need jsonschema")
@@ -359,6 +449,20 @@ class TestPublishedDocument:
 
     def test_a_stale_run_validates(self) -> None:
         entry = _merge_entry(_raw(_provenance(corpus_hash="0" * 64)), _meta())
+        document = {
+            "schema_version": 1,
+            "benchmark": "hnsw_recall_latency",
+            "runs": [entry],
+        }
+
+        errors = list(_validator("hnsw-benchmark-data.schema.json").iter_errors(document))
+
+        assert errors == []
+
+    def test_a_published_optional_field_validates(self) -> None:
+        # The publisher permits `seed` because the schema declares it: what one refuses, the other
+        # must accept, or a valid raw run could never be published.
+        entry = _merge_entry(_raw(_provenance(seed=7)), _meta())
         document = {
             "schema_version": 1,
             "benchmark": "hnsw_recall_latency",

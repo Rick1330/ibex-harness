@@ -273,12 +273,11 @@ class TestCorpusIdentity(CheckerCase):
     def test_a_matching_identity_declared_current_passes(self) -> None:
         self.assert_clean(_hnsw(_hnsw_run()))
 
-    def test_a_matching_identity_declared_stale_fails(self) -> None:
-        report = self.report_for(_hnsw(_hnsw_run(provenance=_recorded(corpus_status="stale"))))
-
-        self.assert_problem(
-            report, "runs[0].provenance.corpus_status: 'stale' but the recorded identity is the"
-        )
+    def test_a_matching_identity_declared_stale_passes(self) -> None:
+        # "stale" is the conservative flag, not a false claim. The publisher itself writes it for a
+        # corpus edited locally, where the hash *is* this checkout's hash, so failing this shape
+        # would make the publisher write a claim its own checker refuses.
+        self.assert_clean(_hnsw(_hnsw_run(provenance=_recorded(corpus_status="stale"))))
 
     def test_a_different_hash_declared_current_fails(self) -> None:
         report = self.report_for(_hnsw(_hnsw_run(provenance=_recorded(corpus_hash=OTHER_HASH))))
@@ -306,6 +305,17 @@ class TestCorpusIdentity(CheckerCase):
     def test_a_matching_hash_under_a_different_manifest_declared_stale_passes(self) -> None:
         record = _recorded(
             corpus_manifest="pgvector|synth.py=x|corpus.py=y|dim=1024,active=64",
+            corpus_status="stale",
+        )
+        self.assert_clean(_hnsw(_hnsw_run(provenance=record)))
+
+    def test_a_stale_recorded_run_older_than_the_history_passes(self) -> None:
+        # Retaining history must not turn the check red: an older run declares the corpus it
+        # measured, says "stale" about it, and is not compared with today's bytes.
+        older = "1" * 64
+        record = _recorded(
+            corpus_hash=older,
+            corpus_manifest=f"pgvector|synth.py={older}|corpus.py={older}",
             corpus_status="stale",
         )
         self.assert_clean(_hnsw(_hnsw_run(provenance=record)))
@@ -378,6 +388,45 @@ class TestGoldSetIdentity(CheckerCase):
     def test_a_recorded_run_without_the_gold_set_name_fails(self) -> None:
         record = _gold_recorded()
         del record["gold_set_name"]
+        problems = self._problems("v1", record)
+
+        self.assertTrue(
+            any("provenance.gold_set_name" in problem for problem in problems), problems
+        )
+
+    def test_an_older_gold_set_recorded_as_stale_passes(self) -> None:
+        # A run measured on a previous generation of the v1 gold set keeps the hash it measured and
+        # says "stale" about it. The bytes in this checkout are not its business, so retaining it
+        # cannot turn the check red; the record is still internally consistent.
+        older = "1" * 64
+        record = _gold_recorded(
+            corpus_hash=older,
+            corpus_manifest=f"gold_set_v1.json={older}",
+            gold_set_hash=older,
+            corpus_status="stale",
+        )
+
+        self.assert_clean(
+            _ranking(_ranking_run(provenance=record)), "ranking-quality-benchmark-data.json"
+        )
+
+    def test_a_stale_run_that_states_two_corpus_hashes_fails(self) -> None:
+        # Skipping the checkout comparison is not skipping consistency: the gold set is the corpus
+        # on this benchmark, so gold_set_hash and corpus_hash cannot name different bytes.
+        record = _gold_recorded(corpus_hash="1" * 64, gold_set_hash="2" * 64, corpus_status="stale")
+        problems = self._problems("v1", record)
+
+        self.assertTrue(
+            any(
+                "provenance.gold_set_hash: '222" in problem and "!= corpus_hash" in problem
+                for problem in problems
+            ),
+            problems,
+        )
+
+    def test_a_stale_run_that_names_the_other_generation_fails(self) -> None:
+        # The label-to-file map needs no checked-out bytes, so it holds for an older run too.
+        record = _gold_recorded(corpus_status="stale", gold_set_name="gold_set_v2.json")
         problems = self._problems("v1", record)
 
         self.assertTrue(

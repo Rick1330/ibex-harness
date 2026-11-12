@@ -13,21 +13,24 @@ What it checks, and why each check exists:
    empty ``run_url`` is a claim with no source.
 2. **Clean tree.** A run measured on a modified tree cannot be reproduced from its commit, so
    ``provenance.dirty == true`` fails.
-3. **Corpus.** The corpus identity is recomputed from the checked-out tree and compared with
-   the newest recorded run's declaration. The comparison covers the complete identity --
-   ``corpus_hash``, the ``corpus_manifest`` that states what the hash covers, and
-   ``gold_set_hash`` where the record carries it -- because a matching hash next to a different
-   manifest is still a different corpus. ``corpus_status`` must be ``"current"`` exactly when
-   that identity matches and ``"stale"`` exactly when it does not; the failure that matters is a
-   run claiming ``"current"`` on bytes that are not the ones it hashed. A recorded run on an
-   artifact kind with no corpus identity is unverifiable, so it fails too.
+3. **Corpus.** The corpus identity is recomputed from the checked-out tree and compared with a
+   run's declaration when -- and only when -- that run claims ``corpus_status: "current"``. The
+   comparison covers the complete identity -- ``corpus_hash``, the ``corpus_manifest`` that states
+   what the hash covers, and ``gold_set_hash`` where the record carries it -- because a matching
+   hash next to a different manifest is still a different corpus. ``"stale"`` is history, not a
+   false claim: an older run measured other bytes, so it is checked for internal consistency only
+   and retaining it does not turn the check red. A recorded run on an artifact kind with no corpus
+   identity is unverifiable, so it fails.
 4. **Percentiles.** A p50 above its p95, a p95 above its p99, or a p95 outside its own
    confidence interval is a broken measurement, not a slow one.
-5. **Ranking.** ``gold_set`` names a known set, and a recorded run's ``gold_set_name`` and
-   ``gold_set_hash`` must be the file and the hash that label names (``v1`` is
-   ``gold_set_v1.json``, ``ranking_quality_v2`` is ``gold_set_v2.json``): a v1 label next to a v2
-   hash claims a corpus that was not measured. A ``modes`` object covers only defined modes while
-   always including the two the ranking milestone compares.
+5. **Ranking.** ``gold_set`` names a known set, and on every recorded run ``gold_set_name`` must be
+   the file that label names (``v1`` is ``gold_set_v1.json``, ``ranking_quality_v2`` is
+   ``gold_set_v2.json``) while ``gold_set_hash`` must be the ``corpus_hash`` the same record
+   states, because on this benchmark the gold set *is* the corpus. A v1 label next to a v2 name
+   claims a corpus that was not measured. The bytes in this checkout are compared with those
+   fields only when the run claims ``corpus_status: "current"``, so an older gold set recorded
+   honestly as ``"stale"`` passes. A ``modes`` object covers only defined modes while always
+   including the two the ranking milestone compares.
 6. **Unrecorded runs.** A run with no provenance block, or ``status == "unrecorded"``, is
    counted and reported as a warning. It is *not* evidence, and the count is printed so that
    "28 unrecorded runs" can never be read as "28 verified runs". Enforcement is flipped
@@ -131,7 +134,6 @@ _CI_HIGH: Final = "_p95_ci_high"
 # The fields a recorded run states its corpus identity with. ``gold_set_hash`` is compared when
 # the record carries it; ``corpus_manifest`` is what the hash covers, so both are needed.
 _IDENTITY_FIELDS: Final = ("corpus_hash", "corpus_manifest", "gold_set_hash")
-_GOLD_SET_FIELDS: Final = ("gold_set_name", "gold_set_hash")
 # A corpus identity: ``(corpus_hash, corpus_manifest)``, as ``provenance.corpus_identity`` returns.
 Identity = tuple[str, str]
 
@@ -419,65 +421,106 @@ def _gold_corpus(gold: Any) -> GoldCorpus | None:
     return GOLD_SETS.get(gold) if isinstance(gold, str) else None
 
 
-def _gold_identity_problems(
-    label: str, record: dict[str, Any], corpus: GoldCorpus, identity: Identity
-) -> list[str]:
-    """The gold set fields ``record`` states, checked against the corpus ``corpus`` names."""
-    expected = {"gold_set_name": corpus.name, "gold_set_hash": identity[0]}
-    return [
-        f"{label}.provenance.{field}: {record.get(field)!r} != {expected[field]!r}, the value"
+def _gold_field_problem(
+    corpus: GoldCorpus, record: dict[str, Any], field: tuple[str, Any]
+) -> str:
+    """One gold set field as ``declared != expected``, naming the label that implies it."""
+    key, expected = field
+    return (
+        f"{corpus.label}.provenance.{key}: {record.get(key)!r} != {expected!r}, the value"
         f" gold_set={corpus.label!r} implies for {corpus.name}"
-        for field in _GOLD_SET_FIELDS
-        if record.get(field) != expected[field]
+    )
+
+
+def _gold_name_problems(label: str, record: dict[str, Any], corpus: GoldCorpus) -> list[str]:
+    """``gold_set_name`` must be the file the ``gold_set`` label names.
+
+    The label-to-file map is fixed, so this needs no checked-out bytes and holds for an older run
+    too: a name that disagrees with the label is a claim about a corpus that was not measured.
+    """
+    declared = record.get("gold_set_name")
+    if declared == corpus.name:
+        return []
+    return [_gold_field_problem(corpus, record, ("gold_set_name", corpus.name))]
+
+
+def _gold_hash_problems(label: str, record: dict[str, Any]) -> list[str]:
+    """``gold_set_hash`` must be the corpus hash the same record states.
+
+    On this benchmark the gold set *is* the corpus, so one record cannot state two identities for
+    it: a reader re-deriving either from the other must land on the same bytes. This compares the
+    record with itself, never with the checkout, so an older run keeps its own hash.
+    """
+    declared = record.get("gold_set_hash")
+    corpus_hash = record.get("corpus_hash")
+    if declared == corpus_hash:
+        return []
+    return [
+        (
+            f"{label}.provenance.gold_set_hash: {declared!r} != corpus_hash {corpus_hash!r}; on a"
+            " ranking run the gold set is the corpus, so the record must state one identity"
+        )
     ]
 
 
-def _check_gold_set(label: str, run: dict[str, Any], cache: dict[str, Identity]) -> list[str]:
-    """A recorded ranking run must name the gold set it declares, and hash that corpus.
+def _gold_checkout_problems(
+    record: dict[str, Any], corpus: GoldCorpus, identity: Identity
+) -> list[str]:
+    """The gold set hash, checked against the corpus bytes in this checkout."""
+    expected = identity[0]
+    if record.get("gold_set_hash") == expected:
+        return []
+    return [_gold_field_problem(corpus, record, ("gold_set_hash", expected))]
 
-    ``gold_set`` is the label; ``provenance.gold_set_name`` and ``gold_set_hash`` are what a
-    reader re-derives it from. A contradictory identity -- a v1 label next to the v2 hash -- is a
-    claim about a corpus that was not measured, so it is a problem rather than a footnote.
+
+def _check_gold_set(label: str, run: dict[str, Any], cache: dict[str, Identity]) -> list[str]:
+    """A recorded ranking run must name the gold set it declares, and state one identity.
+
+    ``gold_set`` is the label; ``provenance.gold_set_name`` must be the file that label names and
+    ``gold_set_hash`` must agree with the run's own ``corpus_hash``. Both are checked on every run
+    and neither needs the bytes in this checkout, so an older run recorded as ``"stale"`` is not
+    failed for being old. The checkout is consulted only when the run claims
+    ``corpus_status: "current"``, which is the claim that says a reader will find this gold set
+    here.
     """
     record = _provenance(run)
     corpus = _gold_corpus(run.get("gold_set"))
     if record.get("status") != "recorded" or corpus is None:
         return []
-    identity, problems = _current_identity(corpus.kind, cache)
-    if identity is None:
+    problems = _gold_name_problems(label, record, corpus) + _gold_hash_problems(label, record)
+    if record.get("corpus_status") != "current":
         return problems
-    return _gold_identity_problems(label, record, corpus, identity)
+    identity, identity_problems = _current_identity(corpus.kind, cache)
+    if identity is None:
+        return problems + identity_problems
+    return problems + _gold_checkout_problems(record, corpus, identity)
 
 
 def _identity_verdict(
     label: str, record: dict[str, Any], kind: str, identity: Identity
 ) -> list[str]:
-    """``corpus_status`` must agree with the complete recorded identity, in both directions.
+    """A ``"current"`` claim must describe the checked-out corpus; ``"stale"`` is left alone.
 
     A matching hash next to a different manifest is still a different corpus: the manifest states
     what the hash covers, so a reader re-deriving one from the other must get what the record
     promised. The failure that matters is a run claiming ``"current"`` on an identity that is not
-    the checked-out corpus.
+    the checked-out corpus, so that is the only claim compared with the bytes here.
+
+    ``"stale"`` is not compared at all. It says the run measured bytes that are not the ones in
+    this checkout, which is what an older run honestly records, and the publisher also writes it
+    for a corpus edited locally -- where the hash *does* match this checkout. Failing either one
+    would make retaining history, or publishing an honest flag, turn the check red.
     """
+    if record.get("corpus_status") != "current":
+        return []
     mismatched = _mismatched_identity(record, identity)
-    claimed = record.get("corpus_status")
-    corpus_hash = identity[0]
     if not mismatched:
-        if claimed == "current":
-            return []
-        return [
-            (
-                f"{label}.provenance.corpus_status: {claimed!r} but the recorded identity is the"
-                f" checked-out {kind} corpus ({corpus_hash})"
-            )
-        ]
-    if claimed != "current":
         return []
     return [
         (
             f"{label}.provenance.corpus_status: 'current' but"
             f" {_describe_mismatch(record, identity, mismatched)} does not describe the"
-            f" checked-out {kind} corpus ({corpus_hash})"
+            f" checked-out {kind} corpus ({identity[0]})"
         )
     ]
 

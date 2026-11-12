@@ -43,8 +43,13 @@ const prohibited = [
  * "not audited, enterprise-grade software" must not pass: the denial covers
  * "audited", not the claim after the comma. Contrast "not production-ready, but
  * battle-tested", where the `but` already breaks the clause.
+ *
+ * A full stop ends a sentence only when it is not sitting between two digits: a
+ * decimal point is part of the number, not a clause boundary. Otherwise
+ * "0.97 recall on the corpus" would split after `0.97` and the metric word that
+ * qualifies the score would fall outside its own clause.
  */
-const clauseBreaks = /[.;,!?:]|\b(?:but|however|yet|although|though|while)\b/gi
+const clauseBreaks = /(?<!\d)\.(?!\d)|[;,!?:]|\b(?:but|however|yet|although|though|while)\b/gi
 
 /**
  * A number that reads as a measurement: a digit with a unit suffix, or a
@@ -56,14 +61,35 @@ const numericClaim = /(?<![A-Za-z0-9_.])(?:\d[\d,.]*\s*(?:%|ms|µs|ns)(?!\w)|p\d
 /**
  * A number that reads as a result without carrying a unit: a bare score such as
  * `0.99` or `.97`. It is a claim only when its own clause names the metric it
- * measures. The lookbehind keeps `routing_0.5` a field name and the lookaheads
- * keep `1.0.9` a version, `.9` the tail of that version, and `99.9%` or `1.5 ms`
- * the percentage and time-unit claims the rule above already reports. It is gated
- * by the same `app/data` scope as those claims, where a reader-facing result is
- * authored.
+ * measures. The lookbehind keeps `routing_0.5` a field name and `(?!\d)` stops a
+ * decimal short of a longer number. A number that carries a unit is the claim the
+ * rule above already reports, so it is excluded here by the predicate below
+ * rather than by the pattern: `99.9%` and `1.5 ms` need a percentage and a time
+ * unit excluded, and with all of them in the pattern the expression crossed the
+ * complexity limit that keeps it reviewable. It was also wrong there: `\b` after
+ * `%` matched only when another word followed, so a percentage at the end of a
+ * clause was read as a unitless score too, and one measurement produced two
+ * findings whose allowlist entry for the percentage still left a failure behind.
+ * It is gated by the same `app/data` scope as those claims, where a reader-facing
+ * result is authored.
  */
-const dimensionlessScore = /(?<![A-Za-z0-9_.])(?:0?\.\d+|\d+\.\d+)(?!\d)(?!\.\d)(?!\s*(?:%|ms|µs|ns)\b)/g
+const dimensionlessScore = /(?<![A-Za-z0-9_.])(?:\d+\.\d+|\.\d+)(?!\d)/g
 const scoreMetrics = /\b(?:mrr|precision|recall|ndcg|accuracy|f1|scores?|p50|p95|p99)\b/i
+
+/**
+ * What may follow a score and show it is not dimensionless: the next component of
+ * a version, read directly after the number, or a unit the measurement rule above
+ * already reports — a percentage or a time unit — read after optional
+ * whitespace. `v1.0.9` and `1.0.9` therefore yield `1.0` from the pattern and are
+ * dropped here on the `.9` that follows.
+ */
+const versionTail = /^\.\d/
+const unitSuffix = /^(?:%|(?:ms|µs|ns)\b)/
+
+function carriesAUnit(text, index, length) {
+  const rest = text.slice(index + length)
+  return versionTail.test(rest) || unitSuffix.test(rest.trimStart())
+}
 
 /**
  * The artifact a quoted number must name on its own line: the benchmarks page,
@@ -137,6 +163,17 @@ const tokenClaims = (pattern, text, label, accept) => [...text.matchAll(pattern)
   .map(match => ({ label, token: match[0] }))
 
 /**
+ * A unitless score is a claim only when its own clause names the metric. A number
+ * that carries a unit is not one: the measurement rule already reports it, so it
+ * is dropped here rather than counted twice.
+ */
+function isScoreClaim(text, match) {
+  const length = match[0].length
+  if (carriesAUnit(text, match.index, length)) return false
+  return scoreMetrics.test(clauseAround(text, match.index, length))
+}
+
+/**
  * Numeric claims, one finding per occurrence so the allowlist excuses one number
  * rather than the line it sits on. A line that names its artifact supports all
  * of its numbers and reports nothing.
@@ -144,8 +181,7 @@ const tokenClaims = (pattern, text, label, accept) => [...text.matchAll(pattern)
 function numericViolations(text) {
   if (artifactReference.test(text)) return []
   const measures = tokenClaims(numericClaim, text, numericLabel, () => true)
-  const scores = tokenClaims(dimensionlessScore, text, scoreLabel,
-    match => scoreMetrics.test(clauseAround(text, match.index, match[0].length)))
+  const scores = tokenClaims(dimensionlessScore, text, scoreLabel, match => isScoreClaim(text, match))
   return [...measures, ...scores]
 }
 
@@ -153,7 +189,7 @@ function numericViolations(text) {
  * `ledger.ts` is code as well as claims: only the `name` and `detail` string
  * values are claims, so an object key or a derived count cannot trip a rule.
  * A claim field is read from a single-quoted, double-quoted, or template literal,
- * on one line or several.
+ * on one line or several, that is the whole value the field renders.
  */
 const claimKey = /^[ \t]*(name|detail)\??[ \t]*:[ \t]*(?:\r?\n[ \t]*)?/gm
 
@@ -193,34 +229,106 @@ const escapeMap = new Map([['n', '\n'], ['r', '\r'], ['t', '\t']])
 const unescapeChar = char => escapeMap.get(char) ?? char ?? ''
 
 /**
+ * The only characters a claim literal may open with. Without this test the first
+ * character of any expression would be read as an opening quote: `messages.claim`
+ * would close on the `m` of `claim` and hand back `essages.clai`, accepting a
+ * dynamic value as if it were a static claim.
+ */
+const literalQuotes = new Set(["'", '"', '`'])
+
+const opensLiteral = quote => literalQuotes.has(quote)
+
+/**
+ * A template literal is the only one that may span lines and carry an
+ * interpolation.
+ */
+const isTemplateLiteral = quote => quote === '`'
+
+/**
+ * Whether the text at `index` opens a template interpolation. Its runtime text is
+ * not in the source, so the value cannot be read from it.
+ */
+const isInterpolation = (source, index) => source[index] === '$' && source[index + 1] === '{'
+
+/**
+ * The value an escape sequence contributes and the index the scan resumes at,
+ * after both characters. Only the named escapes are resolved; any other escaped
+ * character stands for itself, which is enough to compare prose rather than byte
+ * values.
+ */
+const readEscape = (source, index) => ({ value: unescapeChar(source[index + 1]), next: index + 2 })
+
+/**
+ * Whether `char` is the first of the two characters of an escape sequence. The
+ * caller reads it with `readEscape` and continues after both.
+ */
+const opensEscape = char => char === '\\'
+
+/**
+ * Whether `char` closes the literal that opened with `quote`.
+ */
+const closesLiteral = (char, quote) => char === quote
+
+/**
+ * Whether the character at `index` ends the scan without a readable value: a
+ * single-quoted literal that breaks across lines, or a template that
+ * interpolates. A template may hold newlines, so the line break is unreadable
+ * only outside one.
+ */
+function unreadableAt(source, index, template) {
+  return template ? isInterpolation(source, index) : source[index] === '\n'
+}
+
+/**
  * Reads the literal that starts at `start`. `null` means the value is not a
- * static string: unterminated, a single-line literal that breaks across lines, or
- * a template with `${}` interpolation, whose runtime text is not in the source.
+ * static string: it does not open with a quote or backtick, it is unterminated, a
+ * single-line literal that breaks across lines, or a template with `${}`
+ * interpolation, whose runtime text is not in the source. The scan decides per
+ * character whether the literal closes, escapes, or is unreadable, and otherwise
+ * takes the character as part of the value.
  */
 function readLiteral(source, start) {
   const quote = source[start]
-  const template = quote === '`'
+  if (!opensLiteral(quote)) return null
+  const template = isTemplateLiteral(quote)
   let value = ''
-  for (let index = start + 1; index < source.length; index += 1) {
+  let index = start + 1
+  while (index < source.length) {
     const char = source[index]
-    if (template && char === '$' && source[index + 1] === '{') return null
-    if (char === '\\') {
-      value += unescapeChar(source[index + 1])
-      index += 1
+    if (closesLiteral(char, quote)) return { value, end: index + 1 }
+    if (opensEscape(char)) {
+      const escape = readEscape(source, index)
+      value += escape.value
+      index = escape.next
       continue
     }
-    if (char === quote) return { value, end: index + 1 }
-    if (!template && char === '\n') return null
+    if (unreadableAt(source, index, template)) return null
     value += char
+    index += 1
   }
   return null
+}
+
+/**
+ * The characters that may follow a claim literal without making it one operand of
+ * a larger expression: the object syntax that closes the value and the separator
+ * before the next property. Whitespace, newlines included, is skipped first. Any
+ * other character — `+`, a call, another literal — means the rendered text is
+ * built at runtime, so the literal alone is not the claim.
+ */
+const valueTerminator = /[;,}\])]/
+
+function endsValue(source, index) {
+  const next = source.slice(index).trimStart()[0]
+  return next === undefined || valueTerminator.test(next)
 }
 
 const lineOf = (source, index) => source.slice(0, index).split('\n').length
 
 /**
  * Splits `ledger.ts` into the claim values it renders. A field whose value cannot
- * be read is returned in `unreadable` and fails the check.
+ * be read, or whose literal is only part of a larger expression, is returned in
+ * `unreadable` and fails the check.
  */
 function ledgerClaimTexts(source) {
   const texts = []
@@ -229,7 +337,7 @@ function ledgerClaimTexts(source) {
     const valueStart = match.index + match[0].length
     const line = lineOf(source, match.index)
     const literal = readLiteral(source, valueStart)
-    if (literal) {
+    if (literal && endsValue(source, literal.end)) {
       texts.push({ line, text: literal.value })
       continue
     }
