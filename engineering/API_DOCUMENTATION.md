@@ -70,7 +70,7 @@ Every operator request, stream, export, deletion, replay, and asynchronous job d
 
 2. **Explicit over implicit**: Error responses tell you exactly what went wrong and how to fix it. No cryptic error codes.
 
-3. **Versioned from day one**: a breaking change is **detected**, not impossible. The committed OpenAPI snapshot (`services/api/openapi.snapshot.json`) is diffed against a git baseline by `make api-breaking` — `origin/main` at the merge-base by default, or a release tag such as `make api-breaking BASE=v0.1.9` for the released contract — and protobuf shapes are diffed by `make proto-breaking` (`buf breaking`). Both are **local gates today**: `buf-breaking` runs in CI on Go-touching changes as an advisory job (`continue-on-error: true`) and `api-breaking` is not wired into any workflow, so neither is a required status check. A green local run is evidence, not a guarantee: pin the contract version you integrate against. A deprecated contract is supported for a recorded window of at least 180 days (`stable`) or 31 days (`beta`) after its notice date, and the same window applies to REST routes, gRPC methods, and MCP tool schemas — recorded in [`architecture-v2/contracts/deprecations.json`](architecture-v2/contracts/deprecations.json) and schema-validated in CI. See [Compatibility and Versioning](architecture-v2/16-compatibility-and-versioning.md).
+3. **Versioned from day one**: a breaking change is **detected**, not impossible. The committed OpenAPI snapshot (`services/api/openapi.snapshot.json`) is diffed against a git baseline by `make api-breaking` — `origin/main` at the merge-base by default, or a release tag such as `make api-breaking BASE=v0.1.9` for the released contract — and protobuf shapes are diffed by `make proto-breaking` (`buf breaking`). Both are **local gates today**: `buf-breaking` runs in CI on Go-touching changes as an advisory job (`continue-on-error: true`) and `api-breaking` is not wired into any workflow, so neither is a required status check. A green local run is evidence, not a guarantee: pin the contract version you integrate against. A deprecated contract is supported for a recorded window of at least 180 days (`stable`) or 31 days (`beta`) measured from the date it was announced (`announced_on`, which cannot precede its `notice_date`), and the same window applies to REST routes, gRPC methods, and MCP tool schemas — recorded in [`architecture-v2/contracts/deprecations.json`](architecture-v2/contracts/deprecations.json) and schema-validated in CI. See [Compatibility and Versioning](architecture-v2/16-compatibility-and-versioning.md).
 
 4. **Idempotent where possible**: Safe to retry on network failure. Every write operation accepts an idempotency key.
 
@@ -3078,27 +3078,43 @@ v2 (future):   Announced when breaking changes needed
 ### Deprecation Process
 
 A deprecation is recorded in [`architecture-v2/contracts/deprecations.json`](architecture-v2/contracts/deprecations.json)
-before it is announced, and the record is checked in CI. The window is `sunset_date - notice_date` and must be at least
-**180 days** for a `stable` contract and **31 days** for a `beta` contract. The same rule covers REST routes, gRPC
-methods, and MCP tool schemas; the full policy is
+before it is announced, and the record is checked in CI. The window is `sunset_date - announced_on` and must be at least
+**180 days** for a `stable` contract and **31 days** for a `beta` contract; only an entry with no recorded announcement
+is measured from its `notice_date`. An `announced` entry must record `announced_on`, and it may not be earlier than its
+`notice_date`. The same rule covers REST routes, gRPC methods, and MCP tool schemas; the full policy is
 [Compatibility and Versioning](architecture-v2/16-compatibility-and-versioning.md).
 
 ```text
-Day 0:          Notice date. The Deprecation and Sunset headers ship on the deprecated contract and the
-                migration note is published.
-Day 0-sunset:   Both contracts are supported. The deprecated one receives security and correctness fixes only.
-Sunset date:    At least 180 days (stable) or 31 days (beta) after the notice date. The contract is removed,
-                or returns 410 Gone with a link to the migration note.
+notice_date:    The deprecation is planned and recorded as `proposed`. No consumer has been told yet.
+announced_on:   The notice is published and the record moves to `announced`. The support window starts here,
+                not at notice_date, so a record cannot spend its own planning delay as part of the window.
+announced_on -> sunset_date:
+                The deprecated contract stays supported for the whole window and keeps receiving security and
+                correctness fixes. That is not conditional on a successor: the successor may not exist yet, and
+                its availability is a separate fact — named by the `Link: rel="successor-version"` relation and
+                by the record's `successor` field — never a precondition of the support the deprecated contract
+                gets.
+sunset_date:    At least 180 days (stable) or 31 days (beta) after `announced_on`. The contract is removed, or
+                returns 410 Gone with a link to the migration note.
 ```
 
-**Deprecation headers (standard fields; hostnames and dates require verification):**
+A gRPC method or an MCP tool has no standard deprecation header, so for those surfaces the record is the notice of
+record: `headers_implemented` stays `false`, and the method comment or tool description names the successor. Only a REST
+entry (`surface: rest`) sets `headers_implemented: true`, and only once an emitter ships. The check trusts that flag plus
+an `evidence` path that exists; it does not prove an emitter, and a green run does not mean a response carries the
+headers.
+
+**Standard deprecation headers (what a REST emitter must send; nothing in `services/` emits them today):**
 
 ```http
 Deprecation: @1798761600
-Sunset: Mon, 01 Jun 2026 00:00:00 GMT
+Sunset: Wed, 30 Jun 2027 00:00:00 GMT
 Link: <{public-docs-origin}/migration/v1-to-v2>; rel="deprecation"
 Link: <{api-origin}/v2/>; rel="successor-version"
 ```
+
+`@1798761600` is `Fri, 01 Jan 2027 00:00:00 GMT`, and the `Sunset` value is exactly 180 days later — the `stable`
+window. A `beta` notice from the same date would sunset no earlier than `Mon, 01 Feb 2027 00:00:00 GMT`.
 
 ---
 

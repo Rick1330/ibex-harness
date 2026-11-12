@@ -43,7 +43,7 @@ def _save(directory: Path, record: dict[str, Any] | None = None) -> Path:
 
 
 def _failures(tmp_path: Path, record: dict[str, Any]) -> list[str]:
-    return descriptors.check(_save(tmp_path, record))
+    return descriptors.check(_save(tmp_path, record), allow_root=tmp_path)
 
 
 def _drifted(tmp_path: Path, mutate: Callable[[dict[str, Any]], None]) -> list[str]:
@@ -112,15 +112,16 @@ def test_record_matches_the_surface_it_was_exported_from(tmp_path: Path) -> None
 def test_check_never_writes_the_record(tmp_path: Path) -> None:
     path = _save(tmp_path)
     before = path.read_bytes()
-    assert descriptors.main(["--path", str(path)]) == 0
+    assert descriptors.main(["--path", str(path), "--allow-root", str(tmp_path)]) == 0
     assert path.read_bytes() == before
 
 
 def test_update_then_check_round_trips(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = tmp_path / RECORD_NAME
-    assert descriptors.main(["--update", "--path", str(path)]) == 0
+    root = ["--allow-root", str(tmp_path)]
+    assert descriptors.main(["--update", "--path", str(path), *root]) == 0
     assert f"recorded {TOOL_COUNT} tool(s)" in capsys.readouterr().out
-    assert descriptors.main(["--check", "--path", str(path)]) == 0
+    assert descriptors.main(["--check", "--path", str(path), *root]) == 0
 
 
 def test_cli_exits_non_zero_and_names_the_drift(
@@ -129,7 +130,7 @@ def test_cli_exits_non_zero_and_names_the_drift(
     record = _record()
     _row(record)["deprecated"] = True
     path = _save(tmp_path, record)
-    assert descriptors.main(["--check", "--path", str(path)]) == 1
+    assert descriptors.main(["--check", "--path", str(path), "--allow-root", str(tmp_path)]) == 1
     captured = capsys.readouterr()
     assert f"deprecated-tool: {TOOL}" in captured.err
     assert "mcp tool descriptor check failed: 1 problem(s)" in captured.out
@@ -137,11 +138,14 @@ def test_cli_exits_non_zero_and_names_the_drift(
 
 def test_update_is_deterministic_and_readable(tmp_path: Path) -> None:
     path = tmp_path / RECORD_NAME
-    assert descriptors.update(path) == TOOL_COUNT
+    assert descriptors.update(path, allow_root=tmp_path) == TOOL_COUNT
     first = path.read_bytes()
-    assert descriptors.update(path) == TOOL_COUNT
+    assert descriptors.update(path, allow_root=tmp_path) == TOOL_COUNT
     assert path.read_bytes() == first
-    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    # Git records only the executable bit, so the atomic rename leaving the
+    # temporary file's 0600 does not change what is committed; that bit must stay
+    # clear. Asserting 0644 would pin a mode the writer no longer sets.
+    assert not path.stat().st_mode & stat.S_IXUSR
     assert sorted(item.name for item in tmp_path.iterdir()) == [RECORD_NAME]
     assert all("description_sha256" in row for row in json.loads(first)["tools"])
 
@@ -157,7 +161,7 @@ def test_update_keeps_the_original_when_the_replace_fails(
 
     monkeypatch.setattr(descriptors.os, "replace", _fail)
     with pytest.raises(OSError, match="disk full"):
-        descriptors.update(path)
+        descriptors.update(path, allow_root=tmp_path)
     assert path.read_text(encoding="utf-8") == "original\n"
     assert sorted(item.name for item in tmp_path.iterdir()) == [RECORD_NAME]
 
@@ -170,7 +174,7 @@ def test_update_refuses_a_tool_without_a_version(
     monkeypatch.setattr(descriptors, "export", lambda: record)
     path = tmp_path / RECORD_NAME
     with pytest.raises(SystemExit, match="no declared version"):
-        descriptors.update(path)
+        descriptors.update(path, allow_root=tmp_path)
     assert not path.exists()
 
 
@@ -269,7 +273,7 @@ def test_generator_drift_warns_but_passes(
 
 
 def test_missing_record_names_the_generator_command(tmp_path: Path) -> None:
-    failures = descriptors.check(tmp_path / "absent.json")
+    failures = descriptors.check(tmp_path / "absent.json", allow_root=tmp_path)
     _only(failures, "missing-descriptor: ")
     assert descriptors.GENERATOR_COMMAND in failures[0]
 
@@ -277,12 +281,15 @@ def test_missing_record_names_the_generator_command(tmp_path: Path) -> None:
 def test_unreadable_record_is_reported(tmp_path: Path) -> None:
     path = tmp_path / RECORD_NAME
     path.write_text("{not json", encoding="utf-8")
-    _only(descriptors.check(path), "unreadable-descriptor: ")
+    _only(descriptors.check(path, allow_root=tmp_path), "unreadable-descriptor: ")
 
 
 def test_record_that_is_not_an_object_is_reported(tmp_path: Path) -> None:
     path = _save(tmp_path, [])  # type: ignore[arg-type]
-    _only(descriptors.check(path), "invalid-descriptor: the record must be a JSON object")
+    _only(
+        descriptors.check(path, allow_root=tmp_path),
+        "invalid-descriptor: the record must be a JSON object",
+    )
 
 
 @pytest.mark.parametrize(
@@ -328,3 +335,62 @@ def test_every_row_pins_the_published_description() -> None:
     for row in _record()["tools"]:
         description = published[row["name"]].description or ""
         assert row["description_sha256"] == descriptors.canonical_sha256(description)
+
+
+def test_a_record_inside_the_allow_root_is_accepted(tmp_path: Path) -> None:
+    """Positive control: the refusals below must not come from a checker that refuses everything."""
+    nested = tmp_path / "nested"
+    path = nested / RECORD_NAME
+    assert descriptors.update(path, allow_root=tmp_path) == TOOL_COUNT
+    assert descriptors.check(path, allow_root=tmp_path) == []
+    assert sorted(item.name for item in nested.iterdir()) == [RECORD_NAME]
+
+
+def test_cli_refuses_a_path_segment_that_steps_up(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    escaped = tmp_path / ".." / "escape.json"
+    code = descriptors.main(["--update", "--path", str(escaped), "--allow-root", str(tmp_path)])
+    assert code == 2
+    assert "'..' segment" in capsys.readouterr().err
+    assert not (tmp_path.parent / "escape.json").exists()
+
+
+def test_cli_refuses_a_path_outside_the_allow_root(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    outside = tmp_path.parent / "outside.json"
+    code = descriptors.main(["--check", "--path", str(outside), "--allow-root", str(tmp_path)])
+    assert code == 2
+    captured = capsys.readouterr()
+    assert "refusing" in captured.err
+    assert "resolves outside" in captured.err
+    assert not outside.exists()
+
+
+def test_cli_refuses_a_target_that_is_not_a_regular_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = descriptors.main(["--update", "--path", str(tmp_path), "--allow-root", str(tmp_path)])
+    assert code == 2
+    assert "not a regular file" in capsys.readouterr().err
+
+
+def test_cli_takes_the_allow_root_from_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _save(tmp_path)
+    monkeypatch.setenv(descriptors.ALLOW_ROOT_ENV, str(tmp_path))
+    assert descriptors.main(["--check", "--path", str(path)]) == 0
+
+
+def test_allow_root_defaults_to_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(descriptors.ALLOW_ROOT_ENV, raising=False)
+    assert descriptors._allow_root() == tmp_path
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    monkeypatch.setenv(descriptors.ALLOW_ROOT_ENV, str(tree))
+    assert descriptors._allow_root() == tree

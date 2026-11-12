@@ -4,10 +4,13 @@ The first tests assert the committed record against the committed registries. Th
 rest build a synthetic workspace in ``tmp_path`` so each failure mode is isolated;
 none of them touch PostgreSQL, the app, or the tree.
 
-The record is the notice of record, so the tests pin the two properties the gate
+The record is the notice of record, so the tests pin the properties the gate
 exists for: a window shorter than 180 days (stable) or 31 days (beta) cannot be
-recorded, and a deprecation cannot name a contract, tool, or server that the
-committed registries do not contain.
+recorded, the window is measured from the announcement rather than an earlier
+plan date, a deprecation cannot name a contract, tool, or server that the
+committed registries do not contain or claim a class those registries contradict,
+and ``headers_implemented`` is true only where a standard deprecation header
+exists (REST).
 """
 
 from __future__ import annotations
@@ -27,7 +30,11 @@ _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_deprecations.
 
 _REST_CONTRACT = "management.agents.read.v1"
 _EVIDENCE = "engineering/architecture-v2/16-compatibility-and-versioning.md"
-_MCP_TOOLS = {"operator": ["budget.get"], "memory": ["get_memory_lineage"]}
+_GRPC_CONTRACT = "ibex.memory.v1.MemoryService/GetMemory"
+_MCP_TOOLS = {
+    "operator": {"budget.get": "beta"},
+    "memory": {"get_memory_lineage": "beta"},
+}
 _MCP_TOOL = "budget.get"
 _MCP_SERVER = "operator"
 
@@ -55,11 +62,13 @@ class _WorkspaceSpec:
     """Overrides for the synthetic registry workspace."""
 
     rest_stability: str = "stable"
-    tools: dict[str, list[str]] = field(default_factory=lambda: dict(_MCP_TOOLS))
+    tools: dict[str, dict[str, str]] = field(
+        default_factory=lambda: {server: dict(tools) for server, tools in _MCP_TOOLS.items()}
+    )
 
 
 def _entry(**overrides: Any) -> dict[str, Any]:
-    """A valid announced REST deprecation with a 180-day window."""
+    """A valid announced REST deprecation with a 180-day window from its announcement."""
     entry: dict[str, Any] = {
         "id": "dep.agents.read",
         "surface": "rest",
@@ -67,6 +76,7 @@ def _entry(**overrides: Any) -> dict[str, Any]:
         "successor": "management.agents.v2",
         "stability": "stable",
         "notice_date": _NOTICE.isoformat(),
+        "announced_on": _NOTICE.isoformat(),
         "sunset_date": _sunset(180),
         "status": "announced",
         "headers_implemented": True,
@@ -74,6 +84,31 @@ def _entry(**overrides: Any) -> dict[str, Any]:
     }
     entry.update(overrides)
     return {key: value for key, value in entry.items() if value is not None}
+
+
+def _grpc_entry(**overrides: Any) -> dict[str, Any]:
+    """A valid announced gRPC deprecation: no standard header exists, so headers stay false."""
+    base: dict[str, Any] = {
+        "surface": "grpc",
+        "contract_id": _GRPC_CONTRACT,
+        "headers_implemented": False,
+    }
+    base.update(overrides)
+    return _entry(**base)
+
+
+def _mcp_entry(**overrides: Any) -> dict[str, Any]:
+    """A valid announced MCP deprecation, defaulting to the beta class of the fixture tool."""
+    base: dict[str, Any] = {
+        "surface": "mcp",
+        "contract_id": None,
+        "tool": _MCP_TOOL,
+        "server": _MCP_SERVER,
+        "stability": "beta",
+        "headers_implemented": False,
+    }
+    base.update(overrides)
+    return _entry(**base)
 
 
 def _entry_stability(entries: list[dict[str, Any]]) -> str:
@@ -120,10 +155,12 @@ def _write_registries(tmp_path: Path, spec: _WorkspaceSpec) -> None:
     (tmp_path / "rest-route-registry.json").write_text(
         json.dumps(registry, indent=2) + "\n", encoding="utf-8"
     )
-    for server, names in spec.tools.items():
+    for server, tools in spec.tools.items():
         server_dir = tmp_path / "services" / f"mcp-{server}"
         server_dir.mkdir(parents=True, exist_ok=True)
-        payload = {"tools": [{"name": name, "stability": "beta"} for name in names]}
+        payload = {
+            "tools": [{"name": name, "stability": stability} for name, stability in tools.items()]
+        }
         (server_dir / "mcp_tools.json").write_text(
             json.dumps(payload, indent=2) + "\n", encoding="utf-8"
         )
@@ -194,6 +231,7 @@ def test_announced_rest_deprecation_with_a_full_window_passes(
     assert _check(tmp_path, deprecations, [_entry()]) == []
 
 
+@pytest.mark.parametrize("surface", ["rest", "grpc"])
 @pytest.mark.parametrize(
     "case",
     [
@@ -205,14 +243,19 @@ def test_announced_rest_deprecation_with_a_full_window_passes(
     ids=["stable-180", "stable-179", "beta-31", "beta-30"],
 )
 def test_window_must_meet_the_class_minimum(
-    tmp_path: Path, deprecations: ModuleType, case: tuple[str, int, bool]
+    tmp_path: Path, deprecations: ModuleType, surface: str, case: tuple[str, int, bool]
 ) -> None:
-    """180 days for stable and 31 days for beta, and the boundary day itself passes."""
+    """180 days for stable and 31 for beta, and the boundary day itself passes.
+
+    The window arithmetic is defined once and exercised on both surfaces that
+    resolve against no registry, so a gRPC entry cannot drift to a different rule.
+    """
     stability, days, valid = case
+    factory = _entry if surface == "rest" else _grpc_entry
     failures = _check(
         tmp_path,
         deprecations,
-        [_entry(stability=stability, sunset_date=_sunset(days))],
+        [factory(stability=stability, sunset_date=_sunset(days))],
     )
     if valid:
         assert failures == []
@@ -261,28 +304,44 @@ def test_duplicate_registry_row_fails(tmp_path: Path, deprecations: ModuleType) 
 def test_mcp_deprecation_passes_and_unknown_tool_fails(
     tmp_path: Path, deprecations: ModuleType
 ) -> None:
-    valid = _entry(surface="mcp", contract_id=None, tool=_MCP_TOOL, server=_MCP_SERVER)
+    valid = _mcp_entry()
     assert _check(tmp_path, deprecations, [valid]) == []
 
-    missing = _entry(surface="mcp", contract_id=None, tool="budget.delete", server=_MCP_SERVER)
+    missing = _mcp_entry(tool="budget.delete")
     failures = _check(tmp_path, deprecations, [missing])
     assert len(failures) == 1, failures
     assert failures[0].startswith("unknown-tool: dep.agents.read deprecates tool 'budget.delete'")
     assert "mcp-operator/mcp_tools.json" in failures[0]
 
 
+def test_mcp_stability_must_match_the_tool_descriptor(
+    tmp_path: Path, deprecations: ModuleType
+) -> None:
+    """The descriptor's class sets the window, so a `stable` claim on a beta tool cannot buy 180 days."""
+    failures = _check(tmp_path, deprecations, [_mcp_entry(stability="stable")])
+    assert len(failures) == 1, failures
+    assert failures[0].startswith("stability-mismatch: dep.agents.read records 'stable' ")
+    assert "records 'beta' for tool 'budget.get'" in failures[0]
+    assert "mcp-operator/mcp_tools.json" in failures[0]
+
+
+def test_mcp_stable_tool_accepts_a_stable_entry(tmp_path: Path, deprecations: ModuleType) -> None:
+    """A stable tool's descriptor is what makes the stable class and its 180-day window valid."""
+    spec = _WorkspaceSpec(tools={"operator": {"budget.get": "stable"}, "memory": {}})
+    paths = _workspace(tmp_path, deprecations, [_mcp_entry(stability="stable")], spec)
+    assert deprecations.check(paths, today=_TODAY) == []
+
+
 def test_mcp_tool_on_the_wrong_server_fails(tmp_path: Path, deprecations: ModuleType) -> None:
     """The named server's descriptor is the registry checked, not any server's."""
-    entry = _entry(surface="mcp", contract_id=None, tool=_MCP_TOOL, server="memory")
-    failures = _check(tmp_path, deprecations, [entry])
+    failures = _check(tmp_path, deprecations, [_mcp_entry(server="memory")])
     assert len(failures) == 1, failures
     assert "unknown-tool: dep.agents.read deprecates tool 'budget.get'" in failures[0]
     assert "mcp-memory/mcp_tools.json" in failures[0]
 
 
 def test_unknown_mcp_server_fails(tmp_path: Path, deprecations: ModuleType) -> None:
-    entry = _entry(surface="mcp", contract_id=None, tool=_MCP_TOOL, server="worker")
-    failures = _check(tmp_path, deprecations, [entry])
+    failures = _check(tmp_path, deprecations, [_mcp_entry(server="worker")])
     assert len(failures) == 1, failures
     assert failures[0].startswith("unknown-server: dep.agents.read names server 'worker'")
     assert "['memory', 'operator']" in failures[0]
@@ -321,10 +380,142 @@ def test_successor_must_be_a_non_blank_string(
 
 
 def test_announced_without_headers_fails(tmp_path: Path, deprecations: ModuleType) -> None:
-    """A deprecation may not be announced before the headers are implemented."""
+    """A REST deprecation may not be announced before the headers are implemented."""
     failures = _check(tmp_path, deprecations, [_entry(headers_implemented=False)])
     assert len(failures) == 1, failures
     assert failures[0].startswith("headers-not-implemented: dep.agents.read is announced")
+
+
+def test_grpc_and_mcp_cannot_claim_deprecation_headers(
+    tmp_path: Path, deprecations: ModuleType
+) -> None:
+    """No standard header exists for those surfaces, so the record is the notice of record."""
+    for entry in (_grpc_entry(headers_implemented=True), _mcp_entry(headers_implemented=True)):
+        failures = _check(tmp_path, deprecations, [entry])
+        assert len(failures) == 1, failures
+        assert failures[0].startswith(
+            f"headers-not-applicable: dep.agents.read is {entry['surface']}, "
+        )
+        assert "headers_implemented must be false" in failures[0]
+        assert "the record is the notice of record" in failures[0]
+
+
+def test_announced_without_an_announcement_date_fails(
+    tmp_path: Path, deprecations: ModuleType
+) -> None:
+    """The window is measured from the announcement, so an announced entry must date it."""
+    entry = _entry()
+    del entry["announced_on"]
+    failures = _check(tmp_path, deprecations, [entry])
+    assert len(failures) == 1, failures
+    assert failures[0].startswith(
+        "missing-announcement: dep.agents.read is announced but has no announced_on"
+    )
+    assert "window is measured from it" in failures[0]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [("stable", 180), ("beta", 31)],
+    ids=["stable-180", "beta-31"],
+)
+def test_notice_on_the_announcement_day_meets_the_minimum(
+    tmp_path: Path, deprecations: ModuleType, case: tuple[str, int]
+) -> None:
+    """When notice and announcement coincide, the boundary day is exactly enough."""
+    stability, days = case
+    assert (
+        _check(tmp_path, deprecations, [_entry(stability=stability, sunset_date=_sunset(days))])
+        == []
+    )
+
+
+def test_window_is_measured_from_the_announcement_not_the_notice(
+    tmp_path: Path, deprecations: ModuleType
+) -> None:
+    """An early notice cannot buy window time the announcement never gave the consumer."""
+    entry = _entry(announced_on="2026-06-01", sunset_date="2026-06-30")
+    failures = _check(tmp_path, deprecations, [entry])
+    assert len(failures) == 1, failures
+    assert failures[0].startswith("window-too-short: dep.agents.read is stable,")
+    assert "at least 180 days after announced_on 2026-06-01" in failures[0]
+    assert "this window is 29 day(s)" in failures[0]
+
+
+def test_announced_on_before_the_notice_date_fails(
+    tmp_path: Path, deprecations: ModuleType
+) -> None:
+    """A window cannot start before the deprecation was noticed."""
+    failures = _check(tmp_path, deprecations, [_entry(announced_on="2025-12-01")])
+    assert failures == [
+        (
+            "announcement-before-notice: dep.agents.read was announced on 2025-12-01 before its "
+            "notice_date 2026-01-01; the window cannot start before the notice"
+        )
+    ]
+
+
+@pytest.mark.parametrize("value", [20260101, [2026, 1, 1]], ids=["int", "list"])
+def test_non_string_announced_on_fails(
+    tmp_path: Path, deprecations: ModuleType, value: object
+) -> None:
+    """A non-string announcement date cannot anchor the window, so it is not a date."""
+    entry = _entry()
+    entry["announced_on"] = value
+    failures = _check(tmp_path, deprecations, [entry])
+    assert failures == [
+        f"invalid-date: dep.agents.read.announced_on is {value!r}; expected YYYY-MM-DD"
+    ]
+
+
+def test_null_announcement_date_is_allowed_before_announcement(
+    tmp_path: Path, deprecations: ModuleType
+) -> None:
+    """A proposal carries no announcement date, and a null is an absent date, not a wrong one."""
+    entry = _entry(status="proposed", headers_implemented=False)
+    entry["announced_on"] = None
+    assert _check(tmp_path, deprecations, [entry]) == []
+
+
+@pytest.mark.parametrize("status", ["proposed", "withdrawn"])
+def test_announcement_date_is_rejected_before_it_is_announced(
+    tmp_path: Path, deprecations: ModuleType, status: str
+) -> None:
+    """A proposal or withdrawal cannot claim a date on which consumers were told."""
+    failures = _check(tmp_path, deprecations, [_entry(status=status)])
+    assert len(failures) == 1, failures
+    assert failures[0].startswith(
+        f"unexpected-announcement: dep.agents.read is {status}, so announced_on must be absent or null"
+    )
+
+
+def test_announced_grpc_entry_without_headers_passes(
+    tmp_path: Path, deprecations: ModuleType
+) -> None:
+    """No gRPC header exists, so `false` is the only truthful value and the record is the notice."""
+    assert _check(tmp_path, deprecations, [_grpc_entry()]) == []
+
+
+def test_grpc_entry_without_contract_id_fails(tmp_path: Path, deprecations: ModuleType) -> None:
+    entry = _grpc_entry()
+    del entry["contract_id"]
+    failures = _check(tmp_path, deprecations, [entry])
+    assert failures == ["missing-field: dep.agents.read lacks contract_id"]
+
+
+def test_grpc_entry_carrying_mcp_selectors_fails(tmp_path: Path, deprecations: ModuleType) -> None:
+    """The selector is exclusive: a gRPC entry names a contract, not a tool on a server."""
+    entry = _grpc_entry(tool=_MCP_TOOL, server=_MCP_SERVER)
+    failures = _check(tmp_path, deprecations, [entry])
+    assert failures == ["unknown-field: dep.agents.read has server, tool"]
+
+
+def test_grpc_contract_id_resolves_against_no_registry(
+    tmp_path: Path, deprecations: ModuleType
+) -> None:
+    """No gRPC method registry is committed, so the id is not cross-checked; the field set is."""
+    unknown = _grpc_entry(contract_id="ibex.ghost.v1.GhostService/Missing")
+    assert _check(tmp_path, deprecations, [unknown]) == []
 
 
 def test_announced_with_missing_evidence_fails(tmp_path: Path, deprecations: ModuleType) -> None:
@@ -386,6 +577,7 @@ def test_proposed_deprecation_without_headers_or_live_evidence_is_allowed(
     entry = _entry(
         status="proposed",
         headers_implemented=False,
+        announced_on=None,
         evidence="engineering/architecture-v2/31-v1-release-plan-2026-11-09.md",
     )
     assert _check(tmp_path, deprecations, [entry], today=date(2026, 8, 1)) == []
@@ -452,7 +644,7 @@ def test_unexpected_selector_for_the_surface_fails(
     tmp_path: Path, deprecations: ModuleType
 ) -> None:
     """`contract_id | tool` is exclusive: an MCP entry carrying `contract_id` is a shape error."""
-    entry = _entry(surface="mcp", tool=_MCP_TOOL, server=_MCP_SERVER)
+    entry = _mcp_entry(contract_id=_REST_CONTRACT)
     failures = _check(tmp_path, deprecations, [entry])
     assert failures == ["unknown-field: dep.agents.read has contract_id"]
 
@@ -498,6 +690,7 @@ def _current_entry(days: int) -> dict[str, Any]:
     notice = datetime.now(UTC).date()
     return _entry(
         notice_date=notice.isoformat(),
+        announced_on=notice.isoformat(),
         sunset_date=(notice + timedelta(days=days)).isoformat(),
     )
 

@@ -50,8 +50,19 @@ schemas and the description are hashed, never the response bodies.
 
 A differing ``generator`` is a warning, not a failure: a Python, ``mcp``, or
 Pydantic bump changes the runtime identities without changing the contract.
-``--update`` replaces the record atomically and leaves it at mode 0644 like its
-neighbours, so a committed record is readable.
+
+``--update`` replaces the record atomically: a same-directory temporary file is
+fsynced and renamed over the record, so a failed write leaves the original in
+place and no temporary file behind. The mode is not forced — git records only the
+executable bit, so the temporary file's 0600 commits as the same 100644 record.
+
+``--path`` comes from a command line, so neither mode reads or writes it until it
+is confined: a path carrying a ``..`` segment is refused, the resolved path must
+stay inside the allow-root (the working directory unless ``--allow-root`` or
+``IBEX_MCP_DESCRIPTOR_ALLOW_ROOT`` names another tree), and an existing target
+must be a regular file. A refusal exits 2 and touches nothing. A *missing* record
+is not a refusal — it is the ``missing-descriptor`` failure below, whose message
+names the command that writes the record.
 
 Every tool is recorded with ``stability: "beta"``: this service's surface is
 provisional, and the record says so rather than implying stable support. That
@@ -91,8 +102,15 @@ from app.tools import build_registry
 DESCRIPTOR_SCHEMA: Final = "ibex.mcp-tool-descriptor.v1"
 DESCRIPTOR_PATH: Final = Path(__file__).resolve().parents[1] / "mcp_tools.json"
 GENERATOR_COMMAND: Final = "python -m app.descriptors --update"
+# Widens the tree a ``--path`` value may resolve under. Unset means the working
+# directory; the tests point it at their temporary directory.
+ALLOW_ROOT_ENV: Final = "IBEX_MCP_DESCRIPTOR_ALLOW_ROOT"
 STABILITY: Final = "beta"
 SCHEMA_FIELDS: Final = ("input", "output")
+
+
+class RefusedPath(Exception):
+    """A ``--path`` value failed confinement; ``main`` reports it and exits 2."""
 
 
 def generator() -> dict[str, str]:
@@ -124,9 +142,9 @@ def export() -> dict[str, Any]:
     }
 
 
-def check(path: Path = DESCRIPTOR_PATH) -> list[str]:
+def check(path: Path = DESCRIPTOR_PATH, allow_root: Path | None = None) -> list[str]:
     """Return every drift failure between the record and the surface; print warnings."""
-    record, failures = _load(path)
+    record, failures = _load(path, allow_root)
     if failures:
         return failures
     published = export()
@@ -135,11 +153,11 @@ def check(path: Path = DESCRIPTOR_PATH) -> list[str]:
     return row_failures + _drift_failures(rows, published["tools"])
 
 
-def update(path: Path = DESCRIPTOR_PATH) -> int:
+def update(path: Path = DESCRIPTOR_PATH, allow_root: Path | None = None) -> int:
     """Rewrite the record from the current surface, atomically; return the tool count."""
     record = export()
     _refuse_undeclared_versions(record["tools"])
-    _write_atomic(path, record)
+    _write_atomic(path, record, allow_root)
     return len(record["tools"])
 
 
@@ -151,11 +169,20 @@ def _refuse_undeclared_versions(tools: list[dict[str, Any]]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    try:
+        return _run(args)
+    except RefusedPath as refusal:
+        print(refusal, file=sys.stderr)
+        return 2
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Record or check the MCP tool descriptors this service publishes.",
         epilog=(
             "--check is the default and never writes. --update replaces the record "
-            "atomically and is the only writer."
+            "atomically and is the only writer. --path must stay inside --allow-root."
         ),
     )
     mode = parser.add_mutually_exclusive_group()
@@ -164,13 +191,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     mode.add_argument("--update", action="store_true", help="rewrite the record from the surface")
     parser.add_argument("--path", type=Path, default=DESCRIPTOR_PATH)
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--allow-root",
+        type=Path,
+        default=None,
+        help=(
+            "directory --path must stay inside (default: the working directory, or "
+            f"{ALLOW_ROOT_ENV} when set)"
+        ),
+    )
+    return parser.parse_args(argv)
 
+
+def _run(args: argparse.Namespace) -> int:
+    """Run one mode; a refused path has already left through ``main``."""
     if args.update:
-        print(f"recorded {update(args.path)} tool(s) in {args.path}")
+        written = update(args.path, args.allow_root)
+        print(f"recorded {written} tool(s) in {args.path}")
         return 0
-
-    failures = check(args.path)
+    failures = check(args.path, args.allow_root)
     for failure in failures:
         print(failure, file=sys.stderr)
     if failures:
@@ -192,6 +231,11 @@ def _build_server() -> FastMCP:
         _refuse_call,
         options=EnforcerOptions(policy=BitmapPolicyEvaluator(), audit=InMemoryAuditEmitter()),
     )
+    # pylint: disable=no-value-for-parameter,unexpected-keyword-arg
+    # False positive: both MCP services define a top-level `app.server` module, and a
+    # repo-root analysis resolves this import to the other service's wiring class
+    # (which takes `audit` and has no `enforcer`). This service's class takes
+    # exactly `enforcer` and `registry`; the call is correct and the tests exercise it.
     return build_mcp_server(McpServerWiring(enforcer=enforcer, registry=registry))
 
 
@@ -233,12 +277,46 @@ def _is_title(key: object, value: object) -> bool:
     return key == "title" and isinstance(value, str)
 
 
-def _load(path: Path) -> tuple[dict[str, Any], list[str]]:
+def _allow_root() -> Path:
+    """The tree a ``--path`` value may live under: the working directory by default."""
+    raw = os.environ.get(ALLOW_ROOT_ENV, "").strip()
+    return Path.cwd() if not raw else Path(raw).resolve()
+
+
+def _confine(path: Path, allow_root: Path | None) -> Path:
+    """Prove a caller-supplied record path stays inside the allow-root.
+
+    ``--path`` comes from a command line, so nothing is read or written until it
+    passes here: a ``..`` segment is refused outright (an escape that is also hard
+    to review), the resolved path must stay inside ``allow_root`` (the working
+    directory unless ``--allow-root`` or ``IBEX_MCP_DESCRIPTOR_ALLOW_ROOT`` widens
+    it), and a target that already exists must be a regular file, so a directory or
+    a device cannot be read or replaced. The resolved path is returned, so every
+    later read and write uses the checked value and a symlink cannot redirect it
+    after the check. A missing target is not refused: the caller holds the
+    ``missing-descriptor`` message, which names the command that writes it.
+    """
+    root = _allow_root() if allow_root is None else allow_root.resolve()
+    if ".." in path.parts:
+        raise RefusedPath(f"refusing {path}: it contains a '..' segment")
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root):
+        raise RefusedPath(
+            f"refusing {path}: it resolves outside {root}; pass --allow-root or set "
+            f"{ALLOW_ROOT_ENV}"
+        )
+    if resolved.exists() and not resolved.is_file():
+        raise RefusedPath(f"refusing {path}: it is not a regular file")
+    return resolved
+
+
+def _load(path: Path, allow_root: Path | None = None) -> tuple[dict[str, Any], list[str]]:
     """Read the record and validate the outer shape the comparison depends on."""
-    if not path.exists():
+    checked = _confine(path, allow_root)
+    if not checked.is_file():
         return {}, [f"missing-descriptor: {path} does not exist; run {GENERATOR_COMMAND}"]
     try:
-        record = json.loads(path.read_text(encoding="utf-8"))
+        record = json.loads(checked.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return {}, [f"unreadable-descriptor: {path}: {error}"]
     if not isinstance(record, dict):
@@ -420,18 +498,20 @@ def _short(digest: object) -> str:
     return str(digest)[:12]
 
 
-def _write_atomic(path: Path, record: dict[str, Any]) -> None:
+def _write_atomic(path: Path, record: dict[str, Any], allow_root: Path | None = None) -> None:
     """Replace the record atomically so an interrupted run cannot truncate it."""
+    target = _confine(path, allow_root)
     payload = json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    handle, temp_name = tempfile.mkstemp(
+        dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
+    )
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temp_name, path)
-        os.chmod(path, 0o644)
+        os.replace(temp_name, target)
     except BaseException:
         Path(temp_name).unlink(missing_ok=True)
         raise

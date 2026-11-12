@@ -12,13 +12,29 @@ state: nothing is deprecated, and an empty list proves nothing is. An entry is
 added only when a deprecation is real, so a phantom deprecation cannot be
 committed and a too-short window cannot be announced.
 
+An entry carries ``id``, ``surface``, ``stability``, ``notice_date``,
+``sunset_date``, ``status``, ``successor``, ``headers_implemented``,
+``evidence``, the surface's selector (``contract_id`` for ``rest``/``grpc``,
+``tool`` + ``server`` for ``mcp``), and the optional ``announced_on``.
+
+``notice_date`` is when the deprecation was planned; ``announced_on`` is when
+consumers were actually told. The support window is measured from
+``announced_on`` when it is recorded, otherwise from ``notice_date``, and an
+``announced`` entry must record it: measuring from an early ``notice_date`` would
+promise a window that the real announcement never gave the consumer.
+
 ``check`` fails, each with a one-line actionable message, on:
 
 - a ``sunset_date`` that is less than 180 days (``stable``) or 31 days (``beta``)
-  after ``notice_date``, or a date field that is present but not an exact
+  after the entry's announcement (``announced_on`` when recorded, otherwise
+  ``notice_date``), or a date field that is present but not an exact
   ``YYYY-MM-DD`` string (``null``, a number, and a list all fail: a value that
   cannot be parsed is not a window, and skipping the window would hide the
   defect);
+- ``status: announced`` without ``announced_on``, with an ``announced_on`` that
+  is not an exact ``YYYY-MM-DD`` string, or with one earlier than ``notice_date``;
+- ``announced_on`` present and non-null on a ``proposed`` or ``withdrawn`` entry,
+  which has not been announced;
 - a field whose schema type is wrong, not merely empty: a string field that is
   not a string, or a ``successor``/``evidence`` that is a blank string;
 - a ``rest`` entry whose ``contract_id`` has no row in
@@ -26,16 +42,28 @@ committed and a too-short window cannot be announced.
   disagrees with that row, or whose ``contract_id`` appears more than once in
   that registry (the loader is not allowed to resolve the contradiction by
   keeping the last row);
-- an ``mcp`` entry whose ``server`` is not ``operator`` or ``memory``, or whose
-  ``tool`` is absent from that server's committed ``mcp_tools.json``;
+- an ``mcp`` entry whose ``server`` is not ``operator`` or ``memory``, whose
+  ``tool`` is absent from that server's committed ``mcp_tools.json``, or whose
+  recorded ``stability`` disagrees with the tool's descriptor entry;
 - an empty or blank ``successor``, or a ``successor`` that names the contract
   itself;
-- ``status: announced`` with ``headers_implemented: false``, with an ``evidence``
-  path that is not a string, is blank, does not exist as a file inside the
-  repository, or with a ``sunset_date`` already in the past;
+- ``status: announced`` with an ``evidence`` path that is not a string, is
+  blank, does not exist as a file inside the repository, or with a
+  ``sunset_date`` already in the past;
+- ``headers_implemented: true`` on a ``grpc`` or ``mcp`` entry, and
+  ``status: announced`` on a ``rest`` entry with ``headers_implemented: false``;
 - an unknown ``surface``/``stability``/``status`` value, an unknown or missing
   field, a missing or malformed record schema, a duplicate ``id``, or entries
   that are not sorted by ``id``.
+
+The header rule is per surface because the wire affordance is per surface. A REST
+response can carry RFC 9745 ``Deprecation``, RFC 8594 ``Sunset``, and a
+``Link`` relation; gRPC methods and MCP tools define no standard deprecation
+header, so for them the committed record is the notice of record and
+``headers_implemented`` must be ``false``. The flag is a declaration, not a
+measurement: this check trusts it plus the ``evidence`` path and cannot prove
+that an emitter exists. No middleware or interceptor in ``services/`` writes
+those headers today.
 
 A ``grpc`` entry is validated structurally and against the window only. There is
 no committed gRPC method registry to cross-check yet: the REST registry declares
@@ -66,6 +94,7 @@ STATUSES: Final = frozenset({"proposed", "announced", "withdrawn"})
 MCP_SERVERS: Final = frozenset({"operator", "memory"})
 WINDOW_DAYS: Final = {"stable": 180, "beta": 31}
 
+_ANNOUNCED_FIELD: Final = "announced_on"
 _COMMON_FIELDS: Final = (
     "id",
     "surface",
@@ -77,6 +106,9 @@ _COMMON_FIELDS: Final = (
     "headers_implemented",
     "evidence",
 )
+# ``announced_on`` is optional: a proposal has not been announced. It is checked
+# by the announcement rule, not by presence.
+_OPTIONAL_FIELDS: Final = (_ANNOUNCED_FIELD,)
 _SELECTORS: Final = {
     "rest": ("contract_id",),
     "grpc": ("contract_id",),
@@ -85,10 +117,14 @@ _SELECTORS: Final = {
 _ALL_SELECTORS: Final = ("contract_id", "tool", "server")
 _DATE_FIELDS: Final = ("notice_date", "sunset_date")
 # Fields validated by a dedicated rule: the enum fields and the boolean have
-# their own messages, and the date fields have ``invalid-date``.
+# their own messages, the date fields have ``invalid-date``, and
+# ``announced_on`` has the announcement rule (which owns its empty value too).
 _DEDICATED_FIELDS: Final = frozenset(
-    {"surface", "stability", "status", "headers_implemented", *_DATE_FIELDS}
+    {"surface", "stability", "status", "headers_implemented", *_DATE_FIELDS, _ANNOUNCED_FIELD}
 )
+# Only ``rest`` can declare headers: the other two surfaces have no standard
+# deprecation header, so their record is the notice of record.
+_HEADER_SURFACES: Final = frozenset({"rest"})
 
 
 @dataclass(frozen=True)
@@ -112,7 +148,7 @@ class _CheckContext:
 
     rest: dict[str, str]
     rest_label: str
-    mcp: dict[str, frozenset[str]]
+    mcp: dict[str, dict[str, str]]
     mcp_paths: dict[str, Path]
     root: Path
     today: date
@@ -189,19 +225,20 @@ def load_rest_registry(path: Path) -> tuple[dict[str, str], list[str]]:
     return contracts, failures
 
 
-def _mcp_tool_names(path: Path, server: str) -> tuple[frozenset[str] | None, list[str]]:
+def _mcp_tool_stabilities(path: Path, server: str) -> tuple[dict[str, str] | None, list[str]]:
+    """Return ``tool name -> stability`` for one server's committed descriptor."""
     payload, failures = _load_mapping(path, f"mcp-{server}-tools")
     if failures:
         return None, failures
     tools = payload.get("tools")
     if not isinstance(tools, list):
         return None, [f'missing-field: {path} needs a "tools" array']
-    names = {
-        str(row["name"])
+    stabilities = {
+        str(row["name"]): str(row.get("stability"))
         for row in tools
         if isinstance(row, dict) and _non_empty_str(row.get("name"))
     }
-    return frozenset(names), []
+    return stabilities, []
 
 
 def mcp_server_path(paths: DeprecationPaths, server: str) -> Path:
@@ -210,18 +247,18 @@ def mcp_server_path(paths: DeprecationPaths, server: str) -> Path:
 
 def load_mcp_tools(
     paths: DeprecationPaths,
-) -> tuple[dict[str, frozenset[str]], dict[str, Path], list[str]]:
-    """Return the tools per named server, their paths, and any load failures."""
-    tools: dict[str, frozenset[str]] = {}
+) -> tuple[dict[str, dict[str, str]], dict[str, Path], list[str]]:
+    """Return the tools and their stabilities per server, their paths, and any load failures."""
+    tools: dict[str, dict[str, str]] = {}
     locations: dict[str, Path] = {}
     failures: list[str] = []
     for server in sorted(MCP_SERVERS):
         path = mcp_server_path(paths, server)
         locations[server] = path
-        names, server_failures = _mcp_tool_names(path, server)
+        stabilities, server_failures = _mcp_tool_stabilities(path, server)
         failures.extend(server_failures)
-        if names is not None:
-            tools[server] = names
+        if stabilities is not None:
+            tools[server] = stabilities
     return tools, locations, failures
 
 
@@ -229,8 +266,13 @@ def _entry_label(entry: dict[str, object], index: int) -> str:
     return str(entry["id"]) if _non_empty_str(entry.get("id")) else f"entries[{index}]"
 
 
-def _entry_fields(surface: object) -> tuple[str, ...]:
+def _required_fields(surface: object) -> tuple[str, ...]:
     return _COMMON_FIELDS + _SELECTORS.get(str(surface), _ALL_SELECTORS)
+
+
+def _entry_fields(surface: object) -> tuple[str, ...]:
+    """Every field the surface's schema declares, required and optional."""
+    return _required_fields(surface) + _OPTIONAL_FIELDS
 
 
 def _missing_fields(entry: dict[str, object], fields: tuple[str, ...]) -> list[str]:
@@ -259,16 +301,25 @@ def _mistyped_string_fields(entry: dict[str, object], fields: tuple[str, ...]) -
 
 
 def _empty_string_fields(entry: dict[str, object], fields: tuple[str, ...]) -> list[str]:
-    """The ``string`` fields present as the empty string."""
-    return [field for field in fields if isinstance(entry.get(field), str) and not entry[field]]
+    """The ``string`` fields present as the empty string.
+
+    ``announced_on`` is excluded: the announcement rule reports its empty value
+    as an invalid date, which is the actionable message for that field.
+    """
+    return [
+        field
+        for field in fields
+        if field != _ANNOUNCED_FIELD and isinstance(entry.get(field), str) and not entry[field]
+    ]
 
 
-def _field_failures(entry: dict[str, object], label: str, fields: tuple[str, ...]) -> list[str]:
+def _field_failures(entry: dict[str, object], label: str, surface: object) -> list[str]:
     """Every required field present, no field outside the surface's schema, none empty."""
+    allowed = _entry_fields(surface)
     failures: list[str] = []
-    missing = _missing_fields(entry, fields)
-    unknown = _unknown_fields(entry, fields)
-    empty = _empty_string_fields(entry, fields)
+    missing = _missing_fields(entry, _required_fields(surface))
+    unknown = _unknown_fields(entry, allowed)
+    empty = _empty_string_fields(entry, allowed)
     if missing:
         failures.append(f"missing-field: {label} lacks {', '.join(missing)}")
     if unknown:
@@ -277,7 +328,7 @@ def _field_failures(entry: dict[str, object], label: str, fields: tuple[str, ...
         failures.append(f"empty-field: {label} has empty {', '.join(empty)}")
     failures.extend(
         f"invalid-field: {label}.{field} must be a string, not {entry[field]!r}"
-        for field in _mistyped_string_fields(entry, fields)
+        for field in _mistyped_string_fields(entry, allowed)
     )
     return failures
 
@@ -335,34 +386,91 @@ def _date_failures(entry: dict[str, object], label: str) -> list[str]:
     return failures
 
 
-def _window_days(entry: dict[str, object]) -> tuple[str, date, date, int] | None:
-    """Return the class, notice, sunset, and window length, or ``None`` if unusable."""
+def _missing_announcement_failure(label: str) -> str:
+    return (
+        f"missing-announcement: {label} is announced but has no announced_on; record the date "
+        "consumers were told, because the window is measured from it"
+    )
+
+
+def _announced_on_failures(entry: dict[str, object], label: str) -> list[str]:
+    """An ``announced`` entry is dated; a proposal or withdrawal carries no date."""
+    value = entry.get(_ANNOUNCED_FIELD)
+    status = entry.get("status")
+    if status == "announced":
+        return _announcement_date_failures(entry, label, value)
+    if value is None or status not in {"proposed", "withdrawn"}:
+        return []
+    return [
+        (
+            f"unexpected-announcement: {label} is {status}, so {_ANNOUNCED_FIELD} must be absent "
+            f"or null, not {value!r}"
+        )
+    ]
+
+
+def _announcement_date_failures(entry: dict[str, object], label: str, value: object) -> list[str]:
+    """The date the entry was announced: required, real, and not before its notice."""
+    if value is None:
+        return [_missing_announcement_failure(label)]
+    announced = _parse_date(value)
+    if announced is None:
+        return [f"invalid-date: {label}.{_ANNOUNCED_FIELD} is {value!r}; expected YYYY-MM-DD"]
+    notice = _parse_date(entry.get("notice_date"))
+    if notice is not None and announced < notice:
+        return [
+            (
+                f"announcement-before-notice: {label} was announced on {announced.isoformat()} "
+                f"before its notice_date {notice.isoformat()}; the window cannot start before "
+                "the notice"
+            )
+        ]
+    return []
+
+
+def _window_anchor(entry: dict[str, object]) -> tuple[str, date] | None:
+    """The field and date the support window is measured from.
+
+    A recorded announcement wins over ``notice_date``: a plan dated months before
+    consumers were told would otherwise promise a window the announcement never
+    gave. Without an announcement, ``notice_date`` is the planned start.
+    """
+    for field in (_ANNOUNCED_FIELD, "notice_date"):
+        parsed = _parse_date(entry.get(field))
+        if parsed is not None:
+            return field, parsed
+    return None
+
+
+def _window_days(entry: dict[str, object]) -> tuple[str, str, date, date, int] | None:
+    """Return the class, anchor field, anchor date, sunset, and window length."""
     stability = entry.get("stability")
     if not isinstance(stability, str):
         return None
     if stability not in WINDOW_DAYS:
         return None
-    notice = _parse_date(entry.get("notice_date"))
-    if notice is None:
+    anchor = _window_anchor(entry)
+    if anchor is None:
         return None
     sunset = _parse_date(entry.get("sunset_date"))
     if sunset is None:
         return None
-    return str(stability), notice, sunset, (sunset - notice).days
+    field, start = anchor
+    return str(stability), field, start, sunset, (sunset - start).days
 
 
 def _window_failures(entry: dict[str, object], label: str) -> list[str]:
     window = _window_days(entry)
     if window is None:
         return []
-    stability, notice, sunset, actual = window
+    stability, anchor_field, anchor, sunset, actual = window
     minimum = WINDOW_DAYS[stability]
     if actual >= minimum:
         return []
     return [
         (
             f"window-too-short: {label} is {stability}, so sunset_date {sunset.isoformat()} must be "
-            f"at least {minimum} days after notice_date {notice.isoformat()}; this window is "
+            f"at least {minimum} days after {anchor_field} {anchor.isoformat()}; this window is "
             f"{actual} day(s)"
         )
     ]
@@ -416,17 +524,43 @@ def _evidence_failures(entry: dict[str, object], label: str, context: _CheckCont
     return [f"missing-evidence: {label} cites {evidence!r}, which {reason}"]
 
 
-def _status_failures(entry: dict[str, object], label: str, context: _CheckContext) -> list[str]:
-    """A deprecation may only be announced when it is implemented and still in window."""
+def _not_applicable_header_failure(label: str, surface: str) -> str:
+    return (
+        f"headers-not-applicable: {label} is {surface}, which has no standard deprecation "
+        "header, so headers_implemented must be false; the record is the notice of record"
+    )
+
+
+def _missing_header_failure(label: str) -> str:
+    return (
+        f"headers-not-implemented: {label} is announced, so headers_implemented must be true; "
+        "implement Deprecation and Sunset before announcing"
+    )
+
+
+def _header_failures(entry: dict[str, object], label: str) -> list[str]:
+    """``headers_implemented`` is a per-surface claim: only REST has such headers.
+
+    gRPC methods and MCP tools define no standard deprecation header, so an entry
+    for them declaring one is a false claim; and a REST entry cannot be announced
+    before its emitter ships. Both directions fail with the same clarity.
+    """
+    surface = entry.get("surface")
+    if not isinstance(surface, str):
+        return []
+    headers = entry.get("headers_implemented")
+    if surface not in _HEADER_SURFACES:
+        return [_not_applicable_header_failure(label, surface)] if headers is True else []
     if entry.get("status") != "announced":
         return []
-    failures: list[str] = []
-    if entry.get("headers_implemented") is not True:
-        failures.append(
-            f"headers-not-implemented: {label} is announced, so headers_implemented must be true; "
-            "implement Deprecation and Sunset before announcing"
-        )
-    failures.extend(_evidence_failures(entry, label, context))
+    return [] if headers is True else [_missing_header_failure(label)]
+
+
+def _status_failures(entry: dict[str, object], label: str, context: _CheckContext) -> list[str]:
+    """An announced deprecation must cite live evidence and still be in window."""
+    if entry.get("status") != "announced":
+        return []
+    failures = _evidence_failures(entry, label, context)
     sunset = _parse_date(entry.get("sunset_date"))
     if sunset is not None and sunset < context.today:
         failures.append(
@@ -466,21 +600,29 @@ def _unknown_server_failures(label: str, server: object) -> list[str]:
 
 def _mcp_failures(entry: dict[str, object], label: str, context: _CheckContext) -> list[str]:
     server = entry.get("server")
-    if not _non_empty_str(server):
-        return _unknown_server_failures(label, server)
-    if str(server) not in MCP_SERVERS:
+    if not _non_empty_str(server) or str(server) not in MCP_SERVERS:
         return _unknown_server_failures(label, server)
     tool = entry.get("tool")
     if not _non_empty_str(tool):
         return []
-    if str(tool) in context.mcp[str(server)]:
-        return []
-    return [
-        (
-            f"unknown-tool: {label} deprecates tool {tool!r}, which is absent from "
-            f"{_display_path(context.mcp_paths[str(server)])}"
-        )
-    ]
+    tools = context.mcp[str(server)]
+    stability = tools.get(str(tool))
+    if stability is None:
+        return [
+            (
+                f"unknown-tool: {label} deprecates tool {tool!r}, which is absent from "
+                f"{_display_path(context.mcp_paths[str(server)])}"
+            )
+        ]
+    if stability != entry.get("stability"):
+        return [
+            (
+                f"stability-mismatch: {label} records {entry.get('stability')!r} but "
+                f"{_display_path(context.mcp_paths[str(server)])} records {stability!r} for tool "
+                f"{tool!r}"
+            )
+        ]
+    return []
 
 
 def _registry_failures(entry: dict[str, object], label: str, context: _CheckContext) -> list[str]:
@@ -496,9 +638,11 @@ def _entry_failures(entry: object, index: int, context: _CheckContext) -> list[s
     if not isinstance(entry, dict):
         return [f"invalid-row: entries[{index}] is not a JSON object"]
     label = _entry_label(entry, index)
-    failures = _field_failures(entry, label, _entry_fields(entry.get("surface")))
+    failures = _field_failures(entry, label, entry.get("surface"))
     failures.extend(_enum_failures(entry, label))
     failures.extend(_date_failures(entry, label))
+    failures.extend(_announced_on_failures(entry, label))
+    failures.extend(_header_failures(entry, label))
     failures.extend(_window_failures(entry, label))
     failures.extend(_successor_failures(entry, label))
     failures.extend(_status_failures(entry, label, context))
