@@ -58,8 +58,9 @@ def _published_provenance(raw: dict) -> dict:
 
     A run measured against an older corpus is a real measurement, so it is published rather than
     refused -- but it must not be published *as* the corpus this checkout has. ``corpus_status``
-    is therefore recomputed here in both directions: ``current`` exactly when the recorded hash
-    is the corpus that is here *and* that corpus is committed and unmodified, ``stale``
+    is therefore recomputed here in both directions: ``current`` exactly when the recorded
+    identity -- hash *and* manifest -- is the corpus that is here *and* that corpus is committed
+    and unmodified, ``stale``
     otherwise. A local edit to the corpus files is enough to make the bytes this checkout would
     hash different from the committed ones, so a run on them is not history a reader can
     reproduce. That is the one rule a reader (or

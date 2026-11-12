@@ -32,6 +32,12 @@ REQUIRED_PROVENANCE_FIELDS: Final = (
 # *is* the corpus, so a recorded run that does not name it cannot be re-derived.
 GOLD_SET_PROVENANCE_FIELDS: Final = ("gold_set_hash", "gold_set_name")
 RANKING_PROVENANCE_FIELDS: Final = REQUIRED_PROVENANCE_FIELDS + GOLD_SET_PROVENANCE_FIELDS
+# The keys a record may carry *besides* the required ones. The schemas set
+# ``additionalProperties: false``, so this list is the whole of what may be written: a raw record
+# with any other key produces a published file the offline checker cannot validate. Each entry is
+# validated when it is present, because a value the schema rejects (``seed = "123"``) fails the
+# publication just as surely as an extra key does.
+OPTIONAL_PROVENANCE_FIELDS: Final = ("seed",)
 
 # The corpus a published ranking-quality run measures. The publisher restates the recorded
 # ``corpus_status`` against it, and ``check_reproducibility`` derives the same kind from the run's
@@ -54,6 +60,11 @@ def _is_hash(value: Any) -> bool:
     return isinstance(value, str) and _HASH_TEXT.fullmatch(value) is not None
 
 
+def _is_int(value: Any) -> bool:
+    # bool is an int, so `true` would otherwise pass as a seed of one.
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _is_bool(value: Any) -> bool:
     return isinstance(value, bool)
 
@@ -66,10 +77,12 @@ def _is_hash_algo(value: Any) -> bool:
     return value == provenance.HASH_ALGO
 
 
-# Required field -> (what it must hold, how to say it). One row per field, so a refusal names the
-# field and the expectation instead of only reporting that something was wrong, and a zero, a
-# typo or a quoted boolean -- each of which would publish an unreproducible claim -- is refused by
-# the same pass. ``status`` is not here: it has its own message in ``_require_recorded_status``.
+# Field -> (what it must hold, how to say it). One row per field, so a refusal names the field and
+# the expectation instead of only reporting that something was wrong, and a zero, a typo or a
+# quoted boolean -- each of which would publish an unreproducible claim -- is refused by the same
+# pass. Optional fields are here too: they are checked when a record carries them, because the
+# schema's type rules apply to an optional field as soon as it is written. ``status`` is not here:
+# it has its own message in ``_require_recorded_status``.
 _TEXT_EXPECTATION: Final = "a non-empty string"
 
 _FIELD_RULES: Final[dict[str, tuple[Any, str]]] = {
@@ -84,7 +97,18 @@ _FIELD_RULES: Final[dict[str, tuple[Any, str]]] = {
     "dirty": (_is_bool, "a boolean"),
     "gold_set_hash": (_is_hash, "64 lowercase hex characters"),
     "gold_set_name": (_is_text, "a non-empty string"),
+    "seed": (_is_int, "an integer"),
 }
+
+
+def permitted_provenance_fields(fields: tuple[str, ...]) -> frozenset[str]:
+    """Every provenance key a published block may carry, given the schema's requirements.
+
+    The schemas close the object with ``additionalProperties: false``, so this set *is* the
+    contract: a key outside it makes the published file invalid, and an optional key inside it is
+    allowed but type-checked.
+    """
+    return frozenset(fields) | frozenset(OPTIONAL_PROVENANCE_FIELDS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,13 +138,37 @@ def _missing_fields(record: Mapping[str, Any], fields: tuple[str, ...]) -> list[
     return [field for field in fields if record.get(field) is None]
 
 
+def _checked_fields(record: Mapping[str, Any], fields: tuple[str, ...]) -> tuple[str, ...]:
+    """The fields to validate: every required one, plus any optional one the record carries."""
+    return fields + tuple(name for name in OPTIONAL_PROVENANCE_FIELDS if name in record)
+
+
 def _invalid_fields(record: Mapping[str, Any], fields: tuple[str, ...]) -> list[str]:
-    """The required fields ``record`` fills with a value that cannot be true for it."""
+    """The checked fields ``record`` fills with a value that cannot be true for it."""
     return [
-        f"{field} must be {expectation}"
-        for field, (is_valid, expectation) in _FIELD_RULES.items()
-        if field in fields and not is_valid(record.get(field))
+        f"{field} must be {_FIELD_RULES[field][1]}"
+        for field in _checked_fields(record, fields)
+        if field in _FIELD_RULES and not _FIELD_RULES[field][0](record.get(field))
     ]
+
+
+def _require_declared_keys(
+    record: Mapping[str, Any], *, artifact: str, fields: tuple[str, ...]
+) -> None:
+    """Refuse a block carrying a key the published schema does not declare.
+
+    The publisher copies the raw block, and the offline checker validates the result against a
+    schema that allows only the keys ``permitted_provenance_fields`` names. An undeclared key is
+    therefore accepted here and rejected there, which is the one outcome a fail-closed publisher
+    must not produce.
+    """
+    undeclared = sorted(set(record) - permitted_provenance_fields(fields))
+    if undeclared:
+        raise RuntimeError(
+            f"{artifact} provenance has undeclared field(s) {', '.join(undeclared)}; the"
+            " published schema rejects a key it does not declare, so drop the field or declare"
+            " it in benchmarks/data-schema/ before publishing"
+        )
 
 
 def _require_complete(
@@ -148,15 +196,29 @@ def _require_valid_values(
         raise RuntimeError(f"{artifact} provenance is invalid ({'; '.join(invalid)}); {rerun}")
 
 
-def _require_recorded_status(
-    record: Mapping[str, Any], *, artifact: str, rerun: str
-) -> None:
+def _require_recorded_status(record: Mapping[str, Any], *, artifact: str, rerun: str) -> None:
     """Refuse a complete block whose status says the number cannot be reproduced."""
     status = record.get("status")
     if status != "recorded":
         raise RuntimeError(
             f"{artifact} provenance.status is {status!r}, expected 'recorded'; "
             f"a published number must be reproducible; {rerun}"
+        )
+
+
+def _require_clean_tree(record: Mapping[str, Any], *, artifact: str) -> None:
+    """Refuse a run measured on a modified tree.
+
+    ``dirty`` is written by the one fail-closed implementation, so ``true`` means the code that
+    produced the number may not be the code the ``sha`` names. No reader can check that run out and
+    get the number back, and the offline checker refuses the same flag, so publishing it would
+    write a claim the project's own gate rejects. The fix is a clean checkout, never a rewrite of
+    the flag: a ``"clean"`` tree that was not clean is a worse claim than an honest refusal.
+    """
+    if record.get("dirty") is True:
+        raise RuntimeError(
+            f"{artifact} provenance.dirty is true; a run measured on a modified tree cannot be"
+            " reproduced from its commit; re-run the bench on a clean checkout"
         )
 
 
@@ -171,15 +233,35 @@ def require_recorded_provenance(
 
     The schemas keep the block optional so artifacts written before it existed stay valid; that
     is a compatibility promise to old files, not permission to write a new one without it. A
-    published number nobody can reproduce is not evidence, so a missing, partial or impossible
-    block stops the publish and names the command that fixes it. ``fields`` is the schema's
-    recorded requirements for the artifact being published.
+    published number nobody can reproduce is not evidence, so a missing, partial, impossible or
+    unprovable block stops the publish and names the command that fixes it. ``fields`` is the
+    schema's recorded requirements for the artifact being published, and it also fixes the
+    permitted key set: a key the schema would reject is refused here instead of being written into
+    a file the offline checker cannot validate.
     """
     record = _recorded_provenance_block(document, artifact=artifact, rerun=rerun)
+    _require_declared_keys(record, artifact=artifact, fields=fields)
     _require_complete(record, artifact=artifact, rerun=rerun, fields=fields)
     _require_valid_values(record, artifact=artifact, rerun=rerun, fields=fields)
     _require_recorded_status(record, artifact=artifact, rerun=rerun)
+    _require_clean_tree(record, artifact=artifact)
     return dict(record)
+
+
+def _declares_current_corpus(record: Mapping[str, Any], *, kind: str) -> bool:
+    """Whether every identity field ``record`` states is the checked-out ``kind`` corpus.
+
+    The identity is the whole of it. ``corpus_manifest`` states what ``corpus_hash`` covers, so a
+    matching digest under another manifest describes other bytes, and ``gold_set_hash`` names the
+    same corpus a second time on the ranking benchmark, so it cannot disagree with it.
+    """
+    corpus_hash, manifest = provenance.corpus_identity(kind)
+    if record.get("corpus_hash") != corpus_hash:
+        return False
+    if record.get("corpus_manifest") != manifest:
+        return False
+    gold_set_hash = record.get("gold_set_hash")
+    return gold_set_hash is None or gold_set_hash == corpus_hash
 
 
 def restated_corpus_status(record: Mapping[str, Any], *, kind: str) -> str:
@@ -187,11 +269,15 @@ def restated_corpus_status(record: Mapping[str, Any], *, kind: str) -> str:
 
     A run measured against an older corpus is a real measurement, so it is published rather than
     refused -- but it must not be published *as* the corpus this checkout has. ``"current"``
-    therefore means exactly "the recorded hash is the corpus here, and that corpus is committed
-    and unmodified", which is the one rule a reader can re-derive without trusting the run.
+    therefore means exactly "the complete recorded identity is the corpus here, and that corpus is
+    committed and unmodified", which is the one rule a reader can re-derive without trusting the
+    run.
+
+    The comparison covers the complete identity, not the hash alone: the offline checker compares
+    ``corpus_hash``, ``corpus_manifest`` and ``gold_set_hash``, so a publisher that restated
+    ``"current"`` from the hash would write a claim its own checker refuses.
     """
-    current_hash, _ = provenance.corpus_identity(kind)
-    if record.get("corpus_hash") != current_hash:
+    if not _declares_current_corpus(record, kind=kind):
         return "stale"
     return provenance.corpus_status(kind)
 
@@ -245,9 +331,7 @@ class MergeRunRequest:
 
 
 def merge_run(request: MergeRunRequest) -> dict[str, Any]:
-    published = load_or_init_published(
-        request.published_path, benchmark=request.benchmark
-    )
+    published = load_or_init_published(request.published_path, benchmark=request.benchmark)
     runs = [r for r in published.get("runs", []) if r.get("sha") != request.sha]
     runs.insert(0, request.entry)
     published["schema_version"] = 1
