@@ -1,0 +1,628 @@
+{
+  "schema": "ibex.contract-registry.v1",
+  "routes": [
+    {
+      "key": "DELETE /v1/agents/{agent_id}",
+      "contract_id": "management.agents.delete.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/agents.py"
+    },
+    {
+      "key": "DELETE /v1/organizations/{org_id}",
+      "contract_id": "management.organizations.delete.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/organizations.py"
+    },
+    {
+      "key": "DELETE /v1/organizations/{org_id}/capture-policies/{policy_id}",
+      "contract_id": "management.capture-policies.delete.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/capture_policies.py"
+    },
+    {
+      "key": "DELETE /v1/organizations/{org_id}/model-policies/{policy_id}",
+      "contract_id": "management.model-policies.delete.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/model_policies.py"
+    },
+    {
+      "key": "DELETE /v1/organizations/{org_id}/providers/{provider_name}",
+      "contract_id": "management.providers.delete.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/providers.py"
+    },
+    {
+      "key": "DELETE /v1/tokens/{token_id}",
+      "contract_id": "management.tokens.delete.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/tokens.py"
+    },
+    {
+      "key": "DELETE /v1/users/{user_id}",
+      "contract_id": "management.users.delete.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/users.py"
+    },
+    {
+      "key": "GET /docs",
+      "contract_id": "platform.docs.read.v1",
+      "owner": "api",
+      "stability": "internal",
+      "status": "shipped",
+      "evidence": "services/api/app/main.py"
+    },
+    {
+      "key": "GET /docs/oauth2-redirect",
+      "contract_id": "platform.docs-oauth2-redirect.read.v1",
+      "owner": "api",
+      "stability": "internal",
+      "status": "shipped",
+      "evidence": "services/api/app/main.py"
+    },
+    {
+      "key": "GET /health",
+      "contract_id": "platform.health.read.v1",
+      "owner": "api",
+      "stability": "internal",
+      "status": "shipped",
+      "evidence": "services/api/app/probes.py"
+    },
+    {
+      "key": "GET /metrics",
+      "contract_id": "platform.metrics.read.v1",
+      "owner": "api",
+      "stability": "internal",
+      "status": "shipped",
+      "evidence": "services/api/app/probes.py"
+    },
+    {
+      "key": "GET /openapi.json",
+      "contract_id": "platform.openapi.json.read.v1",
+      "owner": "api",
+      "stability": "internal",
+      "status": "shipped",
+      "evidence": "services/api/app/main.py"
+    },
+    {
+      "key": "GET /ready",
+      "contract_id": "platform.ready.read.v1",
+      "owner": "api",
+      "stability": "internal",
+      "status": "shipped",
+      "evidence": "services/api/app/probes.py"
+    },
+    {
+      "key": "GET /redoc",
+      "contract_id": "platform.redoc.read.v1",
+      "owner": "api",
+      "stability": "internal",
+      "status": "shipped",
+      "evidence": "services/api/app/main.py"
+    },
+    {
+      "key": "GET /v1/agents",
+      "contract_id": "management.agents.read.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/agents.py"
+    },
+    {
+      "key": "GET /v1/agents/{agent_id}",
+      "contract_id": "management.agents.get.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/agents.py"
+    },
+    {
+      "key": "GET /v1/operator/agents",
+      "contract_id": "operator.agents.read.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_agents.py"
+    },
+    {
+      "key": "GET /v1/operator/agents/{agent_id}",
+      "contract_id": "operator.agents.get.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_agents.py"
+    },
+    {
+      "key": "GET /v1/operator/context",
+      "contract_id": "operator.context.read.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_overview.py"
+    },
+    {
+      "key": "GET /v1/operator/directives",
+      "contract_id": "operator.directives.read.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_directives.py"
+    },
+    {
+      "key": "GET /v1/operator/directives/{directive_id}",
+      "contract_id": "operator.directives.get.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_directives.py"
+    },
+    {
+      "key": "GET /v1/operator/events/stream",
+      "contract_id": "operator.events.stream.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_events.py"
+    },
+    {
+      "key": "GET /v1/operator/evidence/deletions",
+      "contract_id": "operator.evidence-deletions.read.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_evidence_deletions.py"
+    },
+    {
+      "key": "GET /v1/operator/evidence/summary",
+      "contract_id": "operator.evidence.summary.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_evidence.py"
+    },
+    {
+      "key": "GET /v1/operator/memories",
+      "contract_id": "operator.memories.read.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_memories.py"
+    },
+    {
+      "key": "GET /v1/operator/memories/{memory_id}",
+      "contract_id": "operator.memories.get.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_memories.py"
+    },
+    {
+      "key": "GET /v1/operator/overview",
+      "contract_id": "operator.overview.read.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_overview.py"
+    },
+    {
+      "key": "GET /v1/operator/platform/health",
+      "contract_id": "operator.platform.health.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/platform.py"
+    },
+    {
+      "key": "GET /v1/operator/session/me",
+      "contract_id": "operator.session.me.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/session.py"
+    },
+    {
+      "key": "GET /v1/operator/sessions",
+      "contract_id": "operator.sessions.read.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_sessions.py"
+    },
+    {
+      "key": "GET /v1/operator/sessions/{session_id}",
+      "contract_id": "operator.sessions.get.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_sessions.py"
+    },
+    {
+      "key": "GET /v1/operator/traces",
+      "contract_id": "operator.traces.read.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_traces.py"
+    },
+    {
+      "key": "GET /v1/operator/traces/runs/{run_id}",
+      "contract_id": "operator.traces-runs.get.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_traces.py"
+    },
+    {
+      "key": "GET /v1/operator/traces/{trace_id}",
+      "contract_id": "operator.traces.get.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/operator_traces.py"
+    },
+    {
+      "key": "GET /v1/organizations/{org_id}",
+      "contract_id": "management.organizations.get.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/organizations.py"
+    },
+    {
+      "key": "GET /v1/organizations/{org_id}/budget-periods",
+      "contract_id": "management.budget-periods.read.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/billing.py"
+    },
+    {
+      "key": "GET /v1/organizations/{org_id}/capture-policies",
+      "contract_id": "management.capture-policies.read.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/capture_policies.py"
+    },
+    {
+      "key": "GET /v1/organizations/{org_id}/capture-policies/resolved",
+      "contract_id": "management.capture-policies.resolved.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/capture_policies.py"
+    },
+    {
+      "key": "GET /v1/organizations/{org_id}/deletion-jobs/{job_id}",
+      "contract_id": "management.deletion-jobs.get.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/organizations.py"
+    },
+    {
+      "key": "GET /v1/organizations/{org_id}/legal-holds",
+      "contract_id": "management.legal-holds.read.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/legal_holds.py"
+    },
+    {
+      "key": "GET /v1/organizations/{org_id}/model-policies",
+      "contract_id": "management.model-policies.read.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/model_policies.py"
+    },
+    {
+      "key": "GET /v1/organizations/{org_id}/model-policies/{policy_id}",
+      "contract_id": "management.model-policies.get.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/model_policies.py"
+    },
+    {
+      "key": "GET /v1/organizations/{org_id}/providers",
+      "contract_id": "management.providers.read.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/providers.py"
+    },
+    {
+      "key": "GET /v1/organizations/{org_id}/rate-cards",
+      "contract_id": "management.rate-cards.read.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/billing.py"
+    },
+    {
+      "key": "GET /v1/organizations/{org_id}/rate-limits",
+      "contract_id": "management.rate-limits.read.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/rate_limits.py"
+    },
+    {
+      "key": "GET /v1/tenant/ping",
+      "contract_id": "management.tenant.ping.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/tenant.py"
+    },
+    {
+      "key": "GET /v1/tokens",
+      "contract_id": "management.tokens.read.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/tokens.py"
+    },
+    {
+      "key": "GET /v1/tokens/{token_id}",
+      "contract_id": "management.tokens.get.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/tokens.py"
+    },
+    {
+      "key": "GET /v1/users",
+      "contract_id": "management.users.read.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/users.py"
+    },
+    {
+      "key": "GET /v1/users/{user_id}",
+      "contract_id": "management.users.get.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/users.py"
+    },
+    {
+      "key": "PATCH /v1/agents/{agent_id}",
+      "contract_id": "management.agents.update.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/agents.py"
+    },
+    {
+      "key": "PATCH /v1/organizations/{org_id}",
+      "contract_id": "management.organizations.update.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/organizations.py"
+    },
+    {
+      "key": "PATCH /v1/organizations/{org_id}/capture-policies/{policy_id}",
+      "contract_id": "management.capture-policies.update.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/capture_policies.py"
+    },
+    {
+      "key": "PATCH /v1/organizations/{org_id}/model-policies/{policy_id}",
+      "contract_id": "management.model-policies.update.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/model_policies.py"
+    },
+    {
+      "key": "PATCH /v1/organizations/{org_id}/rate-limits",
+      "contract_id": "management.rate-limits.update.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/rate_limits.py"
+    },
+    {
+      "key": "PATCH /v1/users/{user_id}",
+      "contract_id": "management.users.update.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/users.py"
+    },
+    {
+      "key": "POST /v1/agents",
+      "contract_id": "management.agents.create.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/agents.py"
+    },
+    {
+      "key": "POST /v1/agents/{agent_id}/activate",
+      "contract_id": "management.agents.activate.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/agents.py"
+    },
+    {
+      "key": "POST /v1/agents/{agent_id}/archive",
+      "contract_id": "management.agents.archive.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/agents.py"
+    },
+    {
+      "key": "POST /v1/agents/{agent_id}/pause",
+      "contract_id": "management.agents.pause.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/agents.py"
+    },
+    {
+      "key": "POST /v1/operator/session/login",
+      "contract_id": "operator.session.login.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/session.py"
+    },
+    {
+      "key": "POST /v1/operator/session/logout",
+      "contract_id": "operator.session.logout.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/session.py"
+    },
+    {
+      "key": "POST /v1/operator/session/refresh",
+      "contract_id": "operator.session.refresh.v1",
+      "owner": "api",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/session.py"
+    },
+    {
+      "key": "POST /v1/organizations/{org_id}/budget-periods",
+      "contract_id": "management.budget-periods.create.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/billing.py"
+    },
+    {
+      "key": "POST /v1/organizations/{org_id}/capture-policies",
+      "contract_id": "management.capture-policies.create.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/capture_policies.py"
+    },
+    {
+      "key": "POST /v1/organizations/{org_id}/legal-holds",
+      "contract_id": "management.legal-holds.create.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/legal_holds.py"
+    },
+    {
+      "key": "POST /v1/organizations/{org_id}/legal-holds/{hold_id}/clear",
+      "contract_id": "management.legal-holds.clear.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/legal_holds.py"
+    },
+    {
+      "key": "POST /v1/organizations/{org_id}/model-policies",
+      "contract_id": "management.model-policies.create.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/model_policies.py"
+    },
+    {
+      "key": "POST /v1/organizations/{org_id}/providers",
+      "contract_id": "management.providers.create.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/providers.py"
+    },
+    {
+      "key": "POST /v1/organizations/{org_id}/rate-cards",
+      "contract_id": "management.rate-cards.create.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/billing.py"
+    },
+    {
+      "key": "POST /v1/organizations/{org_id}/rate-cards/{card_id}/versions",
+      "contract_id": "management.rate-cards.versions.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/billing.py"
+    },
+    {
+      "key": "POST /v1/organizations/{org_id}/suspend",
+      "contract_id": "management.organizations.suspend.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/organizations.py"
+    },
+    {
+      "key": "POST /v1/organizations/{org_id}/usage/query",
+      "contract_id": "management.usage.query.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/usage_query.py"
+    },
+    {
+      "key": "POST /v1/tokens",
+      "contract_id": "management.tokens.create.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/tokens.py"
+    },
+    {
+      "key": "POST /v1/users",
+      "contract_id": "management.users.create.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/users.py"
+    }
+  ],
+  "out_of_scope": {
+    "grpc": {
+      "reason": "gRPC request/response shapes are frozen by buf-breaking (W5.1) and tracked under P0-12; this registry only asserts that every protobuf service is accounted for, not its message shapes.",
+      "tracked_by": "P0-12",
+      "registered_services": [
+        {
+          "service": "ibex.auth.v1.AuthService",
+          "contract_id": "principal-context.v1",
+          "owner": "auth"
+        },
+        {
+          "service": "ibex.context.v1.ContextAssemblyService",
+          "contract_id": "principal-context.v1",
+          "owner": "context"
+        }
+      ],
+      "declared_out": []
+    },
+    "mcp_tools": {
+      "reason": "MCP tool schemas are versioned descriptors; the descriptor diff and its deprecation record are the gate (W5.5), not the REST route inventory.",
+      "tracked_by": "W5.5"
+    }
+  }
+}

@@ -25,6 +25,88 @@
 | Tests and evidence link | Yes |
 | Deprecation/support window | Public contracts |
 
+## REST route registry (W5.3)
+
+Every route mounted by `services/api` has exactly one row in [`contracts/rest-route-registry.json`](contracts/rest-route-registry.json), and every row's contract ID is derived mechanically as `<surface>.<resource>.<action>.v1`: `surface` is `management` for `/v1`, `operator` for `/v1/operator`, or `platform` for unversioned operational routes; `resource` is the remaining static path segments after the path scope (for example `organizations` in `/v1/organizations/{org_id}/...`), joined with `-`; `action` is the trailing verb (`login`, `activate`, `health`, ...) or the method map `read`/`get`/`create`/`update`/`replace`/`delete`. `stability` is the compatibility class, not an acceptance claim: `stable` on `/v1` management routes, `beta` for the operator surface that `engineering/API_DOCUMENTATION.md` records as mounted-but-provisional, and `internal` for operational routes; `status: shipped` means the route is mounted in this tree, while acceptance stays with the status ledger. The registry carries ownership and compatibility class only; authentication and permission data stay in `services/api/app/route_policy_data.py`. To register a route, add one row with its owner, stability, status, and evidence, then run `cd services/api && .venv/bin/python scripts/check_contract_registry.py`. `--write` deliberately cannot fill that in: it scaffolds missing keys with `owner: UNASSIGNED`, the conservative `stability: internal`, `status: unregistered`, and the router file as evidence, and the check fails on the sentinel owner and on any evidence path that does not exist, so a human must set the owner, review the stability, record the status, and point the evidence at a real file. The check fails on an unregistered mounted route, a stale row, a duplicate key or contract ID, an unknown enum, a contract ID that does not match the derivation or is missing from this document, and a protobuf service that is neither registered in `out_of_scope.grpc.registered_services` nor listed in `out_of_scope.grpc.declared_out`.
+
+| Contract ID | Mounted route | Stability |
+|---|---|---|
+| `management.agents.delete.v1` | `DELETE /v1/agents/{agent_id}` | stable |
+| `management.organizations.delete.v1` | `DELETE /v1/organizations/{org_id}` | stable |
+| `management.capture-policies.delete.v1` | `DELETE /v1/organizations/{org_id}/capture-policies/{policy_id}` | stable |
+| `management.model-policies.delete.v1` | `DELETE /v1/organizations/{org_id}/model-policies/{policy_id}` | stable |
+| `management.providers.delete.v1` | `DELETE /v1/organizations/{org_id}/providers/{provider_name}` | stable |
+| `management.tokens.delete.v1` | `DELETE /v1/tokens/{token_id}` | stable |
+| `management.users.delete.v1` | `DELETE /v1/users/{user_id}` | stable |
+| `platform.docs.read.v1` | `GET /docs` | internal |
+| `platform.docs-oauth2-redirect.read.v1` | `GET /docs/oauth2-redirect` | internal |
+| `platform.health.read.v1` | `GET /health` | internal |
+| `platform.metrics.read.v1` | `GET /metrics` | internal |
+| `platform.openapi.json.read.v1` | `GET /openapi.json` | internal |
+| `platform.ready.read.v1` | `GET /ready` | internal |
+| `platform.redoc.read.v1` | `GET /redoc` | internal |
+| `management.agents.read.v1` | `GET /v1/agents` | stable |
+| `management.agents.get.v1` | `GET /v1/agents/{agent_id}` | stable |
+| `operator.agents.read.v1` | `GET /v1/operator/agents` | beta |
+| `operator.agents.get.v1` | `GET /v1/operator/agents/{agent_id}` | beta |
+| `operator.context.read.v1` | `GET /v1/operator/context` | beta |
+| `operator.directives.read.v1` | `GET /v1/operator/directives` | beta |
+| `operator.directives.get.v1` | `GET /v1/operator/directives/{directive_id}` | beta |
+| `operator.events.stream.v1` | `GET /v1/operator/events/stream` | beta |
+| `operator.evidence-deletions.read.v1` | `GET /v1/operator/evidence/deletions` | beta |
+| `operator.evidence.summary.v1` | `GET /v1/operator/evidence/summary` | beta |
+| `operator.memories.read.v1` | `GET /v1/operator/memories` | beta |
+| `operator.memories.get.v1` | `GET /v1/operator/memories/{memory_id}` | beta |
+| `operator.overview.read.v1` | `GET /v1/operator/overview` | beta |
+| `operator.platform.health.v1` | `GET /v1/operator/platform/health` | beta |
+| `operator.session.me.v1` | `GET /v1/operator/session/me` | beta |
+| `operator.sessions.read.v1` | `GET /v1/operator/sessions` | beta |
+| `operator.sessions.get.v1` | `GET /v1/operator/sessions/{session_id}` | beta |
+| `operator.traces.read.v1` | `GET /v1/operator/traces` | beta |
+| `operator.traces-runs.get.v1` | `GET /v1/operator/traces/runs/{run_id}` | beta |
+| `operator.traces.get.v1` | `GET /v1/operator/traces/{trace_id}` | beta |
+| `management.organizations.get.v1` | `GET /v1/organizations/{org_id}` | stable |
+| `management.budget-periods.read.v1` | `GET /v1/organizations/{org_id}/budget-periods` | stable |
+| `management.capture-policies.read.v1` | `GET /v1/organizations/{org_id}/capture-policies` | stable |
+| `management.capture-policies.resolved.v1` | `GET /v1/organizations/{org_id}/capture-policies/resolved` | stable |
+| `management.deletion-jobs.get.v1` | `GET /v1/organizations/{org_id}/deletion-jobs/{job_id}` | stable |
+| `management.legal-holds.read.v1` | `GET /v1/organizations/{org_id}/legal-holds` | stable |
+| `management.model-policies.read.v1` | `GET /v1/organizations/{org_id}/model-policies` | stable |
+| `management.model-policies.get.v1` | `GET /v1/organizations/{org_id}/model-policies/{policy_id}` | stable |
+| `management.providers.read.v1` | `GET /v1/organizations/{org_id}/providers` | stable |
+| `management.rate-cards.read.v1` | `GET /v1/organizations/{org_id}/rate-cards` | stable |
+| `management.rate-limits.read.v1` | `GET /v1/organizations/{org_id}/rate-limits` | stable |
+| `management.tenant.ping.v1` | `GET /v1/tenant/ping` | stable |
+| `management.tokens.read.v1` | `GET /v1/tokens` | stable |
+| `management.tokens.get.v1` | `GET /v1/tokens/{token_id}` | stable |
+| `management.users.read.v1` | `GET /v1/users` | stable |
+| `management.users.get.v1` | `GET /v1/users/{user_id}` | stable |
+| `management.agents.update.v1` | `PATCH /v1/agents/{agent_id}` | stable |
+| `management.organizations.update.v1` | `PATCH /v1/organizations/{org_id}` | stable |
+| `management.capture-policies.update.v1` | `PATCH /v1/organizations/{org_id}/capture-policies/{policy_id}` | stable |
+| `management.model-policies.update.v1` | `PATCH /v1/organizations/{org_id}/model-policies/{policy_id}` | stable |
+| `management.rate-limits.update.v1` | `PATCH /v1/organizations/{org_id}/rate-limits` | stable |
+| `management.users.update.v1` | `PATCH /v1/users/{user_id}` | stable |
+| `management.agents.create.v1` | `POST /v1/agents` | stable |
+| `management.agents.activate.v1` | `POST /v1/agents/{agent_id}/activate` | stable |
+| `management.agents.archive.v1` | `POST /v1/agents/{agent_id}/archive` | stable |
+| `management.agents.pause.v1` | `POST /v1/agents/{agent_id}/pause` | stable |
+| `operator.session.login.v1` | `POST /v1/operator/session/login` | beta |
+| `operator.session.logout.v1` | `POST /v1/operator/session/logout` | beta |
+| `operator.session.refresh.v1` | `POST /v1/operator/session/refresh` | beta |
+| `management.budget-periods.create.v1` | `POST /v1/organizations/{org_id}/budget-periods` | stable |
+| `management.capture-policies.create.v1` | `POST /v1/organizations/{org_id}/capture-policies` | stable |
+| `management.legal-holds.create.v1` | `POST /v1/organizations/{org_id}/legal-holds` | stable |
+| `management.legal-holds.clear.v1` | `POST /v1/organizations/{org_id}/legal-holds/{hold_id}/clear` | stable |
+| `management.model-policies.create.v1` | `POST /v1/organizations/{org_id}/model-policies` | stable |
+| `management.providers.create.v1` | `POST /v1/organizations/{org_id}/providers` | stable |
+| `management.rate-cards.create.v1` | `POST /v1/organizations/{org_id}/rate-cards` | stable |
+| `management.rate-cards.versions.v1` | `POST /v1/organizations/{org_id}/rate-cards/{card_id}/versions` | stable |
+| `management.organizations.suspend.v1` | `POST /v1/organizations/{org_id}/suspend` | stable |
+| `management.usage.query.v1` | `POST /v1/organizations/{org_id}/usage/query` | stable |
+| `management.tokens.create.v1` | `POST /v1/tokens` | stable |
+| `management.users.create.v1` | `POST /v1/users` | stable |
+
 ## Accepted G0 contract-shape registrations
 
 The following registrations are the accepted contract-shape packet for the principal, replay, evidence, and relay foundation. Acceptance freezes the contract text and safety semantics only. Runtime seams remain `provisional`; no new runtime authority boundary, hosted/HA certification, or G1-G4 exit is implied.
