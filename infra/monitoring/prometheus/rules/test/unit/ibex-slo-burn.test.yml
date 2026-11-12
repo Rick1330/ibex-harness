@@ -1,0 +1,322 @@
+# promtool unit tests for the real proxy-overhead SLO rules (W6.3).
+#
+#   promtool test rules infra/monitoring/prometheus/rules/test/unit/ibex-slo-burn.test.yml
+#
+# Location matters: these files sit in rules/test/unit/, not rules/test/, because
+# infra/scripts/alert-delivery-test.sh renders every rules/test/*.yml as a probe
+# rule file (nonce-tagged, loaded by Prometheus). A promtool unit test is not a
+# rule file: Prometheus would refuse to load it, and its `severity:` lines would
+# be counted as probes by the nonce injection.
+#
+# Driven by infra/scripts/slo-rules-check.sh (and therefore by `make
+# repo-guards`). This is the check that makes "one synthetic burn fires" a
+# measured fact rather than a review promise: the shipped rule file
+# ../ibex-slo.yml is evaluated against synthetic histogram series, with no
+# proxy, no traffic, and no Prometheus server.
+#
+# The synthetic histogram carries the le= labels Prometheus actually stores, not
+# the Go literals from packages/metrics/buckets.go: client_golang renders each
+# bound with strconv.FormatFloat(bound, 'g', -1, 64), so the 0.020 Go literal
+# appears as le="0.02", 0.010 as le="0.01", and 1.000 as le="1". Feeding the
+# literal here would test a series that does not exist in production and would
+# pass against a rule that can never match real data — the defect this file used
+# to encode. The series below are the full rendered ProxyEnforcementBuckets set,
+# advancing 100 observations a minute; only the share over 20 ms differs between
+# the tests, which is the single variable the burn maths depends on.
+#
+# promtool compares annotations exactly, so the exp_annotations strings below are
+# byte-equal copies of the rule annotations. Editing an annotation in
+# ../ibex-slo.yml without editing it here fails this test, which is the intended
+# behaviour: the operator-facing text is part of the alert contract.
+#
+# Six outcomes are asserted, and the negative ones matter as much as the
+# positive one: a gate that can only fire is not a detector.
+#   1. 50% over budget for 8h  -> fast and slow burns both fire;
+#   2.  1% over budget for 8h  -> nothing fires (burn rate 1x spends the budget
+#                                 evenly; alerting on it would page forever);
+#   3.  0% for 54m then 100% for 6m -> the 1h window stays under 14.4x, so the
+#      fast burn must NOT fire; the short window alone cannot page;
+#   4. traffic recorded but no overhead series -> the absence alert fires;
+#   5. no traffic and no overhead series -> the absence alert stays silent (an
+#      idle stack is not an instrumentation gap);
+#   6. 30 of 60 observations over 20 ms on the rendered le="0.02" label -> the
+#      bad share is 0.5 and the burn rate is 50x; this is the real-data
+#      reproduction, and it reports got:[] rather than a value if the selector
+#      is quoted as the Go literal.
+rule_files:
+  - ../../ibex-slo.yml
+
+evaluation_interval: 1m
+
+tests:
+  # --- 1. Sustained 50% over budget: both burn alerts fire ------------------
+  # bad share = 1 - 50/100 = 0.5 ⇒ burn rate 50x, above 14.4x and 6x.
+  - name: sustained-over-budget-fires-fast-and-slow-burn
+    interval: 1m
+    input_series:
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.001"}'
+        values: '0+0x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.0025"}'
+        values: '0+0x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.005"}'
+        values: '0+0x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.01"}'
+        values: '0+0x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.02"}'
+        values: '0+50x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.05"}'
+        values: '0+70x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.1"}'
+        values: '0+90x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.25"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.5"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="1"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="2.5"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="5"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="10"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_count'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_sum'
+        values: '0+1.5x480'
+    alert_rule_test:
+      - eval_time: 8h
+        alertname: IbexProxyOverheadFastBurn
+        exp_alerts:
+          - exp_annotations:
+              summary: "Proxy overhead burn rate is 14.4x the 99% / 20 ms error budget"
+              description: "More than 14.4% of proxy requests exceeded the 20 ms enforcement-overhead budget over both the last hour and the last five minutes, which spends about 2% of a 30-day error budget per hour. This SLI excludes provider time and post-header stream time, so the provider is not the cause. Current burn rate: ibex:sli_proxy_overhead:burn_rate_1h."
+              runbook: "engineering/runbooks/RUNBOOKS.md section 2 (Proxy high p99 overhead)"
+            exp_labels:
+              severity: page
+              service: proxy
+              slo: proxy_overhead_p99_20ms
+      - eval_time: 8h
+        alertname: IbexProxyOverheadSlowBurn
+        exp_alerts:
+          - exp_annotations:
+              summary: "Proxy overhead burn rate is 6x the 99% / 20 ms error budget (slow burn)"
+              description: "More than 6% of proxy requests exceeded the 20 ms enforcement-overhead budget over both the last six hours and the last thirty minutes, which spends about 5% of a 30-day error budget per six hours. No single window is dramatic, so this is queued rather than paged. Current burn rate: ibex:sli_proxy_overhead:burn_rate_6h."
+              runbook: "engineering/runbooks/RUNBOOKS.md section 2 (Proxy high p99 overhead)"
+            exp_labels:
+              severity: ticket
+              service: proxy
+              slo: proxy_overhead_p99_20ms
+      - eval_time: 8h
+        alertname: IbexProxyOverheadSLIAbsent
+        exp_alerts: []
+
+  # --- 2. Sustained 1% over budget: the SLO is being met, nothing fires -----
+  # bad share = 1 - 99/100 = 0.01 ⇒ burn rate 1x. Alerting here would make the
+  # budget itself an incident.
+  - name: on-budget-does-not-burn
+    interval: 1m
+    input_series:
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.001"}'
+        values: '0+0x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.0025"}'
+        values: '0+0x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.005"}'
+        values: '0+0x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.01"}'
+        values: '0+0x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.02"}'
+        values: '0+99x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.05"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.1"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.25"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.5"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="1"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="2.5"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="5"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="10"}'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_count'
+        values: '0+100x480'
+      - series: 'ibex_proxy_overhead_seconds_sum'
+        values: '0+0.5x480'
+    alert_rule_test:
+      - eval_time: 8h
+        alertname: IbexProxyOverheadFastBurn
+        exp_alerts: []
+      - eval_time: 8h
+        alertname: IbexProxyOverheadSlowBurn
+        exp_alerts: []
+      - eval_time: 8h
+        alertname: IbexProxyOverheadSLIAbsent
+        exp_alerts: []
+
+  # --- 3. A recovering burn must not page -----------------------------------
+  # 54m at a 50% bad share (burn 50x), then 6m at 0%. At t=1h the 1h window still
+  # reads ~45x, but the 5m window is clean, so the fast burn must NOT fire: the
+  # incident is over and a page now would be noise. This is the case that proves
+  # the short window is a guard rather than a decoration — drop
+  # `burn_rate_5m > 14.4` from the alert and this test fails.
+  - name: recovering-burn-does-not-page
+    interval: 1m
+    input_series:
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.001"}'
+        values: '0+0x60'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.0025"}'
+        values: '0+0x60'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.005"}'
+        values: '0+0x60'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.01"}'
+        values: '0+0x60'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.02"}'
+        values: '0+50x54 2700+100x6'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.05"}'
+        values: '0+70x54 3780+100x6'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.1"}'
+        values: '0+90x54 4860+100x6'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.25"}'
+        values: '0+100x60'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.5"}'
+        values: '0+100x60'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="1"}'
+        values: '0+100x60'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="2.5"}'
+        values: '0+100x60'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="5"}'
+        values: '0+100x60'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="10"}'
+        values: '0+100x60'
+      - series: 'ibex_proxy_overhead_seconds_count'
+        values: '0+100x60'
+      - series: 'ibex_proxy_overhead_seconds_sum'
+        values: '0+1.5x60'
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: IbexProxyOverheadFastBurn
+        exp_alerts: []
+
+  # --- 4. Traffic without the SLI is the one failure burn alerts cannot report -
+  # Requests are served and recorded in ibex_proxy_requests_total, but the
+  # overhead histogram has no series at all. Both burn alerts are inert (no
+  # data), and silence would otherwise look like health, so the absence alert
+  # must fire. This is the instrumentation regression — a build that stops
+  # observing ibex_proxy_overhead_seconds, or a scrape that drops it.
+  - name: missing-sli-with-traffic-fires-absence-alert
+    interval: 1m
+    input_series:
+      - series: 'ibex_proxy_requests_total{status="200"}'
+        values: '0+10x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: IbexProxyOverheadSLIAbsent
+        exp_alerts:
+          - exp_annotations:
+              summary: "Proxy overhead SLI is missing while the proxy is serving requests"
+              description: 'The proxy is completing requests but ibex_proxy_overhead_seconds_count has had no series for 15m, so both burn alerts above are silently inert. Check that the proxy scrapes (up{job="proxy"}), that the build exports ibex_proxy_overhead_seconds, and that 0.02 is still the rendered label of the 20 ms bucket in the family wired to that histogram (the Go literal is 0.020; Prometheus stores the formatted float).'
+              runbook: "infra/monitoring/prometheus/rules/ibex-slo.yml (header: SLI metric and bucket precondition)"
+            exp_labels:
+              severity: ticket
+              service: proxy
+              slo: proxy_overhead_p99_20ms
+      - eval_time: 30m
+        alertname: IbexProxyOverheadFastBurn
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: IbexProxyOverheadSlowBurn
+        exp_alerts: []
+
+  # --- 5. An idle stack is not an instrumentation gap -----------------------
+  # No overhead series and no traffic: the absence alert must stay silent, or
+  # every quiet local stack would carry a permanent ticket that means nothing.
+  # Drop the traffic term from the alert expression and this test fails.
+  - name: idle-stack-does-not-claim-a-missing-sli
+    interval: 1m
+    input_series:
+      - series: 'ibex_proxy_requests_total{status="200"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: IbexProxyOverheadSLIAbsent
+        exp_alerts: []
+
+  # --- 6. The real-data reproduction: rendered label, measured burn rate ----
+  # This block is the regression case the QA found. It feeds the histogram with
+  # the label Prometheus stores (le="0.02", not the 0.020 Go literal) and asserts
+  # the *number* the burn maths produces, not just the alert: 30 of 60
+  # observations over 20 ms is a 0.5 bad share, and 0.5 / 0.01 is a 50x burn.
+  # A selector quoting the Go literal yields an empty vector here — the alert
+  # never fires and this assertion reports got:[] rather than a value.
+  - name: rendered-label-produces-a-50x-burn-rate
+    interval: 1m
+    input_series:
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.001"}'
+        values: '0+0x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.0025"}'
+        values: '0+0x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.005"}'
+        values: '0+0x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.01"}'
+        values: '0+0x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.02"}'
+        values: '0+30x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.05"}'
+        values: '0+40x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.1"}'
+        values: '0+50x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.25"}'
+        values: '0+60x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="0.5"}'
+        values: '0+60x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="1"}'
+        values: '0+60x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="2.5"}'
+        values: '0+60x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="5"}'
+        values: '0+60x480'
+      - series: 'ibex_proxy_overhead_seconds_bucket{le="10"}'
+        values: '0+60x480'
+      - series: 'ibex_proxy_overhead_seconds_count'
+        values: '0+60x480'
+      - series: 'ibex_proxy_overhead_seconds_sum'
+        values: '0+0.9x480'
+    promql_expr_test:
+      - expr: ibex:sli_proxy_overhead:bad_ratio_5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ibex:sli_proxy_overhead:bad_ratio_5m'
+            value: 0.5
+      - expr: ibex:sli_proxy_overhead:burn_rate_5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ibex:sli_proxy_overhead:burn_rate_5m'
+            value: 50
+    alert_rule_test:
+      - eval_time: 8h
+        alertname: IbexProxyOverheadFastBurn
+        exp_alerts:
+          - exp_annotations:
+              summary: "Proxy overhead burn rate is 14.4x the 99% / 20 ms error budget"
+              description: "More than 14.4% of proxy requests exceeded the 20 ms enforcement-overhead budget over both the last hour and the last five minutes, which spends about 2% of a 30-day error budget per hour. This SLI excludes provider time and post-header stream time, so the provider is not the cause. Current burn rate: ibex:sli_proxy_overhead:burn_rate_1h."
+              runbook: "engineering/runbooks/RUNBOOKS.md section 2 (Proxy high p99 overhead)"
+            exp_labels:
+              severity: page
+              service: proxy
+              slo: proxy_overhead_p99_20ms
+      - eval_time: 8h
+        alertname: IbexProxyOverheadSlowBurn
+        exp_alerts:
+          - exp_annotations:
+              summary: "Proxy overhead burn rate is 6x the 99% / 20 ms error budget (slow burn)"
+              description: "More than 6% of proxy requests exceeded the 20 ms enforcement-overhead budget over both the last six hours and the last thirty minutes, which spends about 5% of a 30-day error budget per six hours. No single window is dramatic, so this is queued rather than paged. Current burn rate: ibex:sli_proxy_overhead:burn_rate_6h."
+              runbook: "engineering/runbooks/RUNBOOKS.md section 2 (Proxy high p99 overhead)"
+            exp_labels:
+              severity: ticket
+              service: proxy
+              slo: proxy_overhead_p99_20ms

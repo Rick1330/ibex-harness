@@ -1,0 +1,36 @@
+# promtool unit test for the constant SLO burn probe (W6.3).
+#
+#   promtool test rules infra/monitoring/prometheus/rules/test/unit/ibex-slo-burn-probe.test.yml
+#
+# Asserts the probe evaluates to a firing alert on its first evaluation, with
+# no input series that carry any meaning. This is the "a synthetic burn fires
+# without traffic" half of the W6.3 acceptance; ../ibex-slo-burn.test.yml is the
+# half that proves the shipped detectors react to a synthetic histogram.
+#
+# Kept out of rules/test/ for the same reason as its sibling: every
+# rules/test/*.yml is rendered as a nonce-tagged probe by
+# infra/scripts/alert-delivery-test.sh, and a unit test is not a rule file.
+rule_files:
+  - ../ibex-slo-burn-probe.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: constant-burn-probe-fires-on-first-evaluation
+    interval: 1m
+    input_series:
+      # Irrelevant to the probe: nothing the probe reads is derived from storage.
+      - series: 'probe_placeholder'
+        values: '1x2'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: IbexSloBurnProbe
+        exp_alerts:
+          - exp_annotations:
+              summary: "Synthetic SLO burn probe: constant 50x burn rate"
+              description: "Always firing. Proves an SLO burn alert evaluates, fires, and reaches the page receiver without any proxy traffic. It makes no claim about the real overhead SLI."
+              runbook: "infra/monitoring/prometheus/rules/test/ibex-slo-burn-probe.yml (header)"
+            exp_labels:
+              severity: page
+              service: slo-burn-probe
+              slo: proxy_overhead_p99_20ms

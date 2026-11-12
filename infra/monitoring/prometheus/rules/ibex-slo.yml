@@ -1,0 +1,213 @@
+# IBEX proxy enforcement-overhead SLO — recording rules and multi-window burn alerts (W6.3).
+#
+# Objective (ratified, single source of truth):
+#   engineering/architecture-v2/05-request-lifecycle-and-slos.md §Timing policy
+#   p99 ≤ 20 ms of proxy enforcement overhead, for the warm mock-provider
+#   local/protected profile, context assembly disabled. It excludes provider
+#   time, post-header stream time, cold caches, and hosted/reference performance.
+# That document is the only place the number is allowed to change; this file
+# encodes it and does not originate it.
+#
+# SLI metric: ibex_proxy_overhead_seconds (Go histogram, seconds), observed once
+# per completed non-streaming request in packages/metrics/registry_proxy_overhead.go.
+# The SLO therefore covers that population; streaming requests are not observed
+# and are not represented here — a coverage limit, not a claim.
+#
+# The bad-share expressions below need 20 ms to be a bucket boundary, so they
+# select the 20 ms bucket directly. The histogram is wired to
+# ProxyEnforcementBuckets (packages/metrics/buckets.go), whose Go literal is
+# 0.020 — but the label Prometheus stores is the *rendered* form of that float,
+# le="0.02", because client_golang formats the bound with
+# strconv.FormatFloat(bound, 'g', -1, 64). The two strings are not
+# interchangeable: a selector quoting the Go literal matches no series at all,
+# every ratio below becomes an empty vector, both burn alerts go silent, and
+# IbexProxyOverheadSLIAbsent stays quiet too because _count still exists. The
+# p99 recording rules keep working, so the dashboards look healthy while nothing
+# pages — the reason this file states the rendered label and not the literal.
+#
+# infra/scripts/slo-rules-check.sh renders the family's bounds exactly as the
+# client does (and cross-checks that rendering against the real client encoder),
+# then asserts every le= selector in this file exists in that rendered set, so
+# the mismatch is caught at build time instead of at 03:00.
+#
+# Deliberately NOT alerted here: the context-assembly p95 ≤50 ms / p99 ≤100 ms
+# values and the memory-retrieval targets. engineering/architecture-v2/
+# 05-request-lifecycle-and-slos.md classifies them as targets pending a
+# workload-qualified measurement, and the context RPC 40 ms value as an internal
+# client deadline. Encoding an unratified number as a burn alert would invent an
+# SLO and page an operator over a threshold nobody agreed to. The proxy now also
+# records ibex_proxy_context_assemble_seconds (target p95 ≤50 ms, unratified),
+# so the metric exists for a dashboard; it gets a rule when the number is
+# ratified, not before.
+#
+# Burn maths
+# ----------
+# Objective 99% ⇒ the error budget is the 1% of requests allowed over 20 ms.
+#   burn rate = (share of requests over 20 ms) / 0.01
+# A burn rate of 1 spends the budget evenly over the SLO window; a rate of N
+# spends it N times faster. The multipliers are the standard multi-window ones
+# for a 99% objective, not tuning knobs:
+#   14.4x over 1h burns 2% of the budget in one hour (1h × 14.4 / 720h = 2%).
+#    6x   over 6h burns 5% of the budget in six hours (6h × 6 / 720h = 5%).
+# Both windows of a pair must breach before the alert fires, so a single scrape
+# spike, a deploy window, or a short burst cannot page on its own: the long
+# window proves the burn is sustained, the short window proves it is still
+# happening and the alert resolves promptly when it stops.
+#
+# Cost: the histogram is unlabelled (one series per bucket, 13 buckets), so the
+# widest window below — 6h — scans 2160 samples per bucket at a 10s scrape, per
+# evaluation. That is a deliberate trade: the long window is what makes a slow
+# burn visible, and an unlabelled histogram keeps it cheap.
+#
+# Every alert here carries a routing `severity` label (`page`/`ticket`, checked
+# by infra/scripts/check-alert-routing.py) and a `summary` + `runbook` annotation
+# (checked by infra/scripts/slo-rules-check.sh).
+
+groups:
+  - name: ibex.slo.proxy_overhead
+    rules:
+      # --- The SLI, as published for dashboards and API queries --------------
+      # p99 by histogram_quantile over the aggregated bucket set: the single
+      # number the ratified objective names, over a short and a long window.
+      - record: ibex:proxy_overhead_seconds:p99_5m
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(ibex_proxy_overhead_seconds_bucket[5m]))
+          )
+
+      - record: ibex:proxy_overhead_seconds:p99_1h
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(ibex_proxy_overhead_seconds_bucket[1h]))
+          )
+
+      # --- Bad-event share at the 20 ms boundary -----------------------------
+      # Requests over 20 ms = total count - observations in the 20 ms bucket,
+      # selected as le="0.02" (the rendered form of the 0.020 Go literal).
+      # clamp_min keeps a scrape gap (count rate 0) from producing NaN:
+      # a zero-traffic window reports a 0 share, never a division artefact.
+      - record: ibex:sli_proxy_overhead:bad_ratio_5m
+        expr: |
+          (
+            sum(rate(ibex_proxy_overhead_seconds_count[5m]))
+            - sum(rate(ibex_proxy_overhead_seconds_bucket{le="0.02"}[5m]))
+          )
+          / clamp_min(sum(rate(ibex_proxy_overhead_seconds_count[5m])), 1e-9)
+
+      - record: ibex:sli_proxy_overhead:bad_ratio_1h
+        expr: |
+          (
+            sum(rate(ibex_proxy_overhead_seconds_count[1h]))
+            - sum(rate(ibex_proxy_overhead_seconds_bucket{le="0.02"}[1h]))
+          )
+          / clamp_min(sum(rate(ibex_proxy_overhead_seconds_count[1h])), 1e-9)
+
+      - record: ibex:sli_proxy_overhead:bad_ratio_30m
+        expr: |
+          (
+            sum(rate(ibex_proxy_overhead_seconds_count[30m]))
+            - sum(rate(ibex_proxy_overhead_seconds_bucket{le="0.02"}[30m]))
+          )
+          / clamp_min(sum(rate(ibex_proxy_overhead_seconds_count[30m])), 1e-9)
+
+      - record: ibex:sli_proxy_overhead:bad_ratio_6h
+        expr: |
+          (
+            sum(rate(ibex_proxy_overhead_seconds_count[6h]))
+            - sum(rate(ibex_proxy_overhead_seconds_bucket{le="0.02"}[6h]))
+          )
+          / clamp_min(sum(rate(ibex_proxy_overhead_seconds_count[6h])), 1e-9)
+
+      # --- Burn rate for each window (bad share / 1% budget) -----------------
+      # Recorded so the alert expressions read as the comparison they are, and
+      # so an operator can graph the same quantity the alert evaluates.
+      - record: ibex:sli_proxy_overhead:burn_rate_5m
+        expr: ibex:sli_proxy_overhead:bad_ratio_5m / 0.01
+
+      - record: ibex:sli_proxy_overhead:burn_rate_1h
+        expr: ibex:sli_proxy_overhead:bad_ratio_1h / 0.01
+
+      - record: ibex:sli_proxy_overhead:burn_rate_30m
+        expr: ibex:sli_proxy_overhead:bad_ratio_30m / 0.01
+
+      - record: ibex:sli_proxy_overhead:burn_rate_6h
+        expr: ibex:sli_proxy_overhead:bad_ratio_6h / 0.01
+
+      # --- Burn alerts -------------------------------------------------------
+      # Fast burn: 14.4x on both the 1h and the 5m window. Roughly 2% of the
+      # budget per hour, which is a deploy-scale regression, so it pages.
+      - alert: IbexProxyOverheadFastBurn
+        expr: |
+          ibex:sli_proxy_overhead:burn_rate_1h > 14.4
+          and
+          ibex:sli_proxy_overhead:burn_rate_5m > 14.4
+        for: 2m
+        labels:
+          severity: page
+          service: proxy
+          slo: proxy_overhead_p99_20ms
+        annotations:
+          summary: "Proxy overhead burn rate is 14.4x the 99% / 20 ms error budget"
+          description: >-
+            More than 14.4% of proxy requests exceeded the 20 ms enforcement-overhead
+            budget over both the last hour and the last five minutes, which spends
+            about 2% of a 30-day error budget per hour. This SLI excludes provider
+            time and post-header stream time, so the provider is not the cause.
+            Current burn rate: ibex:sli_proxy_overhead:burn_rate_1h.
+          runbook: "engineering/runbooks/RUNBOOKS.md section 2 (Proxy high p99 overhead)"
+
+      # Slow burn: 6x on both the 6h and the 30m window. Roughly 5% of the
+      # budget per six hours — a regression that will exhaust the budget within
+      # days but has no single bad minute, so it is queued, not paged.
+      - alert: IbexProxyOverheadSlowBurn
+        expr: |
+          ibex:sli_proxy_overhead:burn_rate_6h > 6
+          and
+          ibex:sli_proxy_overhead:burn_rate_30m > 6
+        for: 15m
+        labels:
+          severity: ticket
+          service: proxy
+          slo: proxy_overhead_p99_20ms
+        annotations:
+          summary: "Proxy overhead burn rate is 6x the 99% / 20 ms error budget (slow burn)"
+          description: >-
+            More than 6% of proxy requests exceeded the 20 ms enforcement-overhead
+            budget over both the last six hours and the last thirty minutes, which
+            spends about 5% of a 30-day error budget per six hours. No single window
+            is dramatic, so this is queued rather than paged. Current burn rate:
+            ibex:sli_proxy_overhead:burn_rate_6h.
+          runbook: "engineering/runbooks/RUNBOOKS.md section 2 (Proxy high p99 overhead)"
+
+      # The alert above every burn alert: an SLI that is not being recorded
+      # cannot burn, so silence here is indistinguishable from health.
+      #
+      # It requires traffic as well as absence. Without the second term an idle
+      # stack would raise a permanent ticket ("the SLO is unmonitored") that says
+      # nothing, and a proxy that is simply not running is already covered by
+      # IbexProxyDown. With it, the alert means exactly one thing: requests are
+      # being served and the overhead histogram is not recording them, which is
+      # the instrumentation regression that would otherwise hide the SLO for
+      # weeks. Ticket severity: the fix is instrumentation, not incident response.
+      - alert: IbexProxyOverheadSLIAbsent
+        expr: |
+          absent(ibex_proxy_overhead_seconds_count)
+          and
+          (sum(rate(ibex_proxy_requests_total[10m])) > 0)
+        for: 15m
+        labels:
+          severity: ticket
+          service: proxy
+          slo: proxy_overhead_p99_20ms
+        annotations:
+          summary: "Proxy overhead SLI is missing while the proxy is serving requests"
+          description: >-
+            The proxy is completing requests but ibex_proxy_overhead_seconds_count
+            has had no series for 15m, so both burn alerts above are silently
+            inert. Check that the proxy scrapes (up{job="proxy"}), that the build
+            exports ibex_proxy_overhead_seconds, and that 0.02 is still the rendered
+            label of the 20 ms bucket in the family wired to that histogram (the Go
+            literal is 0.020; Prometheus stores the formatted float).
+          runbook: "infra/monitoring/prometheus/rules/ibex-slo.yml (header: SLI metric and bucket precondition)"
