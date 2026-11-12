@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -47,12 +48,13 @@ def _artifact(**scores: float) -> dict[str, Any]:
     }
 
 
-def _baseline(**scores: float) -> dict[str, Any]:
+def _baseline(*, distinguished: bool = False, **scores: float) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "benchmark": "ranking_quality",
         "gold_set": GOLD_SET,
         "reranker": RERANKER,
+        "graph_mode_distinguished": distinguished,
         "baseline": {name: scores.get(name, 0.80) for name in MODES},
     }
 
@@ -124,6 +126,7 @@ class TestLoadBaseline:
         baseline = gate_cli.load_baseline(_write(tmp_path, "b.json", _baseline()))
 
         assert baseline.scores == dict.fromkeys(MODES, 0.80)
+        assert baseline.graph_mode_distinguished is False
 
     def test_a_baseline_without_scores_is_rejected(self, tmp_path: Path) -> None:
         document = _baseline()
@@ -132,6 +135,27 @@ class TestLoadBaseline:
         with pytest.raises(
             gate_cli.GateInputError, match="no baseline to compare against"
         ):
+            gate_cli.load_baseline(_write(tmp_path, "b.json", document))
+
+    def test_a_baseline_without_the_distinction_declaration_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        # Silence cannot be defaulted: the gate would then assert the corpus limitation on the
+        # baseline's behalf instead of checking what it claims.
+        document = _baseline()
+        del document["graph_mode_distinguished"]
+
+        with pytest.raises(gate_cli.GateInputError, match="graph_mode_distinguished"):
+            gate_cli.load_baseline(_write(tmp_path, "b.json", document))
+
+    def test_a_distinction_declared_as_a_string_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        # "false" is truthy, so reading it would flip the declaration without anyone noticing.
+        document = _baseline()
+        document["graph_mode_distinguished"] = "false"
+
+        with pytest.raises(gate_cli.GateInputError, match="as a boolean"):
             gate_cli.load_baseline(_write(tmp_path, "b.json", document))
 
 
@@ -249,42 +273,150 @@ class TestMain:
         artifact["modes"]["hybrid_rerank"] = _mode_row(0.90, non_graph=0.90)
         artifact["modes"]["full_graph"] = _mode_row(0.90, non_graph=0.87)
 
-        code, report = self._run(tmp_path, artifact, _baseline(), monkeypatch)
+        code, report = self._run(
+            tmp_path, artifact, _baseline(distinguished=True), monkeypatch
+        )
 
         assert code == 1
         assert any(failure["check"] == "graph gap" for failure in report["failures"])
 
 
+def _declaration_failure(report: dict[str, Any]) -> dict[str, str]:
+    """The one declaration failure in a report; a second would mean the gate double-reported."""
+    matches = [f for f in report["failures"] if f["check"] == "declaration"]
+    assert len(matches) == 1, report["failures"]
+    return matches[0]
+
+
+@dataclass(frozen=True, slots=True)
+class GateRun:
+    """One gate invocation's pytest fixtures, so the helper takes a single argument.
+
+    The three fixtures travel together in every case in this class; passing them one by one made
+    the helper's signature longer than the call was informative.
+    """
+
+    tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch
+    capsys: pytest.CaptureFixture[str]
+
+    def __call__(
+        self, artifact: dict[str, Any], baseline: dict[str, Any]
+    ) -> tuple[int, dict[str, Any], str]:
+        code, report = TestMain()._run(self.tmp_path, artifact, baseline, self.monkeypatch)
+        return code, report, self.capsys.readouterr().out
+
+
 class TestGraphComparisonFlag:
-    def test_identical_modes_are_reported_as_not_distinguished(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    """The baseline declares whether the corpus can separate the two modes; the run must agree.
+
+    Two equal rows are not evidence that suppression helps. Before this check existed the report
+    carried ``graph_mode_distinguished: false`` next to a passing gate, so a reader had to notice
+    the equality and work out what it meant, and a baseline that declared the wrong thing was
+    never contradicted by the run it governed.
+    """
+
+    def test_a_declared_equality_the_run_confirms_passes(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        # Two equal rows are not evidence that suppression helps; the report says so instead of
-        # leaving a reader to notice the equality and guess.
-        code, report = TestMain()._run(tmp_path, _artifact(), _baseline(), monkeypatch)
+        run = GateRun(tmp_path, monkeypatch, capsys)
+
+        code, report, output = run(_artifact(), _baseline())
 
         assert code == 0
         assert report["graph_mode_distinguished"] is False
+        # The limitation is stated, not left for the reader to infer from two equal rows.
+        assert (
+            "full_graph equals hybrid_rerank: this corpus cannot distinguish suppression "
+            "from reranking" in output
+        )
+
+    def test_a_declared_equality_the_corpus_contradicts_fails_as_stale(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # full_graph moved, so the corpus now separates the modes: the committed baseline is
+        # describing a corpus that no longer exists.
+        artifact = _artifact()
+        artifact["modes"]["full_graph"] = _mode_row(0.85, non_graph=0.80)
+        run = GateRun(tmp_path, monkeypatch, capsys)
+
+        code, report, output = run(artifact, _baseline())
+
+        assert code == 1
+        assert [f["check"] for f in report["failures"]] == ["declaration"]
+        detail = _declaration_failure(report)["detail"]
+        assert "graph_mode_distinguished=False" in detail
+        assert "computed True" in detail
+        # The run disproved the equality, so the note must not restate it.
+        assert "this corpus cannot distinguish" not in output
+
+    def test_a_declared_distinction_the_run_does_not_show_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # The baseline claims the modes were separated; this run measured them identical.
+        run = GateRun(tmp_path, monkeypatch, capsys)
+
+        code, report, _output = run(_artifact(), _baseline(distinguished=True))
+
+        assert code == 1
+        assert [f["check"] for f in report["failures"]] == ["declaration"]
+        detail = _declaration_failure(report)["detail"]
+        assert "graph_mode_distinguished=True" in detail
+        assert "computed False" in detail
 
     def test_a_subject_mode_that_moves_is_reported_as_distinguished(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         artifact = _artifact()
         artifact["modes"]["full_graph"] = _mode_row(0.85, non_graph=0.80)
+        run = GateRun(tmp_path, monkeypatch, capsys)
 
-        _code, report = TestMain()._run(tmp_path, artifact, _baseline(), monkeypatch)
+        code, report, output = run(artifact, _baseline(distinguished=True))
 
+        assert code == 0
         assert report["graph_mode_distinguished"] is True
+        assert "this corpus cannot distinguish" not in output
 
     def test_a_missing_reference_mode_leaves_the_question_unanswered(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         artifact = _artifact()
         del artifact["modes"]["hybrid_rerank"]
+        run = GateRun(tmp_path, monkeypatch, capsys)
 
-        _code, report = TestMain()._run(tmp_path, artifact, _baseline(), monkeypatch)
+        code, report, _output = run(artifact, _baseline())
 
         assert report["graph_mode_distinguished"] is None
+        # The comparison never ran, so coverage fails it and the declaration is not contradicted.
+        assert code == 1
+        assert not [f for f in report["failures"] if f["check"] == "declaration"]
+
+    def test_a_baseline_without_the_declaration_is_refused_as_an_input(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        baseline = _baseline()
+        del baseline["graph_mode_distinguished"]
+
+        code, report = TestMain()._run(tmp_path, _artifact(), baseline, monkeypatch)
+
+        assert code == 2
+        assert report["failures"][0]["check"] == "input"
+        assert "graph_mode_distinguished" in report["failures"][0]["detail"]
 
 
 class TestCommittedBaseline:
@@ -301,6 +433,16 @@ class TestCommittedBaseline:
         baseline = gate_cli.load_baseline(gate_cli.BASELINE_PATH)
 
         assert baseline.reranker == RERANKER
+
+    def test_the_baseline_declares_that_the_corpus_cannot_separate_the_modes(
+        self,
+    ) -> None:
+        # Dropping the declaration turns every future run into an input error, and flipping it
+        # would fail the gate against the corpus as currently pinned.
+        baseline = gate_cli.load_baseline(gate_cli.BASELINE_PATH)
+
+        assert baseline.graph_mode_distinguished is False
+        assert baseline.scores["full_graph"] == baseline.scores["hybrid_rerank"]
 
 
 class TestRejectedRunsStillReport:

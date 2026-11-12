@@ -7,6 +7,10 @@ compare runs that were not measured the same way, and writes the verdict where C
 The refusal is the point. A baseline recorded on another gold set, or with another reranker, is
 not a threshold — it is a number from a different experiment, and comparing against it would
 produce a pass that means nothing. Both are checked before any scoring happens.
+
+The baseline also declares whether this corpus can separate ``full_graph`` from its reference at
+all. A run that measures the opposite of that declaration is not a pass either: one of the two is
+stale, and a caveat that no longer matches the numbers is worse than no caveat.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 _RANK_DIR = Path(__file__).resolve().parent
 _BENCH_MEMORY = _RANK_DIR.parent
@@ -43,6 +47,14 @@ BASELINE_PATH = _RANK_DIR / "baseline-modes.json"
 ARTIFACT_PATH = _RANK_DIR / "output" / "modes-latest.json"
 REPORT_PATH = _RANK_DIR / "output" / "modes-gate.json"
 
+# Printed under the table when the baseline declares the corpus cannot separate the modes and this
+# run measured exactly that. Two equal rows are not evidence that suppression helps, and a reader
+# should not have to infer the reason from the equality.
+DISTINCTION_NOTE: Final = (
+    "full_graph equals hybrid_rerank: this corpus cannot distinguish suppression "
+    "from reranking"
+)
+
 
 class GateInputError(ValueError):
     """An input that cannot be gated: wrong shape, or measured on something else."""
@@ -64,6 +76,7 @@ class Baseline:
     gold_set: str
     reranker: str
     scores: Mapping[str, float]
+    graph_mode_distinguished: bool
 
 
 def _read_json(path: Path) -> Mapping[str, Any]:
@@ -143,12 +156,29 @@ def _baseline_scores(document: Mapping[str, Any], source: str) -> dict[str, floa
     }
 
 
+def _declaration(document: Mapping[str, Any], source: str) -> bool:
+    """Whether the corpus can separate the graph mode from its reference, as declared.
+
+    Required, not defaulted: a baseline silent on this cannot be checked against a run, and
+    defaulting to ``False`` would turn the gate's own honesty statement into an assumption. A
+    string such as ``"false"`` is truthy, so only a real JSON boolean is accepted.
+    """
+    value = document.get("graph_mode_distinguished")
+    if not isinstance(value, bool):
+        raise GateInputError(
+            f"{source} does not declare graph_mode_distinguished as a boolean; without it the "
+            "gate cannot tell a corpus that separates the modes from one that does not"
+        )
+    return value
+
+
 def load_baseline(path: Path) -> Baseline:
     document = _read_json(path)
     return Baseline(
         gold_set=_label(document, "gold_set", path.name),
         reranker=_label(document, "reranker", path.name),
         scores=_baseline_scores(document, path.name),
+        graph_mode_distinguished=_declaration(document, path.name),
     )
 
 
@@ -190,11 +220,10 @@ def _modes_row(results: Mapping[str, ModeResult]) -> dict[str, Any]:
 def _distinguishes_graph_mode(results: Mapping[str, ModeResult]) -> bool | None:
     """Did the corpus let the graph-aware mode differ from its reference at all?
 
-    ``None`` when either mode is missing, since the question cannot be asked. ``False`` is not a
-    gate failure -- a corpus where suppression removes nothing scores identically and the gate
-    still has to pass -- but it does mean the mode comparison carries no evidence about
-    suppression, and a reader looking at two equal rows deserves to be told which of the two it
-    is.
+    ``None`` when either mode is missing, since the question cannot be asked. The answer is not
+    a threshold on its own, but it is checked against the baseline's declaration in
+    :func:`declaration_failures`: a corpus where suppression removes nothing cannot support a
+    baseline that claims a measured distinction.
     """
     reference = results.get(DEFAULT_POLICY.reference_mode)
     subject = results.get(DEFAULT_POLICY.subject_mode)
@@ -209,6 +238,55 @@ def _distinguishes_graph_mode(results: Mapping[str, ModeResult]) -> bool | None:
         ),
     )
     return measured[0] != measured[1]
+
+
+def declaration_failures(artifact: Artifact, baseline: Baseline) -> list[GateFailure]:
+    """A baseline's claim about the corpus, checked against what this run measured.
+
+    The declaration is not a score threshold; it says whether the corpus can separate the two
+    modes at all. A run that contradicts it means one of the two is stale, and either direction
+    hides something: declaring a distinction the run does not show covers a lost signal, and
+    declaring equality while the corpus now separates the modes buries a measured win under an
+    out-of-date caveat.
+    """
+    measured = _distinguishes_graph_mode(artifact.results)
+    if measured is None or measured == baseline.graph_mode_distinguished:
+        # ``None`` means a mode is missing; ``evaluate_gate`` already fails coverage for it, so
+        # adding a declaration failure would report the same cause twice.
+        return []
+    declared = baseline.graph_mode_distinguished
+    if measured:
+        detail = (
+            f"the baseline declares graph_mode_distinguished={declared} but the artifact "
+            "computed True; the corpus now separates full_graph from hybrid_rerank, so the "
+            "committed baseline is stale and must be re-pinned before this comparison means "
+            "anything"
+        )
+    else:
+        detail = (
+            f"the baseline declares graph_mode_distinguished={declared} but the artifact "
+            "computed False; full_graph and hybrid_rerank scored identically, so this run "
+            "cannot support the declared distinction"
+        )
+    return [
+        GateFailure(
+            mode=DEFAULT_POLICY.subject_mode, check="declaration", detail=detail
+        )
+    ]
+
+
+def _distinction_note(artifact: Artifact, baseline: Baseline) -> str | None:
+    """The line that explains two equal rows, or ``None`` when it would be false.
+
+    Printed only when the baseline declares the corpus cannot separate the modes *and* this run
+    measured exactly that. A contradiction fails the gate, and restating the declaration there
+    would assert an equality the run has just disproved.
+    """
+    if baseline.graph_mode_distinguished:
+        return None
+    if _distinguishes_graph_mode(artifact.results) is not False:
+        return None
+    return DISTINCTION_NOTE
 
 
 def build_report(
@@ -261,6 +339,9 @@ def _emit(
     failures: Sequence[GateFailure],
 ) -> int:
     print(render_report(artifact.results, failures, baseline.scores))
+    note = _distinction_note(artifact, baseline)
+    if note is not None:
+        print(note)
     # Written before the exit code, so a failing gate still leaves its verdict for the job that
     # uploads it. A gate that only fails the build is a gate nobody can read afterwards.
     write_json_atomic(_report_path(args), build_report(artifact, baseline, failures))
@@ -305,7 +386,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             [GateFailure(mode="-", check="provenance", detail=str(exc))],
         )
     return _emit(
-        args, artifact, baseline, evaluate_gate(artifact.results, baseline.scores)
+        args,
+        artifact,
+        baseline,
+        [
+            *declaration_failures(artifact, baseline),
+            *evaluate_gate(artifact.results, baseline.scores),
+        ],
     )
 
 
