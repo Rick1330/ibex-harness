@@ -133,27 +133,42 @@ of requests allowed over that boundary. Burn rate = (share of requests over
 - `IbexProxyOverheadSlowBurn` — **ticket.** `ibex:sli_proxy_overhead:burn_rate_6h > 6`
   **and** `..._30m > 6`, for 15m. About 5% of the budget per six hours with no
   single bad window: drift that exhausts the budget in days.
-- `IbexProxyOverheadSLIAbsent` — **ticket.** `absent(ibex_proxy_overhead_seconds_count)`
-  **and** traffic is being served (`sum(rate(ibex_proxy_requests_total[10m])) > 0`)
-  for 15m. The proxy is up and answering, the histogram is not recording, and both
-  burn alerts are therefore silently inert.
+- `IbexProxyOverheadSLIAbsent` — **ticket.** The SLI is unmeasurable while
+  `ibex_proxy_nonstreaming_requests_total{assembly="disabled"}` advances: either
+  `absent(ibex_proxy_overhead_seconds_count{assembly="disabled"})` or that series
+  present but **not advancing**, for 15m. The proxy is up and answering, the
+  histogram is not recording, and both burn alerts are silently inert. `absent()`
+  alone catches only the missing-series case; a present-but-frozen `_count` makes
+  every ratio 0/0 and stays invisible to it.
 
 Also: customer reports “responses slower than normal”; context injection counts
 drop (if timeouts occur).
 
 ### Check first (in this order)
 
-1. **Is the SLI real before you trust it?** The histogram must exist and must be
-   populated: `ibex_proxy_overhead_seconds_count` present and advancing, and
-   `up{job="proxy"} == 1`. If the SLI is absent, treat it as
-   `IbexProxyOverheadSLIAbsent`, not as latency: fix instrumentation first.
+1. **Is the SLI real before you trust it?** The histogram must exist, be
+   populated on the ratified population, and advance:
+   `ibex_proxy_overhead_seconds_count{assembly="disabled"}` present and moving,
+   `up{job="proxy"} == 1`, and the traffic counter advancing in step. Cross-check
+   the second case explicitly — does
+   `ibex_proxy_nonstreaming_requests_total{assembly="disabled"}` advance while
+   `_count` does not? `absent()` cannot see that one. If the SLI is missing or
+   frozen, treat it as `IbexProxyOverheadSLIAbsent`, not as latency: fix
+   instrumentation first.
 2. **The p99 is provider-excluded by construction.** The sample is wall time
    since request start minus the provider's completion time, clamped at zero, so
-   a slow provider does not raise this SLI. If upstream p99 is also up and this
-   SLI is flat, the provider is the story — this alert is not.
-3. **The population is non-streaming successful requests only.** A streaming-only
-   regression will not move this p99, so “the SLO is green” does not clear
-   streaming latency; check `ibex_proxy_stream_duration_seconds` separately.
+   a slow provider does not raise this SLI. It is taken after the response
+   pipeline ran and the body was serialized, so pipeline and serialization work
+   is included; the `proxy_overhead_ms` in the response body is a pre-pipeline
+   diagnostic and is deliberately smaller. The provider leg is subtracted at
+   whole-ms resolution, so the sample can overstate by less than 1 ms and never
+   understate. If upstream p99 is also up and this SLI is flat, the provider is
+   the story — this alert is not.
+3. **The population is completed non-streaming requests with
+   `assembly="disabled"`.** A streaming-only regression will not move this p99,
+   and neither will an `assembly="enabled"` request (it paid the Assemble RPC and
+   is a different workload). “The SLO is green” does not clear streaming latency;
+   check `ibex_proxy_stream_duration_seconds` separately.
 4. **Confirm the profile.** The 20 ms budget is the warm mock-provider
    local/protected run with warm auth/rate-limit/directive caches and context
    assembly disabled. A cold cache, an assemble-enabled profile or a hosted runner
@@ -200,7 +215,9 @@ drop (if timeouts occur).
 - `ibex:sli_proxy_overhead:burn_rate_5m` and `..._1h` back under 14.4 (fast burn
   resolves); for a slow burn, `..._30m` below 6 and `..._6h` trending down
 - `ibex:proxy_overhead_seconds:p99_1h` back at or under the 20 ms objective
-- the histogram is still recording (`ibex_proxy_overhead_seconds_count` advancing)
+- the histogram is still recording on the SLO population
+  (`ibex_proxy_overhead_seconds_count{assembly="disabled"}` advancing, with
+  `ibex_proxy_nonstreaming_requests_total{assembly="disabled"}` advancing in step)
 - fallback rate returns to baseline
 - error rate stable
 

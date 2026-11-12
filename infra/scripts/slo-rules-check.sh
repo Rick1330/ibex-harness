@@ -3,7 +3,7 @@
 #
 #   bash infra/scripts/slo-rules-check.sh     # or: make slo-rules-check
 #
-# Five checks, in order, and every one of them can fail:
+# Six checks, in order, and every one of them can fail:
 #
 #   1. Parse. `promtool check rules` over every rule file under
 #      infra/monitoring/prometheus/rules (including rules/test/, excluding the
@@ -27,18 +27,37 @@
 #      A self-mutation re-runs the check on a copy of the rule file with the
 #      selectors reverted to the Go literal and requires it to be rejected, so
 #      the check itself cannot rot into a no-op.
-#   4. Expectation shape. The unit-test files must keep both a firing and a
+#   4. Population. The ratified objective measures the proxy with context
+#      assembly disabled, so every selector on ibex_proxy_overhead_seconds and on
+#      the eligible-traffic counter ibex_proxy_nonstreaming_requests_total, in an
+#      SLO rule file, must pin assembly="disabled". A selector that omits the pin
+#      grades the assembly-enabled workload against a number that never described
+#      it (that request legitimately pays for the Context Assemble RPC), and a
+#      ratio that pins only one side divides one population by the other. The
+#      check reads expression bodies only, because the header, the summaries and
+#      the descriptions name these metrics in prose. A self-mutation strips the
+#      pin from a copy and requires the check to reject it.
+#   5. Expectation shape. The unit-test files must keep both a firing and a
 #      silent assertion. `both` means both: the silent half used to be dead code
 #      (the caller passed "both", the parser compared against "silent"), so
-#      deleting every negative expectation still exited 0. A self-mutation deletes
-#      every silent expectation from a copy and requires the check to reject it.
-#   5. Synthetic burn. `promtool test rules` evaluates the shipped rule file
+#      deleting every negative expectation still exited 0. A bare `exp_alerts:`
+#      key is not an assertion either: it counts only when an expected-alert
+#      entry follows, so `Alert:` with nothing under it is an empty list spelled
+#      the other way round. Two self-mutations prove it — one deletes every
+#      silent expectation, the other deletes every positive entry from a copy —
+#      and both must be rejected.
+#   6. Synthetic burn. `promtool test rules` evaluates the shipped rule file
 #      against a synthetic histogram carrying the *rendered* labels: a 50% share
 #      over 20 ms must produce a 50x burn rate and fire both burn alerts, a 1%
-#      share must fire neither, a recovering burn must not page, an SLI that is
-#      missing while the proxy serves traffic must raise the absence alert, and
-#      an idle stack must not. A constant probe in rules/test/ is asserted to
-#      fire on its first evaluation with no traffic at all.
+#      share must fire neither, a recovering burn must not page, a 6-minute
+#      burst inside an otherwise clean hour must breach the 5m window without
+#      breaching the 1h window and must stay silent, an SLI that is missing or
+#      frozen while the proxy serves eligible traffic must raise the absence
+#      alert, and an idle stack must not. A constant probe in rules/test/ is
+#      asserted to fire on its first evaluation with no traffic at all. Every
+#      synthetic series carries assembly="disabled", and the on-budget case also
+#      carries an assembly="enabled" series with a 100% over-budget share, so a
+#      rule that lost the population pin would burn there and fail the test.
 #
 # Runner selection. The rule files are evaluated by promtool, which must be new
 # enough to have `check rules` and `test rules`. In order:
@@ -83,12 +102,29 @@ SLOW_BURN_ALERT=IbexProxyOverheadSlowBurn
 FAST_BURN_SPEC="$FAST_BURN_ALERT:both"
 SLOW_BURN_SPEC="$SLOW_BURN_ALERT:both"
 PROBE_SPEC="$PROBE_ALERT:firing"
+# Re-indents captured checker output under the check that produced it. One
+# definition, because the same sed expression spelled out at every call site is
+# what SonarQube shell:S1192 flags (and what one future edit gets wrong).
+INDENT_FILTER='s/^/  /'
+# The SLO histogram and the eligible-traffic counter share one population, so
+# the population check scans both by name (see check_population).
+POPULATION_METRIC_RE='ibex_proxy_(overhead_seconds(_bucket|_count|_sum)?|nonstreaming_requests_total)'
+POPULATION_PIN='assembly="disabled"'
 
 FAILURES=0
 fail() { printf 'slo-rules-check: FAIL %s\n' "$*" >&2; FAILURES=$((FAILURES + 1)); }
 pass() { printf 'slo-rules-check: ok %s\n' "$*"; }
 note() { printf 'slo-rules-check: %s\n' "$*"; }
 no_verdict() { printf 'slo-rules-check: cannot verify %s\n' "$*" >&2; exit 2; }
+# file_count renders "1 file" or "2 files" for a message, so no call site has to
+# hand-roll the plural.
+file_count() {
+  if [[ "$#" -eq 1 ]]; then
+    printf '1 file'
+  else
+    printf '%d files' "$#"
+  fi
+}
 
 # TMP_DIR holds the label-rendering program and the mutated copies the two
 # self-tests feed to their checkers. Nothing is written inside the repository.
@@ -106,7 +142,8 @@ prometheus_image() {
 # promtool_major prints the major version of a promtool binary, or nothing when
 # the binary does not answer `version` at all (an old build prints usage).
 promtool_major() {
-  "$1" version 2>/dev/null |
+  local tool="$1"
+  "$tool" version 2>/dev/null |
     sed -n 's/^promtool, version \([0-9][0-9]*\)\..*/\1/p' | head -n 1
 }
 
@@ -214,6 +251,13 @@ alert_coverage() {
 #   silent  the file must assert at least one empty (exp_alerts: []) evaluation;
 #   both    the file must assert at least one of each.
 #
+# A firing assertion is an `exp_alerts:` key followed by at least one
+# `- exp_annotations:`/`- exp_labels:` entry. The key on its own is not one:
+# `IbexProxyOverheadFastBurn:` with nothing under it means "no alerts", is valid
+# YAML (null), and used to satisfy the firing half of `both` — a test that
+# asserted nothing passed the gate. Only a following entry promotes the key from
+# pending to firing, and an explicit `exp_alerts: []` stays a silent assertion.
+#
 # "both" is what the burn alerts use, and it is the reason this function exists
 # in this shape. It previously read `need_silent = (kind == "silent")` while the
 # caller passed "both", so the silent half was unreachable and every negative
@@ -243,14 +287,21 @@ expectation_shape() {
       if (alert != "") record()
       alert = ""
       kind = ""
+      pending = 0
       next
     }
-    /alertname:/ { alert = $2; sub(/^"/, "", alert); sub(/"$/, "", alert) }
-    /exp_alerts:[[:space:]]*\[\][[:space:]]*$/ { kind = "silent" }
-    /exp_alerts:[[:space:]]*$/ { kind = "firing" }
+    /alertname:/ { alert = $2; sub(/^"/, "", alert); sub(/"$/, "", alert); pending = 0 }
+    /exp_alerts:[[:space:]]*\[\][[:space:]]*$/ { kind = "silent"; pending = 0 }
+    # A bare key is pending, not firing: it becomes an assertion only when an
+    # expected-alert entry actually follows it. An empty list spelled `[]` is
+    # the genuine silent assertion and is handled above.
+    /exp_alerts:[[:space:]]*$/ { kind = ""; pending = 1 }
+    pending && /^[[:space:]]+-[[:space:]]+(exp_annotations|exp_labels):/ { kind = "firing"; pending = 0 }
     function record() {
       if (kind == "firing") fired[alert] = 1
       if (kind == "silent") silent[alert] = 1
+      kind = ""
+      pending = 0
     }
     END {
       record()
@@ -314,6 +365,7 @@ bucket_literal() {
 # bucket_bounds reduces a bucket-family source block to one float per line: the
 # bounds are what is between the first `{` and the first `}` outside a comment.
 bucket_bounds() {
+  local block="$1"
   awk '
     {
       line = $0
@@ -330,7 +382,7 @@ bucket_bounds() {
       }
       print line
     }
-  ' <<<"$1" | grep -oE '[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?' || true
+  ' <<<"$block" | grep -oE '[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?' || true
 }
 
 # rendered_le_labels prints the le= values Prometheus stores for a set of bucket
@@ -495,7 +547,8 @@ GO
 # quoting the wrong label in the header would teach the next editor the wrong
 # string, which is how the original defect survived review.
 slo_le_selectors() {
-  grep -oE 'le="[^"]*"' "$1" 2>/dev/null | sed -e 's/^le="//' -e 's/"$//' | sort -u || true
+  local file="$1"
+  grep -oE 'le="[^"]*"' "$file" 2>/dev/null | sed -e 's/^le="//' -e 's/"$//' | sort -u || true
 }
 
 # check_le_labels reports (on stderr) every le= selector in the rule file that is
@@ -520,6 +573,68 @@ check_le_labels() {
   return "$bad"
 }
 
+# check_population reports (on stderr) every selector in a production SLO rule
+# file that reads the SLI histogram or the eligible-traffic counter without
+# pinning assembly="disabled", and exits non-zero when there is one. Like
+# check_le_labels it is pure: it does not touch FAILURES, so the self-test can
+# run it on a mutant.
+#
+# Only `expr: |` bodies are scanned. The header comment, the alert summaries and
+# the descriptions name these metrics in prose, and a prose mention is not a
+# selector; scanning the whole file would demand a label set inside a sentence.
+#
+# The pin is compared as a whole label, not as a substring: the selector's label
+# set is split on commas and one element must equal assembly="disabled". That
+# accepts `{assembly="disabled"}` and `{assembly="disabled",le="0.02"}` and
+# rejects `{le="0.02"}`, `{}`, and any future `assembly="enabled"` by
+# construction. Across all files it must find at least one pinned selector: a
+# scan that matches nothing proves nothing.
+check_population() {
+  awk -v metric_re="$POPULATION_METRIC_RE" -v pin="$POPULATION_PIN" '
+    function indent(line) { match(line, /^[[:space:]]*/); return RLENGTH }
+    function pinned_in(tail,   labels, parts, count, i) {
+      if (substr(tail, 1, 1) != "{") return 0
+      if (index(tail, "}") == 0) return 0
+      labels = substr(tail, 2, index(tail, "}") - 2)
+      count = split(labels, parts, ",")
+      for (i = 1; i <= count; i++) {
+        if (parts[i] == pin) return 1
+      }
+      return 0
+    }
+    function analyse(body, nr,   rest, at, metric, tail) {
+      rest = body
+      while ((at = match(rest, metric_re)) > 0) {
+        metric = substr(rest, RSTART, RLENGTH)
+        tail = substr(rest, RSTART + RLENGTH)
+        if (pinned_in(tail)) {
+          pinned++
+        } else {
+          printf "FAIL %s:%d: selector %s does not pin the ratified population (expected %s in its label set)\n", FILENAME, nr, metric, pin > "/dev/stderr"
+          bad = 1
+        }
+        rest = tail
+      }
+    }
+    {
+      if (in_body && $0 !~ /^[[:space:]]*$/ && indent($0) <= body_indent) in_body = 0
+      if ($0 ~ /^[[:space:]]*expr:[[:space:]]*\|[[:space:]]*$/) {
+        in_body = 1
+        body_indent = indent($0)
+        next
+      }
+      if (in_body && $0 !~ /^[[:space:]]*$/) analyse($0, FNR)
+    }
+    END {
+      if (pinned == 0) {
+        printf "FAIL %s: selects none of the SLI metrics with %s, so the population check would be vacuous\n", FILENAME, pin > "/dev/stderr"
+        bad = 1
+      }
+      exit bad
+    }
+  ' "$@"
+}
+
 # --- 0. Inputs ---------------------------------------------------------------
 [[ -f "$SLO_HEADER_RULES" ]] || no_verdict "missing $SLO_HEADER_RULES"
 [[ -f "$PROBE_TEST" && -f "$BURN_TEST" ]] || no_verdict "missing a rule unit test under $UNIT_TEST_DIR"
@@ -540,14 +655,14 @@ rule_args=()
 for file in "${files[@]}"; do rule_args+=("$(to_runner_path "$file")"); done
 
 if parse_output="$("${PROMTOOL_CMD[@]}" check rules "${rule_args[@]}" 2>&1)"; then
-  printf '%s\n' "$parse_output" | sed 's/^/  /'
+  printf '%s\n' "$parse_output" | sed "$INDENT_FILTER"
   total_rules="$(printf '%s\n' "$parse_output" |
     sed -n 's/^[[:space:]]*SUCCESS: \([0-9][0-9]*\) rules found$/\1/p' |
     awk '{sum += $1} END {print sum + 0}')"
   [[ "$total_rules" -gt 0 ]] || fail "promtool parsed no rules"
   pass "promtool check rules: ${#files[@]} files, $total_rules rules"
 else
-  printf '%s\n' "$parse_output" | sed 's/^/  /' >&2
+  printf '%s\n' "$parse_output" | sed "$INDENT_FILTER" >&2
   fail "promtool check rules rejected the rule tree"
 fi
 
@@ -556,6 +671,7 @@ slo_files=()
 for file in "${files[@]}"; do
   case "$(basename "$file")" in
   *slo*) slo_files+=("$file") ;;
+  *) : ;; # every other rule file is covered by check 1; its alerts are not SLO alerts
   esac
 done
 [[ "${#slo_files[@]}" -gt 0 ]] || fail "no SLO rule file matched *slo* under $RULES_DIR"
@@ -563,7 +679,7 @@ if [[ "${#slo_files[@]}" -gt 0 ]]; then
   if coverage_output="$(alert_coverage "${slo_files[@]}" 2>&1)"; then
     pass "SLO alerts carry severity + summary + runbook (${#slo_files[@]} files)"
   else
-    printf '%s\n' "$coverage_output" | sed 's/^/  /' >&2
+    printf '%s\n' "$coverage_output" | sed "$INDENT_FILTER" >&2
     fail "an SLO alert is missing a routing severity, a summary, or a runbook"
   fi
 fi
@@ -605,7 +721,7 @@ if [[ -n "$RENDERED_LE" ]]; then
   if label_output="$(check_le_labels "$SLO_HEADER_RULES" "$RENDERED_LE" 2>&1)"; then
     pass "every le= selector in $(basename "$SLO_HEADER_RULES") is a rendered bucket label: $(slo_le_selectors "$SLO_HEADER_RULES" | tr '\n' ' ')"
   else
-    printf '%s\n' "$label_output" | sed 's/^/  /' >&2
+    printf '%s\n' "$label_output" | sed "$INDENT_FILTER" >&2
     fail "an SLO rule selects a bucket label the Prometheus client never writes, so its expression matches no series"
   fi
 
@@ -627,17 +743,58 @@ if [[ -n "$RENDERED_LE" ]]; then
   fi
 fi
 
-# --- 4. Expectation shape: firing and silent assertions both survive ---------
+# --- 4. Population: every SLO selector pins assembly="disabled" --------------
+# The ratified objective is measured with context assembly disabled, and the
+# histogram carries an `assembly` label, so the population is a property of the
+# selector. Nothing else in the expression can tell the two workloads apart:
+# an unpinned selector mixes in requests whose overhead legitimately includes
+# the Context Assemble RPC, and a ratio that pins only one of its terms divides
+# one population by the other. Both read as a healthy or an unhealthy SLO
+# depending on which way the mix moves, which is why this is a gate and not a
+# comment.
+# rules/test/ holds probes and promtool unit tests; a probe is not a production
+# SLO rule and does not have to read the SLI at all.
+production_slo_files=()
+for file in "${slo_files[@]}"; do
+  case "$file" in
+  "$TEST_DIR"/*) : ;; # probe rules, covered by check 1 and check 6
+  *) production_slo_files+=("$file") ;;
+  esac
+done
+if [[ "${#production_slo_files[@]}" -eq 0 ]]; then
+  fail "no production SLO rule file matched *slo* outside $TEST_DIR"
+elif population_output="$(check_population "${production_slo_files[@]}" 2>&1)"; then
+  pass "every SLO selector pins the ratified population assembly=\"disabled\" ($(file_count "${production_slo_files[@]}"))"
+else
+  printf '%s\n' "$population_output" | sed "$INDENT_FILTER" >&2
+  fail "an SLO expression grades a population the ratified objective does not cover, or divides one population by another"
+fi
+
+# Self-mutation: strip the population pin from a copy. The check must reject it
+# and name the selector. Built by transformation, so this gate contains no copy
+# of the unpinned selector it forbids.
+population_mutant="$TMP_DIR/ibex-slo.unpinned-population.yml"
+sed -E 's/(ibex_proxy_(overhead_seconds(_bucket|_count|_sum)?|nonstreaming_requests_total))\{assembly="disabled"/\1{/g' \
+  "$SLO_HEADER_RULES" >"$population_mutant"
+if cmp -s "$SLO_HEADER_RULES" "$population_mutant"; then
+  fail "self-test could not build the population mutant: $(basename "$SLO_HEADER_RULES") selects no pinned SLO metric, so the mutation is vacuous"
+elif mutant_output="$(check_population "$population_mutant" 2>&1)"; then
+  fail "self-test: a selector without assembly=\"disabled\" was accepted; the population check cannot catch the defect it exists for"
+else
+  pass "self-test: a rule with the population pin removed is rejected — $(head -n 1 <<<"$mutant_output")"
+fi
+
+# --- 5. Expectation shape: firing and silent assertions both survive ---------
 if expectation_output="$(expectation_shape "$BURN_TEST" "$FAST_BURN_SPEC" "$SLOW_BURN_SPEC" 2>&1)"; then
   pass "$(basename "$BURN_TEST") keeps firing and silent assertions for the burn alerts"
 else
-  printf '%s\n' "$expectation_output" | sed 's/^/  /' >&2
+  printf '%s\n' "$expectation_output" | sed "$INDENT_FILTER" >&2
   fail "the burn unit test no longer proves a negative outcome"
 fi
 if expectation_output="$(expectation_shape "$PROBE_TEST" "$PROBE_SPEC" 2>&1)"; then
   pass "$(basename "$PROBE_TEST") keeps a firing assertion for $PROBE_ALERT"
 else
-  printf '%s\n' "$expectation_output" | sed 's/^/  /' >&2
+  printf '%s\n' "$expectation_output" | sed "$INDENT_FILTER" >&2
   fail "the constant burn probe is no longer asserted to fire"
 fi
 
@@ -655,17 +812,52 @@ else
   pass "self-test: 'both' rejects a test file with every silent expectation deleted — $(head -n 1 <<<"$mutant_output")"
 fi
 
-# --- 5. Synthetic burn: the shipped rules against the rendered labels --------
+# Self-mutation 2: remove the positive expectations. A bare `exp_alerts:` key
+# used to satisfy the firing half of "both" on its own, so a test that asserted
+# nothing but kept the key passed the gate. The mutant deletes every expected-
+# alert entry and rewrites the now-empty key as `exp_alerts: []` (still valid
+# YAML, and a genuine silent assertion), so only the firing half can fail.
+bare_mutant="$TMP_DIR/ibex-slo-burn.no-positive.test.yml"
+awk '
+  function indent(line) { match(line, /^[[:space:]]*/); return RLENGTH }
+  skipping {
+    if ($0 ~ /^[[:space:]]*$/ || indent($0) > entry_indent) next
+    skipping = 0
+  }
+  /^[[:space:]]+-[[:space:]]+eval_time:/ { bare = 0 }
+  /^[[:space:]]+exp_alerts:[[:space:]]*$/ {
+    match($0, /^[[:space:]]*/)
+    print substr($0, 1, RLENGTH) "exp_alerts: []"
+    bare = 1
+    next
+  }
+  bare && /^[[:space:]]+-[[:space:]]+(exp_annotations|exp_labels):/ {
+    entry_indent = indent($0)
+    skipping = 1
+    bare = 0
+    next
+  }
+  { print }
+' "$BURN_TEST" >"$bare_mutant"
+if grep -qE '^[[:space:]]+exp_alerts:[[:space:]]*$' "$bare_mutant"; then
+  fail "self-test could not build the positive-entry mutant: a bare exp_alerts: key survived the transformation"
+elif mutant_output="$(expectation_shape "$bare_mutant" "$FAST_BURN_SPEC" "$SLOW_BURN_SPEC" 2>&1)"; then
+  fail "self-test: deleting every positive exp_alerts entry still passed; a bare exp_alerts: key is being counted as a firing assertion"
+else
+  pass "self-test: a bare exp_alerts: key is not a firing assertion — $(head -n 1 <<<"$mutant_output")"
+fi
+
+# --- 6. Synthetic burn: the shipped rules against the rendered labels --------
 mapfile -t test_files < <(find "$UNIT_TEST_DIR" -maxdepth 1 -type f -name '*.test.yml' -print | sort)
 [[ "${#test_files[@]}" -gt 0 ]] || no_verdict "no promtool unit tests under $UNIT_TEST_DIR"
 test_args=()
 for file in "${test_files[@]}"; do test_args+=("$(to_runner_path "$file")"); done
 if test_output="$("${PROMTOOL_CMD[@]}" test rules "${test_args[@]}" 2>&1)"; then
-  printf '%s\n' "$test_output" | sed 's/^/  /'
-  pass "promtool test rules: 30 of 60 observations over 20 ms on the le=\"0.02\" label produce a 50x burn rate and fire both burn alerts, 1% share stays silent, a recovering burn does not page, and a missing SLI with traffic raises the absence alert"
+  printf '%s\n' "$test_output" | sed "$INDENT_FILTER"
+  pass "promtool test rules: 30 of 60 observations over 20 ms on the le=\"0.02\" label produce a 50x burn rate and fire both burn alerts; 1% share stays silent with a 100% assembly-enabled series present; a recovering burn does not page; a 6m burst inside a clean hour breaches the 5m window and not the 1h window, so the fast burn stays silent; a missing or frozen SLI with eligible traffic raises the absence alert; an idle stack does not"
   pass "constant probe $PROBE_ALERT evaluates to a firing alert with no traffic"
 else
-  printf '%s\n' "$test_output" | sed 's/^/  /' >&2
+  printf '%s\n' "$test_output" | sed "$INDENT_FILTER" >&2
   fail "promtool test rules rejected the synthetic burn expectations"
 fi
 

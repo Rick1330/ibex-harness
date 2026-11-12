@@ -44,10 +44,13 @@ func (r *ProxyRegistry) prometheusCollectors() []prometheus.Collector {
 }
 
 // enforcementOverheadCollectors are the in-proxy, provider-time-excluded
-// latency histograms that back the proxy overhead and context assembly SLOs.
+// latency series that back the proxy overhead and context assembly SLOs, plus
+// the non-streaming traffic counter that makes a missing overhead sample
+// observable.
 func (r *ProxyRegistry) enforcementOverheadCollectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		r.proxyOverheadSeconds,
+		r.nonstreamingRequestsTotal,
 		r.contextAssembleSeconds,
 	}
 }

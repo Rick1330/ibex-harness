@@ -221,14 +221,34 @@ Every service must publish these metrics:
   - stages: `directive|hot_memories|history|context_grpc`
 - `ibex_proxy_upstream_duration_seconds_bucket{provider,status}`
 - `ibex_proxy_stream_duration_seconds_bucket{provider,status}`
-- `ibex_proxy_overhead_seconds` (histogram, **no labels**) — the ratified SLO
-  metric. Wall time since request start minus the upstream provider's completion
-  time, clamped at zero, observed once per completed **non-streaming** request.
-  Buckets are `ProxyEnforcementBuckets` (`packages/metrics/buckets.go`), which
-  resolves 1/2.5/5/10/20 ms individually. The 20 ms bound is the Go literal
-  `0.020`; Prometheus stores the rendered float, so the label the burn rules must
-  select is `le="0.02"`. The two strings are not interchangeable — a selector
-  quoting `0.020` matches no series at all.
+- `ibex_proxy_overhead_seconds{assembly}` (histogram) — the ratified SLO metric.
+  Wall time since request start minus the upstream provider's completion time,
+  clamped at zero, observed once per completed **non-streaming** request. The one
+  `assembly` label partitions that population:
+  - `assembly="disabled"` — directive-only path (assembly off, skipped, failed
+    open, or nothing to inject). **This is the ratified SLO population**; every
+    rule in `ibex-slo.yml` selects it explicitly.
+  - `assembly="enabled"` — assembled context was injected, so the sample
+    legitimately includes the Context Assemble RPC. That is a different workload
+    with an unratified target and is excluded from every SLO expression; mixing
+    it in would page on assembly being switched on and hide a real regression
+    behind a workload the 20 ms objective never described.
+
+  The sample is taken **after** the response pipeline ran and the body was
+  serialized (`finishProxyOverheadObservation`, called after
+  `responsePipeline.Run` and `processed.Bytes()`), so it includes stage and
+  serialization work. The `proxy_overhead_ms` embedded in the response body is the
+  **pre-pipeline diagnostic** value and is deliberately smaller. Buckets are
+  `ProxyEnforcementBuckets` (`packages/metrics/buckets.go`), which resolves
+  1/2.5/5/10/20 ms individually. The 20 ms bound is the Go literal `0.020`;
+  Prometheus stores the rendered float, so the label the burn rules must select
+  is `le="0.02"`. The two strings are not interchangeable — a selector quoting
+  `0.020` matches no series at all.
+- `ibex_proxy_nonstreaming_requests_total{assembly}` (counter) — eligible
+  non-streaming requests, incremented in the same call as the histogram
+  observation, so the two cannot diverge. It is the traffic term of the absence
+  alert: without it, "no observations" and "nothing to observe" are
+  indistinguishable.
 - `ibex_proxy_context_assemble_seconds` (histogram, no labels) — Context Assemble
   RPC wall time as the proxy sees it, fail-open outcomes included. Target p95
   ≤50 ms, **not yet ratified**, so it has no alert.
@@ -682,9 +702,16 @@ Panels:
 - `IbexProxyOverheadSlowBurn` (`ticket`): `ibex:sli_proxy_overhead:burn_rate_6h > 6`
   **and** `ibex:sli_proxy_overhead:burn_rate_30m > 6` for 15m — about 5% of the
   budget per six hours with no single bad window.
-- `IbexProxyOverheadSLIAbsent` (`ticket`): `absent(ibex_proxy_overhead_seconds_count)`
-  **and** `sum(rate(ibex_proxy_requests_total[10m])) > 0` for 15m — the proxy is
-  serving but the SLI is not recorded, so both burn alerts above are inert.
+- `IbexProxyOverheadSLIAbsent` (`ticket`): the SLI is unmeasurable while
+  `ibex_proxy_nonstreaming_requests_total{assembly="disabled"}` advances — either
+  `absent(ibex_proxy_overhead_seconds_count{assembly="disabled"})` or that series
+  present but **not advancing**, for 15m. `absent()` alone sees only the first
+  case: with `_count` present, every bad-share ratio computes 0/0 and both burn
+  alerts stay quietly healthy. The traffic guard keeps an idle stack from raising
+  a ticket; a stopped proxy is `IbexProxyDown`.
+- Every expression above pins `assembly="disabled"` — the ratified population.
+  `assembly="enabled"` requests ran the Context Assemble RPC and are deliberately
+  excluded.
 - Burn rate is the share of requests over the 20 ms boundary divided by the 1%
   budget of a 99% objective; the bad share is read from the `le="0.02"` bucket
   (the rendered form of the `0.020` Go literal in `buckets.go`), not from
@@ -785,9 +812,18 @@ groups:
 §Timing policy. That document is the only place the number is allowed to change;
 every other file, rule and dashboard reads it from there.
 
-- SLI: `ibex_proxy_overhead_seconds` (histogram, seconds, no labels) — p99 via
-  `histogram_quantile` over the aggregated bucket set, recorded as
+- SLI: `ibex_proxy_overhead_seconds{assembly="disabled"}` (histogram, seconds) —
+  p99 via `histogram_quantile` over the aggregated bucket set, recorded as
   `ibex:proxy_overhead_seconds:p99_5m` and `ibex:proxy_overhead_seconds:p99_1h`.
+- Population: `assembly="disabled"` is the ratified population (no Context
+  Assemble RPC ran). `assembly="enabled"` requests paid the Assemble RPC and are a
+  different workload with an unratified target, excluded from every SLO
+  expression. `ibex_proxy_nonstreaming_requests_total{assembly}` is the matching
+  traffic counter, incremented in the same call as the observation.
+- Sample boundary: the observation is taken after `responsePipeline.Run` and body
+  serialization. It keeps full duration precision; the provider leg is subtracted
+  at whole-ms resolution, so the sample can overstate by less than 1 ms and never
+  understates — the safe direction for a ceiling objective.
 - Objective: p99 ≤ 20 ms, i.e. a 99% objective whose error budget is the 1% of
   requests allowed over the 20 ms boundary.
 - Profile: excludes provider time and post-header stream time. The ratified

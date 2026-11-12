@@ -8,10 +8,40 @@
 # That document is the only place the number is allowed to change; this file
 # encodes it and does not originate it.
 #
-# SLI metric: ibex_proxy_overhead_seconds (Go histogram, seconds), observed once
-# per completed non-streaming request in packages/metrics/registry_proxy_overhead.go.
-# The SLO therefore covers that population; streaming requests are not observed
-# and are not represented here — a coverage limit, not a claim.
+# POPULATION CONTRACT — stated once here; every expression below obeys it
+# ----------------------------------------------------------------------
+# The ratified objective measures the proxy with context assembly DISABLED. The
+# histogram carries an `assembly` label, so the population is selected
+# explicitly and never inferred from "the only series that exists":
+#
+#   ibex_proxy_overhead_seconds{assembly="disabled"}   THE SLO POPULATION.
+#       Context assembly did not run; every request here is graded by this
+#       objective.
+#   ibex_proxy_overhead_seconds{assembly="enabled"}    NOT the SLO population.
+#       Context assembly ran, so this request's overhead legitimately includes
+#       the Context Assemble RPC. That is a different workload with its own
+#       (unratified) target. Mixing it in raises the p99 for a reason the
+#       objective does not cover — it would page an operator about a feature
+#       being switched on, and it would hide a real regression behind a
+#       workload the ratified number never described.
+#
+# Every selector below carries assembly="disabled": both the _count and the
+# _bucket term of each bad-share ratio, every recording rule, both burn alerts,
+# the p99 quantiles, and the absence alert. Infra/scripts/slo-rules-check.sh
+# re-derives that from this file and rejects any selector that omits it (with a
+# self-mutation proving the check can fail), so the population cannot drift back
+# into "whatever the histogram happens to record".
+#
+# Two metrics, one population:
+#   ibex_proxy_overhead_seconds{assembly}            the SLI histogram, observed
+#       once per completed non-streaming request.
+#   ibex_proxy_nonstreaming_requests_total{assembly} eligible non-streaming
+#       requests, incremented once per observed request (same call, same
+#       population). It is the "there is traffic" term of the absence alert
+#       below: without it, "no observations" and "nothing to observe" are
+#       indistinguishable.
+# Streaming requests are observed by neither metric and are not represented
+# here — a coverage limit, not a claim.
 #
 # The bad-share expressions below need 20 ms to be a bucket boundary, so they
 # select the 20 ms bucket directly. The histogram is wired to
@@ -38,7 +68,9 @@
 # SLO and page an operator over a threshold nobody agreed to. The proxy now also
 # records ibex_proxy_context_assemble_seconds (target p95 ≤50 ms, unratified),
 # so the metric exists for a dashboard; it gets a rule when the number is
-# ratified, not before.
+# ratified, not before. That target is also why the assembly="enabled"
+# population above is excluded rather than graded: it is unratified, so the
+# ratified number cannot be stretched to cover it.
 #
 # Burn maths
 # ----------
@@ -52,12 +84,15 @@
 # Both windows of a pair must breach before the alert fires, so a single scrape
 # spike, a deploy window, or a short burst cannot page on its own: the long
 # window proves the burn is sustained, the short window proves it is still
-# happening and the alert resolves promptly when it stops.
+# happening and the alert resolves promptly when it stops. The 5m-only burst is
+# covered in rules/test/unit/ibex-slo-burn.test.yml ("brief-burst...").
 #
-# Cost: the histogram is unlabelled (one series per bucket, 13 buckets), so the
-# widest window below — 6h — scans 2160 samples per bucket at a 10s scrape, per
-# evaluation. That is a deliberate trade: the long window is what makes a slow
-# burn visible, and an unlabelled histogram keeps it cheap.
+# Cost: the histogram is labelled by assembly only (one series per bucket per
+# population, 13 buckets), so the widest window below — 6h — scans 2160 samples
+# per bucket at a 10s scrape, per evaluation. That is a deliberate trade: the
+# long window is what makes a slow burn visible, and a single low-cardinality
+# label keeps it cheap. Do not add a per-request label to this histogram for a
+# dashboard: it multiplies this cost and moves work onto the proxy hot path.
 #
 # Every alert here carries a routing `severity` label (`page`/`ticket`, checked
 # by infra/scripts/check-alert-routing.py) and a `summary` + `runbook` annotation
@@ -69,18 +104,19 @@ groups:
       # --- The SLI, as published for dashboards and API queries --------------
       # p99 by histogram_quantile over the aggregated bucket set: the single
       # number the ratified objective names, over a short and a long window.
+      # Population: assembly="disabled" (see POPULATION CONTRACT).
       - record: ibex:proxy_overhead_seconds:p99_5m
         expr: |
           histogram_quantile(
             0.99,
-            sum by (le) (rate(ibex_proxy_overhead_seconds_bucket[5m]))
+            sum by (le) (rate(ibex_proxy_overhead_seconds_bucket{assembly="disabled"}[5m]))
           )
 
       - record: ibex:proxy_overhead_seconds:p99_1h
         expr: |
           histogram_quantile(
             0.99,
-            sum by (le) (rate(ibex_proxy_overhead_seconds_bucket[1h]))
+            sum by (le) (rate(ibex_proxy_overhead_seconds_bucket{assembly="disabled"}[1h]))
           )
 
       # --- Bad-event share at the 20 ms boundary -----------------------------
@@ -88,41 +124,45 @@ groups:
       # selected as le="0.02" (the rendered form of the 0.020 Go literal).
       # clamp_min keeps a scrape gap (count rate 0) from producing NaN:
       # a zero-traffic window reports a 0 share, never a division artefact.
+      # Both terms of every ratio pin assembly="disabled"; a ratio that pinned
+      # only one would divide one population by the other.
       - record: ibex:sli_proxy_overhead:bad_ratio_5m
         expr: |
           (
-            sum(rate(ibex_proxy_overhead_seconds_count[5m]))
-            - sum(rate(ibex_proxy_overhead_seconds_bucket{le="0.02"}[5m]))
+            sum(rate(ibex_proxy_overhead_seconds_count{assembly="disabled"}[5m]))
+            - sum(rate(ibex_proxy_overhead_seconds_bucket{assembly="disabled",le="0.02"}[5m]))
           )
-          / clamp_min(sum(rate(ibex_proxy_overhead_seconds_count[5m])), 1e-9)
+          / clamp_min(sum(rate(ibex_proxy_overhead_seconds_count{assembly="disabled"}[5m])), 1e-9)
 
       - record: ibex:sli_proxy_overhead:bad_ratio_1h
         expr: |
           (
-            sum(rate(ibex_proxy_overhead_seconds_count[1h]))
-            - sum(rate(ibex_proxy_overhead_seconds_bucket{le="0.02"}[1h]))
+            sum(rate(ibex_proxy_overhead_seconds_count{assembly="disabled"}[1h]))
+            - sum(rate(ibex_proxy_overhead_seconds_bucket{assembly="disabled",le="0.02"}[1h]))
           )
-          / clamp_min(sum(rate(ibex_proxy_overhead_seconds_count[1h])), 1e-9)
+          / clamp_min(sum(rate(ibex_proxy_overhead_seconds_count{assembly="disabled"}[1h])), 1e-9)
 
       - record: ibex:sli_proxy_overhead:bad_ratio_30m
         expr: |
           (
-            sum(rate(ibex_proxy_overhead_seconds_count[30m]))
-            - sum(rate(ibex_proxy_overhead_seconds_bucket{le="0.02"}[30m]))
+            sum(rate(ibex_proxy_overhead_seconds_count{assembly="disabled"}[30m]))
+            - sum(rate(ibex_proxy_overhead_seconds_bucket{assembly="disabled",le="0.02"}[30m]))
           )
-          / clamp_min(sum(rate(ibex_proxy_overhead_seconds_count[30m])), 1e-9)
+          / clamp_min(sum(rate(ibex_proxy_overhead_seconds_count{assembly="disabled"}[30m])), 1e-9)
 
       - record: ibex:sli_proxy_overhead:bad_ratio_6h
         expr: |
           (
-            sum(rate(ibex_proxy_overhead_seconds_count[6h]))
-            - sum(rate(ibex_proxy_overhead_seconds_bucket{le="0.02"}[6h]))
+            sum(rate(ibex_proxy_overhead_seconds_count{assembly="disabled"}[6h]))
+            - sum(rate(ibex_proxy_overhead_seconds_bucket{assembly="disabled",le="0.02"}[6h]))
           )
-          / clamp_min(sum(rate(ibex_proxy_overhead_seconds_count[6h])), 1e-9)
+          / clamp_min(sum(rate(ibex_proxy_overhead_seconds_count{assembly="disabled"}[6h])), 1e-9)
 
       # --- Burn rate for each window (bad share / 1% budget) -----------------
       # Recorded so the alert expressions read as the comparison they are, and
-      # so an operator can graph the same quantity the alert evaluates.
+      # so an operator can graph the same quantity the alert evaluates. The
+      # population is already pinned inside the ratio, so nothing is re-filtered
+      # here: filtering twice would be one more place to get it wrong.
       - record: ibex:sli_proxy_overhead:burn_rate_5m
         expr: ibex:sli_proxy_overhead:bad_ratio_5m / 0.01
 
@@ -153,9 +193,12 @@ groups:
           description: >-
             More than 14.4% of proxy requests exceeded the 20 ms enforcement-overhead
             budget over both the last hour and the last five minutes, which spends
-            about 2% of a 30-day error budget per hour. This SLI excludes provider
-            time and post-header stream time, so the provider is not the cause.
-            Current burn rate: ibex:sli_proxy_overhead:burn_rate_1h.
+            about 2% of a 30-day error budget per hour. Measured over the ratified
+            population only (assembly="disabled"): requests that also ran context
+            assembly are excluded, and the SLI excludes provider time and
+            post-header stream time, so neither the provider nor a deliberate
+            context-assembly rollout is the cause. Current burn rate:
+            ibex:sli_proxy_overhead:burn_rate_1h.
           runbook: "engineering/runbooks/RUNBOOKS.md section 2 (Proxy high p99 overhead)"
 
       # Slow burn: 6x on both the 6h and the 30m window. Roughly 5% of the
@@ -176,38 +219,73 @@ groups:
           description: >-
             More than 6% of proxy requests exceeded the 20 ms enforcement-overhead
             budget over both the last six hours and the last thirty minutes, which
-            spends about 5% of a 30-day error budget per six hours. No single window
-            is dramatic, so this is queued rather than paged. Current burn rate:
+            spends about 5% of a 30-day error budget per six hours. Measured over
+            the ratified population only (assembly="disabled"). No single window is
+            dramatic, so this is queued rather than paged. Current burn rate:
             ibex:sli_proxy_overhead:burn_rate_6h.
           runbook: "engineering/runbooks/RUNBOOKS.md section 2 (Proxy high p99 overhead)"
 
       # The alert above every burn alert: an SLI that is not being recorded
       # cannot burn, so silence here is indistinguishable from health.
       #
-      # It requires traffic as well as absence. Without the second term an idle
-      # stack would raise a permanent ticket ("the SLO is unmonitored") that says
-      # nothing, and a proxy that is simply not running is already covered by
-      # IbexProxyDown. With it, the alert means exactly one thing: requests are
-      # being served and the overhead histogram is not recording them, which is
-      # the instrumentation regression that would otherwise hide the SLO for
-      # weeks. Ticket severity: the fix is instrumentation, not incident response.
+      # It fires on either way the SLI can stop being measurable while eligible
+      # traffic exists, because `absent()` alone only catches the first:
+      #
+      #   1. the series is missing — the histogram family unregistered or
+      #      renamed, the scrape filter dropped it, the build never exports it;
+      #   2. the histogram's cumulative `_count` is present but not advancing
+      #      while the traffic counter does advance. `_count` exists, so every
+      #      ratio computes 0/0, both burn alerts stay quietly healthy, and
+      #      `absent()` can never see it — exactly the regression that hides the
+      #      SLO for weeks.
+      #
+      # The first term is `absent(...) or rate(...) == 0` for those two cases.
+      # The second term is the traffic guard, and it is a lane-specific counter:
+      # ibex_proxy_nonstreaming_requests_total{assembly="disabled"} counts the
+      # requests this SLO is meant to grade, so streaming traffic (which the
+      # histogram never observes) cannot make an idle SLI look loaded, and the
+      # count moving while the histogram does not is the instrumentation
+      # signature itself. Without the guard, an idle stack would raise a
+      # permanent ticket ("the SLO is unmonitored") that says nothing; a proxy
+      # that is simply not running is already covered by IbexProxyDown.
+      # Ticket severity: the fix is instrumentation, not incident response.
+      #
+      # Residual limit, stated so nobody reads more into silence than is there:
+      # the counter and the observation are incremented in one call, so a change
+      # that removes the whole call freezes both and looks like an idle stack.
+      # This alert deliberately covers the histogram-side regression it can
+      # prove; a stopped proxy is IbexProxyDown, and the request-path SLOs cover
+      # traffic that arrives but is not served.
+      #
+      # Label matching: absent() applied to a selector keeps that selector's
+      # equality matchers, so this alert instance carries assembly="disabled" —
+      # which names the population whose instrumentation went missing. The
+      # `and` is a set intersection on the labels both terms share, so exactly
+      # one instance fires; there is no per-population fan-out.
       - alert: IbexProxyOverheadSLIAbsent
         expr: |
-          absent(ibex_proxy_overhead_seconds_count)
+          (
+            absent(ibex_proxy_overhead_seconds_count{assembly="disabled"})
+            or
+            rate(ibex_proxy_overhead_seconds_count{assembly="disabled"}[10m]) == 0
+          )
           and
-          (sum(rate(ibex_proxy_requests_total[10m])) > 0)
+          (rate(ibex_proxy_nonstreaming_requests_total{assembly="disabled"}[10m]) > 0)
         for: 15m
         labels:
           severity: ticket
           service: proxy
           slo: proxy_overhead_p99_20ms
         annotations:
-          summary: "Proxy overhead SLI is missing while the proxy is serving requests"
+          summary: "Proxy overhead SLI is missing or not advancing while non-streaming requests are served"
           description: >-
-            The proxy is completing requests but ibex_proxy_overhead_seconds_count
-            has had no series for 15m, so both burn alerts above are silently
-            inert. Check that the proxy scrapes (up{job="proxy"}), that the build
-            exports ibex_proxy_overhead_seconds, and that 0.02 is still the rendered
-            label of the 20 ms bucket in the family wired to that histogram (the Go
-            literal is 0.020; Prometheus stores the formatted float).
-          runbook: "infra/monitoring/prometheus/rules/ibex-slo.yml (header: SLI metric and bucket precondition)"
+            Non-streaming requests are being served with context assembly disabled,
+            but ibex_proxy_overhead_seconds_count{assembly="disabled"} has either had
+            no series for 15m or is present and not advancing, so both burn alerts
+            above are silently inert. Check that the proxy scrapes (up{job="proxy"}),
+            that the build registers and observes ibex_proxy_overhead_seconds on the
+            assembly="disabled" path, that ibex_proxy_nonstreaming_requests_total
+            shares that population, and that 0.02 is still the rendered label of the
+            20 ms bucket in the family wired to that histogram (the Go literal is
+            0.020; Prometheus stores the formatted float).
+          runbook: "infra/monitoring/prometheus/rules/ibex-slo.yml (header: population contract, SLI metric and bucket precondition)"

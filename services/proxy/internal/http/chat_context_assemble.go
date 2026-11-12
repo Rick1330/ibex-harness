@@ -30,17 +30,22 @@ type contextAssembler interface {
 	Assemble(ctx context.Context, req contextclient.AssembleParams) contextclient.AssembleResult
 }
 
-// proxyOverheadRecorder records one request's enforcement overhead. It is
-// satisfied by *metrics.ProxyRegistry; a nil recorder is a no-op.
+// proxyOverheadRecorder records one completed non-streaming request's enforcement
+// overhead on the `assembly` series that matches whether context assembly ran for
+// it. It is satisfied by *metrics.ProxyRegistry; a nil recorder is a no-op.
 type proxyOverheadRecorder interface {
-	ObserveProxyOverheadSeconds(seconds float64)
+	ObserveNonStreamingProxyOverhead(assemblyEnabled bool, seconds float64)
 }
 
 // contextAssembleMeta records whether Assemble was attempted and its outcome.
-// Attempted=false means Phase 2 only (flag off, nil client, or Skip-Memory) —
-// response writers omit the three X-IBEX-Context-* headers so Phase 2 responses
-// stay header-identical to pre-D.2 behavior. AssemblyMs is measured around the
-// Assemble RPC for the embedded `ibex` block (3.5.D.3); unused for headers.
+// Attempted=false means Phase 2 only (flag off, nil client, Skip-Memory, or a
+// request too incomplete to assemble) — response writers omit the three
+// X-IBEX-Context-* headers so Phase 2 responses stay header-identical to pre-D.2
+// behavior. AssemblyMs is measured around the Assemble RPC for the embedded
+// `ibex` block (3.5.D.3); unused for headers. Attempted is also the `assembly`
+// metric label: it is true whenever the RPC ran, including a fail-open result,
+// because a failed assembly still spends its wall time inside this request's
+// overhead and the ratified population is "context assembly disabled".
 // overhead is the handler's recorder, carried here because the metadata write
 // happens in a context-only helper that no longer has the handler in scope.
 type contextAssembleMeta struct {
@@ -93,7 +98,8 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 // phase2Outcome is the directive-only outcome used whenever Assemble is skipped.
 // Attempted stays false, so the response headers stay identical to pre-D.2
 // behavior, but the recorder travels with it: a request that never assembles
-// context still contributes a proxy-overhead sample to the SLO histogram.
+// context still contributes a proxy-overhead sample, labelled assembly=disabled,
+// to the ratified SLO population.
 func (h chatCompletionHandler) phase2Outcome(ctx context.Context, messages []provider.Message) messageInjectionOutcome {
 	return messageInjectionOutcome{
 		Messages: applyDirectiveInjection(ctx, messages),
@@ -367,15 +373,18 @@ func setContextAssembleResponseHeaders(w http.ResponseWriter, ctx context.Contex
 // attachIbexMetadataForPipeline copies D.2 assemble outcome + request timings into
 // responsepipeline context for IBEXMetadataStage. No-op when Assemble was not
 // attempted so the stage leaves Bytes() dirty=false (verbatim upstream body).
-// It is also the single place the proxy-overhead histogram is observed, using
-// the same proxyOverheadMs value the embedded block reports.
+//
+// The proxy_overhead_ms it embeds is measured here, before the pipeline runs and
+// before the body is serialized: it is a diagnostic number for the response body
+// and cannot include work that has not happened yet. The SLO sample is a
+// different, larger measurement — finishProxyOverheadObservation takes it after
+// Run and Bytes — so the two are deliberately not the same value, and the
+// histogram is the authoritative one.
 func attachIbexMetadataForPipeline(ctx context.Context) context.Context {
 	meta, ok := contextAssembleMetaFromContext(ctx)
 	if !ok {
 		return ctx
 	}
-	overheadMs := proxyOverheadMs(ctx)
-	observeProxyOverhead(meta, overheadMs)
 	if !meta.Attempted {
 		return ctx
 	}
@@ -385,20 +394,43 @@ func attachIbexMetadataForPipeline(ctx context.Context) context.Context {
 		MemoriesInjected:  meta.MemoriesInjected,
 		ContextTokensUsed: meta.ContextTokens,
 		ContextAssemblyMs: meta.AssemblyMs,
-		ProxyOverheadMs:   overheadMs,
+		ProxyOverheadMs:   proxyOverheadMs(ctx),
 	})
 }
 
-// observeProxyOverhead records the enforcement overhead once, in seconds, from
-// the same millisecond value written to the ibex block, so the histogram and the
-// response header/body cannot disagree. proxyOverheadMs truncates to whole
-// milliseconds, so samples have 1 ms granularity — enough for the 1/2.5/5/10/20 ms
-// SLO boundaries, and not worth a second, differently-rounded measurement.
-func observeProxyOverhead(meta contextAssembleMeta, overheadMs int64) {
-	if meta.overhead == nil {
+// finishProxyOverheadObservation records one completed non-streaming request:
+// the ibex_proxy_overhead_seconds sample and the matching
+// ibex_proxy_nonstreaming_requests_total increment, on the `assembly` series the
+// request belongs to. Call it after the response pipeline has run and the
+// processed body has been serialized, so the sample covers stage work and JSON
+// serialization instead of only the pre-pipeline prefix.
+//
+// It is called once per request by contract: encodePipelineResult runs once per
+// response, and the streaming path never reaches it, which is what keeps the
+// population "completed non-streaming requests". A missing assemble metadata
+// value or an unwired recorder make it a no-op.
+func finishProxyOverheadObservation(ctx context.Context) {
+	observeProxyOverheadAt(ctx, time.Now())
+}
+
+// observeProxyOverheadAt is finishProxyOverheadObservation with an injected
+// clock. The 20 ms bucket boundary decides the SLO, so its tests pin the sample
+// exactly instead of racing time.Since against the assertion.
+//
+// The population label is meta.Attempted: assembly=enabled means the Assemble
+// RPC ran and its wall time is part of this sample, so the request is not in the
+// ratified "context assembly disabled" population. A fail-open assembly counts
+// as enabled for that reason — the RPC ran even though nothing was injected.
+func observeProxyOverheadAt(ctx context.Context, now time.Time) {
+	meta, ok := contextAssembleMetaFromContext(ctx)
+	if !ok || meta.overhead == nil {
 		return
 	}
-	meta.overhead.ObserveProxyOverheadSeconds((time.Duration(overheadMs) * time.Millisecond).Seconds())
+	overhead, ok := proxyOverheadDuration(ctx, now)
+	if !ok {
+		return
+	}
+	meta.overhead.ObserveNonStreamingProxyOverhead(meta.Attempted, overhead.Seconds())
 }
 
 func sessionIDForIbexMetadata(ctx context.Context) string {
@@ -412,20 +444,40 @@ func sessionIDForIbexMetadata(ctx context.Context) string {
 	return rs.ExternalID
 }
 
-// proxyOverheadMs is wall time since request start minus provider Complete duration
-// (auth + assemble + pipeline + write prep). Matches MONITORING.md proxy_overhead_ms.
-func proxyOverheadMs(ctx context.Context) int64 {
+// proxyOverheadDuration is wall time since request start minus provider Complete
+// time, clamped at zero (auth + assemble + pipeline + serialization).
+//
+// Both terms keep full time.Duration precision. Rounding the result to whole
+// milliseconds first would turn a 20.4 ms overhead into 20 and hide a breach of
+// the 20 ms objective in the le="0.02" bucket; proxyOverheadMs truncates only the
+// diagnostic JSON field. The provider leg arrives quantized to 1 ms (the context
+// key that carries it stores whole milliseconds), so the sample can overstate
+// overhead by just under 1 ms and never understates it — the safe direction for
+// a ceiling objective.
+func proxyOverheadDuration(ctx context.Context, now time.Time) (time.Duration, bool) {
 	start, ok := RequestStartFromContext(ctx)
+	if !ok {
+		return 0, false
+	}
+	provider := time.Duration(0)
+	if providerMs, ok := providerDurationMsFromContext(ctx); ok {
+		provider = time.Duration(providerMs) * time.Millisecond
+	}
+	overhead := now.Sub(start) - provider
+	if overhead < 0 {
+		return 0, true
+	}
+	return overhead, true
+}
+
+// proxyOverheadMs is the whole-millisecond proxy_overhead_ms written to the
+// embedded ibex block. Truncation is deliberate: the field is a diagnostic JSON
+// integer, while the SLO reads the full-precision histogram sample produced by
+// the same arithmetic.
+func proxyOverheadMs(ctx context.Context) int64 {
+	overhead, ok := proxyOverheadDuration(ctx, time.Now())
 	if !ok {
 		return 0
 	}
-	total := time.Since(start).Milliseconds()
-	if providerMs, ok := providerDurationMsFromContext(ctx); ok {
-		overhead := total - providerMs
-		if overhead < 0 {
-			return 0
-		}
-		return overhead
-	}
-	return total
+	return overhead.Milliseconds()
 }

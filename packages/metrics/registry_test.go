@@ -191,9 +191,10 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.IncIdempotency(IdempotencyHit)
 	reg.IncIdempotency("not-a-real-result")
 	reg.ObserveIdempotencyDurationSeconds(0.001)
-	reg.ObserveProxyOverheadSeconds(0.012)
+	reg.ObserveNonStreamingProxyOverhead(false, 0.012)
+	reg.ObserveNonStreamingProxyOverhead(true, 0.018)
 	reg.ObserveContextAssembleSeconds(0.008)
-	(*ProxyRegistry)(nil).ObserveProxyOverheadSeconds(0.001)
+	(*ProxyRegistry)(nil).ObserveNonStreamingProxyOverhead(false, 0.001)
 	(*ProxyRegistry)(nil).ObserveContextAssembleSeconds(0.001)
 }
 
