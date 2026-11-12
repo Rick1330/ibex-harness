@@ -70,9 +70,7 @@ class TestQuerySpecs:
     def test_expected_id_order_is_preserved(self) -> None:
         # The order is the labeler's ranking of the relevant ids; sorting it here would quietly
         # rewrite the judgment before it is recorded.
-        specs = run_modes.query_specs(
-            _payload(_query(expected_content_keys=["mem-z", "mem-a"]))
-        )
+        specs = run_modes.query_specs(_payload(_query(expected_content_keys=["mem-z", "mem-a"])))
 
         assert specs[0].expected_ids == ("mem-z", "mem-a")
 
@@ -80,9 +78,7 @@ class TestQuerySpecs:
         query = _query()
         del query["embedding_profile"]
 
-        with pytest.raises(
-            run_modes.RunModeError, match=r"'q1' has no embedding_profile"
-        ):
+        with pytest.raises(run_modes.RunModeError, match=r"'q1' has no embedding_profile"):
             run_modes.query_specs(_payload(query))
 
     def test_a_corpus_without_topics_is_rejected(self) -> None:
@@ -108,9 +104,7 @@ class TestRunMode:
         repo = _RecordingRepo([_Hit("mem-a"), _Hit("mem-b")])
 
         outcomes = asyncio.run(
-            run_modes.run_mode(
-                self._search(repo, {"mem-a": "mem-a", "mem-b": "mem-b"}), [spec]
-            )
+            run_modes.run_mode(self._search(repo, {"mem-a": "mem-a", "mem-b": "mem-b"}), [spec])
         )
 
         assert outcomes[0].ranked_ids == ("mem-a", "mem-b")
@@ -154,22 +148,89 @@ class _Seed:
     agent_id = "agent-fixed"
 
 
+_PROVENANCE = {
+    "status": "recorded",
+    "producer": "benchmarks/memory/provenance.py",
+    "corpus_hash": "1" * 64,
+    "corpus_hash_algo": "sha256",
+    "corpus_manifest": "gold_set_v2.json=" + "1" * 64,
+    "corpus_status": "current",
+    "dirty": False,
+    "gold_set_hash": "1" * 64,
+    "gold_set_name": "gold_set_v2.json",
+}
+
+
+class TestProvenance:
+    def test_gold_provenance_names_the_corpus_and_its_state(self) -> None:
+        # The recording has to carry the three fields a reader needs to identify the gold set
+        # without this driver's help, and they come from the one hash implementation.
+        record = run_modes.gold_set_provenance()
+
+        assert record["gold_set_name"] == "gold_set_v2.json"
+        assert len(record["gold_set_hash"]) == 64
+        assert record["corpus_status"] in {"current", "stale"}
+
+    def test_a_recording_without_gold_provenance_is_refused(self) -> None:
+        with pytest.raises(run_modes.RunModeError, match="missing gold_set_hash, corpus_status"):
+            run_modes.build_recording(
+                {"hybrid": []},
+                run_modes.RecordingContext(
+                    reranker="stub/lexical-overlap@1",
+                    gold_set="ranking_quality_v2",
+                    recorded_at="2026-11-04T00:00:00+00:00",
+                    provenance={"gold_set_name": "gold_set_v2.json"},
+                ),
+            )
+
+    def test_a_v1_gold_set_name_is_refused(self) -> None:
+        # The canonical path check would also catch this, but the name is the first thing a
+        # reader sees and the first thing a wrong `--gold-set` changes.
+        with pytest.raises(run_modes.RunModeError, match="not 'gold_set_v2.json'"):
+            run_modes.require_v2_gold_set(
+                run_modes.DEFAULT_GOLD_SET.with_name("gold_set_v1.json"),
+                {"gold_set": "ranking_quality_v1"},
+            )
+
+    def test_a_copy_of_the_corpus_is_refused(self, tmp_path: Path) -> None:
+        # It has the right name and shape, but its hash would be published as the canonical
+        # file's digest, which is exactly the claim provenance exists to make checkable.
+        copy = tmp_path / "gold_set_v2.json"
+        copy.write_text("{}", encoding="utf-8")
+
+        with pytest.raises(run_modes.RunModeError, match="not the canonical"):
+            run_modes.require_v2_gold_set(copy, {"gold_set": "ranking_quality_v2"})
+
+    def test_a_corpus_declaring_another_gold_set_is_refused(self) -> None:
+        with pytest.raises(run_modes.RunModeError, match="declares gold_set 'ranking_quality_v1'"):
+            run_modes.require_v2_gold_set(
+                run_modes.DEFAULT_GOLD_SET, {"gold_set": "ranking_quality_v1"}
+            )
+
+    def test_the_canonical_v2_corpus_passes(self) -> None:
+        run_modes.require_v2_gold_set(
+            run_modes.DEFAULT_GOLD_SET, {"gold_set": "ranking_quality_v2"}
+        )
+
+
 class TestRecording:
     def test_the_recording_names_what_produced_it(self) -> None:
         recording = run_modes.build_recording(
             {"hybrid": []},
-            reranker="stub/lexical-overlap@1",
-            gold_set="ranking_quality_v2",
-            recorded_at="2026-11-04T00:00:00+00:00",
+            run_modes.RecordingContext(
+                reranker="stub/lexical-overlap@1",
+                gold_set="ranking_quality_v2",
+                recorded_at="2026-11-04T00:00:00+00:00",
+                provenance=_PROVENANCE,
+            ),
         )
 
         assert recording["reranker"] == "stub/lexical-overlap@1"
         assert recording["gold_set"] == "ranking_quality_v2"
         assert recording["benchmark"] == "ranking_quality"
+        assert recording["provenance"] == _PROVENANCE
 
-    def test_the_recording_is_readable_by_the_strict_loader(
-        self, tmp_path: Path
-    ) -> None:
+    def test_the_recording_is_readable_by_the_strict_loader(self, tmp_path: Path) -> None:
         # The driver and the scorer only agree because the recording format is one definition.
         # Round-tripping it here is what stops a driver change from publishing unlabelled rows.
         recording = run_modes.build_recording(
@@ -183,9 +244,12 @@ class TestRecording:
                     )
                 ]
             },
-            reranker="stub/lexical-overlap@1",
-            gold_set="ranking_quality_v2",
-            recorded_at="2026-11-04T00:00:00+00:00",
+            run_modes.RecordingContext(
+                reranker="stub/lexical-overlap@1",
+                gold_set="ranking_quality_v2",
+                recorded_at="2026-11-04T00:00:00+00:00",
+                provenance=_PROVENANCE,
+            ),
         )
         path = tmp_path / "recording.json"
         path.write_text(json.dumps(recording), encoding="utf-8")
@@ -226,10 +290,7 @@ class TestBaseSettings:
 
 class TestRerankStub:
     def test_a_document_containing_every_query_term_scores_one(self) -> None:
-        assert (
-            rerank_stub.overlap_score("backup retention", "backup retention policy")
-            == 1.0
-        )
+        assert rerank_stub.overlap_score("backup retention", "backup retention policy") == 1.0
 
     def test_a_partial_overlap_is_the_share_of_query_terms_found(self) -> None:
         assert rerank_stub.overlap_score(
@@ -249,9 +310,7 @@ class TestRerankStub:
     def test_the_client_returns_one_score_per_document_in_order(self) -> None:
         client = rerank_stub.LexicalOverlapReranker()
 
-        scores = asyncio.run(
-            client.rerank("backup retention", ["backup only", "backup retention"])
-        )
+        scores = asyncio.run(client.rerank("backup retention", ["backup only", "backup retention"]))
 
         assert scores == [0.5, 1.0]
         assert (client.calls, client.documents_scored) == (1, 2)
@@ -267,12 +326,8 @@ class TestRerankGuard:
     def test_a_reranked_mode_that_never_reached_the_reranker_is_refused(self) -> None:
         # The stage skips itself when the fused window is too small, so a run can finish with
         # hybrid_rerank's label and none of its behaviour.
-        with pytest.raises(
-            run_modes.RunModeError, match="declares reranking but the reranker"
-        ):
-            run_modes._require_rerank_ran(
-                FULL_GRAPH, rerank_stub.LexicalOverlapReranker()
-            )
+        with pytest.raises(run_modes.RunModeError, match="declares reranking but the reranker"):
+            run_modes._require_rerank_ran(FULL_GRAPH, rerank_stub.LexicalOverlapReranker())
 
     def test_a_mode_without_reranking_is_not_asked_to_have_called_it(self) -> None:
         run_modes._require_rerank_ran(HYBRID, None)

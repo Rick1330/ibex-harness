@@ -17,12 +17,13 @@ from pathlib import Path
 _BENCH_DIR = Path(__file__).resolve().parent
 if str(_BENCH_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCH_DIR))
-from path_guard import (  # noqa: E402
+from path_guard import (
     UnsafePathError,
     resolve_published_hnsw_path,
     resolve_raw_bench_path,
 )
-from publish_cells import (  # noqa: E402
+from provenance import corpus_identity
+from publish_cells import (
     PUBLISH_EF_SEARCH,
     PUBLISH_INDEX_BUILD_MODE,
     PUBLISH_ITERATIVE_SCAN,
@@ -31,6 +32,7 @@ from publish_cells import (  # noqa: E402
     compute_status,
     filter_published_results,
 )
+from publish_quality_common import require_recorded_provenance
 
 # Compat re-exports for tests / callers that import from this module.
 __all__ = [
@@ -49,8 +51,31 @@ class RunMeta:
     run_url: str
 
 
+_RERUN = "re-run the bench (python benchmarks/memory/hnsw_bench.py) so the raw artifact carries it"
+
+
+def _published_provenance(raw: dict) -> dict:
+    """Copy the raw run's provenance, restating whether its corpus is still the current one.
+
+    A run measured against an older corpus is a real measurement, so it is published rather than
+    refused -- but it must not be published *as* the corpus this checkout has. ``corpus_status``
+    is therefore recomputed from the publishing checkout in both directions: ``current`` exactly
+    when the recorded hash is the corpus that is here, ``stale`` otherwise. That is the one rule
+    a reader (or ``benchmarks/scripts/check_reproducibility.py``) can re-derive without trusting
+    the run, and a status that disagreed with the hash would make the claim unverifiable.
+    """
+    record = require_recorded_provenance(raw, artifact="raw artifact", rerun=_RERUN)
+    current_hash, _ = corpus_identity("hnsw")
+    status = "current" if record.get("corpus_hash") == current_hash else "stale"
+    return {**record, "corpus_status": status}
+
+
 def _merge_entry(raw: dict, meta: RunMeta) -> dict:
+    # Provenance first: a raw artifact without it cannot be published at all, and that reason
+    # must not be masked by a cell-filter complaint about the same file.
+    provenance = _published_provenance(raw)
     short = meta.sha[:7] if len(meta.sha) >= 7 else meta.sha
+
     filtered = filter_published_results(list(raw.get("results") or []))
     if not filtered:
         msg = (
@@ -86,6 +111,7 @@ def _merge_entry(raw: dict, meta: RunMeta) -> dict:
         "mean_recall_at_10": mean,
         "status": compute_status(gate),
         "gate_summary": gate,
+        "provenance": provenance,
     }
 
 
