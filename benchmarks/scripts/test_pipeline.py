@@ -15,6 +15,7 @@ TEST_MODULES = (
     "test_build_benchmark_data",
     "test_validate_published_data",
     "test_go_bench_gate",
+    "test_check_reproducibility",
 )
 
 
