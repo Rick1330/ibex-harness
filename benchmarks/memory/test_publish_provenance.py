@@ -363,15 +363,17 @@ class TestRankingPublisher:
         assert entry["provenance"]["corpus_status"] == "stale"
         assert entry["provenance"]["corpus_hash"] == "0" * 64
 
-    def test_a_gold_set_hash_that_disagrees_with_the_corpus_is_published_as_stale(self) -> None:
-        # On this benchmark the gold set is the corpus, so the offline checker refuses a record
-        # that states two hashes for it. Restating "current" from `corpus_hash` alone would write
-        # exactly that record.
+    def test_a_gold_set_hash_that_disagrees_with_the_corpus_is_refused(self) -> None:
+        # On this benchmark the gold set is the corpus, so a record stating two different hashes
+        # cannot be published: restating its status would write the contradictory identity the
+        # offline checker rejects, and hide the contradiction instead of fixing it.
         record = _gold_provenance(gold_set_hash="0" * 64)
+        latest = self._latest(record)
+        gate = self._gate()
+        meta = self._meta()
 
-        entry = merge_ranking_quality_entry(self._latest(record), self._gate(), self._meta())
-
-        assert entry["provenance"]["corpus_status"] == "stale"
+        with pytest.raises(RuntimeError, match="states two different identities"):
+            merge_ranking_quality_entry(latest, gate, meta)
 
     def test_a_run_measured_on_a_modified_tree_is_refused(self) -> None:
         latest = self._latest(_gold_provenance(dirty=True))
