@@ -1,0 +1,492 @@
+#!/usr/bin/env python3
+"""Offline, fail-closed reproducibility check for the published benchmark artifacts.
+
+A published run is evidence only if a reader can re-derive what it measured. This checker is
+the consumer of the provenance contract in ``benchmarks/memory/provenance.py``: it reads the
+artifacts under ``site/public/benchmarks/`` and refuses the claims that cannot be true.
+
+What it checks, and why each check exists:
+
+1. **Identity.** ``sha`` is exactly 40 lowercase hex characters, ``short_sha`` is its first
+   seven, no sha repeats inside one artifact, and a run that declares
+   ``provenance.status == "recorded"`` names the run that produced it. A recorded run with an
+   empty ``run_url`` is a claim with no source.
+2. **Clean tree.** A run measured on a modified tree cannot be reproduced from its commit, so
+   ``provenance.dirty == true`` fails.
+3. **Corpus.** The corpus identity is recomputed from the checked-out tree and compared with
+   the newest recorded run's declaration. ``corpus_status`` must be ``"current"`` exactly when
+   the hashes agree and ``"stale"`` exactly when they differ; the failure that matters is a run
+   claiming ``"current"`` on bytes that are not the ones it hashed. A recorded run on an
+   artifact kind with no corpus identity is unverifiable, so it fails too.
+4. **Percentiles.** A p50 above its p95, a p95 above its p99, or a p95 outside its own
+   confidence interval is a broken measurement, not a slow one.
+5. **Ranking.** ``gold_set`` names a known set, and a ``modes`` object covers only defined
+   modes while always including the two the ranking milestone compares.
+6. **Unrecorded runs.** A run with no provenance block, or ``status == "unrecorded"``, is
+   counted and reported as a warning. It is *not* evidence, and the count is printed so that
+   "28 unrecorded runs" can never be read as "28 verified runs". Enforcement is flipped
+   separately; until then these runs do not fail the check.
+
+Anything the checker cannot read -- an unreadable file, an artifact whose kind it does not
+know, a missing or unusable schema -- is a failure. There is no skip flag: an unchecked
+artifact is the one thing a reproducibility gate must not produce.
+
+Exit code 0 means every checkable claim holds; 1 means at least one line on stderr says which
+one does not. Warnings never change the exit code.
+
+The script fails closed when ``jsonschema`` is missing: every artifact then reports "jsonschema
+is not installed", so the check exits 1 instead of skipping the schema validation. The local
+gate runs it through ``make reproducibility-check`` (and therefore ``make repo-guards``). Wiring
+it into CI needs an edit under ``.github/workflows/**`` plus a ``jsonschema`` install from
+``.github/requirements/jsonschema.txt``; that change is owner-gated, so it is deliberately not
+made here.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import re
+import sys
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from types import ModuleType
+from typing import Any, Final
+
+try:
+    import jsonschema
+except ImportError:  # CI installs it from .github/requirements/jsonschema.txt
+    jsonschema = None  # type: ignore[assignment]
+
+_SCRIPTS: Final = Path(__file__).resolve().parent
+_BENCH: Final = _SCRIPTS.parent
+_ROOT: Final = _BENCH.parent
+_MEMORY: Final = _BENCH / "memory"
+
+
+def _load_provenance() -> ModuleType:
+    """Import ``benchmarks/memory/provenance.py`` by path, so identity has one implementation.
+
+    Loaded by path rather than by name, the way ``provenance._synth`` loads the corpus source:
+    the checker works whatever the process ``sys.path`` is, and it cannot be shadowed by an
+    unrelated module called ``provenance``.
+    """
+    source = _MEMORY / "provenance.py"
+    spec = importlib.util.spec_from_file_location("_ibex_bench_provenance", source)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load provenance contract: {source}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+provenance = _load_provenance()
+
+SCRIPT_NAME: Final = "check_reproducibility"
+SCHEMA_DIR: Final = _BENCH / "data-schema"
+PUBLISHED_DIR: Final = _ROOT / "site" / "public" / "benchmarks"
+ARTIFACT_SUFFIX: Final = "-benchmark-data.json"
+SHA_RE: Final = re.compile(r"[0-9a-f]{40}")
+GOLD_SETS: Final = frozenset({"v1", "ranking_quality_v2"})
+# Mirrors MODES in benchmarks/memory/ranking_quality/modes.py; a test asserts the parity.
+MODE_NAMES: Final = frozenset({"dense_only", "hybrid", "hybrid_rerank", "full_graph"})
+REQUIRED_MODES: Final = frozenset({"hybrid_rerank", "full_graph"})
+# filename stem -> provenance corpus kind, or None when the artifact records no corpus.
+CORPUS_KINDS: Final[dict[str, str | None]] = {
+    "hnsw": "hnsw",
+    "ranking-quality": "gold_v1",
+    "extraction-quality": None,
+    "write-pipeline": None,
+}
+_P50, _P95, _P99 = "_p50", "_p95", "_p99"
+_PERCENTILES: Final = (_P50, _P95, _P99)
+_CI_LOW: Final = "_p95_ci_low"
+_CI_HIGH: Final = "_p95_ci_high"
+
+
+class ArtifactError(ValueError):
+    """An artifact the checker cannot trust: unreadable, unknown kind, or missing schema."""
+
+
+@dataclass(slots=True)
+class Report:
+    """The outcome of one run: every problem, every warning, and the unrecorded tally."""
+
+    problems: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    run_count: int = 0
+    unrecorded: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return not self.problems
+
+
+def _display(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return str(path)
+
+
+def _kind(path: Path) -> str | None:
+    """Return the corpus kind for ``path``, or raise when the artifact kind is unknown."""
+    if not path.name.endswith(ARTIFACT_SUFFIX):
+        raise ArtifactError(f"not a published artifact name (expected *{ARTIFACT_SUFFIX})")
+    stem = path.name[: -len(ARTIFACT_SUFFIX)]
+    if stem not in CORPUS_KINDS:
+        known = ", ".join(sorted(CORPUS_KINDS))
+        raise ArtifactError(f"unknown artifact kind {stem!r}; known kinds: {known}")
+    return CORPUS_KINDS[stem]
+
+
+def _load(path: Path) -> dict[str, Any]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ArtifactError(f"cannot read artifact: {exc.strerror or exc}") from exc
+    try:
+        payload = json.loads(text)
+    except ValueError as exc:
+        raise ArtifactError(f"invalid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ArtifactError("artifact root must be a JSON object")
+    return payload
+
+
+def _schema(stem: str) -> dict[str, Any]:
+    path = SCHEMA_DIR / f"{stem}.schema.json"
+    try:
+        schema = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ArtifactError(f"missing schema {path.name}: {exc.strerror or exc}") from exc
+    except ValueError as exc:
+        raise ArtifactError(f"invalid schema {path.name}: {exc}") from exc
+    return schema
+
+
+def _path_part(part: str | int, text: str) -> str:
+    if isinstance(part, int):
+        return f"[{part}]"
+    return f".{part}" if text else str(part)
+
+
+def _path_text(path: Sequence[str | int]) -> str:
+    text = ""
+    for part in path:
+        text += _path_part(part, text)
+    return text or "<root>"
+
+
+def _schema_problems(payload: dict[str, Any], schema: dict[str, Any]) -> list[str]:
+    if jsonschema is None:
+        return ["jsonschema is not installed; the artifact cannot be checked against its schema"]
+    validator = jsonschema.Draft202012Validator(schema)
+    errors = sorted(validator.iter_errors(payload), key=lambda e: _path_text(e.absolute_path))
+    return [f"schema: {_path_text(e.absolute_path)}: {e.message}" for e in errors]
+
+
+def _runs_of(payload: dict[str, Any]) -> list[Any]:
+    runs = payload.get("runs")
+    return runs if isinstance(runs, list) else []
+
+
+def _provenance(run: Any) -> dict[str, Any]:
+    if not isinstance(run, dict):
+        return {}
+    value = run.get("provenance")
+    return value if isinstance(value, dict) else {}
+
+
+def _prov_status(run: Any) -> str | None:
+    status = _provenance(run).get("status")
+    return status if isinstance(status, str) else None
+
+
+def _check_identity(run: dict[str, Any], label: str, index: int, seen: dict[str, int]) -> list[str]:
+    problems: list[str] = []
+    sha = run.get("sha")
+    if isinstance(sha, str) and SHA_RE.fullmatch(sha):
+        if sha in seen:
+            problems.append(f"{label}.sha: duplicate {sha} (first seen at runs[{seen[sha]}])")
+        else:
+            seen[sha] = index
+    else:
+        problems.append(f"{label}.sha: {sha!r} is not 40 lowercase hex characters")
+    expected = sha[:7] if isinstance(sha, str) else None
+    short = run.get("short_sha")
+    if expected is not None and short != expected:
+        problems.append(f"{label}.short_sha: {short!r} != sha[:7] {expected!r}")
+    return problems
+
+
+def _check_source(run: dict[str, Any], label: str) -> list[str]:
+    """A recorded run must name the run that produced it; a dirty tree fails any run."""
+    problems: list[str] = []
+    if _provenance(run).get("dirty") is True:
+        problems.append(
+            f"{label}.provenance.dirty: true; a run measured on a modified tree cannot be"
+            " reproduced from its commit"
+        )
+    if _prov_status(run) != "recorded":
+        return problems
+    url = run.get("run_url")
+    if not isinstance(url, str) or not url.strip():
+        problems.append(
+            f"{label}.run_url: empty on a run with provenance.status='recorded'; a recorded"
+            " claim must name the run that produced it"
+        )
+    return problems
+
+
+def _as_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _percentile_prefixes(node: dict[str, Any]) -> list[str]:
+    prefixes = {
+        key[: -len(suffix)] for key in node for suffix in _PERCENTILES if key.endswith(suffix)
+    }
+    complete = (p for p in prefixes if all(f"{p}{s}" in node for s in _PERCENTILES))
+    return sorted(complete)
+
+
+def _check_interval(label: str, prefix: str, p95: float, node: dict[str, Any]) -> list[str]:
+    problems: list[str] = []
+    low = _as_number(node.get(f"{prefix}{_CI_LOW}"))
+    high = _as_number(node.get(f"{prefix}{_CI_HIGH}"))
+    if low is not None and low > p95:
+        problems.append(f"{label}.{prefix}: p95 {p95} below ci_low {low}")
+    if high is not None and p95 > high:
+        problems.append(f"{label}.{prefix}: p95 {p95} above ci_high {high}")
+    return problems
+
+
+def _check_percentile_group(label: str, node: dict[str, Any], prefix: str) -> list[str]:
+    names = [f"{prefix}{suffix}" for suffix in _PERCENTILES]
+    values = [_as_number(node[name]) for name in names]
+    broken = next(((n, v) for n, v in zip(names, values, strict=True) if v is None), None)
+    if broken is not None:
+        return [f"{label}.{broken[0]}: not a number ({node[broken[0]]!r})"]
+    p50, p95, p99 = (value for value in values if value is not None)
+    problems: list[str] = []
+    if p50 > p95:
+        problems.append(f"{label}.{prefix}: p50 {p50} > p95 {p95}")
+    if p95 > p99:
+        problems.append(f"{label}.{prefix}: p95 {p95} > p99 {p99}")
+    return problems + _check_interval(label, prefix, p95, node)
+
+
+def _flat(chunks: Iterable[Iterable[str]]) -> list[str]:
+    return [item for chunk in chunks for item in chunk]
+
+
+def _check_groups(label: str, node: dict[str, Any]) -> list[str]:
+    prefixes = _percentile_prefixes(node)
+    return _flat(_check_percentile_group(label, node, prefix) for prefix in prefixes)
+
+
+def _check_children(label: str, node: Any) -> list[str]:
+    if isinstance(node, dict):
+        return _flat(_check_percentiles(f"{label}.{key}", node[key]) for key in sorted(node))
+    if isinstance(node, list):
+        return _flat(
+            _check_percentiles(f"{label}[{index}]", value) for index, value in enumerate(node)
+        )
+    return []
+
+
+def _check_percentiles(label: str, node: Any) -> list[str]:
+    groups = _check_groups(label, node) if isinstance(node, dict) else []
+    return groups + _check_children(label, node)
+
+
+def _modes_of(run: dict[str, Any]) -> Any:
+    modes = run.get("modes")
+    if modes is not None:
+        return modes
+    summary = run.get("gate_summary")
+    return summary.get("modes") if isinstance(summary, dict) else None
+
+
+def _check_modes(label: str, modes: Any) -> list[str]:
+    if not isinstance(modes, dict):
+        return [f"{label}.modes: must be an object keyed by mode name"]
+    problems: list[str] = []
+    unknown = sorted(set(modes) - MODE_NAMES)
+    if unknown:
+        problems.append(
+            f"{label}.modes: unknown mode(s) {unknown}; defined modes are {sorted(MODE_NAMES)}"
+        )
+    absent = sorted(REQUIRED_MODES - set(modes))
+    if absent:
+        problems.append(f"{label}.modes: missing required mode(s) {absent}")
+    return problems
+
+
+def _check_ranking(run: dict[str, Any], label: str) -> list[str]:
+    problems: list[str] = []
+    gold = run.get("gold_set")
+    if gold is not None and gold not in GOLD_SETS:
+        problems.append(f"{label}.gold_set: {gold!r} is not one of {sorted(GOLD_SETS)}")
+    modes = _modes_of(run)
+    if modes is not None:
+        problems.extend(_check_modes(label, modes))
+    return problems
+
+
+def _newest_recorded(runs: list[Any]) -> tuple[int, dict[str, Any]] | None:
+    """The newest recorded run. The publisher prepends, so the first recorded run is newest."""
+    for index, run in enumerate(runs):
+        if _prov_status(run) == "recorded" and isinstance(run, dict):
+            return index, run
+    return None
+
+
+def _current_corpus_hash(kind: str, cache: dict[str, str]) -> tuple[str | None, list[str]]:
+    if kind in cache:
+        return cache[kind], []
+    try:
+        digest = provenance.corpus_identity(kind)[0]
+    except (RuntimeError, ValueError) as exc:
+        return None, [f"corpus identity for kind {kind!r} cannot be computed: {exc}"]
+    cache[kind] = digest
+    return digest, []
+
+
+def _check_corpus(runs: list[Any], kind: str | None, cache: dict[str, str]) -> list[str]:
+    newest = _newest_recorded(runs)
+    if newest is None:
+        return []
+    index, run = newest
+    label = f"runs[{index}]"
+    if kind is None:
+        return [
+            (
+                f"{label}.provenance: recorded on an artifact kind with no corpus identity, so"
+                " the claim cannot be verified"
+            )
+        ]
+    current, problems = _current_corpus_hash(kind, cache)
+    if current is None:
+        return problems
+    declared = _provenance(run).get("corpus_hash")
+    claimed = _provenance(run).get("corpus_status")
+    if declared == current and claimed != "current":
+        problems.append(
+            f"{label}.provenance.corpus_status: {claimed!r} but corpus_hash matches the"
+            f" checked-out {kind} corpus ({current})"
+        )
+    if declared != current and claimed == "current":
+        problems.append(
+            f"{label}.provenance.corpus_status: 'current' but corpus_hash {declared!r} differs"
+            f" from the checked-out {kind} corpus ({current})"
+        )
+    return problems
+
+
+def _run_problems(runs: list[Any]) -> list[str]:
+    problems: list[str] = []
+    seen: dict[str, int] = {}
+    for index, run in enumerate(runs):
+        label = f"runs[{index}]"
+        if not isinstance(run, dict):
+            problems.append(f"{label}: not a JSON object")
+            continue
+        problems.extend(_check_identity(run, label, index, seen))
+        problems.extend(_check_source(run, label))
+        problems.extend(_check_percentiles(label, run))
+        problems.extend(_check_ranking(run, label))
+    return problems
+
+
+def _check_payload(payload: dict[str, Any], kind: str | None) -> list[str]:
+    runs = payload.get("runs")
+    if not isinstance(runs, list):
+        return ["runs: missing or not an array"]
+    return _run_problems(runs) + _check_corpus(runs, kind, {})
+
+
+def _inspect(path: Path) -> tuple[dict[str, Any], str | None, dict[str, Any]]:
+    return _load(path), _kind(path), _schema(path.stem)
+
+
+def _unrecorded_warning(display: str, unrecorded: int, total: int) -> str:
+    return (
+        f"{display}: {unrecorded} of {total} run(s) are unrecorded -- not reproducible"
+        " evidence; provenance enforcement has not been flipped on (warning, not a failure)"
+    )
+
+
+def check_path(path: Path, report: Report) -> None:
+    """Check one artifact, appending its problems and warnings to ``report``."""
+    display = _display(path)
+    try:
+        payload, kind, schema = _inspect(path)
+    except ArtifactError as exc:
+        report.problems.append(f"{display}: {exc}")
+        return
+    messages = _schema_problems(payload, schema) + _check_payload(payload, kind)
+    report.problems.extend(f"{display}: {message}" for message in messages)
+    runs = _runs_of(payload)
+    unrecorded = sum(1 for run in runs if _prov_status(run) != "recorded")
+    report.run_count += len(runs)
+    report.unrecorded += unrecorded
+    if unrecorded:
+        report.warnings.append(_unrecorded_warning(display, unrecorded, len(runs)))
+
+
+def default_paths() -> list[Path]:
+    return sorted(PUBLISHED_DIR.glob(f"*{ARTIFACT_SUFFIX}"))
+
+
+def check_paths(paths: Sequence[Path]) -> Report:
+    report = Report()
+    for path in paths:
+        check_path(path, report)
+    return report
+
+
+def _render(report: Report, artifact_count: int) -> None:
+    for message in report.warnings:
+        print(f"Warning: {message}", file=sys.stderr)
+    for message in report.problems:
+        print(f"{SCRIPT_NAME}: {message}", file=sys.stderr)
+    summary = (
+        f"{SCRIPT_NAME}: {artifact_count} artifact(s), {report.run_count} run(s),"
+        f" {len(report.problems)} problem(s), {len(report.warnings)} warning(s),"
+        f" {report.unrecorded} unrecorded run(s)"
+    )
+    print(summary, file=sys.stdout if report.ok else sys.stderr)
+
+
+def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Fail when a published benchmark artifact makes a claim it cannot support."
+    )
+    parser.add_argument(
+        "artifacts",
+        nargs="*",
+        type=Path,
+        help="artifact paths; default is every site/public/benchmarks/*-benchmark-data.json",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parse_args(argv)
+    paths: list[Path] = list(args.artifacts) or default_paths()
+    if not paths:
+        print(f"{SCRIPT_NAME}: no artifacts found under {PUBLISHED_DIR}", file=sys.stderr)
+        return 1
+    report = check_paths(paths)
+    _render(report, len(paths))
+    return 0 if report.ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
