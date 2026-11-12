@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help setup setup-check check check-tools env-doctor stack-init readiness lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-integration-auth test-embedder test-authclient test-mcp-memory test-memory test-memory-integration test-worker test-worker-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate coverage-worker-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify alert-delivery-test db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory e2e-smoke-p3.5 verify-phase15 verify-phase25 mcp-conformance worker-dev worker-beat-dev worker-ping v1-secrets v1-up v1-down v1-migrate v1-provision v1-logs v1-ps v1-bootstrap-pat
+.PHONY: help setup setup-check check check-tools env-doctor stack-init readiness lint-docs lint-go security-scan repo-guards proto-lint proto-breaking api-breaking proto-gen proto-test proto-test-integration test-integration test-integration-auth test-embedder test-authclient test-mcp-memory test-memory test-memory-integration test-worker test-worker-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate coverage-worker-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify alert-delivery-test db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory e2e-smoke-p3.5 verify-phase15 verify-phase25 mcp-conformance worker-dev worker-beat-dev worker-ping v1-secrets v1-up v1-down v1-migrate v1-provision v1-logs v1-ps v1-bootstrap-pat
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -56,6 +56,9 @@ proto-lint: ## Run Buf lint for protobuf contracts
 
 proto-breaking: ## Run Buf breaking checks against main
 	@"$(BASH)" "$(DEV_TOOL)" proto-breaking
+
+api-breaking: ## Diff the OpenAPI snapshot against a git baseline (BASE=origin/main; a tag selects release mode)
+	@"$(BASH)" "$(DEV_TOOL)" api-breaking '$(subst ','\'',$(if $(value BASE),$(value BASE),origin/main))'
 
 proto-gen: ## Generate protobuf stubs locally (output gitignored)
 	@"$(BASH)" "$(DEV_TOOL)" proto-gen
