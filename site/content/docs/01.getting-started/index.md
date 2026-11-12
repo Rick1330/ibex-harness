@@ -26,7 +26,7 @@ This section takes you from zero to a verified local request without hiding the 
 {"type":"warning","title":"Read the claim boundary first"}
 ---
 
-  “Implemented locally” does not mean hosted, HA, or production-ready. The platform has real auth, tenancy, and proxy code, but the production gates in [Production readiness](/docs/deployment/production-readiness) are still open.
+  “Implemented locally” does not mean production-ready, hosted, or HA. The platform has real auth, tenancy, and proxy code, but the production gates in [Production readiness](/docs/deployment/production-readiness) are still open.
 
 ::
 
