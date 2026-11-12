@@ -70,7 +70,7 @@ Every operator request, stream, export, deletion, replay, and asynchronous job d
 
 2. **Explicit over implicit**: Error responses tell you exactly what went wrong and how to fix it. No cryptic error codes.
 
-3. **Versioned from day one**: Breaking changes never affect existing integrations. Old versions supported for 12 months minimum after deprecation notice.
+3. **Versioned from day one**: a breaking change is **detected**, not impossible. The committed OpenAPI snapshot (`services/api/openapi.snapshot.json`) is diffed against a git baseline by `make api-breaking` — `origin/main` at the merge-base by default, or a release tag such as `make api-breaking BASE=v0.1.9` for the released contract — and protobuf shapes are diffed by `make proto-breaking` (`buf breaking`). Both are **local gates today**: `buf-breaking` runs in CI on Go-touching changes as an advisory job (`continue-on-error: true`) and `api-breaking` is not wired into any workflow, so neither is a required status check. A green local run is evidence, not a guarantee: pin the contract version you integrate against. A deprecated contract is supported for a recorded window of at least 180 days (`stable`) or 31 days (`beta`) after its notice date, and the same window applies to REST routes, gRPC methods, and MCP tool schemas — recorded in [`architecture-v2/contracts/deprecations.json`](architecture-v2/contracts/deprecations.json) and schema-validated in CI. See [Compatibility and Versioning](architecture-v2/16-compatibility-and-versioning.md).
 
 4. **Idempotent where possible**: Safe to retry on network failure. Every write operation accepts an idempotency key.
 
@@ -3077,23 +3077,27 @@ v2 (future):   Announced when breaking changes needed
 
 ### Deprecation Process
 
+A deprecation is recorded in [`architecture-v2/contracts/deprecations.json`](architecture-v2/contracts/deprecations.json)
+before it is announced, and the record is checked in CI. The window is `sunset_date - notice_date` and must be at least
+**180 days** for a `stable` contract and **31 days** for a `beta` contract. The same rule covers REST routes, gRPC
+methods, and MCP tool schemas; the full policy is
+[Compatibility and Versioning](architecture-v2/16-compatibility-and-versioning.md).
+
 ```text
-Month 0:   Breaking change identified
-Month 1:   New version launched, deprecation notice sent
-           Old version: Deprecation header added to responses
-Month 1-12: Both versions supported
-Month 12:  Old version receives no new features
-Month 13:  Old version returns 410 Gone with migration guide
+Day 0:          Notice date. The Deprecation and Sunset headers ship on the deprecated contract and the
+                migration note is published.
+Day 0-sunset:   Both contracts are supported. The deprecated one receives security and correctness fixes only.
+Sunset date:    At least 180 days (stable) or 31 days (beta) after the notice date. The contract is removed,
+                or returns 410 Gone with a link to the migration note.
 ```
 
-**Deprecation Headers (reference example only; hostnames and dates require verification):**
+**Deprecation headers (standard fields; hostnames and dates require verification):**
 
 ```http
-X-IBEX-Deprecation: true
-X-IBEX-Deprecation-Date: 2025-01-15
-X-IBEX-Sunset-Date: 2025-06-01
-X-IBEX-Successor: {api-origin}/v2/
+Deprecation: @1798761600
+Sunset: Mon, 01 Jun 2026 00:00:00 GMT
 Link: <{public-docs-origin}/migration/v1-to-v2>; rel="deprecation"
+Link: <{api-origin}/v2/>; rel="successor-version"
 ```
 
 ---
