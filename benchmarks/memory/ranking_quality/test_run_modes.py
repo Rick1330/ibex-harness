@@ -77,15 +77,18 @@ class TestQuerySpecs:
     def test_a_v1_query_is_named_when_it_has_no_profile(self) -> None:
         query = _query()
         del query["embedding_profile"]
+        payload = _payload(query)
 
         with pytest.raises(run_modes.RunModeError, match=r"'q1' has no embedding_profile"):
-            run_modes.query_specs(_payload(query))
+            run_modes.query_specs(payload)
 
     def test_a_corpus_without_topics_is_rejected(self) -> None:
         # Without the topic map the profile is a dict of names, and a vector cannot be built; a
         # silent fallback would seed one geometry and query another.
+        payload = {"queries": [_query()], "topics": {}}
+
         with pytest.raises(run_modes.RunModeError, match="must declare its topics"):
-            run_modes.query_specs({"queries": [_query()], "topics": {}})
+            run_modes.query_specs(payload)
 
 
 class TestRunMode:

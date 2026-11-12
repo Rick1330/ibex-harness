@@ -77,39 +77,44 @@ class TestLoadArtifact:
     def test_an_artifact_without_modes_is_rejected(self, tmp_path: Path) -> None:
         document = _artifact()
         document["modes"] = {}
+        path = _write(tmp_path, "m.json", document)
 
         with pytest.raises(gate_cli.GateInputError, match="no modes to gate"):
-            gate_cli.load_artifact(_write(tmp_path, "m.json", document))
+            gate_cli.load_artifact(path)
 
     def test_an_artifact_without_a_reranker_is_rejected(self, tmp_path: Path) -> None:
         # Without it there is nothing to compare against the baseline's reranker.
         document = _artifact()
         del document["reranker"]
+        path = _write(tmp_path, "m.json", document)
 
         with pytest.raises(gate_cli.GateInputError, match="does not name its reranker"):
-            gate_cli.load_artifact(_write(tmp_path, "m.json", document))
+            gate_cli.load_artifact(path)
 
     def test_a_boolean_score_is_rejected(self, tmp_path: Path) -> None:
         # bool is an int, so `true` would slide through as 1.0 and read as a perfect score.
         document = _artifact()
         document["modes"]["hybrid"]["ndcg_at_10"] = True
+        path = _write(tmp_path, "m.json", document)
 
         with pytest.raises(gate_cli.GateInputError, match="must be a number"):
-            gate_cli.load_artifact(_write(tmp_path, "m.json", document))
+            gate_cli.load_artifact(path)
 
     def test_a_score_that_is_a_string_is_rejected(self, tmp_path: Path) -> None:
         document = _artifact()
         document["modes"]["hybrid"]["ndcg_at_10"] = "0.8"
+        path = _write(tmp_path, "m.json", document)
 
         with pytest.raises(gate_cli.GateInputError, match="must be a number"):
-            gate_cli.load_artifact(_write(tmp_path, "m.json", document))
+            gate_cli.load_artifact(path)
 
     def test_a_mode_that_is_not_an_object_is_named(self, tmp_path: Path) -> None:
         document = _artifact()
         document["modes"]["hybrid"] = [1, 2]
+        path = _write(tmp_path, "m.json", document)
 
         with pytest.raises(gate_cli.GateInputError, match="'hybrid' is not an object"):
-            gate_cli.load_artifact(_write(tmp_path, "m.json", document))
+            gate_cli.load_artifact(path)
 
     def test_a_document_that_is_not_json_is_reported_with_its_name(
         self, tmp_path: Path
@@ -131,11 +136,12 @@ class TestLoadBaseline:
     def test_a_baseline_without_scores_is_rejected(self, tmp_path: Path) -> None:
         document = _baseline()
         document["baseline"] = {}
+        path = _write(tmp_path, "b.json", document)
 
         with pytest.raises(
             gate_cli.GateInputError, match="no baseline to compare against"
         ):
-            gate_cli.load_baseline(_write(tmp_path, "b.json", document))
+            gate_cli.load_baseline(path)
 
     def test_a_baseline_without_the_distinction_declaration_is_rejected(
         self, tmp_path: Path
@@ -144,9 +150,10 @@ class TestLoadBaseline:
         # baseline's behalf instead of checking what it claims.
         document = _baseline()
         del document["graph_mode_distinguished"]
+        path = _write(tmp_path, "b.json", document)
 
         with pytest.raises(gate_cli.GateInputError, match="graph_mode_distinguished"):
-            gate_cli.load_baseline(_write(tmp_path, "b.json", document))
+            gate_cli.load_baseline(path)
 
     def test_a_distinction_declared_as_a_string_is_rejected(
         self, tmp_path: Path
@@ -154,9 +161,10 @@ class TestLoadBaseline:
         # "false" is truthy, so reading it would flip the declaration without anyone noticing.
         document = _baseline()
         document["graph_mode_distinguished"] = "false"
+        path = _write(tmp_path, "b.json", document)
 
         with pytest.raises(gate_cli.GateInputError, match="as a boolean"):
-            gate_cli.load_baseline(_write(tmp_path, "b.json", document))
+            gate_cli.load_baseline(path)
 
 
 class TestSameExperiment:
@@ -176,21 +184,19 @@ class TestSameExperiment:
     def test_another_gold_set_is_refused(self, tmp_path: Path) -> None:
         document = _baseline()
         document["gold_set"] = "ranking_quality_v1"
+        parsed = self._parsed(tmp_path, _artifact(), document)
 
         with pytest.raises(gate_cli.GateInputError, match="was not the baseline's"):
-            gate_cli.require_same_experiment(
-                *self._parsed(tmp_path, _artifact(), document)
-            )
+            gate_cli.require_same_experiment(*parsed)
 
     def test_another_reranker_is_refused(self, tmp_path: Path) -> None:
         # A cross-encoder's numbers are not a threshold for a fused run's numbers.
         document = _baseline()
         document["reranker"] = "bge-reranker-v2-m3"
+        parsed = self._parsed(tmp_path, _artifact(), document)
 
         with pytest.raises(gate_cli.GateInputError, match="reranker"):
-            gate_cli.require_same_experiment(
-                *self._parsed(tmp_path, _artifact(), document)
-            )
+            gate_cli.require_same_experiment(*parsed)
 
 
 class TestMain:

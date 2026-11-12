@@ -10,6 +10,7 @@ valid -- so the rule lives in the publishers and is tested here.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ if str(_BENCH) not in sys.path:
 import provenance
 from build_published_data import RunMeta, _merge_entry
 from publish_quality_common import (
+    RANKING_PROVENANCE_FIELDS,
     REQUIRED_PROVENANCE_FIELDS,
     merge_ranking_quality_entry,
 )
@@ -43,12 +45,28 @@ _RECORDED: dict[str, Any] = {
     "corpus_status": "current",
     "dirty": False,
 }
+# The two publishers measure different corpora, and the schemas require different identity
+# fields for them: the ranking schema also needs the gold set, because there the gold set is the
+# corpus. The fixtures therefore start from the corpus each publisher actually measures.
 
 
 def _provenance(**overrides: Any) -> dict[str, Any]:
-    """A complete recorded block; ``corpus_hash`` defaults to the corpus in this checkout."""
+    """A complete recorded block for the HNSW corpus in this checkout."""
     record = dict(_RECORDED)
     record["corpus_hash"] = provenance.corpus_identity("hnsw")[0]
+    record.update(overrides)
+    return record
+
+
+def _gold_provenance(**overrides: Any) -> dict[str, Any]:
+    """A complete recorded block for the v1 gold corpus in this checkout."""
+    corpus_hash, manifest = provenance.corpus_identity("gold_v1")
+    record = _provenance(
+        corpus_hash=corpus_hash,
+        corpus_manifest=manifest,
+        gold_set_hash=corpus_hash,
+        gold_set_name="gold_set_v1.json",
+    )
     record.update(overrides)
     return record
 
@@ -86,6 +104,13 @@ def _meta() -> RunMeta:
     )
 
 
+def _recorded_requirements(schema_name: str) -> set[str]:
+    """The fields a schema requires of a ``status == "recorded"`` provenance block."""
+    schema = json.loads((_SCHEMA_DIR / schema_name).read_text(encoding="utf-8"))
+    then = schema["properties"]["runs"]["items"]["properties"]["provenance"]["then"]
+    return {"status", *then["required"]}
+
+
 class TestHnswPublisher:
     def test_the_raw_provenance_is_published(self) -> None:
         record = _provenance(dirty=True)
@@ -95,21 +120,29 @@ class TestHnswPublisher:
         assert entry["provenance"] == record
 
     def test_a_raw_artifact_without_provenance_is_refused(self) -> None:
+        raw = _raw(include=False)
+        meta = _meta()
+
         with pytest.raises(RuntimeError, match="raw artifact has no provenance; re-run the bench"):
-            _merge_entry(_raw(include=False), _meta())
+            _merge_entry(raw, meta)
 
     def test_an_empty_provenance_block_is_refused(self) -> None:
+        raw = _raw({})
+        meta = _meta()
+
         with pytest.raises(RuntimeError, match="has no provenance"):
-            _merge_entry(_raw({}), _meta())
+            _merge_entry(raw, meta)
 
     def test_an_incomplete_provenance_block_is_refused(self) -> None:
         # A half-written block would publish a corpus hash next to no runner identity, which
         # reads as a reproducible measurement when it is not one.
         record = _provenance()
         del record["runner_ram_mib"]
+        raw = _raw(record)
+        meta = _meta()
 
         with pytest.raises(RuntimeError, match="incomplete \\(missing runner_ram_mib\\)"):
-            _merge_entry(_raw(record), _meta())
+            _merge_entry(raw, meta)
 
     def test_a_run_on_the_current_corpus_is_published_as_current(self) -> None:
         entry = _merge_entry(_raw(_provenance()), _meta())
@@ -140,6 +173,66 @@ class TestHnswPublisher:
         assert entry["status"] == "pass"
         assert entry["mean_recall_at_10"] == 1.0
 
+    def test_a_run_on_a_locally_modified_corpus_is_published_as_stale(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The hash is the one this checkout computes, but the corpus file is modified, so the
+        # bytes are not the committed ones a reader would get: the run is not current.
+        monkeypatch.setattr(provenance, "corpus_status", lambda _kind: "stale")
+
+        entry = _merge_entry(_raw(_provenance()), _meta())
+
+        assert entry["provenance"]["corpus_status"] == "stale"
+
+
+class TestProvenanceValues:
+    """A required field with an impossible value is refused, not published.
+
+    Presence is not evidence: ``runner_cpu_count = 0``, ``corpus_hash = "bad"`` and
+    ``dirty = "false"`` all fill the block while describing a run nobody can reproduce, and a
+    published number nobody can reproduce is not evidence.
+    """
+
+    @pytest.mark.parametrize(
+        ("overrides", "expected"),
+        [
+            ({"runner_cpu_count": 0}, "runner_cpu_count must be a positive integer"),
+            ({"runner_cpu_count": True}, "runner_cpu_count must be a positive integer"),
+            ({"runner_ram_mib": 0}, "runner_ram_mib must be a positive integer"),
+            ({"corpus_hash": "bad"}, "corpus_hash must be 64 lowercase hex characters"),
+            ({"corpus_hash": "A" * 64}, "corpus_hash must be 64 lowercase hex characters"),
+            ({"corpus_manifest": 12}, "corpus_manifest must be a non-empty string"),
+            ({"runner_cpu_model": ""}, "runner_cpu_model must be a non-empty string"),
+            ({"corpus_hash_algo": "md5"}, "corpus_hash_algo must be 'sha256'"),
+            ({"corpus_status": "unknown"}, "corpus_status must be 'current' or 'stale'"),
+            ({"dirty": "false"}, "dirty must be a boolean"),
+        ],
+    )
+    def test_an_impossible_value_is_refused(self, overrides: dict[str, Any], expected: str) -> None:
+        raw = _raw(_provenance(**overrides))
+        meta = _meta()
+
+        with pytest.raises(RuntimeError, match=re.escape(expected)):
+            _merge_entry(raw, meta)
+
+    def test_every_invalid_field_is_named_at_once(self) -> None:
+        raw = _raw(_provenance(runner_cpu_count=0, dirty="false"))
+        meta = _meta()
+
+        with pytest.raises(
+            RuntimeError, match="runner_cpu_count must be a positive integer"
+        ) as caught:
+            _merge_entry(raw, meta)
+
+        assert "dirty must be a boolean" in str(caught.value)
+
+    def test_an_unexpected_status_is_refused(self) -> None:
+        raw = _raw(_provenance(status="partial"))
+        meta = _meta()
+
+        with pytest.raises(RuntimeError, match="provenance.status is 'partial'"):
+            _merge_entry(raw, meta)
+
 
 class TestRankingPublisher:
     def _latest(self, provenance_record: Any = None) -> dict[str, Any]:
@@ -167,7 +260,7 @@ class TestRankingPublisher:
         )
 
     def test_the_provenance_is_published(self) -> None:
-        record = _provenance()
+        record = _gold_provenance()
 
         entry = merge_ranking_quality_entry(self._latest(record), self._gate(), self._meta())
 
@@ -175,37 +268,74 @@ class TestRankingPublisher:
         assert entry["status"] == "pass"
 
     def test_a_scored_artifact_without_provenance_is_refused(self) -> None:
+        latest = self._latest()
+        gate = self._gate()
+        meta = self._meta()
+
         with pytest.raises(RuntimeError, match="ranking-quality artifact has no provenance"):
-            merge_ranking_quality_entry(self._latest(), self._gate(), self._meta())
+            merge_ranking_quality_entry(latest, gate, meta)
 
     def test_a_block_whose_status_is_not_recorded_is_refused(self) -> None:
         # A complete-looking block labelled "unrecorded" states that the number cannot be
         # reproduced; publishing it would dress that up as evidence.
-        record = _provenance(status="unrecorded")
+        latest = self._latest(_gold_provenance(status="unrecorded"))
+        gate = self._gate()
+        meta = self._meta()
 
         with pytest.raises(
             RuntimeError,
             match=r"status is 'unrecorded', expected 'recorded'.*must be reproducible",
         ):
-            merge_ranking_quality_entry(self._latest(record), self._gate(), self._meta())
+            merge_ranking_quality_entry(latest, gate, meta)
+
+    def test_a_recorded_block_without_the_gold_set_is_refused(self) -> None:
+        # The gold set is this corpus, so a recorded run that does not name it cannot be
+        # re-derived; the ranking schema requires the pair, and so does the publisher.
+        latest = self._latest(_provenance())
+        gate = self._gate()
+        meta = self._meta()
+
+        with pytest.raises(RuntimeError, match="missing gold_set_hash, gold_set_name"):
+            merge_ranking_quality_entry(latest, gate, meta)
+
+    def test_a_run_on_an_older_gold_set_is_published_as_stale(self) -> None:
+        # Publishing an older measurement is legitimate; claiming it measured today's gold set
+        # is not, so the run is published and the claim is corrected.
+        record = _gold_provenance(corpus_hash="0" * 64, gold_set_hash="0" * 64)
+
+        entry = merge_ranking_quality_entry(self._latest(record), self._gate(), self._meta())
+
+        assert entry["provenance"]["corpus_status"] == "stale"
+        assert entry["provenance"]["corpus_hash"] == "0" * 64
+
+    def test_a_locally_modified_gold_set_is_published_as_stale(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(provenance, "corpus_status", lambda _kind: "stale")
+
+        entry = merge_ranking_quality_entry(
+            self._latest(_gold_provenance()), self._gate(), self._meta()
+        )
+
+        assert entry["provenance"]["corpus_status"] == "stale"
 
     def test_no_modes_field_is_published(self) -> None:
         # The mode comparison is its own artifact; nothing defines a published `modes` shape,
         # so inventing one here would publish a comparison no reader can interpret.
-        latest = self._latest(_provenance())
+        latest = self._latest(_gold_provenance())
         latest["modes"] = {"hybrid": []}
 
         entry = merge_ranking_quality_entry(latest, self._gate(), self._meta())
 
         assert "modes" not in entry
 
-    def test_the_required_fields_are_the_schema_recorded_requirements(self) -> None:
-        schema = json.loads(
-            (_SCHEMA_DIR / "ranking-quality-benchmark-data.schema.json").read_text(encoding="utf-8")
+    def test_the_publishers_require_what_the_schemas_require(self) -> None:
+        assert set(REQUIRED_PROVENANCE_FIELDS) == _recorded_requirements(
+            "hnsw-benchmark-data.schema.json"
         )
-        then = schema["properties"]["runs"]["items"]["properties"]["provenance"]["then"]
-
-        assert set(REQUIRED_PROVENANCE_FIELDS) == {"status", *then["required"]}
+        assert set(RANKING_PROVENANCE_FIELDS) == _recorded_requirements(
+            "ranking-quality-benchmark-data.schema.json"
+        )
 
 
 def _validator(schema_name: str) -> Any:
@@ -246,7 +376,7 @@ class TestPublishedDocument:
                 "query_count": 20,
                 "memory_count": 51,
                 "metrics": {"precision_at_5": 1.0, "recall_at_10": 1.0, "mrr": 1.0},
-                "provenance": _provenance(gold_set_hash="0" * 64, gold_set_name="gold_set_v2.json"),
+                "provenance": _gold_provenance(),
             },
             {"status": "pass", "checks": []},
             QualityRunMeta(
@@ -267,6 +397,37 @@ class TestPublishedDocument:
         )
 
         assert errors == []
+
+    def test_a_recorded_ranking_block_without_the_gold_set_fails_the_schema(self) -> None:
+        # The block is complete for the HNSW corpus and unusable for this one: a recorded
+        # ranking run must state the gold set it measured.
+        document = {
+            "schema_version": 1,
+            "benchmark": "ranking_quality",
+            "runs": [
+                {
+                    "sha": "b" * 40,
+                    "short_sha": "b" * 7,
+                    "timestamp": "2026-11-12T00:00:00+00:00",
+                    "branch": "main",
+                    "run_number": 2,
+                    "run_url": "https://example.invalid/actions/runs/2",
+                    "gold_set": "v1",
+                    "metrics": {"precision_at_5": 1.0, "recall_at_10": 1.0, "mrr": 1.0},
+                    "status": "pass",
+                    "provenance": _provenance(),
+                }
+            ],
+        }
+
+        errors = [
+            error.message
+            for error in _validator("ranking-quality-benchmark-data.schema.json").iter_errors(
+                document
+            )
+        ]
+
+        assert any("gold_set_name" in message for message in errors), errors
 
 
 def test_the_committed_hnsw_history_still_validates() -> None:

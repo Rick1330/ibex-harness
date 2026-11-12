@@ -49,7 +49,7 @@
           "status": { "type": "string", "enum": ["pass", "fail"] },
           "gate_summary": { "type": "object" },
           "provenance": {
-            "description": "Identity of the corpus and the runner. Optional so runs published before this block existed stay valid; status=recorded requires the full identity.",
+            "description": "Identity of the corpus and the runner. Optional so runs published before this block existed stay valid; status=recorded requires the full identity, including the gold set, because on this benchmark the gold set is the corpus.",
             "type": "object",
             "additionalProperties": false,
             "required": ["status"],
@@ -72,7 +72,7 @@
               "dirty": { "type": "boolean" },
               "seed": { "type": "integer" },
               "gold_set_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-              "gold_set_name": { "type": "string" }
+              "gold_set_name": { "type": "string", "minLength": 1 }
             },
             "if": {
               "properties": { "status": { "const": "recorded" } },
@@ -88,7 +88,9 @@
                 "corpus_hash_algo",
                 "corpus_manifest",
                 "corpus_status",
-                "dirty"
+                "dirty",
+                "gold_set_hash",
+                "gold_set_name"
               ]
             }
           }
