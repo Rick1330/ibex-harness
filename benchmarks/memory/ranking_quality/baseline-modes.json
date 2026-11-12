@@ -3,6 +3,7 @@
   "benchmark": "ranking_quality",
   "gold_set": "ranking_quality_v2",
   "reranker": "stub/lexical-overlap@1",
+  "graph_mode_distinguished": false,
   "evidence": {
     "produced_by": "benchmarks/memory/ranking_quality/run_modes.py",
     "run": "https://github.com/Rick1330/ibex-harness/actions/runs/41803777419",
@@ -17,7 +18,8 @@
     "Pinned from the first real run of the multi-mode driver, replaceable only by a run on the same gold set and reranker.",
     "full_graph equals hybrid_rerank exactly. Suppression does run: the twin is removed from the page under full_graph (verified locally against the seeded corpus). It changes no score because the twin never ranks above the expected memory for any graph query, so the document it removes contributes nothing to nDCG@10.",
     "That equality is a corpus limitation, not evidence that graph-aware retrieval beats reranking. Do not publish it as a suppression win; the graph subset needs queries where the twin outranks the winner before this baseline can distinguish the two modes.",
-    "The reranker is the CI stub, not a cross-encoder. These numbers measure the pipeline's plumbing, not a model's ranking quality."
+    "The reranker is the CI stub, not a cross-encoder. These numbers measure the pipeline's plumbing, not a model's ranking quality.",
+    "graph_mode_distinguished: false is a declaration about this corpus, not a quality claim: it says the corpus cannot distinguish suppression from reranking, because full_graph and hybrid_rerank score identically on it. The gate reads it before scoring and fails a run whose computed value disagrees in either direction, and the gate report repeats the limitation as a line under the table. A corpus that later separates the two modes makes this baseline stale: the gate will fail on the mismatch, and the baseline must be re-pinned from a run on that corpus rather than edited to match."
   ],
   "baseline": {
     "dense_only": 0.495625,
