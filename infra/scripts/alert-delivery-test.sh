@@ -98,6 +98,10 @@ cleanup() {
     # ("kill network process: permission denied"). Retry once before reporting.
     local down_out
     if ! down_out="$(compose_down 2>&1)" && ! down_out="$(compose_down 2>&1)"; then
+      # A failed teardown is a failed run even when the containers happen to be
+      # gone: the leftover check below cannot see a surviving network or volume,
+      # so reporting success here would hide a real leak.
+      status=1
       echo "alert-delivery-test: compose down failed twice:" >&2
       printf '%s\n' "$down_out" | sed 's/^/  down| /' >&2
     fi

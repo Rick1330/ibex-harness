@@ -10,8 +10,11 @@ Standard library only, on purpose: the gate runs on a bare CI runner and in
 understands exactly the subset of YAML these two file families use (block
 mappings, block sequences, `matchers:`/`match:` lists, and inline flow lists of
 matchers) and fails loudly on a shape it does not understand instead of
-guessing. It is a line-oriented scanner rather than a set of regexes: every line
-is classified once, so no pattern can backtrack over the input.
+guessing. `match_re:` is outside that subset and is reported as an error: a
+regex constraint the gate never reads would otherwise drop out of the route and
+let a severity look routed on evidence the gate did not evaluate. It is a
+line-oriented scanner rather than a set of regexes: every line is classified
+once, so no pattern can backtrack over the input.
 
 Both inputs are parsed as data only. Nothing here executes, resolves, or
 interprets the file's contents beyond reading labels and matchers.
@@ -421,8 +424,11 @@ class _RouteScan:
         if top_key == "route":
             self._begin_route()
             return True
-        if top_key is not None and not self.in_receivers:
-            # Any other top-level key (inhibit_rules, templates, ...) closes route.
+        if top_key is not None:
+            # Any other top-level key (inhibit_rules, templates, time_intervals,
+            # ...) ends every open block. That includes receiver scanning: its
+            # `- name:` items are not receivers, and leaving the scan open would
+            # invent a receiver that the config does not define.
             self._close_blocks()
         return False
 
@@ -449,8 +455,11 @@ class _RouteScan:
         self.stack.append((-1, self.root))
 
     def _close_blocks(self) -> None:
+        """Close route and receiver scanning: the next block starts clean."""
         self.mode, self.mode_target = None, None
         self.stack.clear()
+        self.in_receivers = False
+        self.current_receiver = None
 
     def _consume_receiver_line(self, lineno: int, line: str) -> None:
         item = _item_value(line, "name")
@@ -492,6 +501,17 @@ class _RouteScan:
             if rest.startswith("["):
                 self._consume_inline_matchers(current, rest, where)
                 self.mode, self.mode_target = None, None
+            return True
+        if key == "match_re":
+            # A regex constraint this gate never reads would silently drop out
+            # of the route, leaving a severity that the route may exclude
+            # looking routed. Fail closed instead of half-reading it.
+            self.errors.append(
+                f"{where}: `match_re` is not supported by this gate; a regex constraint "
+                "it cannot read would drop out of the route, so the route's severities "
+                "are not counted as routed"
+            )
+            self.mode, self.mode_target = None, None
             return True
         self.mode, self.mode_target = None, None
         return True

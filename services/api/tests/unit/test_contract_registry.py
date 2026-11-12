@@ -38,6 +38,17 @@ service TestService {
 
 _DOC_ROW = re.compile(r"^\| `([a-z0-9.-]+\.v1)` \| `([A-Z]+) (/[^`]+)` \| (\w+) \|$", re.MULTILINE)
 
+# Stable committed rows whose IDs encode a derivation decision rather than an
+# incidental position: a scope whose removal leaves no other static segment
+# (``agents``), a scope-dropped nested collection (``providers``), and a beta
+# operator route. They are pinned by route key so a route addition costs no edit
+# while a derivation change that rewrites an existing ID still fails.
+_PINNED_CONTRACT_IDS = {
+    "DELETE /v1/agents/{agent_id}": "management.agents.delete.v1",
+    "GET /v1/organizations/{org_id}/providers": "management.providers.read.v1",
+    "GET /v1/operator/platform/health": "operator.platform.health.v1",
+}
+
 
 @pytest.fixture(scope="module")
 def registry_check() -> ModuleType:
@@ -542,8 +553,9 @@ def test_two_methods_on_one_action_verb_path_collide_on_the_contract_id(
 
     The derivation is deliberately not changed to dodge this: it would rewrite the
     committed IDs and the document. This test pins both halves of that decision —
-    the collision is reported, and the committed registry still holds 75 distinct
-    IDs, so a derivation change that rewrites them cannot pass unnoticed.
+    the collision is reported, and a derivation change that rewrites a pinned
+    committed ID cannot pass unnoticed. The row count is not pinned: adding a
+    route must not force an edit here.
     """
     collision = "management.agents.activate.v1"
     activate = "/v1/agents/{agent_id}/activate"
@@ -560,8 +572,13 @@ def test_two_methods_on_one_action_verb_path_collide_on_the_contract_id(
 
     committed = json.loads(registry_check.RegistryPaths.registry.read_text(encoding="utf-8"))
     rows = committed["routes"]
-    assert len(rows) == 75
-    assert len({row["contract_id"] for row in rows}) == 75
+    # Pin key -> contract ID, not the row count, so legitimate route additions
+    # cost no test edit while a rewritten existing ID fails with a readable diff.
+    by_key = {row["key"]: row["contract_id"] for row in rows}
+    assert len(by_key) == len(rows)
+    assert {key: by_key.get(key) for key in _PINNED_CONTRACT_IDS} == _PINNED_CONTRACT_IDS
+    assert len({row["contract_id"] for row in rows}) == len(rows)
+    assert len(rows) >= len(_PINNED_CONTRACT_IDS)
 
 
 def test_unaccounted_proto_service_fails(tmp_path: Path, registry_check: ModuleType) -> None:
