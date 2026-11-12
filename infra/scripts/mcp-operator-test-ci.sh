@@ -10,6 +10,12 @@ if [[ ! -f "$MCP_DIR/pyproject.toml" ]]; then
   exit 1
 fi
 
+# W5.5 / P0-14: the shared descriptor gate (packages/mcp_tool_descriptors) is
+# exercised here and only here. ci.yml invokes this script once and
+# mcp-memory-test-ci.sh twice, so running the shared suite from the operator job
+# keeps one invocation per CI run instead of two.
+bash "$ROOT/infra/scripts/mcp-tool-descriptors-test-ci.sh"
+
 cd "$MCP_DIR"
 bash "$ROOT/infra/scripts/mcp-operator-uv-sync.sh"
 .venv/bin/ruff check app tests

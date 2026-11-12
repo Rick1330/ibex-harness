@@ -21,6 +21,7 @@ mkdir -p "$WHEEL_DIR"
 bash "$ROOT/infra/scripts/build-authclient-wheel.sh" "$WHEEL_DIR"
 bash "$ROOT/infra/scripts/build-mcp-gateway-wheel.sh" "$WHEEL_DIR"
 bash "$ROOT/infra/scripts/build-mcp-runtime-wheel.sh" "$WHEEL_DIR"
+bash "$ROOT/infra/scripts/build-mcp-tool-descriptors-wheel.sh" "$WHEEL_DIR"
 bash "$ROOT/infra/scripts/build-ibex-async-db-wheel.sh" "$WHEEL_DIR"
 
 cd "$MCP_DIR"
@@ -29,9 +30,11 @@ uv sync --frozen --no-build --extra dev --no-install-project \
   --no-install-package authclient \
   --no-install-package mcp-gateway \
   --no-install-package mcp-runtime \
+  --no-install-package mcp-tool-descriptors \
   --no-install-package ibex-async-db
 uv pip install --no-cache --force-reinstall --no-index --no-deps \
   "$WHEEL_DIR"/authclient-*.whl \
   "$WHEEL_DIR"/mcp_gateway-*.whl \
   "$WHEEL_DIR"/mcp_runtime-*.whl \
+  "$WHEEL_DIR"/mcp_tool_descriptors-*.whl \
   "$WHEEL_DIR"/ibex_async_db-*.whl

@@ -32,18 +32,21 @@ WORKDIR /app/services/mcp-memory
 
 COPY packages/authclient /app/packages/authclient
 COPY packages/mcp_runtime /app/packages/mcp_runtime
+COPY packages/mcp_tool_descriptors /app/packages/mcp_tool_descriptors
 # Trusted monorepo wheel only — UV_NO_BUILD=1 blocks uv build globally (Sonar S8541).
 RUN mkdir -p /wheels \
     && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/authclient \
-    && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/mcp_runtime
+    && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/mcp_runtime \
+    && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/mcp_tool_descriptors
 COPY services/mcp-memory/pyproject.toml services/mcp-memory/uv.lock ./
 
 # Install third-party dependencies from lockfile (wheels only — Sonar S8541).
 RUN uv sync --python "$UV_PYTHON" --frozen --no-build --no-install-project --find-links /wheels \
         --no-install-package authclient \
         --no-install-package mcp-runtime \
+        --no-install-package mcp-tool-descriptors \
     && uv pip install --python /app/.venv/bin/python --no-cache --force-reinstall --no-index --no-deps --find-links /wheels \
-        "authclient==0.1.5" /wheels/mcp_runtime-*.whl
+        "authclient==0.1.5" /wheels/mcp_runtime-*.whl /wheels/mcp_tool_descriptors-*.whl
 
 # --------------------------------------------------------------------------- #
 # Stage 3 — runtime image                                                      #

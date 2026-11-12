@@ -28,7 +28,9 @@ python:
   - 'infra/scripts/idempotency-conformance-ci.sh'
   - 'infra/scripts/build-mcp-gateway-wheel.sh'
   - 'infra/scripts/build-mcp-runtime-wheel.sh'
+  - 'infra/scripts/build-mcp-tool-descriptors-wheel.sh'
   - 'infra/scripts/mcp-gateway-test-ci.sh'
+  - 'infra/scripts/mcp-tool-descriptors-test-ci.sh'
   - 'infra/scripts/mcp-operator-*.sh'
   - 'infra/tests/idempotency-conformance/**'
   - 'packages/apierror_py/**'
@@ -37,6 +39,7 @@ python:
   - 'packages/ibex_idempotency/**'
   - 'packages/mcp_gateway/**'
   - 'packages/mcp_runtime/**'
+  - 'packages/mcp_tool_descriptors/**'
 go:
   - 'services/**'
   - 'packages/**'

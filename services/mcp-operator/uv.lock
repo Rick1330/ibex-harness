@@ -829,6 +829,7 @@ dependencies = [
     { name = "mcp" },
     { name = "mcp-gateway" },
     { name = "mcp-runtime" },
+    { name = "mcp-tool-descriptors" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
@@ -864,6 +865,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.29.1,<2" },
     { name = "mcp-gateway", directory = "../../packages/mcp_gateway" },
     { name = "mcp-runtime", directory = "../../packages/mcp_runtime" },
+    { name = "mcp-tool-descriptors", directory = "../../packages/mcp_tool_descriptors" },
     { name = "opentelemetry-api", specifier = ">=1.27.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.27.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
@@ -990,6 +992,25 @@ requires-dist = [
     { name = "redis", specifier = ">=5.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
     { name = "starlette", specifier = ">=0.40.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "mcp-tool-descriptors"
+version = "0.1.0"
+source = { directory = "../../packages/mcp_tool_descriptors" }
+dependencies = [
+    { name = "mcp" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mcp", specifier = ">=1.29.1,<2" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
 ]
 provides-extras = ["dev"]
 
