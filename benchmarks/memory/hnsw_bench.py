@@ -28,12 +28,14 @@ from app.vectorstore.pgvector_store import PgVectorStore
 _BENCH_DIR = Path(__file__).resolve().parent
 if str(_BENCH_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCH_DIR))
-from hnsw_run import MatrixConfig, SizeResult, WARMUP_QUERIES, run_search_matrix  # noqa: E402
-from path_guard import UnsafePathError, resolve_raw_bench_path  # noqa: E402
-from synth import ACTIVE_DIMS, DIM  # noqa: E402
+from hnsw_run import WARMUP_QUERIES, MatrixConfig, SizeResult, run_search_matrix
+from path_guard import UnsafePathError, resolve_raw_bench_path
+from provenance import provenance_record
+from synth import ACTIVE_DIMS, DIM
 
 _DEFAULT_EF_SEARCH = 64
 _DEFAULT_SIZES = (10_000, 100_000)
+
 
 @dataclass(frozen=True, slots=True)
 class PayloadParams:
@@ -66,6 +68,15 @@ def _methodology_block(params: PayloadParams) -> dict[str, object]:
 
 
 def _build_payload(params: PayloadParams) -> dict[str, object]:
+    """The raw artifact for one measured run.
+
+    ``provenance`` is gathered here rather than by a caller, so a payload cannot be assembled
+    without it. ``provenance_record`` raises for a corpus file it cannot read and for a runner
+    identity it cannot determine, which is the point: a run that cannot say what it measured is
+    not written to disk, and no branch below fills the block in from a default. A halted or
+    unusable ``git`` does not raise -- it is reported as ``dirty``/``stale``, because "cannot
+    prove this is clean" is a fact the record can carry, while "no corpus hash" is not.
+    """
     mean_recall = (
         statistics.fmean(r.recall_at_10 for r in params.results) if params.results else 0.0
     )
@@ -73,6 +84,7 @@ def _build_payload(params: PayloadParams) -> dict[str, object]:
         "benchmark": "hnsw_recall_latency",
         "generated_at": datetime.now(UTC).isoformat(),
         "methodology": _methodology_block(params),
+        "provenance": provenance_record("hnsw"),
         "results": [asdict(r) for r in params.results],
         "mean_recall_at_10": mean_recall,
     }

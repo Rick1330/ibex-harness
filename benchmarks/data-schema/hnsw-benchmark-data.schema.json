@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ibexharness.com/schemas/hnsw-benchmark-data.schema.json",
   "title": "HNSW benchmark published data",
+  "description": "Published HNSW recall/latency history. schema_version stays 1 because the per-run provenance block is a widening: it is optional, so every document written before it existed still validates unchanged.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "benchmark", "runs"],
@@ -41,6 +42,48 @@
           "gate_summary": {
             "type": "object",
             "additionalProperties": true
+          },
+          "provenance": {
+            "description": "Identity of the corpus and the runner. Optional so runs published before this block existed stay valid; status=recorded requires the full identity.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["recorded", "unrecorded"]
+              },
+              "producer": { "type": "string", "minLength": 1 },
+              "runner_cpu_model": { "type": "string", "minLength": 1 },
+              "runner_cpu_count": { "type": "integer", "minimum": 1 },
+              "runner_ram_mib": { "type": "integer", "minimum": 1 },
+              "corpus_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "corpus_hash_algo": { "const": "sha256" },
+              "corpus_manifest": { "type": "string", "minLength": 1 },
+              "corpus_status": {
+                "type": "string",
+                "enum": ["current", "stale"]
+              },
+              "dirty": { "type": "boolean" },
+              "seed": { "type": "integer" }
+            },
+            "if": {
+              "properties": { "status": { "const": "recorded" } },
+              "required": ["status"]
+            },
+            "then": {
+              "required": [
+                "producer",
+                "runner_cpu_model",
+                "runner_cpu_count",
+                "runner_ram_mib",
+                "corpus_hash",
+                "corpus_hash_algo",
+                "corpus_manifest",
+                "corpus_status",
+                "dirty"
+              ]
+            }
           },
           "results": {
             "type": "array",

@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from path_guard import PathResolveOptions, resolve_workspace_path
+
+# What a published ``provenance`` block has to carry. These are the schema's ``status ==
+# "recorded"`` requirements plus the status itself, kept in one place so both publishers refuse
+# the same incomplete record.
+REQUIRED_PROVENANCE_FIELDS = (
+    "status",
+    "producer",
+    "runner_cpu_model",
+    "runner_cpu_count",
+    "runner_ram_mib",
+    "corpus_hash",
+    "corpus_hash_algo",
+    "corpus_manifest",
+    "corpus_status",
+    "dirty",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +38,58 @@ class RunMeta:
 
 def gate_status(gate: dict[str, Any]) -> str:
     return "pass" if gate.get("status") == "pass" else "fail"
+
+
+def _recorded_provenance_block(
+    document: Mapping[str, Any], *, artifact: str, rerun: str
+) -> Mapping[str, Any]:
+    """The document's populated ``provenance`` mapping, or a refusal naming the fix."""
+    record = document.get("provenance")
+    if isinstance(record, Mapping) and record:
+        return record
+    raise RuntimeError(f"{artifact} has no provenance; {rerun}")
+
+
+def _missing_fields(record: Mapping[str, Any]) -> list[str]:
+    """The required provenance fields ``record`` does not carry a value for."""
+    return [field for field in REQUIRED_PROVENANCE_FIELDS if record.get(field) is None]
+
+
+def _require_complete(record: Mapping[str, Any], *, artifact: str, rerun: str) -> None:
+    """Refuse a block that is missing a required field, naming every one that is absent."""
+    missing = _missing_fields(record)
+    if missing:
+        raise RuntimeError(
+            f"{artifact} provenance is incomplete (missing {', '.join(missing)}); {rerun}"
+        )
+
+
+def _require_recorded_status(
+    record: Mapping[str, Any], *, artifact: str, rerun: str
+) -> None:
+    """Refuse a complete block whose status says the number cannot be reproduced."""
+    status = record.get("status")
+    if status != "recorded":
+        raise RuntimeError(
+            f"{artifact} provenance.status is {status!r}, expected 'recorded'; "
+            f"a published number must be reproducible; {rerun}"
+        )
+
+
+def require_recorded_provenance(
+    document: Mapping[str, Any], *, artifact: str, rerun: str
+) -> dict[str, Any]:
+    """Return ``document``'s ``provenance`` block, refusing to publish without a full one.
+
+    The schemas keep the block optional so artifacts written before it existed stay valid; that
+    is a compatibility promise to old files, not permission to write a new one without it. A
+    published number nobody can reproduce is not evidence, so a missing or partial block stops
+    the publish and names the command that fixes it.
+    """
+    record = _recorded_provenance_block(document, artifact=artifact, rerun=rerun)
+    _require_complete(record, artifact=artifact, rerun=rerun)
+    _require_recorded_status(record, artifact=artifact, rerun=rerun)
+    return dict(record)
 
 
 def _resolve_existing_json_path(path: Path) -> Path:
@@ -72,7 +141,9 @@ class MergeRunRequest:
 
 
 def merge_run(request: MergeRunRequest) -> dict[str, Any]:
-    published = load_or_init_published(request.published_path, benchmark=request.benchmark)
+    published = load_or_init_published(
+        request.published_path, benchmark=request.benchmark
+    )
     runs = [r for r in published.get("runs", []) if r.get("sha") != request.sha]
     runs.insert(0, request.entry)
     published["schema_version"] = 1
@@ -97,6 +168,12 @@ def run_entry_base(meta: RunMeta, *, timestamp: str | None = None) -> dict[str, 
 def merge_ranking_quality_entry(
     latest: dict[str, Any], gate: dict[str, Any], meta: RunMeta
 ) -> dict[str, Any]:
+    """One published ranking-quality run: the scored metrics, plus what produced them.
+
+    ``provenance`` is copied from the scored artifact and required. ``modes`` is deliberately
+    not copied: no published shape defines it, and a mode comparison is published as its own
+    artifact rather than smuggled into a single-mode history.
+    """
     return {
         **run_entry_base(meta, timestamp=str(latest.get("timestamp") or None)),
         "gold_set": latest.get("gold_set", "v1"),
@@ -105,6 +182,11 @@ def merge_ranking_quality_entry(
         "metrics": dict(latest.get("metrics") or {}),
         "status": gate_status(gate),
         "gate_summary": gate,
+        "provenance": require_recorded_provenance(
+            latest,
+            artifact="ranking-quality artifact",
+            rerun="re-run the ranking-quality bench on this checkout so the run is reproducible",
+        ),
     }
 
 

@@ -48,6 +48,8 @@ from path_guard import (
     write_json_atomic,
 )
 from profiles import profile_vector
+from provenance import GOLD_SET_PATH as PROVENANCE_GOLD_SET_PATH
+from provenance import provenance_record
 from recorded_run import QueryOutcome
 from rerank_stub import LABEL as STUB_RERANKER_LABEL
 from rerank_stub import LexicalOverlapReranker
@@ -136,9 +138,7 @@ def query_specs(payload: Mapping[str, Any]) -> list[QuerySpec]:
     return [_spec(query, topics) for query in payload["queries"]]
 
 
-async def run_mode(
-    search: SearchPage, specs: Sequence[QuerySpec]
-) -> list[QueryOutcome]:
+async def run_mode(search: SearchPage, specs: Sequence[QuerySpec]) -> list[QueryOutcome]:
     """Ask the page lookup for one page per query and record it verbatim.
 
     No filtering or topping up happens here: a mode that returns nine ids must be published as
@@ -164,9 +164,7 @@ def _content_keys(hits: Sequence[Any], id_to_key: Mapping[str, str]) -> list[str
     A hit that is not part of the corpus cannot be judged, so it is dropped rather than counted
     as a miss; the seed purges the org first, so anything else is a leftover from another test.
     """
-    return [
-        key for key in (id_to_key.get(str(hit.id)) for hit in hits) if key is not None
-    ]
+    return [key for key in (id_to_key.get(str(hit.id)) for hit in hits) if key is not None]
 
 
 def page_search(
@@ -203,24 +201,83 @@ def _row(outcome: QueryOutcome) -> dict[str, Any]:
     }
 
 
+PROVENANCE_GOLD_FIELDS = ("gold_set_hash", "gold_set_name", "corpus_status")
+
+
+def require_v2_gold_set(gold_path: Path, payload: Mapping[str, Any]) -> None:
+    """Refuse a corpus whose provenance could not be recorded honestly.
+
+    The recorded ``gold_set_hash`` is the digest of the v2 corpus at its canonical path, so this
+    driver accepts that file and no other: a copy somewhere else would be seeded and published
+    under the canonical file's hash. The corpus must also name itself the v2 set, because the
+    recording is scored by the v2 validator -- publishing it under ``v1`` would compare a run to
+    a corpus it was not measured on.
+    """
+    if gold_path.name != PROVENANCE_GOLD_SET_PATH.name:
+        raise RunModeError(
+            f"gold set {gold_path.name!r} is not {PROVENANCE_GOLD_SET_PATH.name!r}; "
+            "this driver records provenance for the v2 corpus only"
+        )
+    if gold_path.resolve() != PROVENANCE_GOLD_SET_PATH.resolve():
+        raise RunModeError(
+            f"gold set {gold_path} is not the canonical {PROVENANCE_GOLD_SET_PATH}: the recorded "
+            "provenance hashes that file, so a copy would publish another file's hash"
+        )
+    declared = payload.get("gold_set")
+    if declared != GOLD_SET_NAME:
+        raise RunModeError(
+            f"gold set declares gold_set {declared!r}, expected {GOLD_SET_NAME!r}; "
+            "the recording would name a corpus it was not measured on"
+        )
+
+
+def gold_set_provenance() -> dict[str, Any]:
+    """The provenance block for the v2 corpus, from the one hash implementation."""
+    return dict(provenance_record("gold"))
+
+
+def _require_gold_provenance(provenance: Mapping[str, Any]) -> dict[str, Any]:
+    """A recording must name the corpus it was measured on, or it cannot be scored honestly."""
+    if not isinstance(provenance, Mapping):
+        raise RunModeError(
+            "recording provenance must be the provenance block from benchmarks/memory/provenance.py"
+        )
+    missing = [field for field in PROVENANCE_GOLD_FIELDS if not provenance.get(field)]
+    if missing:
+        raise RunModeError(
+            f"recording provenance is missing {', '.join(missing)}; "
+            "every mode run must name the gold set it was measured on"
+        )
+    return dict(provenance)
+
+
+@dataclass(frozen=True, slots=True)
+class RecordingContext:
+    """The run metadata a recording publishes, bundled so one call carries them all.
+
+    Every field is required rather than defaulted: the recording is the only artifact that knows
+    which corpus produced these rankings, and a default would let a run reach the scorer without
+    saying what it measured.
+    """
+
+    reranker: str
+    gold_set: str
+    recorded_at: str
+    provenance: Mapping[str, Any]
+
+
 def build_recording(
-    runs: Mapping[str, Sequence[QueryOutcome]],
-    *,
-    reranker: str,
-    gold_set: str,
-    recorded_at: str,
+    runs: Mapping[str, Sequence[QueryOutcome]], context: RecordingContext
 ) -> dict[str, Any]:
     """The recorded run, in the format ``recorded_run.load_recorded`` validates."""
     return {
         "schema_version": 1,
         "benchmark": "ranking_quality",
-        "gold_set": gold_set,
-        "reranker": reranker,
-        "recorded_at": recorded_at,
-        "modes": {
-            name: [_row(outcome) for outcome in outcomes]
-            for name, outcomes in runs.items()
-        },
+        "gold_set": context.gold_set,
+        "reranker": context.reranker,
+        "recorded_at": context.recorded_at,
+        "provenance": _require_gold_provenance(context.provenance),
+        "modes": {name: [_row(outcome) for outcome in outcomes] for name, outcomes in runs.items()},
     }
 
 
@@ -231,9 +288,7 @@ def base_settings() -> Settings:
     it to the ambient default would let a refill add lexical hits to the vector-only baseline and
     to the modes that inherit the value, so two runs on different defaults would not compare.
     """
-    return Settings(database_url=async_dsn()).model_copy(
-        update={"search_fallback_enabled": False}
-    )
+    return Settings(database_url=async_dsn()).model_copy(update={"search_fallback_enabled": False})
 
 
 def _settings_for(mode: BenchmarkMode, base: Settings) -> Settings:
@@ -260,9 +315,7 @@ def _rerank_client(mode: BenchmarkMode) -> LexicalOverlapReranker | None:
     return LexicalOverlapReranker() if mode.rerank else None
 
 
-def _require_rerank_ran(
-    mode: BenchmarkMode, client: LexicalOverlapReranker | None
-) -> None:
+def _require_rerank_ran(mode: BenchmarkMode, client: LexicalOverlapReranker | None) -> None:
     """A mode that declares reranking must have reached the reranker.
 
     The stage skips itself when the hydrated window is too small and degrades on any failure,
@@ -284,8 +337,7 @@ async def _run_one_mode(
         context.session_factory, context.store, settings, rerank_client=client
     )
     id_to_key = {
-        str(memory_id): key
-        for key, memory_id in context.seed.content_key_to_memory_id.items()
+        str(memory_id): key for key, memory_id in context.seed.content_key_to_memory_id.items()
     }
     outcomes = await run_mode(
         page_search(repo, context.seed, id_to_key, min_similarity=context.floor),
@@ -304,6 +356,10 @@ async def run_all(
     """Seed the corpus, run each mode over the same queries, and return the recording."""
     _require_stub_reranker(reranker)
     payload = load_gold_set(gold_path)  # validates the corpus before anything is seeded
+    require_v2_gold_set(gold_path, payload)
+    # Gathered before the database is touched: a run that cannot prove which corpus it is
+    # about must stop before it seeds rows, not after measuring them.
+    provenance = gold_set_provenance()
     specs = query_specs(payload)
     base = base_settings()
     settings_by_mode = {mode.name: _settings_for(mode, base) for mode in modes}
@@ -328,9 +384,12 @@ async def run_all(
         await engine.dispose()
     return build_recording(
         runs,
-        reranker=reranker,
-        gold_set=str(payload.get("gold_set") or GOLD_SET_NAME),
-        recorded_at=datetime.now(tz=UTC).isoformat(),
+        RecordingContext(
+            reranker=reranker,
+            gold_set=str(payload.get("gold_set") or GOLD_SET_NAME),
+            recorded_at=datetime.now(tz=UTC).isoformat(),
+            provenance=provenance,
+        ),
     )
 
 
