@@ -369,7 +369,8 @@ case "${1:-help}" in
       '  stack-init [dev|test]  Wait for a stack and create required object-store buckets' \
       '  readiness              Run stack-init readiness probes' \
       '  lint-docs              Run markdownlint' '  security-scan          Run gitleaks locally' \
-      '  repo-guards            Run repository layout and hygiene guards (incl. alert routing)' '  proto-lint              Run Buf lint' \
+      '  repo-guards            Run repository layout and hygiene guards (incl. alert routing + SLO rules)' '  proto-lint              Run Buf lint' \
+      '  slo-rules-check        Parse the Prometheus rules, check SLO alert severity/runbook coverage, and evaluate the synthetic burn' \
       '  proto-breaking         Run Buf breaking checks' '  api-breaking [base]     Diff the OpenAPI snapshot against a git baseline (default origin/main; a tag selects release mode)' \
       '  proto-gen               Generate protobuf stubs' \
       '  proto-test              Run protobuf contract tests' '  test-integration         Run Go integration tests' \
@@ -397,7 +398,8 @@ case "${1:-help}" in
     "$markdownlint" "**/*.md" "#node_modules"
     ;;
   security-scan) cd "$ROOT_DIR"; require_tool gitleaks 'gitleaks is required for security-scan'; gitleaks detect --source . --config .gitleaks.toml --redact --verbose ;;
-  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py ;;
+  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py; bash infra/scripts/slo-rules-check.sh ;;
+  slo-rules-check) cd "$ROOT_DIR"; bash infra/scripts/slo-rules-check.sh ;;
   proto-lint) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf lint ;;
   proto-breaking) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf breaking --against "$PROTO_BREAKING_AGAINST" ;;
   api-breaking) bash "$ROOT_DIR/infra/scripts/api-breaking.sh" "${2:-}" ;;

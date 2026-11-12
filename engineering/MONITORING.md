@@ -221,7 +221,37 @@ Every service must publish these metrics:
   - stages: `directive|hot_memories|history|context_grpc`
 - `ibex_proxy_upstream_duration_seconds_bucket{provider,status}`
 - `ibex_proxy_stream_duration_seconds_bucket{provider,status}`
-- `ibex_proxy_overhead_duration_seconds_bucket{status}`
+- `ibex_proxy_overhead_seconds{assembly}` (histogram) — the ratified SLO metric.
+  Wall time since request start minus the upstream provider's completion time,
+  clamped at zero, observed once per completed **non-streaming** request. The one
+  `assembly` label partitions that population:
+  - `assembly="disabled"` — directive-only path (assembly off, skipped, failed
+    open, or nothing to inject). **This is the ratified SLO population**; every
+    rule in `ibex-slo.yml` selects it explicitly.
+  - `assembly="enabled"` — assembled context was injected, so the sample
+    legitimately includes the Context Assemble RPC. That is a different workload
+    with an unratified target and is excluded from every SLO expression; mixing
+    it in would page on assembly being switched on and hide a real regression
+    behind a workload the 20 ms objective never described.
+
+  The sample is taken **after** the response pipeline ran and the body was
+  serialized (`finishProxyOverheadObservation`, called after
+  `responsePipeline.Run` and `processed.Bytes()`), so it includes stage and
+  serialization work. The `proxy_overhead_ms` embedded in the response body is the
+  **pre-pipeline diagnostic** value and is deliberately smaller. Buckets are
+  `ProxyEnforcementBuckets` (`packages/metrics/buckets.go`), which resolves
+  1/2.5/5/10/20 ms individually. The 20 ms bound is the Go literal `0.020`;
+  Prometheus stores the rendered float, so the label the burn rules must select
+  is `le="0.02"`. The two strings are not interchangeable — a selector quoting
+  `0.020` matches no series at all.
+- `ibex_proxy_nonstreaming_requests_total{assembly}` (counter) — eligible
+  non-streaming requests, incremented in the same call as the histogram
+  observation, so the two cannot diverge. It is the traffic term of the absence
+  alert: without it, "no observations" and "nothing to observe" are
+  indistinguishable.
+- `ibex_proxy_context_assemble_seconds` (histogram, no labels) — Context Assemble
+  RPC wall time as the proxy sees it, fail-open outcomes included. Target p95
+  ≤50 ms, **not yet ratified**, so it has no alert.
 
 #### Cache and fallback behavior
 
@@ -660,13 +690,43 @@ Panels:
 
 ### 11.3 P2 Alerts (examples)
 
-**Proxy p99 overhead regression**
+> Severity vocabulary: the shipped SLO rules label severity `page`/`ticket`
+> (checked by `check-alert-routing.py`); the hand-written examples below still use
+> the older P1/P2/P3 vocabulary. Where the two disagree, the rule file wins.
 
-- Condition: `histogram_quantile(0.99, rate(ibex_proxy_overhead_duration_seconds_bucket[5m])) > 0.06` for 10m
+**Proxy overhead SLO burn (shipped — `infra/monitoring/prometheus/rules/ibex-slo.yml`)**
 
-**Context assembly p95 too slow**
+- `IbexProxyOverheadFastBurn` (`page`): `ibex:sli_proxy_overhead:burn_rate_1h > 14.4`
+  **and** `ibex:sli_proxy_overhead:burn_rate_5m > 14.4` for 2m — about 2% of the
+  30-day error budget spent per hour.
+- `IbexProxyOverheadSlowBurn` (`ticket`): `ibex:sli_proxy_overhead:burn_rate_6h > 6`
+  **and** `ibex:sli_proxy_overhead:burn_rate_30m > 6` for 15m — about 5% of the
+  budget per six hours with no single bad window.
+- `IbexProxyOverheadSLIAbsent` (`ticket`): the SLI is unmeasurable while
+  `ibex_proxy_nonstreaming_requests_total{assembly="disabled"}` advances — either
+  `absent(ibex_proxy_overhead_seconds_count{assembly="disabled"})` or that series
+  present but **not advancing**, for 15m. `absent()` alone sees only the first
+  case: with `_count` present, every bad-share ratio computes 0/0 and both burn
+  alerts stay quietly healthy. The traffic guard keeps an idle stack from raising
+  a ticket; a stopped proxy is `IbexProxyDown`.
+- Every expression above pins `assembly="disabled"` — the ratified population.
+  `assembly="enabled"` requests ran the Context Assemble RPC and are deliberately
+  excluded.
+- Burn rate is the share of requests over the 20 ms boundary divided by the 1%
+  budget of a 99% objective; the bad share is read from the `le="0.02"` bucket
+  (the rendered form of the `0.020` Go literal in `buckets.go`), not from
+  `histogram_quantile`. `infra/scripts/slo-rules-check.sh` renders the family's
+  bounds through the Prometheus client and rejects any selector that is not a
+  label in that set, so quoting the literal fails the gate instead of silently
+  producing an empty vector.
+- Recording rules behind them: `ibex:proxy_overhead_seconds:p99_5m`,
+  `ibex:proxy_overhead_seconds:p99_1h`, and `ibex:sli_proxy_overhead:bad_ratio_*` /
+  `ibex:sli_proxy_overhead:burn_rate_*` on 5m/30m/1h/6h.
 
-- Condition: `histogram_quantile(0.95, rate(ibex_context_assembly_duration_seconds_bucket[5m])) > 0.05` for 10m
+**Context assembly p95 too slow** (illustrative only — no rule ships; the metric is
+`ibex_proxy_context_assemble_seconds` and the p95 ≤50 ms target is unratified)
+
+- Condition: `histogram_quantile(0.95, rate(ibex_proxy_context_assemble_seconds_bucket[5m])) > 0.05` for 10m
 
 **Redis degraded**
 
@@ -692,24 +752,30 @@ groups:
           summary: "Proxy is down"
           description: "No proxy instances are up for >1m."
 
-      - alert: IbexProxyHighP99Overhead
+      # Shipped fast-burn rule, abbreviated. The rule file is authoritative and
+      # also carries the slow burn, the SLI-absent ticket and the recording rules.
+      - alert: IbexProxyOverheadFastBurn
         expr: |
-          histogram_quantile(0.99,
-            rate(ibex_proxy_overhead_duration_seconds_bucket[5m])
-          ) > 0.06
-        for: 10m
+          ibex:sli_proxy_overhead:burn_rate_1h > 14.4
+          and
+          ibex:sli_proxy_overhead:burn_rate_5m > 14.4
+        for: 2m
         labels:
-          severity: P2
+          severity: page
         annotations:
-          summary: "Proxy p99 overhead too high"
-          description: "p99 proxy overhead > 60ms for 10m."
+          summary: "Proxy overhead burn rate is 14.4x the 99% / 20 ms error budget"
+          description: ">14.4% of requests over the 20 ms budget for 1h and 5m."
 
   - name: ibex-context
     rules:
+      # Illustrative only: no context-assembly rule ships. The metric is
+      # ibex_proxy_context_assemble_seconds and the p95 <= 50 ms target is
+      # unratified (05-request-lifecycle-and-slos.md), so it gets a rule when the
+      # number is ratified, not before.
       - alert: IbexContextAssemblySlow
         expr: |
           histogram_quantile(0.95,
-            rate(ibex_context_assembly_duration_seconds_bucket[5m])
+            rate(ibex_proxy_context_assemble_seconds_bucket[5m])
           ) > 0.05
         for: 10m
         labels:
@@ -741,8 +807,39 @@ groups:
 
 ### 12.2 Proxy Overhead Latency SLO
 
-- SLI: `proxy_overhead_ms` p99
-- SLO: p99 < 60ms, p95 < 20ms (excluding provider latency)
+**Ratified objective: p99 ≤ 20 ms** of proxy enforcement overhead, sourced from
+[`architecture-v2/05-request-lifecycle-and-slos.md`](architecture-v2/05-request-lifecycle-and-slos.md)
+§Timing policy. That document is the only place the number is allowed to change;
+every other file, rule and dashboard reads it from there.
+
+- SLI: `ibex_proxy_overhead_seconds{assembly="disabled"}` (histogram, seconds) —
+  p99 via `histogram_quantile` over the aggregated bucket set, recorded as
+  `ibex:proxy_overhead_seconds:p99_5m` and `ibex:proxy_overhead_seconds:p99_1h`.
+- Population: `assembly="disabled"` is the ratified population (no Context
+  Assemble RPC ran). `assembly="enabled"` requests paid the Assemble RPC and are a
+  different workload with an unratified target, excluded from every SLO
+  expression. `ibex_proxy_nonstreaming_requests_total{assembly}` is the matching
+  traffic counter, incremented in the same call as the observation.
+- Sample boundary: the observation is taken after `responsePipeline.Run` and body
+  serialization. It keeps full duration precision; the provider leg is subtracted
+  at whole-ms resolution, so the sample can overstate by less than 1 ms and never
+  understates — the safe direction for a ceiling objective.
+- Objective: p99 ≤ 20 ms, i.e. a 99% objective whose error budget is the 1% of
+  requests allowed over the 20 ms boundary.
+- Profile: excludes provider time and post-header stream time. The ratified
+  profile is the warm mock-provider local/protected run with a warm
+  auth/rate-limit/directive cache and context assembly disabled. It is not a
+  hosted/reference performance claim.
+- **Coverage limit:** the histogram is observed once per completed
+  **non-streaming** request, so a p99 that holds here says nothing about
+  streaming responses. A streaming-only regression would not move this SLI.
+- Alerting: `IbexProxyOverheadFastBurn` (`page`), `IbexProxyOverheadSlowBurn`
+  (`ticket`) and `IbexProxyOverheadSLIAbsent` (`ticket`) in
+  `infra/monitoring/prometheus/rules/ibex-slo.yml`. See §11.3.
+- Evidence state: the blocking PR-time Go benchmark gate is a relative
+  warm-path comparison, not p99 evidence; no recent passing full-chat p99 run is
+  published, so the objective remains an owned target rather than a measured
+  production SLO.
 
 ### 12.3 Memory Search Latency SLO
 
@@ -844,8 +941,12 @@ This view must be accessible in the dashboard and must not require log scraping.
 ## 15) Verification Checklist (Local Phase 2.5 LGTM — not production HA)
 
 Phase 2.5.G7 / ADR-0051 signs off **local Compose** evidence (Grafana on loopback, Prometheus scrape of
-host services, Alertmanager rules loaded, optional OTLP→Tempo). Production HA collectors, org-wide
-SLO burn alerts, and full runbook coverage remain later-phase work.
+host services, Alertmanager rules loaded, optional OTLP→Tempo). Org-wide SLO burn alerts are no longer
+uniformly later-phase work: the proxy-overhead objective (p99 ≤20 ms) now ships recording rules, a fast/slow
+multi-window burn pair and an SLI-absent ticket in `infra/monitoring/prometheus/rules/ibex-slo.yml`, gated by
+`make slo-rules-check`. Context assembly (p95 ≤50 ms / p99 ≤100 ms) and memory retrieval remain **targets
+pending ratification and measurement**, not alerting SLOs. Production HA collectors and full runbook coverage
+remain later-phase work.
 
 Before Phase 2.5 exit is considered verified locally:
 

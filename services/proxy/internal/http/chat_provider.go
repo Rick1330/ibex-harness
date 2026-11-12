@@ -377,6 +377,10 @@ func (h chatCompletionHandler) encodePipelineResult(ctx context.Context, provide
 		h.warnPipelineIssue(ctx, providerName, "response pipeline serialization failed", err)
 		return nil, providerErr502(providerName, errMsgResponsePipelineSerialize)
 	}
+	// Observe after Run and Bytes so the SLO sample covers stage work and body
+	// serialization, not only the pre-pipeline prefix. Runs once per completed
+	// non-streaming response, which is the histogram's population.
+	finishProxyOverheadObservation(ctx)
 	return out, nil
 }
 

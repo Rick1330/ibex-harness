@@ -35,3 +35,14 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["127.0.0.1:8006"]
+  # Host-run management API (IBEX_API_PORT default 8010, /metrics in app/probes.py).
+  - job_name: api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:8010"]
+  # Host-run evidence relay. IBEX_PORT must be set to 8082: the daemon defaults it
+  # to 8081, which is auth's port (services/relay/internal/config/env_config.go:40).
+  - job_name: relay
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:8082"]

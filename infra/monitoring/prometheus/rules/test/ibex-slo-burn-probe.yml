@@ -1,0 +1,39 @@
+# Test-only constant probe for the SLO burn-alert class (W6.3).
+#
+# Not loaded by the default observability stack: prometheus.yml globs
+# /etc/prometheus/rules/*.yml and this file sits one directory deeper.
+# infra/compose/observability/docker-compose.alerting-test.yml mounts this
+# directory as the rules directory, so only test probes evaluate.
+#
+# What it proves, and what it does not:
+#   * proves an SLO burn alert fires and routes with zero traffic: every
+#     expression below is a constant, so the alert is firing on the first
+#     evaluation and never resolves;
+#   * proves the burn-alert class reaches the page receiver through the shipped
+#     routing tree (make alert-delivery-test tags it with the per-run nonce);
+#   * does NOT prove the real detectors in ../ibex-slo.yml fire. That is the job
+#     of the promtool unit test in ./unit/ibex-slo-burn.test.yml, which feeds a
+#     synthetic histogram through the shipped rule file and asserts both a
+#     firing and a silent outcome.
+#
+# The expression is the burn-rate comparison with a constant in place of the
+# measured bad-request share: 0.5 (50% of requests over 20 ms) / 0.01 (the 1%
+# budget of a 99% objective) = a 50x burn rate, which exceeds the 14.4x fast-burn
+# multiplier. The two constants are the ones in ../ibex-slo.yml; if either
+# changes there, this probe is meant to be read again, not to keep them in sync.
+groups:
+  - name: ibex.slo.burn-probe
+    rules:
+      - alert: IbexSloBurnProbe
+        expr: vector(0.5) / 0.01 > 14.4
+        labels:
+          severity: page
+          service: slo-burn-probe
+          slo: proxy_overhead_p99_20ms
+        annotations:
+          summary: "Synthetic SLO burn probe: constant 50x burn rate"
+          description: >-
+            Always firing. Proves an SLO burn alert evaluates, fires, and reaches
+            the page receiver without any proxy traffic. It makes no claim about
+            the real overhead SLI.
+          runbook: "infra/monitoring/prometheus/rules/test/ibex-slo-burn-probe.yml (header)"

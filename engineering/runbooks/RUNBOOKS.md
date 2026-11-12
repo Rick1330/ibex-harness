@@ -117,37 +117,90 @@ kubectl -n ibex-system top pod -l app=proxy
 
 ---
 
-## 2) RUNBOOK: Proxy High p99 Overhead (P2)
+## 2) RUNBOOK: Proxy High p99 Overhead — SLO Burn (page/ticket)
 
 ### Alert signals
 
-- p99 proxy overhead > 60ms for 10m
-- customer reports: “responses slower than normal”
-- context injection counts drop (if timeouts occur)
+The ratified objective is **p99 ≤ 20 ms** of proxy enforcement overhead
+(`architecture-v2/05-request-lifecycle-and-slos.md`); the error budget is the 1%
+of requests allowed over that boundary. Burn rate = (share of requests over
+20 ms) / 0.01. Three alerts read it
+(`infra/monitoring/prometheus/rules/ibex-slo.yml`):
+
+- `IbexProxyOverheadFastBurn` — **pages.** `ibex:sli_proxy_overhead:burn_rate_1h > 14.4`
+  **and** `..._5m > 14.4`, for 2m. About 2% of a 30-day budget per hour: a
+  deploy-scale regression.
+- `IbexProxyOverheadSlowBurn` — **ticket.** `ibex:sli_proxy_overhead:burn_rate_6h > 6`
+  **and** `..._30m > 6`, for 15m. About 5% of the budget per six hours with no
+  single bad window: drift that exhausts the budget in days.
+- `IbexProxyOverheadSLIAbsent` — **ticket.** The SLI is unmeasurable while
+  `ibex_proxy_nonstreaming_requests_total{assembly="disabled"}` advances: either
+  `absent(ibex_proxy_overhead_seconds_count{assembly="disabled"})` or that series
+  present but **not advancing**, for 15m. The proxy is up and answering, the
+  histogram is not recording, and both burn alerts are silently inert. `absent()`
+  alone catches only the missing-series case; a present-but-frozen `_count` makes
+  every ratio 0/0 and stays invisible to it.
+
+Also: customer reports “responses slower than normal”; context injection counts
+drop (if timeouts occur).
+
+### Check first (in this order)
+
+1. **Is the SLI real before you trust it?** The histogram must exist, be
+   populated on the ratified population, and advance:
+   `ibex_proxy_overhead_seconds_count{assembly="disabled"}` present and moving,
+   `up{job="proxy"} == 1`, and the traffic counter advancing in step. Cross-check
+   the second case explicitly — does
+   `ibex_proxy_nonstreaming_requests_total{assembly="disabled"}` advance while
+   `_count` does not? `absent()` cannot see that one. If the SLI is missing or
+   frozen, treat it as `IbexProxyOverheadSLIAbsent`, not as latency: fix
+   instrumentation first.
+2. **The p99 is provider-excluded by construction.** The sample is wall time
+   since request start minus the provider's completion time, clamped at zero, so
+   a slow provider does not raise this SLI. It is taken after the response
+   pipeline ran and the body was serialized, so pipeline and serialization work
+   is included; the `proxy_overhead_ms` in the response body is a pre-pipeline
+   diagnostic and is deliberately smaller. The provider leg is subtracted at
+   whole-ms resolution, so the sample can overstate by less than 1 ms and never
+   understate. If upstream p99 is also up and this SLI is flat, the provider is
+   the story — this alert is not.
+3. **The population is completed non-streaming requests with
+   `assembly="disabled"`.** A streaming-only regression will not move this p99,
+   and neither will an `assembly="enabled"` request (it paid the Assemble RPC and
+   is a different workload). “The SLO is green” does not clear streaming latency;
+   check `ibex_proxy_stream_duration_seconds` separately.
+4. **Confirm the profile.** The 20 ms budget is the warm mock-provider
+   local/protected run with warm auth/rate-limit/directive caches and context
+   assembly disabled. A cold cache, an assemble-enabled profile or a hosted runner
+   is a different measurement — compare like with like before bisecting code.
 
 ### Likely causes
 
 - Redis latency spike (auth cache / rate limits / directives)
 - auth cache miss spike (auth service load increased)
 - context assembly slow/timeout
-- upstream provider latency increased (note: overhead excludes provider latency, but bad measurement can blur)
 - new allocation-heavy logic added to hot path
 - logging turned too verbose in proxy hot path
+- a change that moved the histogram off its bucket family: if `0.020` stops being
+  a bucket boundary, the bad-share rules return an empty vector and the burn
+  alerts go quiet while `up` stays 1 (`make slo-rules-check` asserts the boundary)
 
 ### Diagnosis (fast checklist)
 
-1. Compare stage breakdown:
+1. Read the burn directly: `ibex:sli_proxy_overhead:burn_rate_1h`,
+   `..._30m`, `..._6h`, and `ibex:proxy_overhead_seconds:p99_5m` / `..._p99_1h`.
+2. Compare stage breakdown:
    - auth validation ms
    - rate limit ms
    - context retrieval ms (directive/hot/history/grpc)
-2. Check Redis metrics:
+3. Check Redis metrics:
    - latency
    - reconnects
-3. Check auth cache hit rate:
+4. Check auth cache hit rate:
    - misses rising → auth gRPC calls increasing
-4. Check proxy fallbacks:
+5. Check proxy fallbacks:
    - `context_timeout` increasing?
-5. Compare to deploy version timeline:
+6. Compare to deploy version timeline:
    - did a rollout begin around onset?
 
 ### Mitigation options (safe, reversible)
@@ -159,8 +212,12 @@ kubectl -n ibex-system top pod -l app=proxy
 
 ### Verification
 
-- p99 overhead returns to baseline (<60ms)
-- p95 overhead within target (<20ms)
+- `ibex:sli_proxy_overhead:burn_rate_5m` and `..._1h` back under 14.4 (fast burn
+  resolves); for a slow burn, `..._30m` below 6 and `..._6h` trending down
+- `ibex:proxy_overhead_seconds:p99_1h` back at or under the 20 ms objective
+- the histogram is still recording on the SLO population
+  (`ibex_proxy_overhead_seconds_count{assembly="disabled"}` advancing, with
+  `ibex_proxy_nonstreaming_requests_total{assembly="disabled"}` advancing in step)
 - fallback rate returns to baseline
 - error rate stable
 
@@ -437,7 +494,7 @@ kubectl -n ibex-system top pod -l app=proxy
 ## 9) Runbook Index (Maintain this)
 
 - Proxy Down (P1)
-- Proxy p99 overhead high (P2)
+- Proxy p99 overhead high (page on fast burn, ticket on slow burn / SLI absent)
 - Auth failures spike (P1/P2)
 - Redis down/degraded (P1/P2)
 - PostgreSQL failover/unavailable (P1)

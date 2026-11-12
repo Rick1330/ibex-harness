@@ -27,7 +27,7 @@ availability or recoverability rather than a dependency. The route column is the
 vocabulary, the legacy aliases and the per-environment webhook are documented in
 [`alertmanager/README.md`](../../infra/monitoring/alertmanager/README.md).
 
-Rule count: 11 production rules, reviewed by hand against the table below. The count is not what the gate
+Rule count: 14 production rules, reviewed by hand against the table below. The count is not what the gate
 checks: `python3 infra/scripts/check-alert-routing.py` proves that every rule severity reaches a real
 receiver, that no receiver is a null/discard, and that no rule carries an unlabelled severity — it does
 not count rules, so a rule added with a routed severity passes it. The two synthetic probes under
@@ -46,6 +46,9 @@ not count rules, so a rule added with a routed severity passes it. The two synth
 | `IBEXPostgresBackupStale` | Durability/RPO, not a dependency row: the backup is the recoverability evidence. | `page` | `ibex-page` → `/alerts/page` | Run `infra/scripts/platform/pgbackrest-backup.sh`; check the MinIO repo; RPO budget is ≤5m. |
 | `IBEXWorkerTaskDeadLettered` | Queue/worker | `page` | `ibex-page` → `/alerts/page` | Inspect `ibex_core.failed_tasks` for the `task_name`; fix the cause, then replay. |
 | `IBEXRestoreDrillMissing` | Recoverability, not a dependency row: the drill proves the backup is usable. | `ticket` | `ibex-digest` → `/alerts/digest` | Run `infra/scripts/platform/restore-drill.sh`; make its evidence scrapeable. |
+| `IbexProxyOverheadFastBurn` | Latency budget, not a dependency row: the proxy's own enforcement overhead is exceeding the ratified p99 ≤20 ms objective fast enough to spend ~2% of the error budget per hour. The dependency rows it can implicate are Redis on protected path and Auth/principal/policy. | `page` | `ibex-page` → `/alerts/page` | Run `engineering/runbooks/RUNBOOKS.md` §2; compare `ibex:sli_proxy_overhead:burn_rate_1h` with the auth-cache, rate-limit and directive-cache panels; roll back the recent proxy deploy when correlated. |
+| `IbexProxyOverheadSlowBurn` | Latency budget, not a dependency row: same objective, burning ~5% of the budget per six hours with no single bad window — a drift that exhausts the budget in days. | `ticket` | `ibex-digest` → `/alerts/digest` | Same runbook, no page: confirm the 6h window, bisect by deploy, and check for an allocation-heavy change on the hot path. |
+| `IbexProxyOverheadSLIAbsent` | Observability, not a dependency row: the SLI itself is missing or present but not advancing on the `assembly="disabled"` population, so both burn alerts are inert and silence is indistinguishable from health. | `ticket` | `ibex-digest` → `/alerts/digest` | Check `up{job="proxy"}`; confirm `ibex_proxy_nonstreaming_requests_total{assembly="disabled"}` advances while `ibex_proxy_overhead_seconds_count{assembly="disabled"}` does not; check the build exports `ibex_proxy_overhead_seconds` and that `0.02` is still the rendered 20 ms bucket label. |
 
 Test-only probes (loaded only by `infra/compose/observability/docker-compose.alerting-test.yml`):
 
@@ -53,3 +56,4 @@ Test-only probes (loaded only by `infra/compose/observability/docker-compose.ale
 |---|---|---|---|---|
 | `IbexAlertDeliveryProbePage` | Not a failure: proves the `page` channel is wired to a real receiver. | `page` | `ibex-page` → `/alerts/page` | None. Fires only during `make alert-delivery-test`. |
 | `IbexAlertDeliveryProbeTicket` | Not a failure: proves the `ticket` channel is wired to a real receiver. | `ticket` | `ibex-digest` → `/alerts/digest` | None. Fires only during `make alert-delivery-test`. |
+| `IbexSloBurnProbe` | Not a failure: a constant 50× burn rate that proves an SLO burn alert can fire and route with no proxy traffic. It makes no claim about the real SLI — that is what `rules/test/unit/ibex-slo-burn.test.yml` asserts. | `page` | `ibex-page` → `/alerts/page` | None. Fires only in the alerting-test stack. |

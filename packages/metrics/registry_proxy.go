@@ -66,10 +66,21 @@ type ProxyRegistry struct {
 	responsePipelineStageDuration *prometheus.HistogramVec
 	responsePipelineFailOpenTotal *prometheus.CounterVec
 	contextAssembleFallbackTotal  *prometheus.CounterVec
+	proxyOverheadSeconds          *prometheus.HistogramVec
+	contextAssembleSeconds        prometheus.Histogram
 	extractionEnqueueTotal        *prometheus.CounterVec
 	providerFallbacksTotal        *prometheus.CounterVec
 	policySnapshotTotal           *prometheus.CounterVec
 	processUp                     prometheus.Gauge
+
+	// The handles below are resolved once in initEnforcementOverheadMetrics, so a
+	// completed request observes its pre-registered assembly series without
+	// building label values.
+	proxyOverheadDisabled     prometheus.Observer
+	proxyOverheadEnabled      prometheus.Observer
+	nonstreamingRequestsTotal *prometheus.CounterVec
+	nonstreamingDisabled      prometheus.Counter
+	nonstreamingEnabled       prometheus.Counter
 }
 
 // NewProxy creates and registers proxy metrics.
