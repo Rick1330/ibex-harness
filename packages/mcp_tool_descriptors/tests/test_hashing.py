@@ -25,7 +25,8 @@ def test_canonical_hash_keeps_a_non_string_title() -> None:
 
 def test_canonical_hash_is_stable_for_a_description_string() -> None:
     description = "Read one session.\n"
-    assert canonical_sha256(description) == canonical_sha256(description)
+    same_description = "Read one session.\n"
+    assert canonical_sha256(description) == canonical_sha256(same_description)
     assert canonical_sha256("") != canonical_sha256(" ")
 
 

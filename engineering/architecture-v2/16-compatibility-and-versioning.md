@@ -94,7 +94,7 @@ and neither proves an emitter. A green run never says a `rest` response actually
 | `successor` | The replacement contract or tool. Required, and must differ from the deprecated contract. |
 | `stability` | `stable` or `beta`. For REST and MCP it must equal the registry row's value. |
 | `notice_date`, `sunset_date` | `YYYY-MM-DD`. `notice_date` is when the promise was planned; `sunset_date` is the removal date. |
-| `announced_on` | `YYYY-MM-DD`. The date consumers were told. Absent or `null` on a `proposed` or `withdrawn` entry, required once `status` is `announced`, and never earlier than `notice_date`. The support window is measured from this field when it is recorded. |
+| `announced_on` | `YYYY-MM-DD`. The date consumers were told. Absent or `null` on a `proposed` or `withdrawn` entry, required once `status` is `announced`, never earlier than `notice_date`, and never later than the day of the check. The support window is measured from this field when it is recorded. |
 | `status` | `proposed`, `announced`, or `withdrawn`. |
 | `headers_implemented` | Boolean, and per surface: `true` only for `rest`, and only after an emitter ships; `false` for `grpc` and `mcp`, whose protocols define no deprecation header. No `rest` entry reaches `announced` on `false`; `grpc` and `mcp` reach it on `false` because the record is their notice. |
 | `evidence` | Repository-relative file. It must exist when the entry is `announced`. |
@@ -106,9 +106,9 @@ anticipation of one.
 `status` moves in one direction: `proposed` while the replacement and migration note are being built, `announced`
 once the notice is published — for `rest`, once the headers are implemented as well — and the evidence exists,
 `withdrawn` if the plan is cancelled before sunset. `announced_on` is set by the move to `announced`, and that date is
-what starts the clock, so it cannot precede `notice_date` and cannot be present while the entry is `proposed`. A
-`proposed` entry carries `headers_implemented: false`; an `announced` `rest` entry may not; an `announced` entry whose
-`sunset_date` has passed fails the check until it is withdrawn.
+what starts the clock, so it cannot precede `notice_date`, cannot be in the future, and cannot be present while the
+entry is `proposed`. A `proposed` or `withdrawn` entry carries `headers_implemented: false`; an `announced` `rest`
+entry may not; an `announced` entry whose `sunset_date` has passed fails the check until it is withdrawn.
 
 ### The check
 
@@ -119,13 +119,14 @@ cd services/api && .venv/bin/python scripts/check_deprecations.py
 The check reads the record and both registries, uses no network, and prints sorted one-line failures. It fails on:
 
 - a window shorter than 180 days (`stable`) or 31 days (`beta`) measured from its announcement date, an `announced`
-  entry with no `announced_on`, an `announced_on` earlier than `notice_date`, an `announced_on` present on a `proposed`
-  or `withdrawn` entry, or any date that is not an exact `YYYY-MM-DD`;
+  entry with no `announced_on`, an `announced_on` earlier than `notice_date` or later than the day of the check, an
+  `announced_on` present on a `proposed` or `withdrawn` entry, or any date that is not an exact `YYYY-MM-DD`;
 - a `rest` entry whose `contract_id` is absent from the REST registry, or whose `stability` disagrees with that row;
 - an `mcp` entry whose `server` is not `operator` or `memory`, whose `tool` is absent from that server's
   `mcp_tools.json`, or whose `stability` disagrees with the tool's descriptor row;
 - an empty `successor`, or a `successor` that names the contract itself;
-- `headers_implemented: true` on a `grpc` or `mcp` entry, which has no standard header to implement;
+- `headers_implemented: true` on a `grpc` or `mcp` entry, which has no standard header to implement, or on a `rest`
+  entry that is still `proposed` or `withdrawn`;
 - `status: announced` on a `rest` entry with `headers_implemented: false`, with an `evidence` path that is not an
   existing file inside the repository, or with a `sunset_date` already in the past;
 - an unknown `surface`/`stability`/`status` value, an unknown or missing field, a schema id other than
@@ -140,8 +141,8 @@ phantom contract fails without a workflow change.
 | Question | Answered? | How |
 |---|---|---|
 | Is the record a valid `ibex.deprecations.v1` document? | **yes** | schema id, exact field set per surface, no unknown fields, enum values, `headers_implemented` boolean, unique `id`, entries sorted by `id` |
-| Does every entry keep its class window? | **yes** | `sunset_date` minus the announcement date (`announced_on` when recorded, otherwise `notice_date`) in whole days against 180 (`stable`) / 31 (`beta`); every date field must be an exact `YYYY-MM-DD`, an `announced` entry must carry an `announced_on` no earlier than its `notice_date`, and a `proposed` or `withdrawn` entry must carry none |
-| Is the header flag right for the surface? | **yes** | `headers_implemented: true` fails on a `grpc` or `mcp` entry, which has no standard deprecation header, and an `announced` `rest` entry fails on `false` |
+| Does every entry keep its class window? | **yes** | `sunset_date` minus the announcement date (`announced_on` when recorded, otherwise `notice_date`) in whole days against 180 (`stable`) / 31 (`beta`); every date field must be an exact `YYYY-MM-DD`, an `announced` entry must carry an `announced_on` no earlier than its `notice_date` and no later than the day of the check, and a `proposed` or `withdrawn` entry must carry none |
+| Is the header flag right for the surface? | **yes** | `headers_implemented: true` fails on a `grpc` or `mcp` entry, which has no standard deprecation header, and on a `proposed` or `withdrawn` `rest` entry; an `announced` `rest` entry fails on `false` |
 | Can a `grpc` or `mcp` entry be announced without headers? | **yes** | those entries record `headers_implemented: false` and reach `announced` on the record plus an existing `evidence` path; only `rest` must reach `true` first |
 | Does a declared `headers_implemented: true` prove an emitter exists? | **no** | the flag is trusted together with an existing `evidence` path; nothing reads a `Deprecation` or `Sunset` header from a running response, so a `rest` entry can announce headers no route sends |
 | Does a `rest` entry name a real contract, with the recorded stability? | **yes** | cross-check against [`contracts/rest-route-registry.json`](contracts/rest-route-registry.json) |

@@ -174,8 +174,9 @@ def test_update_keeps_the_original_when_the_replace_fails(
         raise OSError("disk full")
 
     monkeypatch.setattr(writer.os, "replace", _fail)
+    subject = surface.surface()
     with pytest.raises(OSError, match="disk full"):
-        update(surface.surface(), path, allow_root=tmp_path)
+        update(subject, path, allow_root=tmp_path)
     assert path.read_text(encoding="utf-8") == "original\n"
     assert sorted(item.name for item in tmp_path.iterdir()) == [RECORD_NAME]
 
@@ -184,8 +185,9 @@ def test_update_refuses_a_tool_without_a_version(tmp_path: Path) -> None:
     surface = FakeSurface()
     surface.versions = {}
     path = tmp_path / RECORD_NAME
+    subject = surface.surface()
     with pytest.raises(SystemExit, match="no declared version") as refusal:
-        update(surface.surface(), path, allow_root=tmp_path)
+        update(subject, path, allow_root=tmp_path)
     assert TOOL in str(refusal.value)
     assert not path.exists()
 
@@ -312,6 +314,22 @@ def test_unreadable_record_is_reported(tmp_path: Path) -> None:
     path = tmp_path / RECORD_NAME
     path.write_text("{not json", encoding="utf-8")
     _only(check(FakeSurface().surface(), path, allow_root=tmp_path), "unreadable-descriptor: ")
+
+
+def test_record_that_is_not_utf8_is_unreadable_not_a_crash(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Undecodable bytes are a load failure with an actionable message, not an exception."""
+    surface = FakeSurface()
+    path = tmp_path / RECORD_NAME
+    path.write_bytes(b"\xff\xfe{")
+    code = main(
+        surface.surface(), path, ["--check", "--path", str(path), "--allow-root", str(tmp_path)]
+    )
+    assert code == 1
+    captured = capsys.readouterr()
+    assert f"unreadable-descriptor: {path} is not valid UTF-8" in captured.err
+    assert "mcp tool descriptor check failed: 1 problem(s)" in captured.out
 
 
 def test_record_that_is_not_an_object_is_reported(tmp_path: Path) -> None:

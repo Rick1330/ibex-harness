@@ -80,6 +80,10 @@ def _load(path: Path, allow_root: Path | None = None) -> tuple[dict[str, Any], l
         return {}, [f"missing-descriptor: {path} does not exist; run {GENERATOR_COMMAND}"]
     try:
         record = json.loads(checked.read_text(encoding="utf-8"))
+    except UnicodeError as error:
+        # A record is UTF-8 by contract, so undecodable bytes are unreadable, not a
+        # crash: ``UnicodeDecodeError`` is a ``ValueError``, never a JSON error.
+        return {}, [f"unreadable-descriptor: {path} is not valid UTF-8: {error}"]
     except (OSError, json.JSONDecodeError) as error:
         return {}, [f"unreadable-descriptor: {path}: {error}"]
     if not isinstance(record, dict):

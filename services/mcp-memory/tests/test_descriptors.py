@@ -88,8 +88,23 @@ def test_every_row_pins_the_published_description() -> None:
         assert entry["description_sha256"] == canonical_sha256(description)
 
 
-def test_a_regenerated_record_is_byte_identical(tmp_path: Path) -> None:
-    target = tmp_path / "mcp_tools.json"
-    args = ["--update", "--path", str(target), "--allow-root", str(tmp_path)]
-    assert main(descriptors.SURFACE, target, args) == 0
-    assert target.read_bytes() == COMMITTED.read_bytes()
+def test_two_regenerations_in_one_runtime_agree(tmp_path: Path) -> None:
+    """Determinism is a property of the generator, so two runs here must agree byte for byte.
+
+    The committed record is pinned by the ``--check`` test above; comparing a fresh
+    record against it would make determinism fail for a contract change it does not
+    own.
+    """
+    targets = [tmp_path / "first.json", tmp_path / "second.json"]
+    for target in targets:
+        assert (
+            main(
+                descriptors.SURFACE,
+                target,
+                ["--update", "--path", str(target), "--allow-root", str(tmp_path)],
+            )
+            == 0
+        )
+        record = json.loads(target.read_text(encoding="utf-8"))
+        assert [entry["name"] for entry in record["tools"]] == list(MEMORY_TOOLS)
+    assert targets[0].read_bytes() == targets[1].read_bytes()

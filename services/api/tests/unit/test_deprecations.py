@@ -386,6 +386,19 @@ def test_announced_without_headers_fails(tmp_path: Path, deprecations: ModuleTyp
     assert failures[0].startswith("headers-not-implemented: dep.agents.read is announced")
 
 
+@pytest.mark.parametrize("status", ["proposed", "withdrawn"])
+def test_unannounced_rest_entry_cannot_claim_deprecation_headers(
+    tmp_path: Path, deprecations: ModuleType, status: str
+) -> None:
+    """The header flag tracks the announcement: it is false until `announced`, and after a withdrawal."""
+    entry = _entry(status=status, headers_implemented=True, announced_on=None)
+    failures = _check(tmp_path, deprecations, [entry])
+    assert len(failures) == 1, failures
+    assert failures[0].startswith(f"headers-before-announcement: dep.agents.read is {status}")
+    assert "headers_implemented must be false until it is announced" in failures[0]
+    assert "consumers were never told about" in failures[0]
+
+
 def test_grpc_and_mcp_cannot_claim_deprecation_headers(
     tmp_path: Path, deprecations: ModuleType
 ) -> None:
@@ -434,12 +447,33 @@ def test_window_is_measured_from_the_announcement_not_the_notice(
     tmp_path: Path, deprecations: ModuleType
 ) -> None:
     """An early notice cannot buy window time the announcement never gave the consumer."""
-    entry = _entry(announced_on="2026-06-01", sunset_date="2026-06-30")
+    entry = _entry(notice_date="2025-06-01", announced_on="2026-01-01", sunset_date="2026-01-30")
     failures = _check(tmp_path, deprecations, [entry])
     assert len(failures) == 1, failures
     assert failures[0].startswith("window-too-short: dep.agents.read is stable,")
-    assert "at least 180 days after announced_on 2026-06-01" in failures[0]
+    assert "at least 180 days after announced_on 2026-01-01" in failures[0]
     assert "this window is 29 day(s)" in failures[0]
+
+
+def test_announced_on_after_today_fails(tmp_path: Path, deprecations: ModuleType) -> None:
+    """A future date is a scheduled edit, not a notice: nobody has been told yet."""
+    entry = _entry(announced_on="2026-12-01", sunset_date="2027-06-01")
+    failures = _check(tmp_path, deprecations, [entry])
+    assert len(failures) == 1, failures
+    assert failures[0].startswith(
+        "announcement-in-future: dep.agents.read records announced_on 2026-12-01"
+    )
+    assert "is after today 2026-01-15" in failures[0]
+    assert "consumers have been told" in failures[0]
+
+
+def test_announced_on_today_passes(tmp_path: Path, deprecations: ModuleType) -> None:
+    """The boundary day is in the past for the purposes of the rule, so it is allowed."""
+    entry = _entry(
+        announced_on=_TODAY.isoformat(),
+        sunset_date=(_TODAY + timedelta(days=180)).isoformat(),
+    )
+    assert _check(tmp_path, deprecations, [entry]) == []
 
 
 def test_announced_on_before_the_notice_date_fails(
@@ -482,7 +516,7 @@ def test_announcement_date_is_rejected_before_it_is_announced(
     tmp_path: Path, deprecations: ModuleType, status: str
 ) -> None:
     """A proposal or withdrawal cannot claim a date on which consumers were told."""
-    failures = _check(tmp_path, deprecations, [_entry(status=status)])
+    failures = _check(tmp_path, deprecations, [_entry(status=status, headers_implemented=False)])
     assert len(failures) == 1, failures
     assert failures[0].startswith(
         f"unexpected-announcement: dep.agents.read is {status}, so announced_on must be absent or null"
@@ -605,6 +639,17 @@ def test_invalid_field_values_fail(
     field, value, expected = case
     failures = _check(tmp_path, deprecations, [_entry(**{field: value})])
     assert any(failure.startswith(expected) for failure in failures), failures
+
+
+def test_non_string_status_is_reported_not_raised(tmp_path: Path, deprecations: ModuleType) -> None:
+    """A malformed status is an enum failure; the dated and header rules must not raise on it."""
+    failures = _check(tmp_path, deprecations, [_entry(status=["announced"])])
+    assert failures == [
+        (
+            "unknown-enum: dep.agents.read has status ['announced']; "
+            "expected one of ['announced', 'proposed', 'withdrawn']"
+        )
+    ]
 
 
 def test_unknown_field_fails(tmp_path: Path, deprecations: ModuleType) -> None:

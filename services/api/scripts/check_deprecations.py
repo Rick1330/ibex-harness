@@ -32,7 +32,9 @@ promise a window that the real announcement never gave the consumer.
   cannot be parsed is not a window, and skipping the window would hide the
   defect);
 - ``status: announced`` without ``announced_on``, with an ``announced_on`` that
-  is not an exact ``YYYY-MM-DD`` string, or with one earlier than ``notice_date``;
+  is not an exact ``YYYY-MM-DD`` string, with one earlier than ``notice_date``,
+  or with one later than the day of the check (``announcement-in-future``: an
+  announcement is a past event, not a scheduled one);
 - ``announced_on`` present and non-null on a ``proposed`` or ``withdrawn`` entry,
   which has not been announced;
 - a field whose schema type is wrong, not merely empty: a string field that is
@@ -50,8 +52,10 @@ promise a window that the real announcement never gave the consumer.
 - ``status: announced`` with an ``evidence`` path that is not a string, is
   blank, does not exist as a file inside the repository, or with a
   ``sunset_date`` already in the past;
-- ``headers_implemented: true`` on a ``grpc`` or ``mcp`` entry, and
-  ``status: announced`` on a ``rest`` entry with ``headers_implemented: false``;
+- ``headers_implemented: true`` on a ``grpc`` or ``mcp`` entry,
+  ``status: announced`` on a ``rest`` entry with ``headers_implemented: false``,
+  and ``headers_implemented: true`` on a ``rest`` entry that is still
+  ``proposed`` or ``withdrawn``;
 - an unknown ``surface``/``stability``/``status`` value, an unknown or missing
   field, a missing or malformed record schema, a duplicate ``id``, or entries
   that are not sorted by ``id``.
@@ -125,6 +129,9 @@ _DEDICATED_FIELDS: Final = frozenset(
 # Only ``rest`` can declare headers: the other two surfaces have no standard
 # deprecation header, so their record is the notice of record.
 _HEADER_SURFACES: Final = frozenset({"rest"})
+# The statuses an entry can carry before consumers are told, so a REST entry in one
+# of them cannot claim the announcement headers yet.
+_UNANNOUNCED_STATUSES: Final = frozenset({"proposed", "withdrawn"})
 
 
 @dataclass(frozen=True)
@@ -156,6 +163,15 @@ class _CheckContext:
 
 def _non_empty_str(value: object) -> bool:
     return isinstance(value, str) and bool(value)
+
+
+def _is_unannounced(status: object) -> bool:
+    """True only for a known status that has not reached ``announced``.
+
+    The type check is load-bearing: an entry with a non-string ``status`` is reported
+    by the enum rule, and this rule must not turn it into a ``TypeError``.
+    """
+    return isinstance(status, str) and status in _UNANNOUNCED_STATUSES
 
 
 def _display_path(path: Path) -> str:
@@ -393,13 +409,15 @@ def _missing_announcement_failure(label: str) -> str:
     )
 
 
-def _announced_on_failures(entry: dict[str, object], label: str) -> list[str]:
+def _announced_on_failures(
+    entry: dict[str, object], label: str, context: _CheckContext
+) -> list[str]:
     """An ``announced`` entry is dated; a proposal or withdrawal carries no date."""
     value = entry.get(_ANNOUNCED_FIELD)
     status = entry.get("status")
     if status == "announced":
-        return _announcement_date_failures(entry, label, value)
-    if value is None or status not in {"proposed", "withdrawn"}:
+        return _announcement_date_failures(entry, label, value, context)
+    if value is None or not _is_unannounced(status):
         return []
     return [
         (
@@ -409,8 +427,10 @@ def _announced_on_failures(entry: dict[str, object], label: str) -> list[str]:
     ]
 
 
-def _announcement_date_failures(entry: dict[str, object], label: str, value: object) -> list[str]:
-    """The date the entry was announced: required, real, and not before its notice."""
+def _announcement_date_failures(
+    entry: dict[str, object], label: str, value: object, context: _CheckContext
+) -> list[str]:
+    """The date the entry was announced: required, real, and between its notice and today."""
     if value is None:
         return [_missing_announcement_failure(label)]
     announced = _parse_date(value)
@@ -423,6 +443,14 @@ def _announcement_date_failures(entry: dict[str, object], label: str, value: obj
                 f"announcement-before-notice: {label} was announced on {announced.isoformat()} "
                 f"before its notice_date {notice.isoformat()}; the window cannot start before "
                 "the notice"
+            )
+        ]
+    if announced > context.today:
+        return [
+            (
+                f"announcement-in-future: {label} records {_ANNOUNCED_FIELD} "
+                f"{announced.isoformat()}, which is after today {context.today.isoformat()}; an "
+                "announcement is a past event, so record it once consumers have been told"
             )
         ]
     return []
@@ -538,12 +566,22 @@ def _missing_header_failure(label: str) -> str:
     )
 
 
+def _premature_header_failure(label: str, status: str) -> str:
+    return (
+        f"headers-before-announcement: {label} is {status}, so headers_implemented must be false "
+        "until it is announced; a header claims an emitter for a deprecation consumers were "
+        "never told about"
+    )
+
+
 def _header_failures(entry: dict[str, object], label: str) -> list[str]:
     """``headers_implemented`` is a per-surface claim: only REST has such headers.
 
     gRPC methods and MCP tools define no standard deprecation header, so an entry
-    for them declaring one is a false claim; and a REST entry cannot be announced
-    before its emitter ships. Both directions fail with the same clarity.
+    for them declaring one is a false claim. A REST entry is the mirror image: the
+    flag is true exactly while the entry is announced, because a header for a
+    proposed or withdrawn deprecation announces something that is not on offer, and
+    an announced entry cannot exist before its emitter ships.
     """
     surface = entry.get("surface")
     if not isinstance(surface, str):
@@ -551,9 +589,12 @@ def _header_failures(entry: dict[str, object], label: str) -> list[str]:
     headers = entry.get("headers_implemented")
     if surface not in _HEADER_SURFACES:
         return [_not_applicable_header_failure(label, surface)] if headers is True else []
-    if entry.get("status") != "announced":
-        return []
-    return [] if headers is True else [_missing_header_failure(label)]
+    status = entry.get("status")
+    if status == "announced":
+        return [] if headers is True else [_missing_header_failure(label)]
+    if headers is True and _is_unannounced(status):
+        return [_premature_header_failure(label, str(status))]
+    return []
 
 
 def _status_failures(entry: dict[str, object], label: str, context: _CheckContext) -> list[str]:
@@ -641,7 +682,7 @@ def _entry_failures(entry: object, index: int, context: _CheckContext) -> list[s
     failures = _field_failures(entry, label, entry.get("surface"))
     failures.extend(_enum_failures(entry, label))
     failures.extend(_date_failures(entry, label))
-    failures.extend(_announced_on_failures(entry, label))
+    failures.extend(_announced_on_failures(entry, label, context))
     failures.extend(_header_failures(entry, label))
     failures.extend(_window_failures(entry, label))
     failures.extend(_successor_failures(entry, label))

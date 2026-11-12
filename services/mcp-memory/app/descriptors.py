@@ -39,6 +39,11 @@ TOOL_VERSION: Final = "1.0.0"
 
 def _server() -> FastMCP:
     """Build the daemon the way the server tests do: in-memory audit, no memory client."""
+    # pylint: disable=no-value-for-parameter,unexpected-keyword-arg
+    # False positive: both MCP services define a top-level `app.server` module, and a
+    # repo-root analysis resolves this import to the other service's wiring class
+    # (which takes `enforcer` and has no `audit`). This service's class takes exactly
+    # `audit`, `memory_client` and `agent_verifier`; the call is correct and tested.
     return build_mcp_server(
         McpServerWiring(
             audit=AsyncAuditEmitter(MemoryAuditSink(), maxsize=4),

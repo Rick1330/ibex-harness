@@ -76,7 +76,16 @@ async def test_enumeration_refuses_to_execute_a_tool() -> None:
         await descriptors._refuse_call(None, {})  # type: ignore[arg-type]
 
 
-def test_update_into_a_temporary_tree_reproduces_the_committed_record(tmp_path: Path) -> None:
-    target = tmp_path / "mcp_tools.json"
-    assert update(descriptors.SURFACE, target, allow_root=tmp_path) == len(GATEWAY_TOOLS)
-    assert target.read_bytes() == COMMITTED.read_bytes()
+def test_two_regenerations_in_one_runtime_agree(tmp_path: Path) -> None:
+    """Determinism is a property of the generator, so two runs here must agree byte for byte.
+
+    The committed record is pinned by the ``--check`` test above; comparing a fresh
+    record against it would make determinism fail for a contract change it does not
+    own.
+    """
+    targets = [tmp_path / "first.json", tmp_path / "second.json"]
+    for target in targets:
+        assert update(descriptors.SURFACE, target, allow_root=tmp_path) == len(GATEWAY_TOOLS)
+        written = json.loads(target.read_text(encoding="utf-8"))
+        assert tuple(sorted(entry["name"] for entry in written["tools"])) == GATEWAY_TOOLS
+    assert targets[0].read_bytes() == targets[1].read_bytes()
