@@ -1,10 +1,54 @@
+# IBEX Alertmanager routing (ADR-0051 local stack).
+#
+# Every route ends at a real webhook. There is no null/discard receiver: a
+# notification that cannot be delivered fails loudly rather than being dropped.
+# The failure surfaces as the alert staying `active` in /api/v2/alerts, a
+# non-zero alertmanager_notifications_failed_total, and an error in the container
+# log; /api/v2/status reports config, cluster status and uptime, not delivery.
+# The routing tree, the severity vocabulary and the per-environment webhook
+# configuration are documented in ./README.md.
+#
+# Severity vocabulary (primary): page | ticket
+#   page   -> wakes a human now
+#   ticket -> queued work, no wake-up
+# The legacy values p1/p2/p3 are still accepted by the route matchers, so a
+# rule that has not been migrated yet cannot fall through to the wrong channel.
+#
+# Receiver URLs are deployment configuration, never a committed secret. The
+# host `alert-receiver` below is the expected in-network service name and is
+# deliberately not a production address: a deployment renders its own copy of
+# this file with its receiver base URL (see README.md) and mounts it
+# with --config.file. The pinned image is Alertmanager 0.27.0, which has no
+# --config.expand-env flag, so expansion is a render-time step, not a runtime
+# feature. An unrendered copy fails loudly: deliveries error, the failure is
+# counted in alertmanager_notifications_failed_total and the error is written to
+# the container log, while the alert stays `active` in /api/v2/alerts.
+
 route:
-  receiver: local-null
-  group_by: [alertname]
-  group_wait: 10s
-  group_interval: 1m
+  # Catch-all. It pages, it never drops. Any alert whose labels match no child
+  # route is treated as an unknown-severity incident and must wake a human.
+  receiver: ibex-page
+  group_by: [alertname, severity, service]
+  group_wait: 30s
+  group_interval: 5m
   repeat_interval: 4h
+  routes:
+    - receiver: ibex-page
+      matchers:
+        - severity=~"p1|page"
+      repeat_interval: 1h
+    - receiver: ibex-digest
+      matchers:
+        - severity=~"p2|p3|ticket"
+      repeat_interval: 12h
 
 receivers:
-  - name: local-null
-    # Local-only sink; wire webhooks in real environments.
+  - name: ibex-page
+    webhook_configs:
+      - url: http://alert-receiver:8080/alerts/page
+        send_resolved: true
+
+  - name: ibex-digest
+    webhook_configs:
+      - url: http://alert-receiver:8080/alerts/digest
+        send_resolved: true

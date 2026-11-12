@@ -18,3 +18,38 @@
 `/health` is liveness. `/ready` means the selected profile’s required dependencies and contracts are available; optional quality services may be degraded and visibly reported. Readiness must not report healthy when security or evidence integrity is unavailable.
 
 Graceful shutdown drains streams, stops new admissions, cancels bounded work, persists worker state, and reports completion. No process assumes a retry is safe unless the operation is idempotent.
+
+## Alert rules and the failure modes they enforce
+
+Every rule under `infra/monitoring/prometheus/rules/` maps to a row above, or states explicitly that it covers
+availability or recoverability rather than a dependency. The route column is the destination defined in
+[`infra/monitoring/alertmanager/alertmanager.yml`](../../infra/monitoring/alertmanager/alertmanager.yml); the severity
+vocabulary, the legacy aliases and the per-environment webhook are documented in
+[`alertmanager/README.md`](../../infra/monitoring/alertmanager/README.md).
+
+Rule count: 11 production rules, reviewed by hand against the table below. The count is not what the gate
+checks: `python3 infra/scripts/check-alert-routing.py` proves that every rule severity reaches a real
+receiver, that no receiver is a null/discard, and that no rule carries an unlabelled severity — it does
+not count rules, so a rule added with a routed severity passes it. The two synthetic probes under
+`rules/test/` are listed separately: they never load in the default stack.
+
+| Alert | Failure mode (from this doc) | Severity | Route | Owner action |
+|---|---|---|---|---|
+| `IbexProxyDown` | Availability, not a dependency row: the front door is gone, so every dependency row is unreachable. | `p1` (→ page) | `ibex-page` → `/alerts/page` | Check proxy process and `/ready`; restart; confirm ingress. |
+| `IbexAuthDown` | Auth/principal/policy | `p1` (→ page) | `ibex-page` → `/alerts/page` | Restore auth issuance/validation; verify `/ready` and token validation. |
+| `IbexProxyHighErrorRatio` | Provider, with Auth/principal/policy as the second cause | `p1` (→ page) | `ibex-page` → `/alerts/page` | Split 5xx by cause; check provider latency/breaker state; confirm no auth denial storm. |
+| `IbexProcessNotUp` | Availability, not a dependency row: a scraped process is not running (covers every service). | `p1` (→ page) | `ibex-page` → `/alerts/page` | Identify the `service` label; check the process log and its restart policy. |
+| `IbexMemoryDown` | Context/memory quality (degrades to directive-only context) | `p2` (→ ticket) | `ibex-digest` → `/alerts/digest` | Confirm the proxy is degrading to directive-only context rather than failing; restart memory. |
+| `IbexMemoryAfterCommitFailures` | Redis on protected path, surfacing as Context/memory quality divergence | `p2` (→ ticket) | `ibex-digest` → `/alerts/digest` | Reconcile Postgres rows against Redis object cache and the vector index; check write-cache errors. |
+| `IbexMCPAuditDrops` | Evidence outbox (audit events must not be silently lost) | `p2` (→ ticket) | `ibex-digest` → `/alerts/digest` | Check the audit queue consumer; quantify dropped events before trusting the audit trail. |
+| `IbexMemoryEscalationBacklogGrowth` | Queue/worker, with no consumer shipped yet | `p3` (→ ticket) | `ibex-digest` → `/alerts/digest` | Review `memory_conflict_escalations` growth and the retention policy; escalate if it is transactional. |
+| `IBEXPostgresBackupStale` | Durability/RPO, not a dependency row: the backup is the recoverability evidence. | `page` | `ibex-page` → `/alerts/page` | Run `infra/scripts/platform/pgbackrest-backup.sh`; check the MinIO repo; RPO budget is ≤5m. |
+| `IBEXWorkerTaskDeadLettered` | Queue/worker | `page` | `ibex-page` → `/alerts/page` | Inspect `ibex_core.failed_tasks` for the `task_name`; fix the cause, then replay. |
+| `IBEXRestoreDrillMissing` | Recoverability, not a dependency row: the drill proves the backup is usable. | `ticket` | `ibex-digest` → `/alerts/digest` | Run `infra/scripts/platform/restore-drill.sh`; make its evidence scrapeable. |
+
+Test-only probes (loaded only by `infra/compose/observability/docker-compose.alerting-test.yml`):
+
+| Alert | Failure mode | Severity | Route | Owner action |
+|---|---|---|---|---|
+| `IbexAlertDeliveryProbePage` | Not a failure: proves the `page` channel is wired to a real receiver. | `page` | `ibex-page` → `/alerts/page` | None. Fires only during `make alert-delivery-test`. |
+| `IbexAlertDeliveryProbeTicket` | Not a failure: proves the `ticket` channel is wired to a real receiver. | `ticket` | `ibex-digest` → `/alerts/digest` | None. Fires only during `make alert-delivery-test`. |

@@ -1,0 +1,95 @@
+# Test-only override: prove alerts reach a real webhook receiver (P0-19 / W6.2).
+#
+#   make alert-delivery-test
+#
+# Not a deployment profile. It exists so the routing tree in
+# infra/monitoring/alertmanager/alertmanager.yml can be exercised end to end
+# against a local sink instead of being asserted from the file text.
+#
+# What changes versus the base stack:
+#   * Prometheus loads the *rendered* probe rules from
+#     IBEX_ALERT_TEST_RULES_DIR (produced by infra/scripts/alert-delivery-test.sh,
+#     which injects a per-run `run_nonce` label), so only the constant probes
+#     evaluate and a delivery without this run's nonce is refused.
+#   * Prometheus runs without `--web.enable-lifecycle`. The test never reloads or
+#     quits it, and that flag turns the unauthenticated HTTP API into a
+#     reload/quit control for anything that can reach the port.
+#   * Alertmanager mounts a rendered copy of the shipped config whose receiver
+#     base URL points at the sink service (IBEX_ALERT_TEST_CONFIG_FILE, produced
+#     by the same script with the documented render step).
+#   * `alert-receiver` is the local sink (infra/monitoring/alert-receiver). It
+#     publishes **no host port**. Under rootless podman that alone makes it
+#     unreachable from the host (verified: connection refused/timeout, and the
+#     rootless bridge gateway cannot be bound from the host at all). The bind
+#     address is *not* the control: `IBEX_ALERT_SINK_BIND: 0.0.0.0` listens on
+#     every address inside this container's network namespace, and under
+#     **rootful Docker** the container IP can be reachable from the host or a
+#     routed peer.
+#   * The control is the per-run nonce checked by the sink assertion, and it is
+#     a partial one: the nonce is a Prometheus rule label, so it defeats a peer
+#     that can reach only the sink, but **not** a peer that can also read
+#     Prometheus `/api/v1/rules`, which serves the label to any client of the
+#     test Prometheus port. That residual is named, not fixed.
+#   * Distinct container names and a distinct network name so the test never
+#     collides with a running `make observability-up` stack and `down -v`
+#     cannot remove the shared observability network.
+#
+# Host ports are not redeclared here: the base file already parameterises them
+# as ${IBEX_OBS_PROMETHEUS_PORT} / ${IBEX_OBS_ALERTMANAGER_PORT}, and
+# alert-delivery-test.sh exports 19190/19193 so a running stack keeps 9090/9093.
+# Both base bindings are loopback-only (`127.0.0.1:`), and this override leaves
+# `ports` untouched so the test Prometheus stays loopback-only too.
+
+services:
+  prometheus:
+    container_name: ibex-alerting-test-prometheus
+    # The base command minus --web.enable-lifecycle (see the header).
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ${IBEX_ALERT_TEST_RULES_DIR:?alert-delivery-test.sh must set IBEX_ALERT_TEST_RULES_DIR}:/etc/prometheus/rules:ro
+
+  alert-receiver:
+    image: docker.io/library/python@sha256:da54eb86849fe19be7584d8b3f291fcf0c53c196760ab3d70dc6382f681ef9c0
+    container_name: ibex-alerting-test-alert-receiver
+    command: ["python3", "/opt/receiver/receiver.py"]
+    environment:
+      IBEX_ALERT_SINK_OUT: /sink/alerts.jsonl
+      IBEX_ALERT_SINK_READY_FILE: /sink/sink.ready
+      IBEX_ALERT_SINK_PORT: "${IBEX_ALERT_SINK_PORT:-18099}"
+      # Listen on every address inside this container's network namespace. No
+      # port is published, so rootless podman cannot reach it from the host;
+      # under rootful Docker the container IP may be reachable, so the bind is
+      # not the control. See the header for what is, and what it does not cover.
+      IBEX_ALERT_SINK_BIND: 0.0.0.0
+      # The test needs two records. The caps turn "can reach the sink" into a
+      # bounded write, not an unbounded disk fill.
+      IBEX_ALERT_SINK_MAX_RECORDS: "50"
+      IBEX_ALERT_SINK_MAX_BYTES: "1048576"
+    volumes:
+      - ../../monitoring/alert-receiver/receiver.py:/opt/receiver/receiver.py:ro
+      - ${IBEX_ALERT_TEST_SINK_DIR:?alert-delivery-test.sh must set IBEX_ALERT_TEST_SINK_DIR}:/sink
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ['IBEX_ALERT_SINK_PORT']+'/healthz', timeout=2)
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+    networks:
+      - observability
+
+  alertmanager:
+    container_name: ibex-alerting-test-alertmanager
+    volumes:
+      - ${IBEX_ALERT_TEST_CONFIG_FILE:?alert-delivery-test.sh must set IBEX_ALERT_TEST_CONFIG_FILE}:/etc/alertmanager/alertmanager.yml:ro
+    depends_on:
+      - alert-receiver
+
+networks:
+  observability:
+    name: ibex-alerting-test

@@ -369,12 +369,12 @@ case "${1:-help}" in
       '  stack-init [dev|test]  Wait for a stack and create required object-store buckets' \
       '  readiness              Run stack-init readiness probes' \
       '  lint-docs              Run markdownlint' '  security-scan          Run gitleaks locally' \
-      '  repo-guards            Run repository layout and hygiene guards' '  proto-lint              Run Buf lint' \
+      '  repo-guards            Run repository layout and hygiene guards (incl. alert routing)' '  proto-lint              Run Buf lint' \
       '  proto-breaking         Run Buf breaking checks' '  proto-gen               Generate protobuf stubs' \
       '  proto-test              Run protobuf contract tests' '  test-integration         Run Go integration tests' \
       '  test-integration-auth   Run AuthService-backed proxy integration tests' \
       '  compose-dev-up/down/reset/logs/ps  Manage development stack' \
-      '  compose-test-up/down   Manage test stack' '  observability-up/down/smoke  Manage observability' \
+      '  compose-test-up/down   Manage test stack' '  observability-up/down/smoke  Manage observability' '  alert-delivery-test   Prove alerts reach a real webhook receiver' \
       '  v1-secrets             Generate the v1-single-node .env and file secrets' \
       '  v1-up/down/migrate/provision/logs/ps  Manage the v1-single-node profile (use --no-build for rollback image reuse)' \
       '  db-migrate/down/version/seed  Manage Postgres migrations' \
@@ -396,7 +396,7 @@ case "${1:-help}" in
     "$markdownlint" "**/*.md" "#node_modules"
     ;;
   security-scan) cd "$ROOT_DIR"; require_tool gitleaks 'gitleaks is required for security-scan'; gitleaks detect --source . --config .gitleaks.toml --redact --verbose ;;
-  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh ;;
+  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py ;;
   proto-lint) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf lint ;;
   proto-breaking) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf breaking --against "$PROTO_BREAKING_AGAINST" ;;
   proto-gen) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf generate ;;
@@ -414,6 +414,7 @@ case "${1:-help}" in
   observability-up) compose_with_mode observability up -d ;;
   observability-down) compose_with_mode observability down ;;
   observability-smoke) bash "$ROOT_DIR/infra/scripts/observability-smoke.sh" ;;
+  alert-delivery-test) bash "$ROOT_DIR/infra/scripts/alert-delivery-test.sh" ;;
   db-migrate) bash "$DB_MIGRATE" up ;;
   db-migrate-down) bash "$DB_MIGRATE" down ;;
   db-version) bash "$DB_MIGRATE" version ;;

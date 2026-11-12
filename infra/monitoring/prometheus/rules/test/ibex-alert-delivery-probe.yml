@@ -1,0 +1,30 @@
+# Test-only probe rules for the alert-delivery test (P0-19 / W6.2).
+#
+# Not loaded by the default observability stack: prometheus.yml globs
+# /etc/prometheus/rules/*.yml and this file sits one directory deeper.
+# infra/compose/observability/docker-compose.alerting-test.yml mounts this
+# directory as the rules directory, so only these probes evaluate.
+#
+# Both expressions are constant, so both alerts fire on the first evaluation
+# and never resolve. The test asserts the route each severity takes, not the
+# quality of a detector.
+groups:
+  - name: ibex.alert-delivery-probe
+    rules:
+      - alert: IbexAlertDeliveryProbePage
+        expr: vector(1)
+        labels:
+          severity: page
+          service: alert-delivery-probe
+        annotations:
+          summary: "Synthetic page-severity probe (alert delivery test)"
+          description: "Always firing. Proves severity=page reaches the page webhook."
+
+      - alert: IbexAlertDeliveryProbeTicket
+        expr: vector(1)
+        labels:
+          severity: ticket
+          service: alert-delivery-probe
+        annotations:
+          summary: "Synthetic ticket-severity probe (alert delivery test)"
+          description: "Always firing. Proves severity=ticket reaches the digest webhook."
