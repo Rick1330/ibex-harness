@@ -17,12 +17,14 @@ if [[ "${IBEX_NETWORK:-bridge}" == host ]]; then
   TEMPO_URL="${IBEX_OBS_TEMPO_URL:-http://127.0.0.1:3200}"
   LOKI_URL="${IBEX_OBS_LOKI_URL:-http://127.0.0.1:3100}"
   OTEL_HEALTH_URL="${IBEX_OBS_OTEL_HEALTH_URL:-http://127.0.0.1:13133/}"
+  ALERTMANAGER_URL="${IBEX_OBS_ALERTMANAGER_URL:-http://127.0.0.1:9093}"
 else
   PROM_URL="${IBEX_OBS_PROMETHEUS_URL:-http://127.0.0.1:${IBEX_OBS_PROMETHEUS_PORT:-9090}}"
   GRAFANA_URL="${IBEX_OBS_GRAFANA_URL:-http://127.0.0.1:${IBEX_OBS_GRAFANA_PORT:-3000}}"
   TEMPO_URL="${IBEX_OBS_TEMPO_URL:-http://127.0.0.1:${IBEX_OBS_TEMPO_PORT:-3200}}"
   LOKI_URL="${IBEX_OBS_LOKI_URL:-http://127.0.0.1:${IBEX_OBS_LOKI_PORT:-3100}}"
   OTEL_HEALTH_URL="${IBEX_OBS_OTEL_HEALTH_URL:-http://127.0.0.1:${IBEX_OBS_OTEL_HEALTH_PORT:-13133}/}"
+  ALERTMANAGER_URL="${IBEX_OBS_ALERTMANAGER_URL:-http://127.0.0.1:${IBEX_OBS_ALERTMANAGER_PORT:-9093}}"
 fi
 REQUIRE_IBEX_SERIES="${IBEX_OBS_REQUIRE_IBEX_SERIES:-0}"
 CURL_MAX_TIME="${CURL_MAX_TIME:-10}"
@@ -69,6 +71,35 @@ if ! grep -q '"job":"prometheus"' <<<"$targets_json"; then
   exit 1
 fi
 echo "ok: prometheus targets API"
+
+# Alertmanager readiness is not enough: a null receiver accepts every alert and
+# drops it, so a readiness-only smoke check passes while every page goes
+# nowhere (P0-19 / W6.2). Assert the configuration the running Alertmanager
+# serves. This is a shape check, not a delivery check: the base stack has no
+# alert-receiver service, so nothing here proves the webhook URL resolves.
+check_200 "alertmanager ready" "${ALERTMANAGER_URL}/-/ready"
+am_status="$(curl -fsS --connect-timeout 5 --max-time "$CURL_MAX_TIME" "${ALERTMANAGER_URL}/api/v2/status" || true)"
+if ! grep -q 'webhook_configs' <<<"$am_status"; then
+  echo "observability-smoke failed: alertmanager config has no webhook_configs (alerts would be dropped)"
+  exit 1
+fi
+if grep -q 'local-null' <<<"$am_status"; then
+  echo "observability-smoke failed: alertmanager still routes to the null receiver (local-null)"
+  exit 1
+fi
+# A webhook shape check passes for any receiver. Assert the two receivers this
+# routing tree actually names, so a renamed or dropped receiver is caught here
+# instead of surfacing as an alert that was never sent. Alertmanager serialises
+# the served config into a JSON string, so match the receiver definition
+# (`name: <receiver>`) without anchoring to a line.
+for receiver in ibex-page ibex-digest; do
+  if ! grep -qE "name: ['\"]?${receiver}['\"]?([^a-zA-Z0-9_-]|$)" <<<"$am_status"; then
+    echo "observability-smoke failed: alertmanager config defines no receiver named ${receiver} (expected ibex-page for page, ibex-digest for ticket)"
+    exit 1
+  fi
+done
+echo "ok: alertmanager config shape (webhook_configs present, no local-null, ibex-page + ibex-digest defined)"
+echo "note: deliverability not asserted; the base stack has no alert-receiver service (use make alert-delivery-test)"
 
 if [[ "$REQUIRE_IBEX_SERIES" == "1" ]]; then
   series="$(curl -fsS --connect-timeout 5 --max-time "$CURL_MAX_TIME" \

@@ -5,7 +5,8 @@ These files are the configuration and provisioning source for the **local Compos
 | Path | Role |
 | --- | --- |
 | `prometheus/` | Scrape configuration and alert rules |
-| `alertmanager/` | Local Alertmanager configuration |
+| `alertmanager/` | Local Alertmanager routing tree (`alertmanager.yml`) and the routing/severity doc (`README.md`) |
+| `alert-receiver/` | Local webhook sink used by `make alert-delivery-test`; not a deployment receiver |
 | `otel/` | Collector pipelines for OTLP traces/logs |
 | `tempo/` | Local filesystem Tempo configuration |
 | `loki/` | Local single-binary Loki configuration |
@@ -17,3 +18,5 @@ These files are the configuration and provisioning source for the **local Compos
 `infra/compose/observability/` consumes these files. `infra/helm/observability/` currently does not provide Alertmanager, dashboard/rule/scrape ConfigMaps, or the Compose logs-to-Loki pipeline. Do not describe Helm installation as equivalent local LGTM coverage until those templates and acceptance tests exist.
 
 Local observability is useful evidence for development and contract checks only. Production HA, multi-AZ retention, external alert routing, and measured recovery remain separate operational gates.
+
+Alert routing is no longer a null receiver: `make alert-delivery-test` proves that a `page` and a `ticket` alert each reach their own webhook path, and `python3 infra/scripts/check-alert-routing.py` (part of `make repo-guards`) fails when a rule severity has no route. No page reaches a human until a deployment supplies a real receiver URL; see [`alertmanager/README.md`](alertmanager/README.md).
