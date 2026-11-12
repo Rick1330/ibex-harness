@@ -1,0 +1,234 @@
+{
+  "generator": {
+    "command": "python -m app.descriptors --update",
+    "mcp": "1.30.0",
+    "pydantic": "2.14.1",
+    "python": "3.12.14",
+    "schema": "ibex.mcp-tool-descriptor.v1"
+  },
+  "tools": [
+    {
+      "deprecated": false,
+      "description_sha256": "a4971e8a374a33fc343b76d859bd120dc4f6e09a6f3e66d7fdc13f3c8987dd53",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "active_only": {
+            "default": true,
+            "title": "Active Only",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "BudgetGetArgs",
+        "type": "object"
+      },
+      "input_schema_sha256": "2006a285278d511a7fe9694ae3a1ab72964abc45f5f9e72e1cf0919067ef62a9",
+      "name": "budget.get",
+      "output_schema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "budget_getOutput",
+        "type": "object"
+      },
+      "output_schema_sha256": "417b27880272a3b36b33e9c3f6e02d14daa52e64f6da1893bfb28a357f3d75f2",
+      "stability": "beta",
+      "version": "1.0.0"
+    },
+    {
+      "deprecated": false,
+      "description_sha256": "6cf17e708ba64d02993417a27cac3a91062f4c0acffdf43b1b5590e35a1a29de",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error Code"
+          },
+          "limit": {
+            "default": 25,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Session Id"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ok",
+                  "error"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^\\S+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trace Id"
+          }
+        },
+        "title": "EvidenceQueryArgs",
+        "type": "object"
+      },
+      "input_schema_sha256": "0cc468c14acf7ceae3ef0ac83d75258afcbd987ffa8e66fb1f73fc26be073bf6",
+      "name": "evidence.query",
+      "output_schema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "evidence_queryOutput",
+        "type": "object"
+      },
+      "output_schema_sha256": "417b27880272a3b36b33e9c3f6e02d14daa52e64f6da1893bfb28a357f3d75f2",
+      "stability": "beta",
+      "version": "1.0.0"
+    },
+    {
+      "deprecated": false,
+      "description_sha256": "cc212f2180ab7e65cccb4bbdc7c454c6442cd47102254fab7e982b9f81aecfa9",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "description": "Evidence run UUID within the caller's org",
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "RunGetArgs",
+        "type": "object"
+      },
+      "input_schema_sha256": "18a4e927f796f5e78386cf3ef6071c0430175c4b0b793c49a05a95ee6ef091fe",
+      "name": "run.get",
+      "output_schema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "run_getOutput",
+        "type": "object"
+      },
+      "output_schema_sha256": "417b27880272a3b36b33e9c3f6e02d14daa52e64f6da1893bfb28a357f3d75f2",
+      "stability": "beta",
+      "version": "1.0.0"
+    },
+    {
+      "deprecated": false,
+      "description_sha256": "ca7d539dc3fdd4d0cef0740fbc334ec37ea83d9a8e1bb45136eb5f5c78797ed5",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "description": "Session UUID within the caller's org",
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "title": "SessionGetArgs",
+        "type": "object"
+      },
+      "input_schema_sha256": "77364d77d69ecb9efe9be0c99bbcca4d4886d6b2744817f925db83f56050e228",
+      "name": "session.get",
+      "output_schema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "session_getOutput",
+        "type": "object"
+      },
+      "output_schema_sha256": "417b27880272a3b36b33e9c3f6e02d14daa52e64f6da1893bfb28a357f3d75f2",
+      "stability": "beta",
+      "version": "1.0.0"
+    }
+  ]
+}

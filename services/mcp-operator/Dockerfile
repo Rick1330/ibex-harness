@@ -36,12 +36,14 @@ WORKDIR /app/services/mcp-operator
 COPY packages/authclient /app/packages/authclient
 COPY packages/mcp_gateway /app/packages/mcp_gateway
 COPY packages/mcp_runtime /app/packages/mcp_runtime
+COPY packages/mcp_tool_descriptors /app/packages/mcp_tool_descriptors
 COPY packages/ibex_async_db /app/packages/ibex_async_db
 # Trusted monorepo wheels only — UV_NO_BUILD=1 blocks uv build globally (Sonar S8541).
 RUN mkdir -p /wheels \
     && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/authclient \
     && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/mcp_gateway \
     && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/mcp_runtime \
+    && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/mcp_tool_descriptors \
     && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/ibex_async_db
 COPY services/mcp-operator/pyproject.toml services/mcp-operator/uv.lock ./
 
@@ -50,11 +52,13 @@ RUN uv sync --python "$UV_PYTHON" --frozen --no-build --no-install-project --fin
         --no-install-package authclient \
         --no-install-package mcp-gateway \
         --no-install-package mcp-runtime \
+        --no-install-package mcp-tool-descriptors \
         --no-install-package ibex-async-db \
     && uv pip install --python /app/.venv/bin/python --no-cache --force-reinstall --no-index --no-deps \
         /wheels/authclient-*.whl \
         /wheels/mcp_gateway-*.whl \
         /wheels/mcp_runtime-*.whl \
+        /wheels/mcp_tool_descriptors-*.whl \
         /wheels/ibex_async_db-*.whl
 
 # --------------------------------------------------------------------------- #

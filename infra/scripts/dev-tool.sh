@@ -370,7 +370,8 @@ case "${1:-help}" in
       '  readiness              Run stack-init readiness probes' \
       '  lint-docs              Run markdownlint' '  security-scan          Run gitleaks locally' \
       '  repo-guards            Run repository layout and hygiene guards (incl. alert routing)' '  proto-lint              Run Buf lint' \
-      '  proto-breaking         Run Buf breaking checks' '  proto-gen               Generate protobuf stubs' \
+      '  proto-breaking         Run Buf breaking checks' '  api-breaking [base]     Diff the OpenAPI snapshot against a git baseline (default origin/main; a tag selects release mode)' \
+      '  proto-gen               Generate protobuf stubs' \
       '  proto-test              Run protobuf contract tests' '  test-integration         Run Go integration tests' \
       '  test-integration-auth   Run AuthService-backed proxy integration tests' \
       '  compose-dev-up/down/reset/logs/ps  Manage development stack' \
@@ -399,6 +400,7 @@ case "${1:-help}" in
   repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py ;;
   proto-lint) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf lint ;;
   proto-breaking) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf breaking --against "$PROTO_BREAKING_AGAINST" ;;
+  api-breaking) bash "$ROOT_DIR/infra/scripts/api-breaking.sh" "${2:-}" ;;
   proto-gen) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf generate ;;
   proto-test) cd "$ROOT_DIR"; go test ./packages/proto/... ;;
   proto-test-integration) cd "$PROTO_DIR"; buf generate; cd "$ROOT_DIR"; go test -tags=integration ./packages/proto/... ;;
