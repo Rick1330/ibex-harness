@@ -79,6 +79,12 @@ export const capabilities: Capability[] = [
     href: '/docs/context/overview',
   },
   {
+    name: 'Ranking-quality benchmarks',
+    status: 'PROVISIONAL',
+    detail: 'The published v1 gold set is twenty saturated queries, so its 1.0 scores measure corpus difficulty rather than ranking quality. The v2 mode comparison cannot separate graph suppression from reranking: full_graph equals hybrid_rerank because the expected memory must outrank the twin that suppression removes, so the removed document cannot move nDCG@10. No v2 number is published.',
+    href: '/docs/intelligence/evaluation',
+  },
+  {
     name: 'Extraction workers',
     status: 'PROVISIONAL',
     detail: 'Batch extraction and a cassette-backed evaluation harness exist. Queue durability, live model quality, and exactly-once projection are not certified.',

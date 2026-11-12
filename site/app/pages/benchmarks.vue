@@ -258,9 +258,9 @@ const suites = computed(() => [
     title: 'Ranking quality',
     shortTitle: 'Ranking',
     icon: 'i-lucide-list-checks',
-    detail: 'Gold-set precision, recall, reciprocal rank, and ordering checks.',
+    detail: 'Gold-set precision, recall, reciprocal rank, and ordering checks on a saturated twenty-query v1 gold set.',
     metric: `${rankingAtCeiling.value} / ${rankingRows.value.length}`,
-    metricLabel: 'metrics at 1.0',
+    metricLabel: 'metrics at 1.0 · saturated',
     runs: rankingRuns.length,
     tag: 'gold set v1',
     href: '#ranking',
@@ -717,7 +717,7 @@ function rankingModal(row: number): GraphModalState {
     ...blankModal(),
     eyebrow: '03 / Ranking quality',
     title: 'Ranking quality history',
-    description: 'Gold-set metrics across published runs. A ceiling result is a regression guard, not evidence of broad ranking quality. Hover to preview a run; click to pin it.',
+    description: 'Gold-set metrics across published v1 runs. A saturated set is a regression guard, not evidence of broad ranking quality, and the v2 mode comparison cannot separate graph suppression from reranking on this corpus. Hover to preview a run; click to pin it.',
     sourceHref: run.run_url,
     chartKind: 'bar',
     barLabels: ['P@5', 'R@10', 'MRR', 'Order', 'Category'],
@@ -750,7 +750,7 @@ function rankingModal(row: number): GraphModalState {
       formatPercent(item.metrics.top_category_accuracy),
       item.status,
     ]),
-    tableNote: 'Newest first. Gold set v1; every published metric is at the ceiling.',
+    tableNote: 'Newest first. v1 gold-set runs only: twenty queries, saturated, so 1.0 measures the corpus rather than ranking quality. No v2 mode numbers are published.',
   }
 }
 
@@ -1191,8 +1191,8 @@ function compactNs(value: number) {
           <BenchmarkSectionHeader
             index="03"
             label="Ranking quality"
-            title="The gold set is at its ceiling."
-            :description="`Twenty queries over fifty-one memories. ${rankingAtCeiling === rankingRows.length ? 'Every published ranking metric is 1.0, which means this set is saturated, not that ranking generalizes everywhere.' : 'The latest run is not at the ceiling; see the gate checks before citing ranking quality.'}`"
+            title="Twenty queries, saturated at 1.0."
+            :description="`Twenty queries over fifty-one memories on the v1 gold set (fifty in the four oldest runs). ${rankingAtCeiling === rankingRows.length ? 'Every published ranking metric is 1.0 because the set is saturated, so 1.0 measures how easy the corpus is, not ranking quality.' : 'The latest run is below 1.0 on at least one metric; read the gate checks before citing ranking quality.'} The v2 mode comparison cannot distinguish graph suppression from reranking on this corpus, and no v2 number is published here.`"
             icon="i-lucide-list-checks"
             :tag="suites[2]?.tag"
             :run-url="latestRanking.run_url"
@@ -1203,7 +1203,7 @@ function compactNs(value: number) {
             <BenchmarkGraphCard
               title="Gold-set score"
               :meta="`${latestRanking.query_count} queries / ${latestRanking.memory_count} memories`"
-              caption="A ceiling result is a regression guard, not evidence of broad ranking quality."
+              caption="A saturated result is a regression guard, not evidence of broad ranking quality. The v2 mode comparison cannot separate graph suppression from reranking on this corpus."
               @expand="openRanking"
             >
               <div class="grid w-full place-items-center py-2">
@@ -1224,7 +1224,7 @@ function compactNs(value: number) {
             <BenchmarkGraphCard
               title="Metric ladder"
               :meta="`gate v1 · ${rankingGate.passed} / ${rankingGate.total} checks`"
-              :caption="rankingAtCeiling === rankingRows.length ? 'Every published ranking metric is at the ceiling for this set.' : 'The latest run is below the ceiling for at least one metric.'"
+              :caption="rankingAtCeiling === rankingRows.length ? 'Every published ranking metric is 1.0 on this saturated set.' : 'The latest run is below 1.0 on at least one metric.'"
               @expand="openRanking"
             >
               <BenchmarkMeter :items="rankingRows.map(row => ({ label: row.label, value: row.value * 100, display: formatPercent(row.value), color: 'var(--chart-lime)' }))" />
@@ -1233,7 +1233,7 @@ function compactNs(value: number) {
             <BenchmarkGraphCard
               title="Run context"
               meta="saturated set"
-              caption="Twenty queries and fifty-one memories. The set is intentionally small."
+              caption="Twenty queries and fifty-one memories today, fifty in the four oldest runs: intentionally small, and saturated. The v2 mode comparison is a source baseline, not a published site artifact."
               @expand="openRanking"
             >
               <dl class="m-0 w-full self-start divide-y divide-[var(--site-line)] text-[0.74rem]">

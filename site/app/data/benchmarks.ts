@@ -35,7 +35,7 @@ export const benchmarkMeta = {
   ranking: {
     title: 'Ranking quality',
     file: 'ranking-quality-benchmark-data.json',
-    description: 'Gold-set precision, recall, MRR, and expected-order checks.',
+    description: 'Gold-set precision, recall, MRR, and expected-order checks. Only v1 gold-set runs are published: a saturated twenty-query set, so the scores measure corpus difficulty rather than ranking quality. The v2 mode comparison in benchmarks/memory/ranking_quality/baseline-modes.json cannot separate graph suppression from reranking on this corpus, and no v2 number is published here.',
   },
   write: {
     title: 'Write pipeline',
