@@ -1,0 +1,269 @@
+{
+  "generator": {
+    "command": "python -m app.descriptors --update",
+    "mcp": "1.30.0",
+    "pydantic": "2.13.4",
+    "python": "3.14.4",
+    "schema": "ibex.mcp-tool-descriptor.v1"
+  },
+  "tools": [
+    {
+      "deprecated": false,
+      "description_sha256": "e29f6220a650257700c1ec78b16fda2cc6140c6e8e15cf896b722e1728ca63d2",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "max_depth": {
+            "default": 3,
+            "maximum": 5,
+            "minimum": 1,
+            "title": "Max Depth",
+            "type": "integer"
+          },
+          "memory_id": {
+            "format": "uuid",
+            "title": "Memory Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "memory_id"
+        ],
+        "title": "get_memory_lineageArguments",
+        "type": "object"
+      },
+      "input_schema_sha256": "9d20498262a062cf6149d92ee2e03bbaab55e186a36adbcd92cc8210201f8460",
+      "name": "get_memory_lineage",
+      "output_schema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "get_memory_lineageOutput",
+        "type": "object"
+      },
+      "output_schema_sha256": "417b27880272a3b36b33e9c3f6e02d14daa52e64f6da1893bfb28a357f3d75f2",
+      "stability": "beta",
+      "version": "1.0.0"
+    },
+    {
+      "deprecated": false,
+      "description_sha256": "8adc10f9b46f1929294c4f8b7a10bfed999fcbf72455d4d8e13286246dbb89d8",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "feedback": {
+            "enum": [
+              "positive",
+              "negative",
+              "neutral"
+            ],
+            "title": "Feedback",
+            "type": "string"
+          },
+          "memory_id": {
+            "format": "uuid",
+            "title": "Memory Id",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Notes"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Session Id"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trace Id"
+          }
+        },
+        "required": [
+          "memory_id",
+          "feedback"
+        ],
+        "title": "record_feedbackArguments",
+        "type": "object"
+      },
+      "input_schema_sha256": "a8b12873392e02ec571c106604eab47a0ff345f3666f2f4d8240841ad58199e3",
+      "name": "record_feedback",
+      "output_schema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "record_feedbackOutput",
+        "type": "object"
+      },
+      "output_schema_sha256": "417b27880272a3b36b33e9c3f6e02d14daa52e64f6da1893bfb28a357f3d75f2",
+      "stability": "beta",
+      "version": "1.0.0"
+    },
+    {
+      "deprecated": false,
+      "description_sha256": "05ba3741e7970bd0440570577be051048b6e46d44a370b0228efb481eed4dc70",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Agent Id"
+          },
+          "limit": {
+            "default": 5,
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "search_memoryArguments",
+        "type": "object"
+      },
+      "input_schema_sha256": "95b53df0c5c330f73717a17d332939f7bd0ee72f92e69030df3766d8eaeada18",
+      "name": "search_memory",
+      "output_schema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "search_memoryOutput",
+        "type": "object"
+      },
+      "output_schema_sha256": "417b27880272a3b36b33e9c3f6e02d14daa52e64f6da1893bfb28a357f3d75f2",
+      "stability": "beta",
+      "version": "1.0.0"
+    },
+    {
+      "deprecated": false,
+      "description_sha256": "886d3fb5bbca646658c8b663083cd250a83c0e88feeb9dca587497d1a074e28a",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Agent Id"
+          },
+          "category": {
+            "default": "factual",
+            "enum": [
+              "factual",
+              "preference",
+              "behavioral",
+              "episodic",
+              "procedural"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "confidence": {
+            "default": 0.6,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "content": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "write_memoryArguments",
+        "type": "object"
+      },
+      "input_schema_sha256": "fd8408a6105797f8dad5398dc126f25c2337c164266ca56f66f5621fbfdd2203",
+      "name": "write_memory",
+      "output_schema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "write_memoryOutput",
+        "type": "object"
+      },
+      "output_schema_sha256": "417b27880272a3b36b33e9c3f6e02d14daa52e64f6da1893bfb28a357f3d75f2",
+      "stability": "beta",
+      "version": "1.0.0"
+    }
+  ]
+}
