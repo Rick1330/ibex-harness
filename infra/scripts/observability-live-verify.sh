@@ -10,6 +10,13 @@ LOG_DIR="${IBEX_OBS_LIVE_LOG_DIR:-/tmp/ibex-obs-live}"
 mkdir -p "$LOG_DIR"
 PIDS=()
 
+# RUN_START bounds the Tempo trace search to *this* run. Searching "the last
+# hour" made the assertion pass on a stale trace: a leftover from an earlier run
+# sits inside the window, so a current export failure is masked and the check
+# reports a trace it did not produce. Everything this script starts begins after
+# this instant, so a trace with an earlier start cannot be evidence for it.
+RUN_START="$(date +%s)"
+
 PROXY_ADDR="${IBEX_PROXY_ADDR:-http://127.0.0.1:18080}"
 AUTH_HTTP="${IBEX_AUTH_HTTP:-http://127.0.0.1:18081}"
 AUTH_GRPC_PORT="${IBEX_GRPC_PORT:-19091}"
@@ -17,6 +24,7 @@ EMBEDDER_ADDR="${IBEX_EMBEDDER_ADDR:-http://127.0.0.1:18004}"
 MCP_ADDR="${IBEX_MCP_ADDR:-http://127.0.0.1:18090}"
 PROM_URL="${IBEX_OBS_PROMETHEUS_URL:-http://127.0.0.1:19090}"
 GRAFANA_URL="${IBEX_OBS_GRAFANA_URL:-http://127.0.0.1:3000}"
+TEMPO_URL="${IBEX_OBS_TEMPO_URL:-http://127.0.0.1:3200}"
 DEV_TOKEN="${IBEX_DEV_TOKEN:-ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY}"
 DEV_AGENT="${IBEX_DEV_AGENT_ID:-00000000-0000-0000-0000-000000000003}"
 EMBED_TOKEN="${IBEX_EMBEDDING_API_TOKEN:-dev-embedder-metrics-token}"
@@ -58,6 +66,62 @@ prom_query() {
   local query="$1"
   curl -fsS --connect-timeout 2 --max-time 10 \
     --get --data-urlencode "query=${query}" "$PROM_URL/api/v1/query"
+}
+
+# tempo_ready separates "Tempo is not running" from "Tempo is running but empty".
+tempo_ready() {
+  curl -fsS --connect-timeout 2 --max-time 5 "$TEMPO_URL/ready" >/dev/null 2>&1
+}
+
+# TRACE_SERVICE is the resource service.name the proxy actually exports, not a
+# guess: services/proxy/internal/bootstrap/run.go pins bootstrapServiceName =
+# "ibex-proxy" and passes it to telemetry.InitTracer, and
+# packages/telemetry/resource.go turns that into semconv.ServiceName. Tempo's
+# search returns every service in the window, so without this filter a trace from
+# auth, the embedder or an earlier run satisfies the assertion.
+TRACE_SERVICE="ibex-proxy"
+
+# tempo_search asks for the newest single ibex-proxy trace that started after
+# this script did. Both bounds are sent explicitly:
+#   * `q={service.name="ibex-proxy"}` keeps another service's traffic from
+#     standing in for the proxy's export path;
+#   * `start=${RUN_START}` keeps an earlier run's trace from masking a current
+#     export failure — the failure mode that made this assertion unfalsifiable.
+# Relying on Tempo's default window would silently test a different range than
+# the operator expects.
+tempo_search() {
+  local end
+  end=$(date +%s)
+  # Keep the window non-degenerate: the first iteration can run inside the same
+  # second as RUN_START, and start == end is an empty range.
+  [[ "$end" -le "$RUN_START" ]] && end=$((RUN_START + 1))
+  curl -fsS --connect-timeout 2 --max-time 10 --get \
+    --data-urlencode "limit=1" \
+    --data-urlencode 'q={service.name="'"$TRACE_SERVICE"'"}' \
+    --data-urlencode "start=${RUN_START}" \
+    --data-urlencode "end=${end}" \
+    "$TEMPO_URL/api/search"
+}
+
+# tempo_first_trace_id prints the trace id of the first search hit and exits 1
+# when the payload has none (or cannot be parsed), so the caller can tell an
+# empty Tempo from a successful round-trip.
+tempo_first_trace_id() {
+  python3 -c '
+import json, sys
+
+try:
+    payload = json.load(sys.stdin)
+except (OSError, ValueError):
+    sys.exit(1)
+traces = payload.get("traces") or []
+if not traces:
+    sys.exit(1)
+trace_id = traces[0].get("traceID") or ""
+if not trace_id:
+    sys.exit(1)
+print(trace_id)
+'
 }
 
 assert_series() {
@@ -235,10 +299,40 @@ ds="$(curl -fsS "$GRAFANA_URL/api/datasources/uid/prometheus")"
 echo "$ds" | grep -q '"uid":"prometheus"' || fail "grafana prometheus datasource missing"
 pass "grafana prometheus datasource"
 
-# Tempo has traces if OTLP worked (best-effort)
-if curl -fsS "$PROM_URL/api/v1/query?query=up" >/dev/null; then
-  pass "prometheus API healthy"
+echo "=== Tempo trace round-trip ==="
+# Tempo is part of this stack (infra/compose/observability/docker-compose.yml) and
+# the services started above export OTLP to the collector through
+# OTEL_EXPORTER_OTLP_ENDPOINT, so a trace asserted here is the end-to-end path
+# W6.4 asks for: service -> collector -> Tempo -> query.
+#
+# The two failure modes are reported differently on purpose. An unreachable Tempo
+# is an infrastructure problem (nothing is running); a reachable Tempo with no
+# trace is an export problem (the collector, the exporter, or sampling), and
+# conflating them turns a five-minute fix into an hour of guessing. This
+# replaced an assertion that queried Prometheus `up` while claiming to check
+# Tempo, which could never fail for a Tempo problem.
+#
+# The search is narrowed twice (see tempo_search): to service.name="ibex-proxy"
+# and to traces that started after RUN_START. An unfiltered "newest trace in the
+# last hour" passed on leftovers from an earlier run, so a broken export path
+# stayed green for as long as one old trace remained in the window.
+if ! tempo_ready; then
+  fail "Tempo unreachable at ${TEMPO_URL}/ready: start it with 'make observability-up' (services export OTLP to ${OTEL_EXPORTER_OTLP_ENDPOINT})"
 fi
+pass "tempo ready"
+
+trace_id=""
+for _ in $(seq 1 30); do
+  if trace_id="$(tempo_search 2>/dev/null | tempo_first_trace_id 2>/dev/null)"; then
+    [[ -n "$trace_id" ]] && break
+  fi
+  trace_id=""
+  sleep 2
+done
+if [[ -z "$trace_id" ]]; then
+  fail "Tempo is reachable at ${TEMPO_URL} but returned no ${TRACE_SERVICE} trace that started after this run began (${RUN_START}): either OTLP export from the proxy is not reaching it (check the otel-collector log; endpoint ${OTEL_EXPORTER_OTLP_ENDPOINT}, service.name=${TRACE_SERVICE}) or its search API returned an unparseable response. A stale trace from an earlier run is not accepted as evidence."
+fi
+pass "tempo trace found: ${trace_id}"
 
 echo ""
 echo "observability-live-verify passed"
@@ -248,4 +342,5 @@ echo "  Auth:               $GRAFANA_URL/d/ibex-auth"
 echo "  Embedder+MCP:       $GRAFANA_URL/d/ibex-embedder-mcp"
 echo "  System Overview:    $GRAFANA_URL/d/ibex-system-overview"
 echo "Prometheus: $PROM_URL"
+echo "Tempo:      $TEMPO_URL  (trace ${trace_id} is searchable)"
 echo "Services kept running (KEEP=$KEEP). Logs: $LOG_DIR"

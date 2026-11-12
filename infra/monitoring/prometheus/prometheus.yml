@@ -67,6 +67,38 @@ scrape_configs:
           service: worker
           port_profile: default
 
+  # Management API (services/api, FastAPI). IBEX_API_PORT defaults to 8010 and
+  # app/probes.py serves /metrics there unauthenticated, next to /health and
+  # /ready. Under the v1-single-node profile the API binds 127.0.0.1 inside the
+  # edge namespace, so this target exists for a host-run API (the local
+  # quickstart) and reads DOWN, not silently stale, when nothing is listening.
+  - job_name: api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8010"]
+        labels:
+          service: api
+          port_profile: default
+
+  # Evidence relay (services/relay) — default off, see IBEX_RELAY_ENABLED.
+  # Port: the daemon has one HTTP listener (internal/bootstrap/health.go serves
+  # /health, /ready and /metrics) bound to IBEX_PORT. services/relay/internal/
+  # config/env_config.go:40 defaults IBEX_PORT to 8081, which is auth's listen
+  # port (services/auth/internal/config/env_config.go:20), so a relay left on the
+  # default is indistinguishable from a host-run auth in `up{job=...}` and the
+  # two cannot coexist. No compose profile deploys the relay (ADR-0097: no
+  # Dockerfile, optional, default off), so its port is the operator's choice:
+  # run it with IBEX_PORT=8082 and this job finds it. It is reported DOWN while
+  # the relay is disabled, which is the true state of a daemon that is not
+  # supposed to be running.
+  - job_name: relay
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8082"]
+        labels:
+          service: relay
+          port_profile: default
+
   # Demo / e2e ports when 8080 is occupied on the host (Phase 2.5 exit live verify).
   - job_name: proxy-demo
     metrics_path: /metrics
@@ -102,3 +134,15 @@ scrape_configs:
         labels:
           service: mcp-memory
           port_profile: demo
+
+  # Deliberately NOT scraped (W6.4 gap record; see
+  # engineering/architecture-v2/31-v1-release-plan-2026-11-09.md §W6 6.4 and
+  # 14-failure-modes-and-readiness.md):
+  #   * services/console — the Nuxt/Nitro BFF has no /metrics route
+  #     (`grep -rn metrics services/console/server` is empty). A scrape job would
+  #     add a permanently DOWN target, not an observation. The operator plane can
+  #     only be observed from outside until instrumentation lands.
+  #   * services/context — gRPC only, loopback-only by construction (it refuses
+  #     any non-loopback bind, ADR-0096) and no HTTP metrics surface. It is
+  #     observed indirectly through the proxy's own context metrics
+  #     (ibex_proxy_directive_*, ibex_proxy_fallbacks_total).
