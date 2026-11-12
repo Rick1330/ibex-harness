@@ -44,12 +44,16 @@ const prohibited = [
  * "audited", not the claim after the comma. Contrast "not production-ready, but
  * battle-tested", where the `but` already breaks the clause.
  *
- * A full stop ends a sentence only when it is not sitting between two digits: a
- * decimal point is part of the number, not a clause boundary. Otherwise
- * "0.97 recall on the corpus" would split after `0.97` and the metric word that
- * qualifies the score would fall outside its own clause.
+ * A full stop ends a sentence unless a digit follows it directly: that is a
+ * decimal fraction or a version component (`0.97`, `v1.9`, `.97`), so the metric
+ * word that qualifies the score stays inside its own clause. Any other full stop
+ * ends the sentence, including one that trails a version or a unit: in "Not
+ * measured in v1. Production-ready." the denial belongs to the first sentence and
+ * must not excuse the claim in the second. Reading a stop as part of the number
+ * only when digits sit on both sides was wrong the other way: it read the stop in
+ * `v1.` as mid-clause and let a denial cross the sentence.
  */
-const clauseBreaks = /(?<!\d)\.(?!\d)|[;,!?:]|\b(?:but|however|yet|although|though|while)\b/gi
+const clauseBreaks = /\.(?!\d)|[;,!?:]|\b(?:but|however|yet|although|though|while)\b/gi
 
 /**
  * A number that reads as a measurement: a digit with a unit suffix, or a
@@ -222,11 +226,70 @@ function expressionOnLine(source, start) {
 }
 
 /**
- * Escapes a literal may carry. Anything else resolves to the character itself,
- * which is enough to read a claim: the checker compares prose, not byte values.
+ * The single-character escapes a claim literal may carry and the character each
+ * contributes. They are decoded rather than dropped so the claim text is the text
+ * the page renders.
  */
-const escapeMap = new Map([['n', '\n'], ['r', '\r'], ['t', '\t']])
-const unescapeChar = char => escapeMap.get(char) ?? char ?? ''
+const singleCharEscapes = new Map([
+  ['n', '\n'],
+  ['t', '\t'],
+  ['r', '\r'],
+  ['0', '\0'],
+  ['b', '\b'],
+  ['f', '\f'],
+  ['v', '\v'],
+  ['\\', '\\'],
+  ["'", "'"],
+  ['"', '"'],
+  ['`', '`'],
+])
+
+const hexDigit = /[0-9a-f]/i
+
+/**
+ * Whether `char` is a hexadecimal digit. A character past the end of the source is
+ * not one, so a truncated escape fails to decode.
+ */
+const isHexDigit = char => char !== undefined && hexDigit.test(char)
+
+/**
+ * Whether `code` is a code point a JavaScript literal can hold. A value outside
+ * Unicode is not text any page renders.
+ */
+const isCodePoint = code => code >= 0 && code <= 0x10ffff
+
+/**
+ * A decoded escape, or `null` when its code point is outside Unicode.
+ */
+const decodedCodePoint = (code, next) => (isCodePoint(code) ? { value: String.fromCodePoint(code), next } : null)
+
+/**
+ * The value a fixed-width hexadecimal escape (`\xNN`, `\uNNNN`) contributes and
+ * the index the scan resumes at, after the run of hex digits. `null` when the run
+ * is short or a digit is not hex.
+ */
+function readFixedHexEscape(source, index, width) {
+  const digits = source.slice(index, index + width)
+  if (digits.length !== width || ![...digits].every(isHexDigit)) return null
+  return decodedCodePoint(Number.parseInt(digits, 16), index + width)
+}
+
+/**
+ * The value a braced code-point escape (`\u{...}`) contributes and the index the
+ * scan resumes at, after the closing brace: one to six hex digits between braces.
+ * `null` when a brace is missing or a digit is not hex.
+ */
+function readBracedHexEscape(source, index) {
+  const close = source.indexOf('}', index)
+  const digits = source.slice(index, close)
+  if (close === -1 || digits.length < 1 || digits.length > 6) return null
+  if (![...digits].every(isHexDigit)) return null
+  return decodedCodePoint(Number.parseInt(digits, 16), close + 1)
+}
+
+const readUnicodeEscape = (source, index) => (source[index] === '{'
+  ? readBracedHexEscape(source, index + 1)
+  : readFixedHexEscape(source, index, 4))
 
 /**
  * The only characters a claim literal may open with. Without this test the first
@@ -252,15 +315,23 @@ const isInterpolation = (source, index) => source[index] === '$' && source[index
 
 /**
  * The value an escape sequence contributes and the index the scan resumes at,
- * after both characters. Only the named escapes are resolved; any other escaped
- * character stands for itself, which is enough to compare prose rather than byte
- * values.
+ * after the whole sequence. `\xNN`, `\uNNNN`, `\u{...}` and the standard
+ * single-character escapes are decoded, because the claim text has to be the text
+ * the page renders: passing `\x35 ms` through as `x35 ms` hides the numeric claim
+ * behind the escape. `null` means the sequence is not one this checker can decode,
+ * and the value that holds it is uninspectable rather than read wrong.
  */
-const readEscape = (source, index) => ({ value: unescapeChar(source[index + 1]), next: index + 2 })
+function readEscape(source, index) {
+  const char = source[index + 1]
+  if (singleCharEscapes.has(char)) return { value: singleCharEscapes.get(char), next: index + 2 }
+  if (char === 'x') return readFixedHexEscape(source, index + 2, 2)
+  if (char === 'u') return readUnicodeEscape(source, index + 2)
+  return null
+}
 
 /**
- * Whether `char` is the first of the two characters of an escape sequence. The
- * caller reads it with `readEscape` and continues after both.
+ * Whether `char` opens an escape sequence. The caller reads it with `readEscape`
+ * and continues after the whole sequence, whose length depends on the escape.
  */
 const opensEscape = char => char === '\\'
 
@@ -298,6 +369,7 @@ function readLiteral(source, start) {
     if (closesLiteral(char, quote)) return { value, end: index + 1 }
     if (opensEscape(char)) {
       const escape = readEscape(source, index)
+      if (escape === null) return null
       value += escape.value
       index = escape.next
       continue

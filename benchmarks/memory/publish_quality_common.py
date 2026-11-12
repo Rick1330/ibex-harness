@@ -353,6 +353,24 @@ def run_entry_base(meta: RunMeta, *, timestamp: str | None = None) -> dict[str, 
     }
 
 
+def _require_consistent_gold_identity(record: Mapping[str, Any]) -> None:
+    """Refuse a ranking record whose two statements of the corpus disagree.
+
+    On this benchmark the gold set *is* the corpus, so ``gold_set_hash`` and ``corpus_hash`` name
+    the same bytes. Publishing a record where they differ would write a claim the offline checker
+    rejects, and restating it as ``stale`` would hide the contradiction instead of fixing it.
+    """
+    gold_set_hash = record.get("gold_set_hash")
+    if gold_set_hash is None or gold_set_hash == record.get("corpus_hash"):
+        return
+    raise RuntimeError(
+        "ranking artifact provenance.gold_set_hash "
+        f"{gold_set_hash!r} != provenance.corpus_hash {record.get('corpus_hash')!r}; on this "
+        "benchmark the gold set is the corpus, so the record states two different identities; "
+        "re-run the ranking-quality bench on this checkout"
+    )
+
+
 def merge_ranking_quality_entry(
     latest: dict[str, Any], gate: dict[str, Any], meta: RunMeta
 ) -> dict[str, Any]:
@@ -371,6 +389,7 @@ def merge_ranking_quality_entry(
         rerun="re-run the ranking-quality bench on this checkout so the run is reproducible",
         fields=RANKING_PROVENANCE_FIELDS,
     )
+    _require_consistent_gold_identity(record)
     restated = restated_corpus_status(record, kind=RANKING_CORPUS_KIND)
     return {
         **run_entry_base(meta, timestamp=str(latest.get("timestamp") or None)),
