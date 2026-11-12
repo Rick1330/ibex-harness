@@ -204,7 +204,7 @@ async def test_factory_inner_callbacks_invoked() -> None:
                 embed=embed,
             )
         )
-        exact_stage = pipeline._stages[2]
+        exact_stage = next(s for s in pipeline._stages if s.name == "exact_dedup")
         ctx = WriteContext(
             org_id=org_id,
             agent_id=agent_id,
@@ -215,7 +215,7 @@ async def test_factory_inner_callbacks_invoked() -> None:
         lookup_mock.assert_awaited()
         bump_mock.assert_awaited()
 
-        conflict_stage = pipeline._stages[5]
+        conflict_stage = next(s for s in pipeline._stages if s.name == "conflict")
         ctx.near_duplicate_candidates = [uuid4()]
         await conflict_stage.process(ctx)
         load_mock.assert_awaited()

@@ -44,15 +44,19 @@ def test_build_write_pipeline_and_orchestrator() -> None:
     pii = MagicMock()
     embed = AsyncMock()
 
-    with patch(
-        "app.write.factory.find_active_by_content_hash",
-        AsyncMock(return_value=None),
-    ), patch(
-        "app.write.factory.increment_retrieval_count",
-        AsyncMock(return_value=1),
-    ), patch(
-        "app.write.factory.load_candidate_memories",
-        AsyncMock(return_value=[]),
+    with (
+        patch(
+            "app.write.factory.find_active_by_content_hash",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.write.factory.increment_retrieval_count",
+            AsyncMock(return_value=1),
+        ),
+        patch(
+            "app.write.factory.load_candidate_memories",
+            AsyncMock(return_value=[]),
+        ),
     ):
         pipeline = build_write_pipeline(
             WritePipelineDeps(
@@ -63,7 +67,17 @@ def test_build_write_pipeline_and_orchestrator() -> None:
                 embed=embed,
             )
         )
-        assert len(pipeline._stages) == 6
+        # Injection runs before PII: the heuristic must see raw content, and a
+        # quarantine must not be redacted, deduped, embedded or indexed first.
+        assert pipeline.stage_names == [
+            "validate",
+            "injection",
+            "pii",
+            "exact_dedup",
+            "embed",
+            "near_dedup",
+            "conflict",
+        ]
 
         orch = build_write_orchestrator(
             WritePipelineDeps(

@@ -415,9 +415,11 @@ Creates a new memory for an agent. Automatically handles deduplication, embeddin
 
 | Status | Stages / steps |
 |--------|----------------|
-| **Implemented** (ADR-0054–0056) | `validate → PII → exact dedup → embed → near-dup → conflict` |
+| **Implemented** (ADR-0054–0056) | `validate → injection → PII → exact dedup → embed → near-dup → conflict` |
 | **Implemented** (ADR-0057, issue #620) | HTTP handler + **DB write** (insert + apply `pending_supersede_targets`) + unique-violation→bump/`409` + after-commit **cache update** + **index**/vector upsert |
 | **Implemented** (ADR-0048, issue #630) | Optional `labels[]` — transactional `memory_labels` insert; scalar `category` synced by DB trigger |
+
+The `injection` stage quarantines instruction-shaped content before redaction, exact dedup, embedding, near-dup, and conflict detection ever see it, returning `202` with `quarantine_reason: "prompt_injection_heuristic"` and `status: "quarantined"`.
 
 Request/response shapes below are the **existing** contract — do not invent a parallel API.
 
@@ -530,13 +532,16 @@ X-Idempotency-Key: {uuid}
     "id": "...",
     "status": "quarantined",
     "lifecycle_revision": 1,
-    "pii_detected": true
+    "pii_detected": true,
+    "quarantine_reason": "pii_low_confidence"
   },
   "meta": {
     "message": "Memory quarantined for review due to PII detection"
   }
 }
 ```
+
+`quarantine_reason` is always present on a `202`: `pii_low_confidence` for a PII quarantine, `prompt_injection_heuristic` for an injection-heuristic quarantine (same shape, `"pii_detected": false`, `"message": "Memory quarantined for review due to suspected prompt injection"`).
 
 ---
 

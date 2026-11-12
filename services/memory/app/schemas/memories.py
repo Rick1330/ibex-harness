@@ -104,6 +104,9 @@ class QuarantineMemoryData(BaseModel):
     status: Literal["quarantined"]
     lifecycle_revision: int = 1
     pii_detected: bool = True
+    #: ``pii_low_confidence`` or ``prompt_injection_heuristic``; derived from the
+    #: persisted row, never stored as a column.
+    quarantine_reason: str | None = None
 
 
 class QuarantineMemoryResponse(BaseModel):
