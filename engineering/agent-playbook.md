@@ -239,16 +239,21 @@ Three scanners are available as MCP servers and must be run locally on the chang
 Run `/quality-gate` to execute all three plus the repo gates in one pass. Fix every finding before pushing; a PR is not
 the first place these run. This is the rule that prevents the "push, wait, fail, push again" cycle.
 
-**Hard gate: zero findings on the change set.** Before any push, the three scanners must report **zero findings on the
-change set**. Iterate until zero. A push carrying an open finding is a defect in the change, not a judgement call and
-not a matter of taste. This is not review theatre: duplication, path-traversal and test-shape findings have all reached
-CI from this repository after a review that did not run the scanners locally.
+**Hard gate: every finding resolved.** Before any push, the three scanners must report **no unresolved finding on the
+change set**. A finding is resolved only when it is corrected in the change, or closed with a written justification in
+the PR body (file, line, and why it does not apply) **plus** a targeted, documented suppression wherever the tool needs
+one to stay quiet. The reported count may therefore be non-zero, but only when each remaining item is exactly one of
+those two. An unaddressed or unexplained finding fails the gate: a justification is a decision that is recorded, not a
+silencer, and "mostly clean" is not a pass. A push carrying an unresolved finding is a defect in the change, not a
+judgement call and not a matter of taste. This is not review theatre: duplication, path-traversal and test-shape
+findings have all reached CI from this repository after a review that did not run the scanners locally.
 
 The local sequence, before every push:
 
 1. `/review-on` — enable the three MCP servers and start Docker for SonarQube.
 2. CodeScene `pre_commit_code_health_safeguard` on the staged change set; `codescene_analyze_change_set` across the
-   branch before opening a PR.
+   branch before opening a PR, and again before every push that adds commits to an open PR — a branch-level review
+   catches what the staged-only safeguard cannot see once the commit exists.
 3. SonarQube `sonarqube_analyze_code_snippet` per changed source file (project `Rick1330_ibex-harness`, org
    `rick1330`).
 4. Codacy `codacy_cli_analyze` with `rootPath` per changed file, plus `codacy_list_repository_issues` for findings

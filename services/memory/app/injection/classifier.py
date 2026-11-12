@@ -55,6 +55,10 @@ _LEAK_VERB = r"(?:reveal|show|print|repeat|output|disclose|dump|leak)"
 # Qualifiers that make the leaked noun the model's own framing rather than any
 # document: "the build instructions" must not match, "the system prompt" must.
 _LEAK_QUALIFIER = r"(?:hidden|system|original|initial|secret|full|exact|internal|current)"
+# Possessives point at the model's own framing on their own ("reveal your
+# instructions"); the definite determiners need one of the qualifiers above.
+_LEAK_POSSESSIVE = r"(?:your|my)"
+_LEAK_DEFINITE = r"(?:the|its|all)"
 
 # "You are now ..." assigns a role. These continuations describe capability or
 # state instead ("You are now able to export reports"), so they are excepted.
@@ -121,12 +125,16 @@ RULES: tuple[InjectionRule, ...] = (
         name="instruction_disclosure",
         rationale=(
             "Asks the model to emit its own framing instead of answering: "
-            "'reveal your instructions'. A qualified noun is required, so "
-            "'show the build instructions' stays clean."
+            "'reveal your instructions'. A possessive determiner is "
+            "model-directed alone, but a definite one ('the', 'its', 'all') "
+            "needs a model qualifier: 'print the system prompt' matches and "
+            "'print the instructions for a desk' stays clean."
         ),
         pattern=re.compile(
-            rf"\b{_LEAK_VERB}\s+(?:me\s+)?(?:your|the|its|all)\s+"
-            rf"(?:{_LEAK_QUALIFIER}\s+)*(?:system prompt|instructions?|prompts?|directives?)\b",
+            rf"\b{_LEAK_VERB}\s+(?:me\s+)?"
+            rf"(?:{_LEAK_POSSESSIVE}\s+(?:{_LEAK_QUALIFIER}\s+)*"
+            rf"|{_LEAK_DEFINITE}\s+(?:{_LEAK_QUALIFIER}\s+)+)"
+            rf"(?:system prompt|instructions?|prompts?|directives?)\b",
             re.IGNORECASE,
         ),
     ),

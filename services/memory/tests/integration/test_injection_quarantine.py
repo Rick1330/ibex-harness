@@ -187,6 +187,13 @@ async def test_injection_write_is_quarantined_and_never_retrieved(
     query_vec = await upsert_embedding(
         store, session_factory, org_id=org_id, memory_id=active_id, hotspot=2
     )
+
+    # Give the quarantined row the same embedding hotspot, so it would be a
+    # vector hit. The helper reuses the row's current lifecycle revision instead
+    # of bumping it, so the exclusion asserted below depends on the status
+    # filter, not on a missing vector.
+    await upsert_embedding(store, session_factory, org_id=org_id, memory_id=memory_id, hotspot=2)
+
     found = await _retrievable_ids(env, query_vec, hybrid)
 
     assert active_id in found
