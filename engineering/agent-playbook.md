@@ -239,6 +239,40 @@ Three scanners are available as MCP servers and must be run locally on the chang
 Run `/quality-gate` to execute all three plus the repo gates in one pass. Fix every finding before pushing; a PR is not
 the first place these run. This is the rule that prevents the "push, wait, fail, push again" cycle.
 
+**Hard gate: every finding resolved.** Before any push, the three scanners must report **no unresolved finding on the
+change set**. A finding is resolved only when it is corrected in the change, or closed with a written justification in
+the PR body (file, line, and why it does not apply) **plus** a targeted, documented suppression wherever the tool needs
+one to stay quiet. The reported count may therefore be non-zero, but only when each remaining item is exactly one of
+those two. An unaddressed or unexplained finding fails the gate: a justification is a decision that is recorded, not a
+silencer, and "mostly clean" is not a pass. A push carrying an unresolved finding is a defect in the change, not a
+judgement call and not a matter of taste. This is not review theatre: duplication, path-traversal and test-shape
+findings have all reached CI from this repository after a review that did not run the scanners locally.
+
+The local sequence, before every push:
+
+1. `/review-on` — enable the three MCP servers and start Docker for SonarQube.
+2. CodeScene `pre_commit_code_health_safeguard` on the staged change set; `codescene_analyze_change_set` across the
+   branch before opening a PR, and again before every push that adds commits to an open PR — a branch-level review
+   catches what the staged-only safeguard cannot see once the commit exists.
+3. SonarQube `sonarqube_analyze_code_snippet` per changed source file (project `Rick1330_ibex-harness`, org
+   `rick1330`).
+4. Codacy `codacy_cli_analyze` with `rootPath` per changed file, plus `codacy_list_repository_issues` for findings
+   already recorded against the repository.
+5. `/review-off` — disable the servers, stop the container and Docker.
+
+Every finding is either **fixed** or **recorded as a written justification** in the PR body: file, line, and why the
+finding does not apply. Silence is neither. Suppressions must be **targeted** — the narrowest scope that covers the true
+positive — **documented** with the reason inline, and never whole-file or whole-rule. A blanket disable is itself a
+finding.
+
+**False positives are answered with evidence, not with a mute.** A finding you believe is wrong is closed by (a) the
+exact line, (b) why the tool mis-resolved it, and (c) a targeted suppression carrying the reason inline. The worked
+example is the pair of `app.server` pylint false positives in the MCP services
+(`services/mcp-memory/app/descriptors.py`, `services/mcp-operator/app/descriptors.py`): a repo-root analysis resolves
+`from app.server import ...` to the *other* service's wiring class, so `no-value-for-parameter` and
+`unexpected-keyword-arg` fire against a signature that is correct for this service. The suppression covers two rules on
+one call, with the reason written directly above it. That is the standard.
+
 Run `/security-gate` for secrets, SAST, dependency CVEs, and the SonarQube/Codacy security findings when a change
 touches code, dependencies, auth, configuration, or infrastructure.
 
@@ -272,12 +306,15 @@ does the same when OpenCode is not running.
 
 ## 8. PR babysitting: fix everything, then push once
 
-When a PR is open and CI or reviewers are active:
+When a PR is open and CI or reviewers are active, the sequence is fixed. Do not enter it in the middle.
 
-1. **Let every job finish before pushing.** Do not push a fix while other jobs are still running; you will cancel them
-   and lose the evidence.
-2. **Collect all failures at once.** Read every failing job, every annotation, and every review comment before editing.
-3. **Pull the real logs:**
+1. **Wait for the whole run, not the first failure.** After a push, wait until every job has finished and every
+   reviewer has stopped commenting. A job still running is not a result; a bot mid-review is not a findings list.
+2. **Do not fix while anything is pending.** Editing while checks are pending or a review bot is still commenting is
+   the anti-pattern this section exists to prevent: you fix half the surface, push, cancel the evidence, and meet the
+   other half one round later. Wait for the run to settle.
+3. **Collect everything in one pass.** Read every failing job, every annotation, and every review comment before
+   editing:
 
    ```bash
    gh pr checks <pr>
@@ -292,18 +329,23 @@ When a PR is open and CI or reviewers are active:
    Pull the exact finding through the scanner's MCP tools rather than inferring from a status badge:
    `sonarqube_search_sonar_issues_in_projects`, `codacy_list_pull_request_issues`,
    `codescene_code_health_review` on the changed files.
-5. **Fix root causes.** If the same failure appears in two jobs, fix it once at the source, not per job.
-6. **Re-run locally**, then push a single coherent commit set.
-7. **Re-request review** and resolve threads only after the fix is visible in the diff.
+5. **Assign the batch, then fix once.** The collected set is a single work item, not a queue to drain one message at a
+   time. Hand it to one fix pass, not one agent per comment as comments land.
+6. **Fix root causes.** If the same failure appears in two jobs, fix it once at the source, not per job.
+7. **Re-run the local scanner gate from §6.1** plus the gates from §6, then push **once**, as a single coherent commit
+   set.
+8. **Re-request review** and resolve threads only after the fix is visible in the diff.
 
 The `babysit` skill automates this loop; use it rather than improvising.
 
 Hard rules:
 
 - Never push "to see if it fixes it".
+- Never push, or start a fix, while a CI run or a review bot is still in progress. Do not dispatch fix agents mid-run:
+  a fix built on a partial results list is wasted work and cancels the evidence for the rest.
 - Never merge with a failing required check.
 - Never resolve a review thread you have not addressed.
-- Never re-run a flaky job more than twice without investigating; report flakiness instead.
+- Never re-run a flaky job more than twice without investigating; report flakiness instead of retrying it down.
 
 ---
 

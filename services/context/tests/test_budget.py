@@ -24,7 +24,11 @@ from app.capability_catalog import (
     UnknownModelError,
     default_catalog,
 )
-from app.estimate import ESTIMATE_CHARS_DIV_4, ESTIMATE_RUNES_DIV_3_5
+from app.estimate import (
+    ESTIMATE_CHARS_DIV_4,
+    ESTIMATE_RUNES_DIV_3_5,
+    estimate_tokens,
+)
 
 
 def _tiny_catalog(*, context_window: int, max_output: int) -> CapabilityCatalog:
@@ -108,8 +112,12 @@ class BudgetCalculatorTests(unittest.TestCase):
         )
         self.assertEqual(budget.response_reserve, 500)
         self.assertEqual(budget.safety_buffer, int(1000 * 0.02))
-        # usable = 1000 - 500 - 20 - 0 - 0 = 480 >= 256
-        self.assertEqual(budget.usable_budget, 480)
+        # W10.4: no directive still reserves the memory data-framing sentence
+        # (126 chars → 32 tokens) plus its section join, because the formatter
+        # emits that framing whenever a memory is packed.
+        # usable = 1000 - 500 - 20 - 0 - 0 - 32 = 448 >= 256
+        self.assertEqual(budget.formatter_overhead_tokens, 32)
+        self.assertEqual(budget.usable_budget, 448)
         self.assertFalse(budget.is_constrained)
 
     def test_multi_message_concat_counts(self) -> None:
@@ -191,6 +199,105 @@ class BudgetCalculatorTests(unittest.TestCase):
             )
         )
         self.assertGreater(large.formatter_overhead_tokens, small.formatter_overhead_tokens)
+
+    def test_formatter_overhead_reserves_framing_without_directive(self) -> None:
+        """W10.4: memory framing is reserved whether or not a directive exists."""
+        with_directive = self.calc.calculate(
+            BudgetRequest(model="gpt-4o", messages=(), directive="be helpful")
+        )
+        without_directive = self.calc.calculate(
+            BudgetRequest(model="gpt-4o", messages=(), directive="")
+        )
+        self.assertGreater(without_directive.formatter_overhead_tokens, 0)
+        # Both cases reserve the same 126-char sentence: "\n"+sentence+"\n\n" when a
+        # directive precedes it (129 chars → 33 tokens), sentence+"\n\n" when it is
+        # its own leading section (128 chars → 32 tokens). The one-newline delta is
+        # the line break after the directive text.
+        self.assertEqual(without_directive.formatter_overhead_tokens, 32)
+        self.assertEqual(with_directive.formatter_overhead_tokens, 33)
+
+    def test_formatter_overhead_empty_without_directive_or_memories(self) -> None:
+        from app.budget import FormatterSections, _formatter_fixed_overhead_text
+
+        nonce = representative_nonce(16)
+        self.assertEqual(
+            _formatter_fixed_overhead_text(
+                FormatterSections(
+                    has_directive=False,
+                    has_memories=False,
+                    has_messages=False,
+                    has_tools=False,
+                ),
+                nonce,
+            ),
+            "",
+        )
+        # History alone is one section: no joins, no framing sentence (its text is
+        # already in messages_tokens).
+        history_only = _formatter_fixed_overhead_text(
+            FormatterSections(
+                has_directive=False,
+                has_memories=False,
+                has_messages=True,
+                has_tools=False,
+            ),
+            nonce,
+        )
+        self.assertEqual(history_only, "")
+
+    def test_formatter_overhead_matches_memory_only_formatter_output(self) -> None:
+        """W10.4: the reserved overhead equals what the formatter emits."""
+        from app.budget import representative_nonce
+        from app.capability_catalog import default_catalog
+        from app.formatter import (
+            ContextFormatter,
+            FormatRequest,
+            serialize_memory_element_for_estimate,
+        )
+        from app.packer import PackedMemories, ScoredMemory
+        from app.retrieval import MemoryHit
+
+        policy = default_catalog().family_policy("o200k_base")
+        nonce = representative_nonce(16)
+        budget = self.calc.calculate(
+            BudgetRequest(model="gpt-4o", messages=(), directive="", nonce_bytes=16)
+        )
+        hit = MemoryHit(
+            memory_id="m1",
+            org_id="00000000-0000-0000-0000-000000000001",
+            agent_id="00000000-0000-0000-0000-000000000002",
+            content="fact",
+            category="factual",
+            confidence=0.9,
+            similarity=0.9,
+            rank=1,
+            source="vector",
+        )
+        formatted = ContextFormatter().format(
+            FormatRequest(
+                directive=None,
+                recent_messages=(),
+                packed=PackedMemories(
+                    memories=(ScoredMemory(hit=hit, composite_score=0.9),),
+                    total_tokens=1,
+                    total_score=0.9,
+                    skipped_count=0,
+                    was_budget_reached=False,
+                    path="dp",
+                    candidates_evaluated=1,
+                ),
+                nonce=nonce,
+            )
+        )
+        memory_element = serialize_memory_element_for_estimate(
+            nonce=nonce,
+            memory_id="m1",
+            category="factual",
+            content="fact",
+        )
+        overhead = formatted.assembled_context.replace(memory_element, "", 1)
+        overhead_tokens, _ = estimate_tokens(overhead, policy)
+        self.assertEqual(overhead_tokens, budget.formatter_overhead_tokens)
 
     def test_estimate_wrapped_memory_tokens_uses_nonce(self) -> None:
         policy = default_catalog().family_policy("o200k_base")

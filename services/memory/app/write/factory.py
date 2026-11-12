@@ -24,6 +24,7 @@ from app.pipeline import (
     ValidateStage,
     WritePipeline,
 )
+from app.pipeline.stages import InjectionStage
 from app.vectorstore.base import SearchMode
 from app.write.embed_context import get_write_org_id
 from app.write.models import WriteOutcome
@@ -65,6 +66,9 @@ def build_write_pipeline(deps: WritePipelineDeps) -> WritePipeline:
     return WritePipeline(
         [
             ValidateStage(settings),
+            # Injection before PII: the heuristic must see the raw content, and a
+            # quarantined write never reaches redaction, dedup, embed or conflict.
+            InjectionStage(),
             PiiStage(deps.pii),
             ExactDedupStage(dedup),
             EmbedStage(deps.embed),

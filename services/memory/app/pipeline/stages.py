@@ -1,8 +1,9 @@
-"""Concrete write-pipeline stages (validate → pii → exact → embed → near → conflict)."""
+"""Concrete write-pipeline stages (validate → injection → pii → exact → embed → near → conflict)."""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
@@ -17,6 +18,8 @@ from app.conflict.types import (
     IncomingMemory,
 )
 from app.dedup import metrics as dedup_metrics
+from app.injection import metrics as injection_metrics
+from app.injection.classifier import INJECTION_QUARANTINE_REASON, classify
 from app.pipeline.context import WriteContext
 
 if TYPE_CHECKING:
@@ -24,6 +27,8 @@ if TYPE_CHECKING:
     from app.conflict.service import ConflictService
     from app.dedup.service import DedupService
     from app.pii.service import PiiService
+
+logger = logging.getLogger(__name__)
 
 
 class EmbedCallable(Protocol):
@@ -56,6 +61,40 @@ class ValidateStage:
         if error is not None:
             ctx.stop = True
             ctx.error = error
+        return ctx
+
+
+class InjectionStage:
+    """Quarantine instruction-shaped content before anything consumes it (W10.4).
+
+    Runs after validation and before PII: the heuristic reads the raw content,
+    and a match stops the pipeline with ``status="quarantined"`` so the
+    orchestrator takes the existing quarantine persist path (no embedding, no
+    dedup, no index write, `quarantined` lifecycle event).
+
+    Content is untrusted input, never a log line: only the agent and the rule
+    name are logged.
+    """
+
+    name = "injection"
+
+    async def process(self, ctx: WriteContext) -> WriteContext:
+        # Offload the regex pass so the Stage Protocol stays async-uniform.
+        risk, rule = await asyncio.to_thread(classify, ctx.content)
+        if not risk:
+            return ctx
+        ctx.status = "quarantined"
+        ctx.quarantine_reason = INJECTION_QUARANTINE_REASON
+        # Quarantined content is never embedded, deduped or indexed.
+        ctx.stop = True
+        injection_metrics.record_quarantine(injection_metrics.REASON_INJECTION)
+        logger.info(
+            "memory write quarantined org_id=%s agent_id=%s reason=%s rule=%s",
+            ctx.org_id,
+            ctx.agent_id,
+            INJECTION_QUARANTINE_REASON,
+            rule,
+        )
         return ctx
 
 

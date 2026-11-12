@@ -82,8 +82,13 @@ class VectorMemorySeed:
     hotspot: int = 5
 
 
+def _stage(orch: MemoryWriteOrchestrator, name: str):
+    """Look a stage up by name: indices shift whenever a stage is inserted."""
+    return next(stage for stage in orch._pipeline._stages if stage.name == name)
+
+
 async def ensure_pii_ready(orch: MemoryWriteOrchestrator) -> None:
-    pii = orch._pipeline._stages[1]._pii
+    pii = _stage(orch, "pii")._pii
     if hasattr(pii, "ensure_ready"):
         await pii.ensure_ready()
 

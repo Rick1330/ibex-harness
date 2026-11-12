@@ -53,9 +53,18 @@ from app.schemas.memories import (
     QuarantineMemoryResponse,
 )
 from app.write.labels import MemoryLabelInput, resolve_write_labels
-from app.write.models import CreateMemoryCommand, WriteOutcome
+from app.write.models import CreateMemoryCommand, MemoryRow, WriteOutcome
 
 logger = logging.getLogger(__name__)
+
+#: Stable quarantine messages. ``meta.message`` is caller-visible contract: a
+#: reason keeps its exact wording once shipped.
+QUARANTINE_MESSAGES: dict[str, str] = {
+    "pii_low_confidence": "Memory quarantined for review due to PII detection",
+    "prompt_injection_heuristic": (
+        "Memory quarantined for review due to suspected prompt injection"
+    ),
+}
 
 # ``prepare`` returns the bytes the ledger must store for a replayed create.
 PrepareResponse = Callable[[AsyncSession], Awaitable[bytes]]
@@ -454,6 +463,21 @@ def memory_data_from_outcome(outcome: WriteOutcome, org_id: UUID) -> MemoryData:
     )
 
 
+def quarantine_reason_for(memory: MemoryRow) -> str:
+    """Map a persisted quarantine row back to the reason that caused it.
+
+    The pipeline keeps ``quarantine_reason`` in memory only — there is no column
+    for it — so the response derives the reason from ``pii_detected``, which is
+    persisted. ``InjectionStage`` runs before ``PiiStage`` and stops the pipeline
+    on a match, so ``pii_detected`` is set only when PII caused the quarantine.
+    A row that is neither is reported as the injection heuristic: unknown
+    quarantine content is untrusted content.
+    """
+    if memory.pii_detected:
+        return "pii_low_confidence"
+    return "prompt_injection_heuristic"
+
+
 async def finalize_quarantine_response(
     *,
     outcome: WriteOutcome,
@@ -462,13 +486,16 @@ async def finalize_quarantine_response(
 ) -> QuarantineMemoryResponse:
     """Record the 202 and store it as the replayed response for the key."""
     response.status_code = 202
+    reason = quarantine_reason_for(outcome.memory)
     payload = QuarantineMemoryResponse(
         data=QuarantineMemoryData(
             id=outcome.memory.id,
             status="quarantined",
             lifecycle_revision=outcome.memory.lifecycle_revision,
+            pii_detected=outcome.memory.pii_detected,
+            quarantine_reason=reason,
         ),
-        meta={"message": "Memory quarantined for review due to PII detection"},
+        meta={"message": QUARANTINE_MESSAGES[reason]},
     )
     body = payload.model_dump_json().encode("utf-8")
     await commit_idempotency_fail_closed(
