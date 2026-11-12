@@ -25,7 +25,7 @@ check = load_module("check_reproducibility", SCRIPTS / "check_reproducibility.py
 provenance = check.provenance
 PUBLISHED = ROOT / "site" / "public" / "benchmarks"
 MODES_PY = ROOT / "benchmarks" / "memory" / "ranking_quality" / "modes.py"
-HNSW_CORPUS_HASH = provenance.corpus_identity("hnsw")[0]
+HNSW_CORPUS_HASH, HNSW_CORPUS_MANIFEST = provenance.corpus_identity("hnsw")
 OTHER_HASH = "0" * 64
 # The checker refuses an artifact it cannot schema-validate, so anything asserting a clean run
 # needs the validator. `benchmark-gate` (which runs this module) has no jsonschema installed;
@@ -34,6 +34,13 @@ NEEDS_JSONSCHEMA = unittest.skipUnless(
     check.jsonschema is not None,
     "needs jsonschema: pip install -r .github/requirements/jsonschema.txt",
 )
+
+
+def _gold_identity(gold_set: str) -> tuple[str, str, str]:
+    """``(file, hash, manifest)`` of the gold corpus a ``gold_set`` label names."""
+    corpus = check.GOLD_SETS[gold_set]
+    corpus_hash, manifest = provenance.corpus_identity(corpus.kind)
+    return corpus.name, corpus_hash, manifest
 
 
 def _hnsw_result(**overrides: object) -> dict[str, object]:
@@ -59,10 +66,23 @@ def _recorded(**overrides: object) -> dict[str, object]:
         "runner_ram_mib": 8192,
         "corpus_hash": HNSW_CORPUS_HASH,
         "corpus_hash_algo": "sha256",
-        "corpus_manifest": "pgvector|synth.py=x|corpus.py=y|dim=1024,active=64",
+        "corpus_manifest": HNSW_CORPUS_MANIFEST,
         "corpus_status": "current",
         "dirty": False,
     }
+    block.update(overrides)
+    return block
+
+
+def _gold_recorded(gold_set: str = "v1", **overrides: object) -> dict[str, object]:
+    """A recorded block for a run on ``gold_set``, carrying that corpus's real identity."""
+    name, corpus_hash, manifest = _gold_identity(gold_set)
+    block = _recorded(
+        corpus_hash=corpus_hash,
+        corpus_manifest=manifest,
+        gold_set_hash=corpus_hash,
+        gold_set_name=name,
+    )
     block.update(overrides)
     return block
 
@@ -159,6 +179,11 @@ class CheckerCase(unittest.TestCase):
         self.assertEqual(problems, [], f"expected no problems, got {problems}")
 
 
+def _runs_in(path: Path) -> list[object]:
+    """The runs of a committed artifact, read the way the checker reads them."""
+    return check._runs_of(json.loads(path.read_text(encoding="utf-8")))
+
+
 class TestCommittedArtifacts(CheckerCase):
     @NEEDS_JSONSCHEMA
     def test_every_published_artifact_passes(self) -> None:
@@ -169,11 +194,23 @@ class TestCommittedArtifacts(CheckerCase):
         self.assertEqual(report.problems, [], f"expected no problems, got {report.problems}")
         self.assertGreater(report.run_count, 0)
 
-    def test_every_committed_run_is_counted_as_unrecorded(self) -> None:
-        report = check.check_paths(check.default_paths())
+    def test_the_committed_history_is_reported_as_unrecorded(self) -> None:
+        # This history predates the provenance block, so its runs are counted and warned about
+        # rather than passed as evidence. The counts are read from the files instead of pinned,
+        # so the first recorded run added to one of them does not break this test -- what must
+        # not change is that an unrecorded run is counted, and warned about, not treated as
+        # evidence.
+        paths = check.default_paths()
+        groups = [_runs_in(path) for path in paths]
+        unrecorded = [
+            sum(1 for run in group if check._prov_status(run) != "recorded") for group in groups
+        ]
+        report = check.check_paths(paths)
 
-        self.assertEqual(report.unrecorded, report.run_count)
-        self.assertEqual(len(report.warnings), 4)
+        self.assertGreater(sum(unrecorded), 0, "expected committed runs that predate provenance")
+        self.assertEqual(report.unrecorded, sum(unrecorded))
+        self.assertEqual(report.run_count, sum(len(group) for group in groups))
+        self.assertEqual(len(report.warnings), sum(1 for count in unrecorded if count))
 
     @NEEDS_JSONSCHEMA
     def test_main_exits_zero_and_prints_the_unrecorded_count(self) -> None:
@@ -186,7 +223,8 @@ class TestCommittedArtifacts(CheckerCase):
         self.assertEqual(code, 0)
         self.assertIn("0 problem(s)", out.getvalue())
         self.assertIn(f"{unrecorded} unrecorded run(s)", out.getvalue())
-        self.assertIn("Warning:", err.getvalue())
+        if unrecorded:
+            self.assertIn("Warning:", err.getvalue())
 
 
 class TestIdentity(CheckerCase):
@@ -232,30 +270,45 @@ class TestDirtyTree(CheckerCase):
 
 
 class TestCorpusIdentity(CheckerCase):
-    def test_a_matching_hash_declared_current_passes(self) -> None:
+    def test_a_matching_identity_declared_current_passes(self) -> None:
         self.assert_clean(_hnsw(_hnsw_run()))
 
-    def test_a_matching_hash_declared_stale_fails(self) -> None:
+    def test_a_matching_identity_declared_stale_fails(self) -> None:
         report = self.report_for(_hnsw(_hnsw_run(provenance=_recorded(corpus_status="stale"))))
 
         self.assert_problem(
-            report, "runs[0].provenance.corpus_status: 'stale' but corpus_hash matches"
+            report, "runs[0].provenance.corpus_status: 'stale' but the recorded identity is the"
         )
 
     def test_a_different_hash_declared_current_fails(self) -> None:
         report = self.report_for(_hnsw(_hnsw_run(provenance=_recorded(corpus_hash=OTHER_HASH))))
 
+        self.assert_problem(report, "runs[0].provenance.corpus_status: 'current' but corpus_hash")
         self.assert_problem(
-            report, "runs[0].provenance.corpus_status: 'current' but corpus_hash '0"
+            report, f"does not describe the checked-out hnsw corpus ({HNSW_CORPUS_HASH})"
         )
+
+    def test_a_matching_hash_under_a_different_manifest_declared_current_fails(self) -> None:
+        # The manifest states what the hash covers: the same digest under a manifest that names
+        # other inputs is a claim about a different corpus, not the one this checkout has.
+        record = _recorded(corpus_manifest="pgvector|synth.py=x|corpus.py=y|dim=1024,active=64")
+        report = self.report_for(_hnsw(_hnsw_run(provenance=record)))
+
         self.assert_problem(
-            report, f"differs from the checked-out hnsw corpus ({HNSW_CORPUS_HASH})"
+            report, "runs[0].provenance.corpus_status: 'current' but corpus_manifest"
         )
 
     def test_a_different_hash_declared_stale_passes(self) -> None:
         self.assert_clean(
             _hnsw(_hnsw_run(provenance=_recorded(corpus_hash=OTHER_HASH, corpus_status="stale")))
         )
+
+    def test_a_matching_hash_under_a_different_manifest_declared_stale_passes(self) -> None:
+        record = _recorded(
+            corpus_manifest="pgvector|synth.py=x|corpus.py=y|dim=1024,active=64",
+            corpus_status="stale",
+        )
+        self.assert_clean(_hnsw(_hnsw_run(provenance=record)))
 
     def test_only_the_newest_recorded_run_declares_the_corpus(self) -> None:
         stale_history = _hnsw_run(
@@ -272,6 +325,69 @@ class TestCorpusIdentity(CheckerCase):
         )
 
         self.assert_problem(report, "recorded on an artifact kind with no corpus identity")
+
+
+class TestGoldSetIdentity(CheckerCase):
+    """A recorded ranking run must name the gold set its ``gold_set`` label measures."""
+
+    def _problems(self, gold_set: str, block: dict[str, object]) -> list[str]:
+        run = _ranking_run(gold_set=gold_set, provenance=block)
+        return self.content_problems(_ranking(run), "ranking-quality-benchmark-data.json")
+
+    def test_a_v1_run_on_the_v1_corpus_passes(self) -> None:
+        self.assert_clean(
+            _ranking(_ranking_run(provenance=_gold_recorded())),
+            "ranking-quality-benchmark-data.json",
+        )
+
+    def test_a_v2_run_on_the_v2_corpus_passes(self) -> None:
+        record = _gold_recorded("ranking_quality_v2")
+
+        self.assert_clean(
+            _ranking(_ranking_run(gold_set="ranking_quality_v2", provenance=record)),
+            "ranking-quality-benchmark-data.json",
+        )
+
+    def test_a_v1_label_with_the_v2_corpus_fails(self) -> None:
+        # The v1 producer measures gold_set_v1.json; a v2 hash under a v1 label describes a
+        # corpus that was not measured.
+        _name, corpus_hash, manifest = _gold_identity("ranking_quality_v2")
+        record = _gold_recorded(
+            corpus_hash=corpus_hash,
+            corpus_manifest=manifest,
+            gold_set_hash=corpus_hash,
+            gold_set_name="gold_set_v2.json",
+        )
+        problems = self._problems("v1", record)
+
+        self.assertTrue(any("gold_set_name" in problem for problem in problems), problems)
+        self.assertTrue(any("gold_set_hash" in problem for problem in problems), problems)
+
+    def test_a_contradictory_gold_set_hash_is_named_with_the_file_it_implies(self) -> None:
+        problems = self._problems("v1", _gold_recorded(gold_set_hash=OTHER_HASH))
+
+        self.assertTrue(
+            any(
+                "provenance.gold_set_hash: '000" in problem
+                and "implies for gold_set_v1.json" in problem
+                for problem in problems
+            ),
+            problems,
+        )
+
+    def test_a_recorded_run_without_the_gold_set_name_fails(self) -> None:
+        record = _gold_recorded()
+        del record["gold_set_name"]
+        problems = self._problems("v1", record)
+
+        self.assertTrue(
+            any("provenance.gold_set_name" in problem for problem in problems), problems
+        )
+
+    def test_an_unrecorded_run_is_not_checked_against_a_gold_set(self) -> None:
+        self.assert_clean(
+            _ranking(_ranking_run(gold_set="v1")), "ranking-quality-benchmark-data.json"
+        )
 
 
 class TestPercentiles(CheckerCase):

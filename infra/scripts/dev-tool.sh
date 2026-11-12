@@ -16,6 +16,12 @@ V1_COMPOSE="$ROOT_DIR/infra/compose/v1-single-node/compose.yml"
 # infra/compose/v1-single-node so development credentials cannot leak in.
 V1_ENV="$ROOT_DIR/infra/compose/v1-single-node/.env"
 MANIFEST="$ROOT_DIR/infra/tool-versions.conf"
+# benchmarks/scripts/check_reproducibility.py fails closed when jsonschema is
+# absent, so the gate must not inherit whatever the system interpreter happens to
+# have. This venv is provisioned once from the hash-locked requirement file CI
+# installs, and every wheel hash is verified on the way in.
+REPRO_VENV="$ROOT_DIR/.cache/reproducibility-venv"
+REPRO_REQUIREMENTS="$ROOT_DIR/.github/requirements/jsonschema.txt"
 PROTO_BREAKING_AGAINST="${PROTO_BREAKING_AGAINST:-https://github.com/Rick1330/ibex-harness.git#branch=main,subdir=packages/proto}"
 
 source "$MANIFEST"
@@ -360,6 +366,31 @@ unset_external_otel() {
   done < <(env)
 }
 
+# reproducibility_python prints the interpreter the reproducibility check runs on:
+# the shared venv when it already imports jsonschema, otherwise a fresh one built
+# from .github/requirements/jsonschema.txt with --require-hashes. Progress goes to
+# stderr so the caller can use the stdout as a path.
+reproducibility_python() {
+  local python="$REPRO_VENV/bin/python"
+  if [[ -x "$python" ]] && "$python" -c 'import jsonschema' >/dev/null 2>&1; then
+    printf '%s\n' "$python"
+    return 0
+  fi
+  require_tool python3 'python3 is required to provision the reproducibility venv'
+  rm -rf "$REPRO_VENV"
+  python3 -m venv "$REPRO_VENV" >&2
+  "$REPRO_VENV/bin/python" -m pip install --quiet --disable-pip-version-check \
+    --require-hashes --only-binary :all: -r "$REPRO_REQUIREMENTS" >&2
+  printf '%s\n' "$python"
+}
+
+reproducibility_check() {
+  local python
+  python="$(reproducibility_python)"
+  cd "$ROOT_DIR"
+  "$python" benchmarks/scripts/check_reproducibility.py
+}
+
 case "${1:-help}" in
   help)
     printf '%s\n' 'IBEX Harness commands:' \
@@ -371,6 +402,8 @@ case "${1:-help}" in
       '  lint-docs              Run markdownlint' '  security-scan          Run gitleaks locally' \
       '  repo-guards            Run repository layout and hygiene guards (incl. alert routing, SLO rules, reproducibility)' '  proto-lint              Run Buf lint' \
       '  reproducibility-check  Fail when a published benchmark artifact cannot support its claim' \
+      '                         Runs on .cache/reproducibility-venv, provisioned once from' \
+      '                         .github/requirements/jsonschema.txt with pip --require-hashes' \
       '  slo-rules-check        Parse the Prometheus rules, check SLO alert severity/runbook coverage, and evaluate the synthetic burn' \
       '  proto-breaking         Run Buf breaking checks' '  api-breaking [base]     Diff the OpenAPI snapshot against a git baseline (default origin/main; a tag selects release mode)' \
       '  proto-gen               Generate protobuf stubs' \
@@ -399,8 +432,8 @@ case "${1:-help}" in
     "$markdownlint" "**/*.md" "#node_modules"
     ;;
   security-scan) cd "$ROOT_DIR"; require_tool gitleaks 'gitleaks is required for security-scan'; gitleaks detect --source . --config .gitleaks.toml --redact --verbose ;;
-  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py; bash infra/scripts/slo-rules-check.sh; python3 benchmarks/scripts/check_reproducibility.py ;;
-  reproducibility-check) cd "$ROOT_DIR"; python3 benchmarks/scripts/check_reproducibility.py ;;
+  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py; bash infra/scripts/slo-rules-check.sh; reproducibility_check ;;
+  reproducibility-check) reproducibility_check ;;
   slo-rules-check) cd "$ROOT_DIR"; bash infra/scripts/slo-rules-check.sh ;;
   proto-lint) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf lint ;;
   proto-breaking) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf breaking --against "$PROTO_BREAKING_AGAINST" ;;

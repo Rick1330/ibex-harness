@@ -17,6 +17,7 @@ import json
 import os
 import statistics
 import sys
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -75,7 +76,9 @@ def _build_payload(params: PayloadParams) -> dict[str, object]:
     identity it cannot determine, which is the point: a run that cannot say what it measured is
     not written to disk, and no branch below fills the block in from a default. A halted or
     unusable ``git`` does not raise -- it is reported as ``dirty``/``stale``, because "cannot
-    prove this is clean" is a fact the record can carry, while "no corpus hash" is not.
+    prove this is clean" is a fact the record can carry, while "no corpus hash" is not. Because
+    this record is gathered *after* the run, ``_benchmark`` compares it with the one captured
+    before the run and refuses to write a payload when they differ.
     """
     mean_recall = (
         statistics.fmean(r.recall_at_10 for r in params.results) if params.results else 0.0
@@ -88,6 +91,32 @@ def _build_payload(params: PayloadParams) -> dict[str, object]:
         "results": [asdict(r) for r in params.results],
         "mean_recall_at_10": mean_recall,
     }
+
+
+def _changed_provenance(before: Mapping[str, object], after: Mapping[str, object]) -> list[str]:
+    """The provenance fields that differ between two records of the same run."""
+    return sorted(
+        field for field in set(before) | set(after) if before.get(field) != after.get(field)
+    )
+
+
+def _require_one_corpus(before: Mapping[str, object], after: object) -> None:
+    """Refuse a run the corpus moved under.
+
+    The record is captured before the matrix and built again inside the payload afterwards, so a
+    difference between the two is proof that the corpus, the runner identity or the tree changed
+    while the measurement was running. Such a run mixes two corpora in one number and no reader
+    can tell which, so it is refused rather than written.
+    """
+    if not isinstance(after, Mapping):
+        raise TypeError("payload.provenance must be the mapping _build_payload writes")
+    changed = _changed_provenance(before, after)
+    if changed:
+        raise RuntimeError(
+            f"provenance changed during the run ({', '.join(changed)}); the corpus or the tree"
+            " was modified between the start and the end of the measurement, so this run cannot"
+            " be attributed to one corpus -- re-run the bench on an unchanged checkout"
+        )
 
 
 def _require_dsn() -> str:
@@ -118,6 +147,9 @@ def _write_payload(path: Path, payload: dict[str, object]) -> None:
 
 async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
     dsn = _require_dsn()
+    # Captured before the matrix runs: the payload's record is gathered after it, and a
+    # difference between the two is the corpus changing mid-run.
+    before = provenance_record("hnsw")
     settings = Settings(database_url=dsn, hnsw_ef_search=args.ef_search)
     engine = create_engine(settings)
     factory = create_session_factory(engine)
@@ -136,6 +168,7 @@ async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
             index_modes=config.index_modes,
         )
     )
+    _require_one_corpus(before, payload.get("provenance"))
     _write_payload(resolve_raw_bench_path(args.output, must_exist=False), payload)
     return payload
 

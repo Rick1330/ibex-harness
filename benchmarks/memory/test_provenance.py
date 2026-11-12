@@ -448,11 +448,16 @@ class TestSchemaWidening:
         bad = {**record, "gold_set_hash": "not-a-hash"}
         assert _errors(schema, _ranking_payload(_ranking_run(provenance=bad)))
 
-    def test_a_recorded_block_without_the_gold_fields_passes_the_ranking_schema(
+    def test_a_recorded_block_without_the_gold_fields_is_rejected_by_the_ranking_schema(
         self,
     ) -> None:
-        # gold_set_hash/gold_set_name are optional: only this corpus kind knows the filename.
+        # The ranking schema requires the gold set for a recorded run: on this benchmark the gold
+        # set is the corpus, so a block that hashes one gold set and names none cannot be
+        # re-derived. The pair stays absent from the HNSW record (that corpus has no gold set),
+        # and the whole block stays optional so files written before it existed still validate.
         record = provenance.provenance_record("hnsw") | {"seed": 7}
         payload = _ranking_payload(_ranking_run(provenance=record))
 
-        assert _errors(_schema(RANKING_SCHEMA_PATH), payload) == []
+        errors = _errors(_schema(RANKING_SCHEMA_PATH), payload)
+
+        assert any("gold_set_name" in message for message in errors), errors

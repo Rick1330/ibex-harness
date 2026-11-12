@@ -14,14 +14,20 @@ What it checks, and why each check exists:
 2. **Clean tree.** A run measured on a modified tree cannot be reproduced from its commit, so
    ``provenance.dirty == true`` fails.
 3. **Corpus.** The corpus identity is recomputed from the checked-out tree and compared with
-   the newest recorded run's declaration. ``corpus_status`` must be ``"current"`` exactly when
-   the hashes agree and ``"stale"`` exactly when they differ; the failure that matters is a run
-   claiming ``"current"`` on bytes that are not the ones it hashed. A recorded run on an
+   the newest recorded run's declaration. The comparison covers the complete identity --
+   ``corpus_hash``, the ``corpus_manifest`` that states what the hash covers, and
+   ``gold_set_hash`` where the record carries it -- because a matching hash next to a different
+   manifest is still a different corpus. ``corpus_status`` must be ``"current"`` exactly when
+   that identity matches and ``"stale"`` exactly when it does not; the failure that matters is a
+   run claiming ``"current"`` on bytes that are not the ones it hashed. A recorded run on an
    artifact kind with no corpus identity is unverifiable, so it fails too.
 4. **Percentiles.** A p50 above its p95, a p95 above its p99, or a p95 outside its own
    confidence interval is a broken measurement, not a slow one.
-5. **Ranking.** ``gold_set`` names a known set, and a ``modes`` object covers only defined
-   modes while always including the two the ranking milestone compares.
+5. **Ranking.** ``gold_set`` names a known set, and a recorded run's ``gold_set_name`` and
+   ``gold_set_hash`` must be the file and the hash that label names (``v1`` is
+   ``gold_set_v1.json``, ``ranking_quality_v2`` is ``gold_set_v2.json``): a v1 label next to a v2
+   hash claims a corpus that was not measured. A ``modes`` object covers only defined modes while
+   always including the two the ranking milestone compares.
 6. **Unrecorded runs.** A run with no provenance block, or ``status == "unrecorded"``, is
    counted and reported as a warning. It is *not* evidence, and the count is printed so that
    "28 unrecorded runs" can never be read as "28 verified runs". Enforcement is flipped
@@ -89,7 +95,25 @@ SCHEMA_DIR: Final = _BENCH / "data-schema"
 PUBLISHED_DIR: Final = _ROOT / "site" / "public" / "benchmarks"
 ARTIFACT_SUFFIX: Final = "-benchmark-data.json"
 SHA_RE: Final = re.compile(r"[0-9a-f]{40}")
-GOLD_SETS: Final = frozenset({"v1", "ranking_quality_v2"})
+
+
+@dataclass(frozen=True, slots=True)
+class GoldCorpus:
+    """The corpus a ``gold_set`` label names: its label, its file, and the kind it hashes as."""
+
+    label: str
+    name: str
+    kind: str
+
+
+# The two labels are different corpora, so a v1 label next to a v2 hash describes a corpus that
+# was not measured. Both gold sets are byte-deterministic, so the file's hash is its identity.
+GOLD_SETS: Final[dict[str, GoldCorpus]] = {
+    "v1": GoldCorpus(label="v1", name="gold_set_v1.json", kind="gold_v1"),
+    "ranking_quality_v2": GoldCorpus(
+        label="ranking_quality_v2", name="gold_set_v2.json", kind="gold"
+    ),
+}
 # Mirrors MODES in benchmarks/memory/ranking_quality/modes.py; a test asserts the parity.
 MODE_NAMES: Final = frozenset({"dense_only", "hybrid", "hybrid_rerank", "full_graph"})
 REQUIRED_MODES: Final = frozenset({"hybrid_rerank", "full_graph"})
@@ -104,6 +128,12 @@ _P50, _P95, _P99 = "_p50", "_p95", "_p99"
 _PERCENTILES: Final = (_P50, _P95, _P99)
 _CI_LOW: Final = "_p95_ci_low"
 _CI_HIGH: Final = "_p95_ci_high"
+# The fields a recorded run states its corpus identity with. ``gold_set_hash`` is compared when
+# the record carries it; ``corpus_manifest`` is what the hash covers, so both are needed.
+_IDENTITY_FIELDS: Final = ("corpus_hash", "corpus_manifest", "gold_set_hash")
+_GOLD_SET_FIELDS: Final = ("gold_set_name", "gold_set_hash")
+# A corpus identity: ``(corpus_hash, corpus_manifest)``, as ``provenance.corpus_identity`` returns.
+Identity = tuple[str, str]
 
 
 class ArtifactError(ValueError):
@@ -328,11 +358,12 @@ def _check_modes(label: str, modes: Any) -> list[str]:
     return problems
 
 
-def _check_ranking(run: dict[str, Any], label: str) -> list[str]:
+def _check_ranking(run: dict[str, Any], label: str, cache: dict[str, Identity]) -> list[str]:
     problems: list[str] = []
     gold = run.get("gold_set")
     if gold is not None and gold not in GOLD_SETS:
         problems.append(f"{label}.gold_set: {gold!r} is not one of {sorted(GOLD_SETS)}")
+    problems.extend(_check_gold_set(label, run, cache))
     modes = _modes_of(run)
     if modes is not None:
         problems.extend(_check_modes(label, modes))
@@ -347,49 +378,141 @@ def _newest_recorded(runs: list[Any]) -> tuple[int, dict[str, Any]] | None:
     return None
 
 
-def _current_corpus_hash(kind: str, cache: dict[str, str]) -> tuple[str | None, list[str]]:
+def _current_identity(kind: str, cache: dict[str, Identity]) -> tuple[Identity | None, list[str]]:
+    """``(corpus_hash, corpus_manifest)`` of the checked-out corpus for ``kind``."""
     if kind in cache:
         return cache[kind], []
     try:
-        digest = provenance.corpus_identity(kind)[0]
+        identity = provenance.corpus_identity(kind)
     except (RuntimeError, ValueError) as exc:
         return None, [f"corpus identity for kind {kind!r} cannot be computed: {exc}"]
-    cache[kind] = digest
-    return digest, []
+    cache[kind] = identity
+    return identity, []
 
 
-def _check_corpus(runs: list[Any], kind: str | None, cache: dict[str, str]) -> list[str]:
+def _identity_values(identity: Identity) -> dict[str, str]:
+    """What a record must declare to be the corpus ``identity``.
+
+    ``gold_set_hash`` repeats the corpus hash on a gold corpus, so the same expectation covers
+    it; on the HNSW corpus the field is absent and is not compared.
+    """
+    corpus_hash, manifest = identity
+    return {"corpus_hash": corpus_hash, "corpus_manifest": manifest, "gold_set_hash": corpus_hash}
+
+
+def _mismatched_identity(record: dict[str, Any], identity: Identity) -> list[str]:
+    """The identity fields ``record`` declares that do not describe ``identity``."""
+    expected = _identity_values(identity)
+    return [
+        field for field in _IDENTITY_FIELDS if field in record and record[field] != expected[field]
+    ]
+
+
+def _describe_mismatch(record: dict[str, Any], identity: Identity, fields: list[str]) -> str:
+    """The mismatched fields as ``field declared != expected``, for one actionable message."""
+    expected = _identity_values(identity)
+    return ", ".join(f"{field} {record.get(field)!r} != {expected[field]}" for field in fields)
+
+
+def _gold_corpus(gold: Any) -> GoldCorpus | None:
+    """The corpus a ``gold_set`` label names, or ``None`` for an unknown one."""
+    return GOLD_SETS.get(gold) if isinstance(gold, str) else None
+
+
+def _gold_identity_problems(
+    label: str, record: dict[str, Any], corpus: GoldCorpus, identity: Identity
+) -> list[str]:
+    """The gold set fields ``record`` states, checked against the corpus ``corpus`` names."""
+    expected = {"gold_set_name": corpus.name, "gold_set_hash": identity[0]}
+    return [
+        f"{label}.provenance.{field}: {record.get(field)!r} != {expected[field]!r}, the value"
+        f" gold_set={corpus.label!r} implies for {corpus.name}"
+        for field in _GOLD_SET_FIELDS
+        if record.get(field) != expected[field]
+    ]
+
+
+def _check_gold_set(label: str, run: dict[str, Any], cache: dict[str, Identity]) -> list[str]:
+    """A recorded ranking run must name the gold set it declares, and hash that corpus.
+
+    ``gold_set`` is the label; ``provenance.gold_set_name`` and ``gold_set_hash`` are what a
+    reader re-derives it from. A contradictory identity -- a v1 label next to the v2 hash -- is a
+    claim about a corpus that was not measured, so it is a problem rather than a footnote.
+    """
+    record = _provenance(run)
+    corpus = _gold_corpus(run.get("gold_set"))
+    if record.get("status") != "recorded" or corpus is None:
+        return []
+    identity, problems = _current_identity(corpus.kind, cache)
+    if identity is None:
+        return problems
+    return _gold_identity_problems(label, record, corpus, identity)
+
+
+def _identity_verdict(
+    label: str, record: dict[str, Any], kind: str, identity: Identity
+) -> list[str]:
+    """``corpus_status`` must agree with the complete recorded identity, in both directions.
+
+    A matching hash next to a different manifest is still a different corpus: the manifest states
+    what the hash covers, so a reader re-deriving one from the other must get what the record
+    promised. The failure that matters is a run claiming ``"current"`` on an identity that is not
+    the checked-out corpus.
+    """
+    mismatched = _mismatched_identity(record, identity)
+    claimed = record.get("corpus_status")
+    corpus_hash = identity[0]
+    if not mismatched:
+        if claimed == "current":
+            return []
+        return [
+            (
+                f"{label}.provenance.corpus_status: {claimed!r} but the recorded identity is the"
+                f" checked-out {kind} corpus ({corpus_hash})"
+            )
+        ]
+    if claimed != "current":
+        return []
+    return [
+        (
+            f"{label}.provenance.corpus_status: 'current' but"
+            f" {_describe_mismatch(record, identity, mismatched)} does not describe the"
+            f" checked-out {kind} corpus ({corpus_hash})"
+        )
+    ]
+
+
+def _corpus_kind(run: dict[str, Any], kind: str | None) -> str | None:
+    """The corpus ``run`` must be measured against.
+
+    On the ranking artifact a recorded run names its own ``gold_set``, and that label -- not the
+    artifact's filename -- says which corpus the number came from, so it wins when it is known.
+    """
+    corpus = _gold_corpus(run.get("gold_set"))
+    return kind if corpus is None else corpus.kind
+
+
+def _check_corpus(runs: list[Any], kind: str | None, cache: dict[str, Identity]) -> list[str]:
     newest = _newest_recorded(runs)
     if newest is None:
         return []
     index, run = newest
     label = f"runs[{index}]"
-    if kind is None:
+    expected_kind = _corpus_kind(run, kind)
+    if expected_kind is None:
         return [
             (
                 f"{label}.provenance: recorded on an artifact kind with no corpus identity, so"
                 " the claim cannot be verified"
             )
         ]
-    current, problems = _current_corpus_hash(kind, cache)
-    if current is None:
+    identity, problems = _current_identity(expected_kind, cache)
+    if identity is None:
         return problems
-    declared = _provenance(run).get("corpus_hash")
-    claimed = _provenance(run).get("corpus_status")
-    if declared == current and claimed != "current":
-        problems.append(
-            f"{label}.provenance.corpus_status: {claimed!r} but corpus_hash matches the"
-            f" checked-out {kind} corpus ({current})"
-        )
-    if declared != current and claimed == "current":
-        problems.append(
-            f"{label}.provenance.corpus_status: 'current' but corpus_hash {declared!r} differs"
-            f" from the checked-out {kind} corpus ({current})"
-        )
-    return problems
+    return _identity_verdict(label, _provenance(run), expected_kind, identity)
 
 
-def _run_problems(runs: list[Any]) -> list[str]:
+def _run_problems(runs: list[Any], cache: dict[str, Identity]) -> list[str]:
     problems: list[str] = []
     seen: dict[str, int] = {}
     for index, run in enumerate(runs):
@@ -400,7 +523,7 @@ def _run_problems(runs: list[Any]) -> list[str]:
         problems.extend(_check_identity(run, label, index, seen))
         problems.extend(_check_source(run, label))
         problems.extend(_check_percentiles(label, run))
-        problems.extend(_check_ranking(run, label))
+        problems.extend(_check_ranking(run, label, cache))
     return problems
 
 
@@ -408,7 +531,8 @@ def _check_payload(payload: dict[str, Any], kind: str | None) -> list[str]:
     runs = payload.get("runs")
     if not isinstance(runs, list):
         return ["runs: missing or not an array"]
-    return _run_problems(runs) + _check_corpus(runs, kind, {})
+    cache: dict[str, Identity] = {}
+    return _run_problems(runs, cache) + _check_corpus(runs, kind, cache)
 
 
 def _inspect(path: Path) -> tuple[dict[str, Any], str | None, dict[str, Any]]:
