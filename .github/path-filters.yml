@@ -40,6 +40,15 @@ python:
   - 'packages/mcp_gateway/**'
   - 'packages/mcp_runtime/**'
   - 'packages/mcp_tool_descriptors/**'
+  # Same rule as the `go` filter, for the half of the class the python-gated jobs run:
+  # embedder-test-ci.sh, mcp-memory-test-ci.sh, worker-test-ci.sh,
+  # worker-integration-test-ci.sh, context-uv-sync.sh and every coverage-*.sh gate
+  # except coverage-api-gate.sh matched no filter, so editing one skipped the job that
+  # executes it. The per-script entries above stay because they record which gate each
+  # script drives; this rule is what makes the class safe, since dorny/paths-filter
+  # ignores `!` rules under the default predicate-quantifier, so an exclusion list is not
+  # available to narrow it.
+  - 'infra/scripts/**'
 go:
   - 'services/**'
   - 'packages/**'
@@ -50,6 +59,22 @@ go:
   - '.golangci.depguard.yml'
   - '.golangci.complexity.yml'
   - '.github/tools/**'
+  # The OpenAPI breaking gate diffs the snapshot against the PR base; it is driven by
+  # the `go` filter (api-breaking runs only when run_go is true), so a PR that edits the
+  # gate script itself must run the gate. Its siblings (api-test-ci.sh,
+  # api-integration-test-ci.sh, api-uv-sync.sh) are exercised by run_python and stay in
+  # the `python` filter above; api-breaking.sh is standalone, with no sourced helper.
+  - 'infra/scripts/api-breaking.sh'
+  # A script that drives a gate must trigger that gate. The jobs that execute a script
+  # from infra/scripts/ are gated on run_go (or run_go || run_python), so before this
+  # rule a PR editing go-test-gotestsum.sh, gocovmerge.py, coverage-gate.sh,
+  # ensure-origin-main.sh or context-uv-sync.sh matched no filter, left the area
+  # inactive, and the aggregate gate reported "Area inactive" instead of running the
+  # gate that was edited. One directory-wide rule closes that class: over-running the
+  # matrix for a changed gate is the correct failure mode, and it costs no more than the
+  # services/** edit that already sets the same flags. The `python` filter repeats the
+  # rule because the affected jobs split on run_go || run_python.
+  - 'infra/scripts/**'
 site:
   - 'site/**'
   - 'engineering/**'
@@ -108,6 +133,12 @@ compose:
   - 'infra/scripts/phase35_e2e_safe_marker.py'
   - 'infra/scripts/mcp-conformance.sh'
   - 'infra/scripts/observability-*.sh'
+  # The bundle smoke is the only check that proves the supported profile migrates,
+  # seeds, starts, and serves a tenant-isolated memory. It is driven by run_compose, so
+  # a PR that edits the smoke script itself must run it instead of passing the gate with
+  # a skipped job. Its only sibling is test-bundle-smoke-url.sh, which repo-guards runs
+  # unconditionally and needs no filter entry.
+  - 'infra/scripts/bundle-smoke.sh'
 # Heavy Postgres PgVectorStore integration (memory-integration job).
 memory:
   - 'services/memory/**'

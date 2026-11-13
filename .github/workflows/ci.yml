@@ -413,6 +413,11 @@ jobs:
   #
   # It runs only on pull_request: github.base_ref is empty on push, and an empty base
   # would make the gate diff HEAD against itself (a vacuous pass).
+  #
+  # Trigger: run_go. The gate's own script (infra/scripts/api-breaking.sh) is in the
+  # `go` path filter for exactly that reason: a PR that weakens or breaks the gate must
+  # run the gate, not skip it. Its inputs already travel with `go` too — the oasdiff pin
+  # in .github/tools/** and the committed snapshot in services/api/**.
   api-breaking:
     name: api-breaking
     needs: [changes]
@@ -617,7 +622,8 @@ jobs:
   # and requires GITHUB_SHA == HEAD, so the evidence it writes names this commit.
   #
   # Trigger: only what can change the bundle definition. run_compose covers
-  # infra/compose/** plus any full run; the raw `docker` filter covers Dockerfiles.
+  # infra/compose/**, the smoke script itself (infra/scripts/bundle-smoke.sh), plus any
+  # full run; the raw `docker` filter covers Dockerfiles.
   # run_go/run_python are deliberately absent: both are set by any services/** or
   # packages/** edit, which spent the full 40-minute build on PRs that cannot alter the
   # bundle. The raw `docker` output is used instead of run_docker because detect-changes
@@ -2802,6 +2808,18 @@ jobs:
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
+
+      # Same fetch as mcp-memory-test: this job runs the same descriptor gate, and the
+      # default shallow checkout (fetch-depth 1, credentials dropped) has no
+      # origin/<base> ref. Without the fetch the script warns and degrades to the weaker
+      # local `--check`, so the enforcing job would print a fallback it did not intend.
+      # One branch, depth 1, unauthenticated — the repository is public.
+      - name: Fetch the PR base branch for the descriptor gate
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          base_ref="${GITHUB_BASE_REF:?GITHUB_BASE_REF is required on pull_request}"
+          git fetch --no-tags --depth=1 origin "+refs/heads/${base_ref}:refs/remotes/origin/${base_ref}"
       - name: MCP memory pytest coverage
         run: bash infra/scripts/mcp-memory-test-ci.sh
       - name: MCP memory coverage gate
