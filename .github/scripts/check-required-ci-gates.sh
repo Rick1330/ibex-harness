@@ -6,6 +6,7 @@ PROTECTION="${ROOT}/.github/branch-protection-main.json"
 CI_WORKFLOW="${ROOT}/.github/workflows/ci.yml"
 SEMGREP_WORKFLOW="${ROOT}/.github/workflows/semgrep.yml"
 SEMANTIC_WORKFLOW="${ROOT}/.github/workflows/semantic-pr.yml"
+MEMORY_BENCH_WORKFLOW="${ROOT}/.github/workflows/memory-benchmark.yml"
 
 # Map each protected context to the workflow expected to emit it. The inventory
 # drives iteration, so adding/removing a required context cannot silently escape
@@ -14,6 +15,7 @@ SEMANTIC_WORKFLOW="${ROOT}/.github/workflows/semantic-pr.yml"
   case "$1" in
     ci-gate-repo|ci-gate-go|ci-gate-site|ci-gate-security|ci-gate-python|gitleaks) printf '%s\n' "$CI_WORKFLOW" ;;
     ci-gate-semgrep) printf '%s\n' "$SEMGREP_WORKFLOW" ;;
+    ci-gate-memory-benchmark) printf '%s\n' "$MEMORY_BENCH_WORKFLOW" ;;
     semantic-pr-title) printf '%s\n' "$SEMANTIC_WORKFLOW" ;;
     *) return 1 ;;
   esac
@@ -61,6 +63,19 @@ grep -Fq 'evaluate-ci-gate.sh "$AREA_ACTIVE" "$CHANGES_RESULT" "$SEMGREP_RESULT"
 }
 grep -Fq 'evaluate-ci-gate.sh "${{ needs.changes.outputs.run_python }}" "${{ needs.changes.result }}"' "$CI_WORKFLOW" || {
   echo 'ci-gate-python must pass the detector result to the shared gate' >&2; exit 1;
+}
+
+# ci-gate-memory-benchmark is published by an always-run aggregate in a separate workflow.
+# It must take the detector's verdict and the active flag, or a path-filtered skip would be
+# indistinguishable from "not due".
+grep -Fq 'evaluate-memory-benchmark-gate.sh' "$MEMORY_BENCH_WORKFLOW" || {
+  echo 'ci-gate-memory-benchmark must evaluate through evaluate-memory-benchmark-gate.sh' >&2; exit 1;
+}
+grep -Fq 'BENCH_ACTIVE: ${{ needs.detect-memory-bench-changes.outputs.bench_active }}' "$MEMORY_BENCH_WORKFLOW" || {
+  echo 'ci-gate-memory-benchmark must pass the detector active flag' >&2; exit 1;
+}
+grep -Fq 'DETECTOR_RESULT: ${{ needs.detect-memory-bench-changes.result }}' "$MEMORY_BENCH_WORKFLOW" || {
+  echo 'ci-gate-memory-benchmark must pass the detector result' >&2; exit 1;
 }
 
 printf 'All %s protected contexts match exactly one workflow job name.\n' "${#contexts[@]}"

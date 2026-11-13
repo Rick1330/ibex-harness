@@ -7,30 +7,15 @@ name: Memory Benchmarks
 # Successful main collects notify the benchmark bot when enabled.
 
 on:
+  # P1-25: no path filter at the trigger. A required status check has to be published on
+  # every pull request; a trigger-level filter means "this workflow never ran" on unrelated
+  # PRs, which leaves the check permanently Expected and blocks the merge. The path decision
+  # now lives in `detect-memory-bench-changes`, and `ci-gate-memory-benchmark` publishes the
+  # verdict on every event.
   pull_request:
     branches: [main]
-    paths:
-      - 'services/memory/**'
-      - 'benchmarks/memory/**'
-      - 'benchmarks/memory/ranking_quality/**'
-      - 'benchmarks/memory/write_pipeline/**'
-      - 'benchmarks/data-schema/hnsw-benchmark-data.schema.json'
-      - 'benchmarks/data-schema/ranking-quality-benchmark-data.schema.json'
-      - 'benchmarks/data-schema/write-pipeline-benchmark-data.schema.json'
-      - 'infra/scripts/memory-bench.sh'
-      - '.github/workflows/memory-benchmark.yml'
   push:
     branches: [main]
-    paths:
-      - 'services/memory/**'
-      - 'benchmarks/memory/**'
-      - 'benchmarks/memory/ranking_quality/**'
-      - 'benchmarks/memory/write_pipeline/**'
-      - 'benchmarks/data-schema/hnsw-benchmark-data.schema.json'
-      - 'benchmarks/data-schema/ranking-quality-benchmark-data.schema.json'
-      - 'benchmarks/data-schema/write-pipeline-benchmark-data.schema.json'
-      - 'infra/scripts/memory-bench.sh'
-      - '.github/workflows/memory-benchmark.yml'
   schedule:
     # Weekly full suite (Sunday 05:00 UTC) after proxy benches
     - cron: '0 5 * * 0'
@@ -92,9 +77,79 @@ jobs:
           echo "bench_profile=$profile" >> "$GITHUB_OUTPUT"
           echo "Resolved MEMORY_BENCH_PROFILE=$profile"
 
+  # P1-25: decides whether the three collectors are due. The filter mirrors the path list
+  # the trigger used to carry, so the set of PRs and main pushes that collect is unchanged;
+  # only the publishing of a verdict is new.
+  detect-memory-bench-changes:
+    name: detect-memory-bench-changes
+    runs-on: ubuntu-latest
+    permissions:
+      # dorny/paths-filter reads the PR file list through the API.
+      contents: read
+      pull-requests: read
+    outputs:
+      bench_active: ${{ steps.decide.outputs.bench_active }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      # push events are diffed with git, which needs the history to find the previous commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        with:
+          filters: |
+            memory_bench:
+              - 'services/memory/**'
+              - 'benchmarks/memory/**'
+              - 'benchmarks/memory/ranking_quality/**'
+              - 'benchmarks/memory/write_pipeline/**'
+              - 'benchmarks/data-schema/hnsw-benchmark-data.schema.json'
+              - 'benchmarks/data-schema/ranking-quality-benchmark-data.schema.json'
+              - 'benchmarks/data-schema/write-pipeline-benchmark-data.schema.json'
+              - 'infra/scripts/memory-bench.sh'
+              - '.github/workflows/memory-benchmark.yml'
+
+      - id: decide
+        name: Decide whether the collectors run
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FILTERED: ${{ steps.filter.outputs.memory_bench }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            schedule|workflow_dispatch)
+              # Explicit full runs; there is no diff to filter on.
+              active=true
+              ;;
+            *)
+              # An empty value means the filter did not produce a verdict. Running the
+              # collectors is the safe default: a detector bug must not silently skip a gate.
+              active="${FILTERED:-true}"
+              ;;
+          esac
+          case "$active" in
+            true|false) ;;
+            *) echo "unexpected filter output: $active" >&2; exit 1 ;;
+          esac
+          echo "bench_active=$active" >> "$GITHUB_OUTPUT"
+          echo "MEMORY_BENCH_ACTIVE=$active"
+
   collect-hnsw-benchmarks:
     name: collect-hnsw-benchmarks
-    needs: detect-memory-bench-profile
+    needs: [detect-memory-bench-profile, detect-memory-bench-changes]
+    # A collector needs both a due path verdict and a resolved profile; without the
+    # profile the job would run with an empty MEMORY_BENCH_PROFILE and mask the failure.
+    if: >-
+      needs.detect-memory-bench-changes.outputs.bench_active == 'true' &&
+      needs.detect-memory-bench-profile.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -367,7 +422,12 @@ jobs:
 
   collect-ranking-quality:
     name: collect-ranking-quality
-    needs: detect-memory-bench-profile
+    needs: [detect-memory-bench-profile, detect-memory-bench-changes]
+    # A collector needs both a due path verdict and a resolved profile; without the
+    # profile the job would run with an empty MEMORY_BENCH_PROFILE and mask the failure.
+    if: >-
+      needs.detect-memory-bench-changes.outputs.bench_active == 'true' &&
+      needs.detect-memory-bench-profile.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -628,7 +688,12 @@ jobs:
 
   collect-write-pipeline-bench:
     name: collect-write-pipeline-bench
-    needs: detect-memory-bench-profile
+    needs: [detect-memory-bench-profile, detect-memory-bench-changes]
+    # A collector needs both a due path verdict and a resolved profile; without the
+    # profile the job would run with an empty MEMORY_BENCH_PROFILE and mask the failure.
+    if: >-
+      needs.detect-memory-bench-changes.outputs.bench_active == 'true' &&
+      needs.detect-memory-bench-profile.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -848,3 +913,39 @@ jobs:
             echo "## Write-pipeline PR comment skipped"
             echo "Fork PRs upload the \`write-pipeline-benchmark-data\` artifact only (no bot comment)."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # P1-25: the aggregate is always-run, so `ci-gate-memory-benchmark` is published on every
+  # pull request -- including the ones where the collectors are not due and are skipped. That
+  # is what makes it safe to require: it can never stay "Expected" waiting for a job that a
+  # path filter suppressed. When the collectors are due, a skipped or failed one fails it.
+  ci-gate-memory-benchmark:
+    name: ci-gate-memory-benchmark
+    needs:
+      - detect-memory-bench-changes
+      - collect-hnsw-benchmarks
+      - collect-ranking-quality
+      - collect-write-pipeline-bench
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Evaluate memory benchmark gate
+        env:
+          BENCH_ACTIVE: ${{ needs.detect-memory-bench-changes.outputs.bench_active }}
+          DETECTOR_RESULT: ${{ needs.detect-memory-bench-changes.result }}
+          HNSW_RESULT: ${{ needs.collect-hnsw-benchmarks.result }}
+          RANKING_RESULT: ${{ needs.collect-ranking-quality.result }}
+          WRITE_RESULT: ${{ needs.collect-write-pipeline-bench.result }}
+        run: |
+          bash .github/scripts/evaluate-memory-benchmark-gate.sh \
+            "$BENCH_ACTIVE" "$DETECTOR_RESULT" \
+            "$HNSW_RESULT" "$RANKING_RESULT" "$WRITE_RESULT"
