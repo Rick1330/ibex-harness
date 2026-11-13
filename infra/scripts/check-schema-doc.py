@@ -84,12 +84,14 @@ def normalise(identifier: str) -> str:
 
 def table_keys(sql: str) -> list[str]:
     """Return canonical `schema.name` (or bare `name`) keys, in file order."""
-    keys: list[str] = []
-    for match in CREATE_TABLE_RE.finditer(strip_sql_comments(sql)):
-        first = normalise(match.group("first"))
-        second = match.group("second")
-        keys.append(f"{first}.{normalise(second)}" if second else first)
-    return keys
+    return [_table_key(match) for match in CREATE_TABLE_RE.finditer(strip_sql_comments(sql))]
+
+
+def _table_key(match: re.Match[str]) -> str:
+    """`schema.name` when the CREATE TABLE qualifies the table, else the bare name."""
+    first = normalise(match.group("first"))
+    second = match.group("second")
+    return f"{first}.{normalise(second)}" if second else first
 
 
 def migration_tables(migrations_dir: pathlib.Path) -> dict[str, list[str]]:
@@ -172,26 +174,60 @@ def doc_tables(doc_text: str) -> tuple[dict[str, int], set[str]]:
     in prose does not satisfy the gate.
     """
     heading_index, region = postgres_region(doc_text)
+    documented, planning = _fenced_tables(region, heading_index)
+    for key, line in _heading_tables(region, heading_index).items():
+        documented.setdefault(key, line)
+    return documented, planning
+
+
+def _fenced_tables(region: list[str], heading_index: int) -> tuple[dict[str, int], set[str]]:
+    """Tables the sql fences document, split into applied DDL and planning-only sketches."""
     documented: dict[str, int] = {}
     planning: set[str] = set()
     for body_start, block in fenced_sql_blocks(region):
-        block_lines = block.splitlines()
-        for match in CREATE_TABLE_RE.finditer(strip_sql_comments(block)):
-            first = normalise(match.group("first"))
-            second = match.group("second")
-            key = f"{first}.{normalise(second)}" if second else first
-            offset = block.count("\n", 0, match.start())
-            if is_planning_only(block_lines, offset):
-                planning.add(key)
-                continue
-            documented.setdefault(key, heading_index + body_start + offset + 1)
-    for offset, line in enumerate(region):
-        heading = HEADING_TABLE_RE.match(line)
-        if not heading:
-            continue
-        raw = heading.group("quoted") or heading.group("bare")
-        documented.setdefault(normalise(raw), heading_index + offset + 1)
+        _collect_fence(block, heading_index + body_start, documented, planning)
     return documented, planning
+
+
+def _collect_fence(
+    block: str,
+    first_line: int,
+    documented: dict[str, int],
+    planning: set[str],
+) -> None:
+    """Record one fence's tables; a statement under the planning marker is a sketch."""
+    block_lines = block.splitlines()
+    for key, offset in _block_tables(block):
+        if is_planning_only(block_lines, offset):
+            planning.add(key)
+        else:
+            documented.setdefault(key, first_line + offset + 1)
+
+
+def _block_tables(block: str) -> list[tuple[str, int]]:
+    """(table key, line offset within the block) for each CREATE TABLE in a fence."""
+    return [
+        (_table_key(match), block.count("\n", 0, match.start()))
+        for match in CREATE_TABLE_RE.finditer(strip_sql_comments(block))
+    ]
+
+
+def _heading_tables(region: list[str], heading_index: int) -> dict[str, int]:
+    """Tables documented by a per-table heading, keyed the same way as the fences."""
+    documented: dict[str, int] = {}
+    for offset, line in enumerate(region):
+        key = _heading_key(line)
+        if key is not None:
+            documented.setdefault(key, heading_index + offset + 1)
+    return documented
+
+
+def _heading_key(line: str) -> str | None:
+    """The table a per-table heading names, or None for any other line."""
+    heading = HEADING_TABLE_RE.match(line)
+    if heading is None:
+        return None
+    return normalise(heading.group("quoted") or heading.group("bare"))
 
 
 def covered(key: str, candidates: set[str]) -> bool:
@@ -206,38 +242,66 @@ def covered(key: str, candidates: set[str]) -> bool:
 def check(repo_root: pathlib.Path, doc_path: pathlib.Path) -> tuple[list[str], str]:
     """Return (problems, summary). Empty problems means the gate passes."""
     migrations = migration_tables(repo_root / "infra/migrations/postgres")
-    doc_text = doc_path.read_text(encoding="utf-8")
-    documented, planning = doc_tables(doc_text)
+    documented, planning = doc_tables(doc_path.read_text(encoding="utf-8"))
 
-    migration_keys = set(migrations)
-    documented_keys = set(documented)
-
-    missing = sorted(key for key in migration_keys if not covered(key, documented_keys))
-    unknown = sorted(
-        key for key in documented_keys if not covered(key, migration_keys) and key not in planning
-    )
-
-    problems: list[str] = []
-    if missing:
-        problems.append(f"created by a migration but not documented ({len(missing)}):")
-        for key in missing:
-            problems.append(f"  - {key}  (from {', '.join(migrations[key])})")
-    if unknown:
-        problems.append(f"documented but no migration creates it ({len(unknown)}):")
-        for key in unknown:
-            line = documented[key]
-            problems.append(f"  - {key}  (doc line {line})")
-
+    problems = _drift_problems(migrations, documented, planning)
     if problems:
         return problems, ""
 
-    applied = len(documented_keys - planning)
+    applied = len(set(documented) - planning)
     summary = (
-        f"OK: {len(migration_keys)} migration tables documented in {doc_path.name} "
+        f"OK: {len(migrations)} migration tables documented in {doc_path.name} "
         f"({applied} applied, {len(planning)} planning-only sketches); "
         f"{file_count(repo_root)} up migrations scanned"
     )
     return [], summary
+
+
+def _drift_problems(
+    migrations: dict[str, list[str]],
+    documented: dict[str, int],
+    planning: set[str],
+) -> list[str]:
+    """Both directions of the comparison, each a header line plus one line per table."""
+    missing = _undocumented(migrations, documented)
+    unknown = _unmigrated(documented, migrations, planning)
+    return [*_missing_lines(missing, migrations), *_unknown_lines(unknown, documented)]
+
+
+def _undocumented(migrations: dict[str, list[str]], documented: dict[str, int]) -> list[str]:
+    """Tables a migration creates that the doc never names."""
+    documented_keys = set(documented)
+    return sorted(key for key in migrations if not covered(key, documented_keys))
+
+
+def _unmigrated(
+    documented: dict[str, int],
+    migrations: dict[str, list[str]],
+    planning: set[str],
+) -> list[str]:
+    """Tables the doc names that no migration creates and no planning marker exempts."""
+    migration_keys = set(migrations)
+    return sorted(
+        key for key in documented if key not in planning and not covered(key, migration_keys)
+    )
+
+
+def _missing_lines(missing: list[str], migrations: dict[str, list[str]]) -> list[str]:
+    if not missing:
+        return []
+    return [
+        f"created by a migration but not documented ({len(missing)}):",
+        *(f"  - {key}  (from {', '.join(migrations[key])})" for key in missing),
+    ]
+
+
+def _unknown_lines(unknown: list[str], documented: dict[str, int]) -> list[str]:
+    if not unknown:
+        return []
+    return [
+        f"documented but no migration creates it ({len(unknown)}):",
+        *(f"  - {key}  (doc line {documented[key]})" for key in unknown),
+    ]
 
 
 def file_count(repo_root: pathlib.Path) -> int:

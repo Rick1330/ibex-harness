@@ -5,6 +5,10 @@ Every failure mode in the checker's contract gets a synthetic artifact that viol
 that rule, and every passing branch gets the smallest payload that must not be refused. The
 committed artifacts are checked as they are, because "the checker passes on real data" is the
 claim that matters most.
+
+Two subjects are big enough to own a module, and both reuse the harness defined here:
+`test_proxy_artifact` (the exact-name proxy artifact and its ``p50_ms`` spelling) and
+`test_gold_set_identity` (a recorded ranking run naming the gold set its label measures).
 """
 
 from __future__ import annotations
@@ -66,13 +70,6 @@ def needs_jsonschema(test: Callable[..., object]) -> Callable[..., object]:
     return wrapper
 
 
-def _gold_identity(gold_set: str) -> tuple[str, str, str]:
-    """``(file, hash, manifest)`` of the gold corpus a ``gold_set`` label names."""
-    corpus = check.GOLD_SETS[gold_set]
-    corpus_hash, manifest = provenance.corpus_identity(corpus.kind)
-    return corpus.name, corpus_hash, manifest
-
-
 def _hnsw_result(**overrides: object) -> dict[str, object]:
     result: dict[str, object] = {
         "corpus_size": 1000,
@@ -100,19 +97,6 @@ def _recorded(**overrides: object) -> dict[str, object]:
         "corpus_status": "current",
         "dirty": False,
     }
-    block.update(overrides)
-    return block
-
-
-def _gold_recorded(gold_set: str = "v1", **overrides: object) -> dict[str, object]:
-    """A recorded block for a run on ``gold_set``, carrying that corpus's real identity."""
-    name, corpus_hash, manifest = _gold_identity(gold_set)
-    block = _recorded(
-        corpus_hash=corpus_hash,
-        corpus_manifest=manifest,
-        gold_set_hash=corpus_hash,
-        gold_set_name=name,
-    )
     block.update(overrides)
     return block
 
@@ -167,72 +151,6 @@ def _hnsw(*runs: dict[str, object]) -> dict[str, object]:
 
 def _ranking(*runs: dict[str, object]) -> dict[str, object]:
     return _payload("ranking_quality", *runs)
-
-
-PROXY_NAME = "benchmark-data.json"
-
-
-def _proxy_run(**overrides: object) -> dict[str, object]:
-    """One run of the proxy latency artifact, in the shape the artifact actually publishes."""
-    run: dict[str, object] = {
-        "sha": "e" * 40,
-        "short_sha": "e" * 7,
-        "timestamp": "2026-11-12T00:00:00+00:00",
-        "branch": "main",
-        "pr_number": None,
-        "run_number": 7,
-        "run_url": "https://example.invalid/actions/runs/7",
-        "status": "pass",
-        "k6": {"p50_ms": 0.5, "p95_ms": 1.0, "p99_ms": 1.5, "p999_ms": 2.5},
-        "stages": {
-            "auth_lru_p50_ms": 0.1,
-            "auth_lru_p95_ms": 0.2,
-            "auth_lru_p99_ms": 0.3,
-        },
-        "metric_deltas": {"k6": {"p99_ms": -0.1}},
-    }
-    run.update(overrides)
-    return run
-
-
-def _proxy(*runs: dict[str, object]) -> dict[str, object]:
-    return {"schema_version": 1, "baseline_sha": "f" * 40, "runs": list(runs)}
-
-
-# Run overrides and the problem each must produce. The proxy artifact spells its percentiles
-# ``p50_ms`` (and ``auth_lru_p50_ms`` inside ``stages``), so every ordering case is stated in
-# that spelling; ``p999_ms`` is optional and must not hide the triple when it is absent.
-PROXY_CASES: dict[str, tuple[dict[str, object], str]] = {
-    "sha is not 40 lowercase hex": (
-        {"sha": "E" * 40, "short_sha": "E" * 7},
-        "runs[0].sha:",
-    ),
-    # The provenance contract knows the hnsw and gold corpora, not the proxy source, so a
-    # recorded proxy run is refused like a recorded extraction-quality run.
-    "a recorded run has no corpus": ({"provenance": _recorded()}, "no corpus identity"),
-    "k6 p50 above its p95": (
-        {"k6": {"p50_ms": 5.0, "p95_ms": 4.0, "p99_ms": 6.0, "p999_ms": 7.0}},
-        "runs[0].k6: p50 5.0 > p95 4.0",
-    ),
-    "a stage group keeps its name": (
-        {
-            "stages": {
-                "auth_lru_p50_ms": 3.0,
-                "auth_lru_p95_ms": 2.0,
-                "auth_lru_p99_ms": 4.0,
-            }
-        },
-        "runs[0].stages.auth_lru: p50 3.0 > p95 2.0",
-    ),
-    "p99 above its p999": (
-        {"k6": {"p50_ms": 0.5, "p95_ms": 1.0, "p99_ms": 3.0, "p999_ms": 2.0}},
-        "runs[0].k6: p99 3.0 > p999 2.0",
-    ),
-    "a run without a p999": (
-        {"k6": {"p50_ms": 5.0, "p95_ms": 4.0, "p99_ms": 6.0}},
-        "runs[0].k6: p50 5.0 > p95 4.0",
-    ),
-}
 
 
 class CheckerCase(unittest.TestCase):
@@ -507,120 +425,6 @@ class TestCorpusIdentity(CheckerCase):
         )
 
 
-class TestGoldSetIdentity(CheckerCase):
-    """A recorded ranking run must name the gold set its ``gold_set`` label measures."""
-
-    def _problems(self, gold_set: str, block: dict[str, object]) -> list[str]:
-        run = _ranking_run(gold_set=gold_set, provenance=block)
-        return self.content_problems(
-            _ranking(run), "ranking-quality-benchmark-data.json"
-        )
-
-    def test_a_v1_run_on_the_v1_corpus_passes(self) -> None:
-        self.assert_clean(
-            _ranking(_ranking_run(provenance=_gold_recorded())),
-            "ranking-quality-benchmark-data.json",
-        )
-
-    def test_a_v2_run_on_the_v2_corpus_passes(self) -> None:
-        record = _gold_recorded("ranking_quality_v2")
-
-        self.assert_clean(
-            _ranking(_ranking_run(gold_set="ranking_quality_v2", provenance=record)),
-            "ranking-quality-benchmark-data.json",
-        )
-
-    def test_a_v1_label_with_the_v2_corpus_fails(self) -> None:
-        # The v1 producer measures gold_set_v1.json; a v2 hash under a v1 label describes a
-        # corpus that was not measured.
-        _name, corpus_hash, manifest = _gold_identity("ranking_quality_v2")
-        record = _gold_recorded(
-            corpus_hash=corpus_hash,
-            corpus_manifest=manifest,
-            gold_set_hash=corpus_hash,
-            gold_set_name="gold_set_v2.json",
-        )
-        problems = self._problems("v1", record)
-
-        self.assertTrue(
-            any("gold_set_name" in problem for problem in problems), problems
-        )
-        self.assertTrue(
-            any("gold_set_hash" in problem for problem in problems), problems
-        )
-
-    def test_a_contradictory_gold_set_hash_is_named_with_the_file_it_implies(
-        self,
-    ) -> None:
-        problems = self._problems("v1", _gold_recorded(gold_set_hash=OTHER_HASH))
-
-        self.assertTrue(
-            any(
-                "provenance.gold_set_hash: '000" in problem
-                and "implies for gold_set_v1.json" in problem
-                for problem in problems
-            ),
-            problems,
-        )
-
-    def test_a_recorded_run_without_the_gold_set_name_fails(self) -> None:
-        record = _gold_recorded()
-        del record["gold_set_name"]
-        problems = self._problems("v1", record)
-
-        self.assertTrue(
-            any("provenance.gold_set_name" in problem for problem in problems), problems
-        )
-
-    def test_an_older_gold_set_recorded_as_stale_passes(self) -> None:
-        # A run measured on a previous generation of the v1 gold set keeps the hash it measured and
-        # says "stale" about it. The bytes in this checkout are not its business, so retaining it
-        # cannot turn the check red; the record is still internally consistent.
-        older = "1" * 64
-        record = _gold_recorded(
-            corpus_hash=older,
-            corpus_manifest=f"gold_set_v1.json={older}",
-            gold_set_hash=older,
-            corpus_status="stale",
-        )
-
-        self.assert_clean(
-            _ranking(_ranking_run(provenance=record)),
-            "ranking-quality-benchmark-data.json",
-        )
-
-    def test_a_stale_run_that_states_two_corpus_hashes_fails(self) -> None:
-        # Skipping the checkout comparison is not skipping consistency: the gold set is the corpus
-        # on this benchmark, so gold_set_hash and corpus_hash cannot name different bytes.
-        record = _gold_recorded(
-            corpus_hash="1" * 64, gold_set_hash="2" * 64, corpus_status="stale"
-        )
-        problems = self._problems("v1", record)
-
-        self.assertTrue(
-            any(
-                "provenance.gold_set_hash: '222" in problem
-                and "!= corpus_hash" in problem
-                for problem in problems
-            ),
-            problems,
-        )
-
-    def test_a_stale_run_that_names_the_other_generation_fails(self) -> None:
-        # The label-to-file map needs no checked-out bytes, so it holds for an older run too.
-        record = _gold_recorded(corpus_status="stale", gold_set_name="gold_set_v2.json")
-        problems = self._problems("v1", record)
-
-        self.assertTrue(
-            any("provenance.gold_set_name" in problem for problem in problems), problems
-        )
-
-    def test_an_unrecorded_run_is_not_checked_against_a_gold_set(self) -> None:
-        self.assert_clean(
-            _ranking(_ranking_run(gold_set="v1")), "ranking-quality-benchmark-data.json"
-        )
-
-
 class TestPercentiles(CheckerCase):
     def test_a_p50_above_its_p95_fails(self) -> None:
         report = self.report_for(
@@ -814,43 +618,6 @@ class TestRealArtifactViolation(CheckerCase):
         self.assertEqual(code, 1)
         self.assertIn("runs[5].results[0].latency_ms: p95", err.getvalue())
         self.assertIn("> p99", err.getvalue())
-
-
-class TestProxyArtifact(CheckerCase):
-    """The proxy latency artifact: exact name, ``p50_ms`` spelling, no corpus identity."""
-
-    def test_the_published_artifact_is_checked_in_its_own_spelling(self) -> None:
-        """The kind, its schema, and every per-run rule, stated in the ``p50_ms`` spelling.
-
-        One test method keeps the contract in one place; each subTest names the case that fails.
-        """
-        kind = check._kind(Path(PROXY_NAME))
-        suffixed = check._kind(Path("hnsw-benchmark-data.json"))
-        self.assertEqual(kind.name, "benchmark-data")
-        self.assertIsNone(kind.corpus)
-        self.assertEqual(kind.percentiles, check.PROXY_PERCENTILES)
-        self.assertEqual(check._schema(Path(PROXY_NAME).stem)["title"], "BenchmarkData")
-        # The four suffixed kinds keep the corpus and the spelling they had.
-        self.assertEqual(suffixed.corpus, "hnsw")
-        self.assertEqual(suffixed.percentiles, check.SUFFIXED_PERCENTILES)
-
-        self.assert_clean(_proxy(_proxy_run()), PROXY_NAME)
-        for name, (overrides, expected) in PROXY_CASES.items():
-            with self.subTest(name):
-                problems = self.content_problems(
-                    _proxy(_proxy_run(**overrides)), PROXY_NAME
-                )
-                self.assertTrue(
-                    any(expected in problem for problem in problems), problems
-                )
-
-        # A renamed field would stop the ordering check silently: the layout would find no group
-        # and report nothing. This pins the spelling the published artifact actually uses.
-        for index, run in enumerate(_runs_in(PUBLISHED / PROXY_NAME)):
-            k6 = check._percentile_prefixes(run["k6"], check.PROXY_PERCENTILES)
-            stages = check._percentile_prefixes(run["stages"], check.PROXY_PERCENTILES)
-            self.assertEqual(k6, [""], f"runs[{index}].k6")
-            self.assertTrue(stages, f"runs[{index}].stages")
 
 
 if __name__ == "__main__":

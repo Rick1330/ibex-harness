@@ -24,7 +24,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from mcp_tool_descriptors.base import check_base
+from mcp_tool_descriptors.base import ReadScope, check_base
 from mcp_tool_descriptors.checks import check, update
 from mcp_tool_descriptors.paths import ALLOW_ROOT_ENV, RefusedPath
 from mcp_tool_descriptors.record import Surface
@@ -113,9 +113,8 @@ def _run(surface: Surface, args: argparse.Namespace) -> int:
 
 def _run_check_base(surface: Surface, args: argparse.Namespace) -> int:
     failures = check(surface, args.path, args.allow_root)
-    failures.extend(
-        check_base(surface, args.path, args.check_base, args.allow_root, args.deprecations)
-    )
+    scope = ReadScope(args.allow_root, args.deprecations)
+    failures.extend(check_base(surface, args.path, args.check_base, scope))
     message = f"mcp tool descriptors match the published surface and {args.check_base}: {args.path}"
     return _report(failures, args.path, message)
 

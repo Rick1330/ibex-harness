@@ -8,6 +8,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("check-schema-doc.py")
@@ -31,6 +32,86 @@ def make_doc(root: Path, body: str, name: str = "DATABASE_SCHEMA.md") -> Path:
     path = root / name
     path.write_text(textwrap.dedent(body), encoding="utf-8")
     return path
+
+
+@dataclass(frozen=True)
+class DocCase:
+    """One doc and the verdict the gate must reach on it.
+
+    ``needle`` is the table the problems must name; ``None`` means the doc is in
+    sync and the gate must pass it with an ``OK:`` summary.
+    """
+
+    name: str
+    body: str
+    needle: str | None = None
+
+
+# The migrations fixture is `ibex_core.a` and `ibex_core.b`, so each row states one
+# drift shape: complete, a migration table the doc omits, a doc table no migration
+# creates, and a sketch the planning marker exempts.
+DOC_CASES = (
+    DocCase(
+        name="every migration table is documented",
+        body="""
+            ### PostgreSQL Schema
+
+            ```sql
+            CREATE TABLE ibex_core.a (id UUID);
+            ```
+
+            ##### `ibex_core.b` (migration `000001`)
+
+            **Purpose.** B.
+
+            ### ClickHouse Schema
+            """,
+    ),
+    DocCase(
+        name="a migration table the doc never names fails",
+        body="""
+            ### PostgreSQL Schema
+
+            ```sql
+            CREATE TABLE ibex_core.a (id UUID);
+            ```
+
+            ### ClickHouse Schema
+            """,
+        needle="ibex_core.b",
+    ),
+    DocCase(
+        name="a doc table no migration creates fails",
+        body="""
+            ### PostgreSQL Schema
+
+            ```sql
+            CREATE TABLE ibex_core.a (id UUID);
+            CREATE TABLE ibex_core.b (id UUID);
+            CREATE TABLE ibex_core.ghost (id UUID);
+            ```
+
+            ### ClickHouse Schema
+            """,
+        needle="ibex_core.ghost",
+    ),
+    DocCase(
+        name="the planning marker exempts a sketch",
+        body="""
+            ### PostgreSQL Schema
+
+            ```sql
+            CREATE TABLE ibex_core.a (id UUID);
+            CREATE TABLE ibex_core.b (id UUID);
+
+            -- schema-doc: not-migrated — planning sketch.
+            CREATE TABLE ibex_core.sketch (id UUID);
+            ```
+
+            ### ClickHouse Schema
+            """,
+    ),
+)
 
 
 class TableKeyTests(unittest.TestCase):
@@ -84,81 +165,22 @@ class CheckTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def test_passes_when_doc_covers_every_table(self) -> None:
-        doc = make_doc(
-            self.root,
-            """
-            ### PostgreSQL Schema
+    def test_the_gate_reaches_the_recorded_verdict_for_each_doc(self) -> None:
+        for case in DOC_CASES:
+            with self.subTest(case.name):
+                problems, summary = self._check(case.body)
+                self._assert_verdict(case, problems, summary)
 
-            ```sql
-            CREATE TABLE ibex_core.a (id UUID);
-            ```
+    def _check(self, body: str) -> tuple[list[str], str]:
+        return check_schema_doc.check(self.root, make_doc(self.root, body))
 
-            ##### `ibex_core.b` (migration `000001`)
-
-            **Purpose.** B.
-
-            ### ClickHouse Schema
-            """,
-        )
-        problems, summary = check_schema_doc.check(self.root, doc)
-        self.assertEqual(problems, [])
-        self.assertTrue(summary.startswith("OK:"), summary)
-
-    def test_fails_when_a_migration_table_is_missing(self) -> None:
-        doc = make_doc(
-            self.root,
-            """
-            ### PostgreSQL Schema
-
-            ```sql
-            CREATE TABLE ibex_core.a (id UUID);
-            ```
-
-            ### ClickHouse Schema
-            """,
-        )
-        problems, _ = check_schema_doc.check(self.root, doc)
-        self.assertTrue(any("ibex_core.b" in line for line in problems), problems)
-
-    def test_fails_when_doc_names_an_unmigrated_table(self) -> None:
-        doc = make_doc(
-            self.root,
-            """
-            ### PostgreSQL Schema
-
-            ```sql
-            CREATE TABLE ibex_core.a (id UUID);
-            CREATE TABLE ibex_core.b (id UUID);
-            CREATE TABLE ibex_core.ghost (id UUID);
-            ```
-
-            ### ClickHouse Schema
-            """,
-        )
-        problems, _ = check_schema_doc.check(self.root, doc)
-        self.assertTrue(any("ibex_core.ghost" in line for line in problems), problems)
-
-    def test_planning_marker_exempts_a_sketch(self) -> None:
-        doc = make_doc(
-            self.root,
-            """
-            ### PostgreSQL Schema
-
-            ```sql
-            CREATE TABLE ibex_core.a (id UUID);
-            CREATE TABLE ibex_core.b (id UUID);
-
-            -- schema-doc: not-migrated — planning sketch.
-            CREATE TABLE ibex_core.sketch (id UUID);
-            ```
-
-            ### ClickHouse Schema
-            """,
-        )
-        problems, summary = check_schema_doc.check(self.root, doc)
-        self.assertEqual(problems, [])
-        self.assertTrue(summary.startswith("OK:"), summary)
+    def _assert_verdict(self, case: DocCase, problems: list[str], summary: str) -> None:
+        """An in-sync doc passes with a summary; a drifting one names the table at fault."""
+        if case.needle is None:
+            self.assertEqual(problems, [])
+            self.assertTrue(summary.startswith("OK:"), summary)
+            return
+        self.assertTrue(any(case.needle in line for line in problems), problems)
 
     def test_planning_marker_does_not_leak_to_the_next_statement(self) -> None:
         doc = make_doc(

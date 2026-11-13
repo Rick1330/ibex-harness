@@ -40,6 +40,9 @@ var destructiveDDLDetectors = []struct {
 // DROP PROJECTION) destroys data without naming a table or a column.
 var alterDropRe = regexp.MustCompile(`\bDROP\b`)
 
+// alterDropPattern is the finding name for that separate ALTER … DROP rule.
+const alterDropPattern = "ALTER ... DROP"
+
 // reviewedExceptions is the companion record P2-03 allows: a migration file
 // name mapped to the written reason it may contain destructive DDL. It is
 // empty today — no ClickHouse migration needs an exception — and every entry is
@@ -57,30 +60,45 @@ type destructiveFinding struct {
 func TestUnit_UpMigrations_NoDestructiveDDL(t *testing.T) {
 	t.Parallel()
 
+	names := upMigrationNames(t)
+	if len(names) == 0 {
+		t.Fatal("no up migrations scanned; the gate would pass vacuously")
+	}
+	for _, name := range names {
+		assertNoDestructiveDDL(t, name)
+	}
+}
+
+// upMigrationNames lists the embedded up migrations in directory order.
+func upMigrationNames(t *testing.T) []string {
+	t.Helper()
 	entries, err := migrationFiles.ReadDir(".")
 	if err != nil {
 		t.Fatalf("read migrations: %v", err)
 	}
-	scanned := 0
+	var names []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".up.sql") {
 			continue
 		}
-		scanned++
-		name := e.Name()
-		if _, ok := reviewedExceptions[name]; ok {
-			continue
-		}
-		body, err := migrationFiles.ReadFile(name)
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		for _, f := range destructiveDDLFindings(string(body)) {
-			t.Errorf("%s: destructive DDL (%s): %s", name, f.pattern, f.snippet)
-		}
+		names = append(names, e.Name())
 	}
-	if scanned == 0 {
-		t.Fatal("no up migrations scanned; the gate would pass vacuously")
+	return names
+}
+
+// assertNoDestructiveDDL reports every refused statement in one migration,
+// skipping the files a written exception names.
+func assertNoDestructiveDDL(t *testing.T, name string) {
+	t.Helper()
+	if _, ok := reviewedExceptions[name]; ok {
+		return
+	}
+	body, err := migrationFiles.ReadFile(name)
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	for _, f := range destructiveDDLFindings(string(body)) {
+		t.Errorf("%s: destructive DDL (%s): %s", name, f.pattern, f.snippet)
 	}
 }
 
@@ -245,124 +263,197 @@ func hasPattern(findings []destructiveFinding, want string) bool {
 // and string literals are blanked before matching, so only executable SQL is
 // considered.
 func destructiveDDLFindings(sqlText string) []destructiveFinding {
-	clean := stripSQLCommentsAndLiterals(sqlText)
 	var findings []destructiveFinding
-	for _, stmt := range splitSQLStatements(clean) {
-		upper := strings.ToUpper(strings.TrimSpace(stmt))
-		if upper == "" {
-			continue
-		}
-		snippet := statementSnippet(stmt)
-		for _, d := range destructiveDDLDetectors {
-			if d.re.MatchString(upper) {
-				findings = append(findings, destructiveFinding{pattern: d.pattern, snippet: snippet})
-			}
-		}
-		if strings.HasPrefix(upper, "ALTER") && alterDropRe.MatchString(upper) {
-			findings = append(findings, destructiveFinding{pattern: "ALTER ... DROP", snippet: snippet})
+	for _, stmt := range splitSQLStatements(stripSQLCommentsAndLiterals(sqlText)) {
+		findings = append(findings, stmt.findings()...)
+	}
+	return findings
+}
+
+// sqlStatement is one executable statement, kept in its original casing for the
+// failure snippet and in its uppercased form for matching.
+type sqlStatement struct {
+	text  string
+	upper string
+}
+
+// findings returns the refused patterns in the statement: one per detector that
+// matches, plus the ALTER … DROP rule when the statement drops data without
+// naming a table or a column.
+func (s sqlStatement) findings() []destructiveFinding {
+	if s.upper == "" {
+		return nil
+	}
+	findings := s.detectorFindings()
+	if s.isAlterDrop() {
+		findings = append(findings, destructiveFinding{pattern: alterDropPattern, snippet: s.snippet()})
+	}
+	return findings
+}
+
+// detectorFindings returns one finding per destructiveDDLDetectors entry that
+// matches the statement.
+func (s sqlStatement) detectorFindings() []destructiveFinding {
+	var findings []destructiveFinding
+	for _, d := range destructiveDDLDetectors {
+		if d.re.MatchString(s.upper) {
+			findings = append(findings, destructiveFinding{pattern: d.pattern, snippet: s.snippet()})
 		}
 	}
 	return findings
 }
 
+// isAlterDrop reports whether the statement is an ALTER that drops data without
+// naming a table or a column.
+func (s sqlStatement) isAlterDrop() bool {
+	return strings.HasPrefix(s.upper, "ALTER") && alterDropRe.MatchString(s.upper)
+}
+
 const maxSnippetLen = 120
 
-func statementSnippet(stmt string) string {
-	fields := strings.Fields(stmt)
-	snippet := strings.Join(fields, " ")
+// snippet is the statement on one line, truncated for a failure message.
+func (s sqlStatement) snippet() string {
+	snippet := strings.Join(strings.Fields(s.text), " ")
 	if len(snippet) > maxSnippetLen {
 		return snippet[:maxSnippetLen] + "…"
 	}
 	return snippet
 }
 
-// splitSQLStatements splits on `;`. It runs after comment and literal stripping,
-// so a semicolon inside a comment or a string cannot split a statement.
-func splitSQLStatements(sqlText string) []string {
-	var (
-		out []string
-		cur strings.Builder
-	)
-	for i := 0; i < len(sqlText); i++ {
-		if sqlText[i] == ';' {
-			out = append(out, cur.String())
-			cur.Reset()
+// splitSQLStatements splits on `;` and drops the blank segments. It runs after
+// comment and literal stripping, so a semicolon inside a comment or a string
+// cannot split a statement.
+func splitSQLStatements(stripped string) []sqlStatement {
+	segments := strings.Split(stripped, ";")
+	statements := make([]sqlStatement, 0, len(segments))
+	for _, segment := range segments {
+		upper := strings.ToUpper(strings.TrimSpace(segment))
+		if upper == "" {
 			continue
 		}
-		cur.WriteByte(sqlText[i])
+		statements = append(statements, sqlStatement{text: segment, upper: upper})
 	}
-	if strings.TrimSpace(cur.String()) != "" {
-		out = append(out, cur.String())
-	}
-	return out
+	return statements
 }
 
 // stripSQLCommentsAndLiterals replaces `--` line comments, `/* */` block
 // comments, and single-quoted string literals with spaces, preserving newlines
 // and byte offsets so the statement text stays readable in a failure message.
 func stripSQLCommentsAndLiterals(sqlText string) string {
-	var b strings.Builder
-	b.Grow(len(sqlText))
-	var (
-		inLine    bool
-		inBlock   bool
-		inLiteral bool
-	)
-	for i := 0; i < len(sqlText); i++ {
-		c := sqlText[i]
-		switch {
-		case inLine:
-			if c == '\n' {
-				inLine = false
-				b.WriteByte('\n')
-				continue
-			}
-			b.WriteByte(' ')
-		case inBlock:
-			if c == '*' && i+1 < len(sqlText) && sqlText[i+1] == '/' {
-				inBlock = false
-				b.WriteString("  ")
-				i++
-				continue
-			}
-			if c == '\n' {
-				b.WriteByte('\n')
-				continue
-			}
-			b.WriteByte(' ')
-		case inLiteral:
-			if c == '\'' {
-				if i+1 < len(sqlText) && sqlText[i+1] == '\'' {
-					b.WriteString("''")
-					i++
-					continue
-				}
-				inLiteral = false
-				b.WriteByte('\'')
-				continue
-			}
-			if c == '\n' {
-				b.WriteByte('\n')
-				continue
-			}
-			b.WriteByte(' ')
-		default:
-			switch {
-			case c == '-' && i+1 < len(sqlText) && sqlText[i+1] == '-':
-				inLine = true
-				b.WriteString("  ")
-				i++
-			case c == '/' && i+1 < len(sqlText) && sqlText[i+1] == '*':
-				inBlock = true
-				b.WriteString("  ")
-				i++
-			case c == '\'':
-				inLiteral = true
-				b.WriteByte('\'')
-			default:
-				b.WriteByte(c)
-			}
-		}
+	scanner := sqlScanner{src: sqlText}
+	scanner.out.Grow(len(sqlText))
+	for scanner.pos < len(scanner.src) {
+		scanner.step()
 	}
-	return b.String()
+	return scanner.out.String()
+}
+
+// sqlScanner is the stripper's state: the input, the byte it is reading, and the
+// output it is writing. Every token writes exactly as many bytes as it consumes,
+// so the result keeps the input's offsets.
+type sqlScanner struct {
+	src string
+	out strings.Builder
+	pos int
+}
+
+// step consumes one token: a comment, a string literal, or one byte of SQL.
+func (s *sqlScanner) step() {
+	switch {
+	case s.atLineComment():
+		s.skipLineComment()
+	case s.atBlockComment():
+		s.skipBlockComment()
+	case s.peek() == '\'':
+		s.skipLiteral()
+	default:
+		s.out.WriteByte(s.peek())
+		s.pos++
+	}
+}
+
+// peek returns the byte at pos, or 0 at end of input.
+func (s *sqlScanner) peek() byte {
+	if s.pos < len(s.src) {
+		return s.src[s.pos]
+	}
+	return 0
+}
+
+// next returns the byte after pos, or 0 at end of input.
+func (s *sqlScanner) next() byte {
+	if s.pos+1 < len(s.src) {
+		return s.src[s.pos+1]
+	}
+	return 0
+}
+
+func (s *sqlScanner) atLineComment() bool { return s.peek() == '-' && s.next() == '-' }
+
+func (s *sqlScanner) atBlockComment() bool { return s.peek() == '/' && s.next() == '*' }
+
+func (s *sqlScanner) atBlockEnd() bool { return s.peek() == '*' && s.next() == '/' }
+
+func (s *sqlScanner) atEscapedQuote() bool { return s.peek() == '\'' && s.next() == '\'' }
+
+// skipLineComment blanks `-- ...` through the end of the line, keeping the
+// newline that ends it.
+func (s *sqlScanner) skipLineComment() {
+	s.out.WriteString("  ")
+	s.pos += 2
+	for s.pos < len(s.src) {
+		if s.peek() == '\n' {
+			s.out.WriteByte('\n')
+			s.pos++
+			return
+		}
+		s.out.WriteByte(' ')
+		s.pos++
+	}
+}
+
+// skipBlockComment blanks `/* ... */`, keeping the newlines inside it.
+func (s *sqlScanner) skipBlockComment() {
+	s.out.WriteString("  ")
+	s.pos += 2
+	for s.pos < len(s.src) {
+		if s.atBlockEnd() {
+			s.out.WriteString("  ")
+			s.pos += 2
+			return
+		}
+		s.writeBlank()
+		s.pos++
+	}
+}
+
+// skipLiteral blanks the inside of a single-quoted literal, keeping its quotes
+// and its doubled-quote escape.
+func (s *sqlScanner) skipLiteral() {
+	s.out.WriteByte('\'')
+	s.pos++
+	for s.pos < len(s.src) {
+		if s.atEscapedQuote() {
+			s.out.WriteString("''")
+			s.pos += 2
+			continue
+		}
+		if s.peek() == '\'' {
+			s.out.WriteByte('\'')
+			s.pos++
+			return
+		}
+		s.writeBlank()
+		s.pos++
+	}
+}
+
+// writeBlank blanks the current byte, keeping a newline so line structure
+// survives.
+func (s *sqlScanner) writeBlank() {
+	if s.peek() == '\n' {
+		s.out.WriteByte('\n')
+		return
+	}
+	s.out.WriteByte(' ')
 }

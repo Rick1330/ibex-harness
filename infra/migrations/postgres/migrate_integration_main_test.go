@@ -305,38 +305,82 @@ func prepareSharedDatabase(dsn string) {
 // migrations fail with SQLSTATE 2BP01, which is the same failure mode this file
 // exists to remove.
 func TestHarness_SharedDatabaseRecovery(t *testing.T) {
-	dsn := testDSN()
+	run := openSharedRun(t)
+	run.up()
+	run.markDirtyVersion()
+	run.requireDirtyVersionRefused()
+	run.recover()
+	run.up()
+	run.requireRecoveredVersion()
+}
+
+// sharedRun is one harness test's database: the DSN under test and the
+// connection to it. Each step of the recovery scenario is a method so the test
+// reads as the sequence it asserts.
+type sharedRun struct {
+	t   *testing.T
+	dsn string
+	db  *sql.DB
+}
+
+// openSharedRun opens the connection the scenario drives and closes it after the
+// test.
+func openSharedRun(t *testing.T) sharedRun {
+	t.Helper()
 	db := openTestDB(t)
-	defer func() { _ = db.Close() }()
+	t.Cleanup(func() { _ = db.Close() })
+	return sharedRun{t: t, dsn: testDSN(), db: db}
+}
 
-	if err := Up(dsn); err != nil {
-		t.Fatalf("up: %v", err)
+// up applies every migration, failing the test if the migration set refuses to
+// run.
+func (r sharedRun) up() {
+	r.t.Helper()
+	if err := Up(r.dsn); err != nil {
+		r.t.Fatalf("up: %v", err)
 	}
+}
 
-	// Simulate an interrupted run: a recorded version marked dirty.
-	if err := Force(dsn, 36); err != nil {
-		t.Fatalf("force 36: %v", err)
+// markDirtyVersion simulates an interrupted run: a recorded version that the
+// harness marked dirty before it stopped.
+func (r sharedRun) markDirtyVersion() {
+	r.t.Helper()
+	if err := Force(r.dsn, 36); err != nil {
+		r.t.Fatalf("force 36: %v", err)
 	}
-	if _, err := db.ExecContext(context.Background(), `UPDATE schema_migrations SET dirty = true`); err != nil {
-		t.Fatalf("mark dirty: %v", err)
+	if _, err := r.db.ExecContext(context.Background(), `UPDATE schema_migrations SET dirty = true`); err != nil {
+		r.t.Fatalf("mark dirty: %v", err)
 	}
-	if err := Up(dsn); err == nil {
-		t.Fatal("up on a dirty version must fail; the harness would inherit the dirty state")
-	}
+}
 
-	prepareSharedDatabase(dsn)
-
-	if err := Up(dsn); err != nil {
-		t.Fatalf("up after recovery: %v", err)
+// requireDirtyVersionRefused pins that Up refuses a dirty version: without that
+// refusal the harness would inherit the dirty state instead of repairing it.
+func (r sharedRun) requireDirtyVersionRefused() {
+	r.t.Helper()
+	if err := Up(r.dsn); err == nil {
+		r.t.Fatal("up on a dirty version must fail; the harness would inherit the dirty state")
 	}
-	version, dirty, err := Version(dsn)
+}
+
+// recover runs the fallback recovery path the harness uses when a run finds a
+// dirty database.
+func (r sharedRun) recover() {
+	r.t.Helper()
+	prepareSharedDatabase(r.dsn)
+}
+
+// requireRecoveredVersion requires the recovered database to be clean and at the
+// newest embedded migration.
+func (r sharedRun) requireRecoveredVersion() {
+	r.t.Helper()
+	version, dirty, err := Version(r.dsn)
 	if err != nil {
-		t.Fatalf("version after recovery: %v", err)
+		r.t.Fatalf("version after recovery: %v", err)
 	}
 	if dirty {
-		t.Fatal("recovered database is still dirty")
+		r.t.Fatal("recovered database is still dirty")
 	}
-	if want := maxEmbeddedMigrationVersion(t); version != want {
-		t.Fatalf("version after recovery = %d, want %d", version, want)
+	if want := maxEmbeddedMigrationVersion(r.t); version != want {
+		r.t.Fatalf("version after recovery = %d, want %d", version, want)
 	}
 }
