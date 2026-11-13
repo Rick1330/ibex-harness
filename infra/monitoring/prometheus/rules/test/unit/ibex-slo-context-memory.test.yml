@@ -1,0 +1,104 @@
+# promtool unit tests for the context-assembly and memory-retrieval SLI rules
+# (W6.3). The thresholds are unratified, so the rules record the SLI and alert
+# on absence only; these tests prove the absence alerts fire when the series is
+# missing while the guarded traffic exists, and stay silent when the stack is
+# idle or the series is advancing.
+#
+#   promtool test rules infra/monitoring/prometheus/rules/test/unit/ibex-slo-context-memory.test.yml
+#
+# Driven by infra/scripts/slo-rules-check.sh (and therefore `make repo-guards`).
+# Every annotation below is a byte-equal copy of the rule file's annotation, so
+# an operator-facing text change without the matching test change fails here.
+rule_files:
+  - ../../ibex-slo.yml
+
+evaluation_interval: 1m
+
+tests:
+  # The context histogram only exists when assembled context is injected. The
+  # guard is ibex_proxy_nonstreaming_requests_total{assembly="enabled"}; without
+  # it a profile with assembly disabled would page forever.
+  - name: context-assembly-sli-absent-with-enabled-traffic-fires
+    interval: 1m
+    input_series:
+      - series: 'ibex_proxy_nonstreaming_requests_total{assembly="enabled"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: IbexContextAssemblySLIAbsent
+        exp_alerts:
+          - exp_annotations:
+              summary: 'Context-assembly SLI is missing or not advancing while assembled context is being injected'
+              description: 'Proxy requests are being served with assembly="enabled", but ibex_proxy_context_assemble_seconds_count has either had no series for 15m or is present and not advancing. The p95 target is unratified (engineering/architecture-v2/05-request-lifecycle-and-slos.md §Timing policy), so this alert only proves the SLI is recorded; it does not grade it. Check that the proxy scrapes, that the build observes ibex_proxy_context_assemble_seconds on the assembly path, and that the enabled traffic counter shares that population.'
+              runbook: 'infra/monitoring/prometheus/rules/ibex-slo.yml (header: context/memory SLI, threshold awaits ratification)'
+            exp_labels:
+              severity: ticket
+              service: proxy
+              slo: context_assemble_p95_unratified
+
+  - name: context-assembly-sli-absent-idle-silent
+    interval: 1m
+    input_series:
+      - series: 'ibex_process_up'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: IbexContextAssemblySLIAbsent
+        exp_alerts: []
+
+  - name: context-assembly-sli-present-silent
+    interval: 1m
+    input_series:
+      - series: 'ibex_proxy_context_assemble_seconds_count'
+        values: '0+1x30'
+      - series: 'ibex_proxy_nonstreaming_requests_total{assembly="enabled"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: IbexContextAssemblySLIAbsent
+        exp_alerts: []
+
+  # The memory histogram is labelled by route template; the guard and the SLI
+  # both pin /v1/memories/search so another route cannot satisfy the assertion.
+  - name: memory-retrieval-sli-absent-with-search-traffic-fires
+    interval: 1m
+    input_series:
+      - series: 'ibex_memory_http_requests_total{route="/v1/memories/search",method="POST",status="200"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: IbexMemoryRetrievalSLIAbsent
+        exp_alerts:
+          - exp_annotations:
+              summary: 'Memory-retrieval SLI is missing or not advancing while the search route serves traffic'
+              description: 'POST /v1/memories/search is being served, but ibex_memory_http_request_duration_seconds_count{route="/v1/memories/search"} has either had no series for 15m or is present and not advancing. The p95 target is unratified (engineering/architecture-v2/05-request-lifecycle-and-slos.md §Timing policy), so this alert only proves the SLI is recorded; it does not grade it. Check the memory service /metrics scrape and the route label.'
+              runbook: 'infra/monitoring/prometheus/rules/ibex-slo.yml (header: context/memory SLI, threshold awaits ratification)'
+            exp_labels:
+              severity: ticket
+              service: memory
+              slo: memory_search_p95_unratified
+              # absent() keeps the selector's equality matchers, so the alert
+              # instance names the route whose SLI went missing.
+              route: /v1/memories/search
+
+  - name: memory-retrieval-sli-absent-idle-silent
+    interval: 1m
+    input_series:
+      - series: 'ibex_process_up'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: IbexMemoryRetrievalSLIAbsent
+        exp_alerts: []
+
+  - name: memory-retrieval-sli-present-silent
+    interval: 1m
+    input_series:
+      - series: 'ibex_memory_http_request_duration_seconds_count{route="/v1/memories/search",method="POST"}'
+        values: '0+1x30'
+      - series: 'ibex_memory_http_requests_total{route="/v1/memories/search",method="POST",status="200"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: IbexMemoryRetrievalSLIAbsent
+        exp_alerts: []

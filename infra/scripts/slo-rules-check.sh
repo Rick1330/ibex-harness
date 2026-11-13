@@ -590,32 +590,45 @@ check_le_labels() {
 # construction. Across all files it must find at least one pinned selector: a
 # scan that matches nothing proves nothing.
 check_population() {
-  awk -v metric_re="$POPULATION_METRIC_RE" -v pin="$POPULATION_PIN" '
+  awk -v metric_re="$POPULATION_METRIC_RE" -v pin="$POPULATION_PIN" \
+    -v context_group="ibex.slo.context_memory" -v context_pin='assembly="enabled"' '
     function indent(line) { match(line, /^[[:space:]]*/); return RLENGTH }
-    function pinned_in(tail,   labels, parts, count, i) {
+    function pinned_in(tail, want,   labels, parts, count, i) {
       if (substr(tail, 1, 1) != "{") return 0
       if (index(tail, "}") == 0) return 0
       labels = substr(tail, 2, index(tail, "}") - 2)
       count = split(labels, parts, ",")
       for (i = 1; i <= count; i++) {
-        if (parts[i] == pin) return 1
+        if (parts[i] == want) return 1
       }
       return 0
     }
-    function analyse(body, nr,   rest, at, metric, tail) {
+    # The ratified overhead population is assembly="disabled" everywhere. The
+    # one exception is the context/memory group-owned eligible-traffic guard, which
+    # is deliberately assembly="enabled": it is the population whose SLI can go
+    # missing. Every other group still has to pin the ratified population, so a
+    # new group cannot read the overhead histogram or the counter unpinned.
+    function required_pin(metric) {
+      if (metric == "ibex_proxy_nonstreaming_requests_total" && group == context_group) return context_pin
+      return pin
+    }
+    function analyse(body, nr,   rest, at, metric, tail, want) {
       rest = body
       while ((at = match(rest, metric_re)) > 0) {
         metric = substr(rest, RSTART, RLENGTH)
         tail = substr(rest, RSTART + RLENGTH)
-        if (pinned_in(tail)) {
+        want = required_pin(metric)
+        if (pinned_in(tail, want)) {
           pinned++
+          if (want == pin) pinned_disabled++
         } else {
-          printf "FAIL %s:%d: selector %s does not pin the ratified population (expected %s in its label set)\n", FILENAME, nr, metric, pin > "/dev/stderr"
+          printf "FAIL %s:%d: selector %s does not pin the required population (expected %s in its label set)\n", FILENAME, nr, metric, want > "/dev/stderr"
           bad = 1
         }
         rest = tail
       }
     }
+    /^[[:space:]]*-[[:space:]]+name:[[:space:]]*/ { group = $3; next }
     {
       if (in_body && $0 !~ /^[[:space:]]*$/ && indent($0) <= body_indent) in_body = 0
       if ($0 ~ /^[[:space:]]*expr:[[:space:]]*\|[[:space:]]*$/) {
@@ -626,8 +639,97 @@ check_population() {
       if (in_body && $0 !~ /^[[:space:]]*$/) analyse($0, FNR)
     }
     END {
-      if (pinned == 0) {
+      if (pinned_disabled == 0) {
         printf "FAIL %s: selects none of the SLI metrics with %s, so the population check would be vacuous\n", FILENAME, pin > "/dev/stderr"
+        bad = 1
+      }
+      exit bad
+    }
+  ' "$@"
+}
+
+# check_context_memory reports (on stderr) every selector in the
+# ibex.slo.context_memory group that does not pin the population it belongs to,
+# and exits non-zero when there is one. The group records two SLIs whose targets
+# are unratified (05-request-lifecycle-and-slos.md §Timing policy), so this check
+# is about *which* series each rule reads, not about a threshold:
+#   * the context-assembly SLI reads ibex_proxy_context_assemble_seconds, which
+#     carries no assembly label;
+#   * its traffic guard reads ibex_proxy_nonstreaming_requests_total pinned to
+#     assembly="enabled" — the population whose SLI can go missing;
+#   * the memory SLI and its guard both pin route="/v1/memories/search", so a
+#     different route cannot satisfy the retrieval assertion.
+# Like check_population it is pure: it does not touch FAILURES, so the
+# self-tests can run it on a mutant.
+check_context_memory() {
+  awk '
+    function indent(line) { match(line, /^[[:space:]]*/); return RLENGTH }
+    function label_set(tail,   end) {
+      if (substr(tail, 1, 1) != "{") return ""
+      end = index(tail, "}")
+      if (end == 0) return ""
+      return substr(tail, 2, end - 2)
+    }
+    function has_label(labels, want,   parts, count, i) {
+      count = split(labels, parts, ",")
+      for (i = 1; i <= count; i++) if (parts[i] == want) return 1
+      return 0
+    }
+    function analyse(body, nr,   rest, at, metric, labels) {
+      rest = body
+      while ((at = match(rest, /ibex_(proxy_(context_assemble_seconds|nonstreaming_requests_total)|memory_http_(request_duration_seconds|requests_total))/)) > 0) {
+        metric = substr(rest, RSTART, RLENGTH)
+        rest = substr(rest, RSTART + RLENGTH)
+        if (match(rest, /^(_bucket|_count|_sum)/)) rest = substr(rest, RLENGTH + 1)
+        labels = label_set(rest)
+        if (metric == "ibex_proxy_context_assemble_seconds") {
+          context++
+        } else if (metric == "ibex_proxy_nonstreaming_requests_total") {
+          if (has_label(labels, "assembly=\"enabled\"")) { guard++ }
+          else {
+            printf "FAIL %s:%d: context-assembly traffic guard %s must pin assembly=\"enabled\"\n", FILENAME, nr, metric > "/dev/stderr"
+            bad = 1
+          }
+        } else if (metric == "ibex_memory_http_request_duration_seconds") {
+          if (has_label(labels, "route=\"/v1/memories/search\"")) { memory++ }
+          else {
+            printf "FAIL %s:%d: memory-retrieval selector %s must pin route=\"/v1/memories/search\"\n", FILENAME, nr, metric > "/dev/stderr"
+            bad = 1
+          }
+        } else if (metric == "ibex_memory_http_requests_total") {
+          if (has_label(labels, "route=\"/v1/memories/search\"")) { memory_guard++ }
+          else {
+            printf "FAIL %s:%d: memory-retrieval traffic guard %s must pin route=\"/v1/memories/search\"\n", FILENAME, nr, metric > "/dev/stderr"
+            bad = 1
+          }
+        }
+      }
+    }
+    /^[[:space:]]*-[[:space:]]+name:[[:space:]]*/ { group = $3; next }
+    {
+      if (in_body && $0 !~ /^[[:space:]]*$/ && indent($0) <= body_indent) in_body = 0
+      if ($0 ~ /^[[:space:]]*expr:[[:space:]]*\|[[:space:]]*$/) {
+        in_body = 1
+        body_indent = indent($0)
+        next
+      }
+      if (in_body && $0 !~ /^[[:space:]]*$/ && group == "ibex.slo.context_memory") analyse($0, FNR)
+    }
+    END {
+      if (context == 0) {
+        printf "FAIL %s: no ibex_proxy_context_assemble_seconds selector in the ibex.slo.context_memory group\n", FILENAME > "/dev/stderr"
+        bad = 1
+      }
+      if (guard == 0) {
+        printf "FAIL %s: no assembly=\"enabled\" traffic guard in the ibex.slo.context_memory group\n", FILENAME > "/dev/stderr"
+        bad = 1
+      }
+      if (memory == 0) {
+        printf "FAIL %s: no ibex_memory_http_request_duration_seconds selector pinned to the search route\n", FILENAME > "/dev/stderr"
+        bad = 1
+      }
+      if (memory_guard == 0) {
+        printf "FAIL %s: no ibex_memory_http_requests_total traffic guard pinned to the search route\n", FILENAME > "/dev/stderr"
         bad = 1
       }
       exit bad
@@ -784,6 +886,48 @@ else
   pass "self-test: a rule with the population pin removed is rejected — $(head -n 1 <<<"$mutant_output")"
 fi
 
+# --- 4b. Context/memory population (W6.3) ------------------------------------
+# The unratified group reads a different population from the ratified overhead
+# SLO: the context histogram has no assembly label, its absence guard must pin
+# assembly="enabled", and the memory SLI/guard must both pin the search route.
+# check_context_memory proves each of those, so a later edit cannot silently
+# grade the wrong series while the recording rule still returns a number.
+if [[ "${#production_slo_files[@]}" -gt 0 ]]; then
+  if context_output="$(check_context_memory "${production_slo_files[@]}" 2>&1)"; then
+    pass "context/memory SLO selectors pin their populations (context_assemble, memory search route, assembly=\"enabled\" guard)"
+  else
+    printf '%s\n' "$context_output" | sed "$INDENT_FILTER" >&2
+    fail "a context/memory SLO selector reads the wrong population or route"
+  fi
+
+  # Self-mutation 1: remove the assembly="enabled" pin from the context guard.
+  # The check must reject it; otherwise the guard could be removed and the
+  # absence alert would page on every profile with assembly disabled.
+  context_guard_mutant="$TMP_DIR/ibex-slo.context-guard-unpinned.yml"
+  sed -E 's/(ibex_proxy_nonstreaming_requests_total)\{assembly="enabled"\}/\1{}/g' \
+    "$SLO_HEADER_RULES" >"$context_guard_mutant"
+  if cmp -s "$SLO_HEADER_RULES" "$context_guard_mutant"; then
+    fail "self-test could not build the context-guard mutant: the context/memory group has no assembly=\"enabled\" guard to transform"
+  elif mutant_output="$(check_context_memory "$context_guard_mutant" 2>&1)"; then
+    fail "self-test: a context-assembly traffic guard without assembly=\"enabled\" was accepted; the context check cannot catch the defect it exists for"
+  else
+    pass "self-test: a context-assembly guard with the population pin removed is rejected — $(head -n 1 <<<"$mutant_output")"
+  fi
+
+  # Self-mutation 2: point the memory SLI at another route. The check must
+  # reject it, because a hot-cache route's latency is not retrieval latency.
+  memory_route_mutant="$TMP_DIR/ibex-slo.memory-route-unpinned.yml"
+  sed -E 's#route="/v1/memories/search"#route="/v1/memories/hot"#g' \
+    "$SLO_HEADER_RULES" >"$memory_route_mutant"
+  if cmp -s "$SLO_HEADER_RULES" "$memory_route_mutant"; then
+    fail "self-test could not build the memory-route mutant: the context/memory group has no search-route pin to transform"
+  elif mutant_output="$(check_context_memory "$memory_route_mutant" 2>&1)"; then
+    fail "self-test: a memory SLI pinned to a non-search route was accepted; the context check cannot catch the defect it exists for"
+  else
+    pass "self-test: a memory selector pinned to a non-search route is rejected — $(head -n 1 <<<"$mutant_output")"
+  fi
+fi
+
 # --- 5. Expectation shape: firing and silent assertions both survive ---------
 if expectation_output="$(expectation_shape "$BURN_TEST" "$FAST_BURN_SPEC" "$SLOW_BURN_SPEC" 2>&1)"; then
   pass "$(basename "$BURN_TEST") keeps firing and silent assertions for the burn alerts"
@@ -854,7 +998,7 @@ test_args=()
 for file in "${test_files[@]}"; do test_args+=("$(to_runner_path "$file")"); done
 if test_output="$("${PROMTOOL_CMD[@]}" test rules "${test_args[@]}" 2>&1)"; then
   printf '%s\n' "$test_output" | sed "$INDENT_FILTER"
-  pass "promtool test rules: 30 of 60 observations over 20 ms on the le=\"0.02\" label produce a 50x burn rate and fire both burn alerts; 1% share stays silent with a 100% assembly-enabled series present; a recovering burn does not page; a 6m burst inside a clean hour breaches the 5m window and not the 1h window, so the fast burn stays silent; a missing or frozen SLI with eligible traffic raises the absence alert; an idle stack does not"
+  pass "promtool test rules: 30 of 60 observations over 20 ms on the le=\"0.02\" label produce a 50x burn rate and fire both burn alerts; 1% share stays silent with a 100% assembly-enabled series present; a recovering burn does not page; a 6m burst inside a clean hour breaches the 5m window and not the 1h window, so the fast burn stays silent; a missing or frozen SLI with eligible traffic raises the absence alert; an idle stack does not; the context-assembly and memory-retrieval absence alerts fire only while their guarded traffic exists"
   pass "constant probe $PROBE_ALERT evaluates to a firing alert with no traffic"
 else
   printf '%s\n' "$test_output" | sed "$INDENT_FILTER" >&2

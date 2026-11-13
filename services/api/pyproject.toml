@@ -60,6 +60,12 @@ markers = [
 line-length = 100
 target-version = "py312"
 
+[tool.ruff.lint.per-file-ignores]
+# A readiness probe must fail closed on any exception and must never return 500,
+# so the broad `except Exception` in the probe module is deliberate. The handler
+# says why in place; BLE001 is disabled for this module only, never repository-wide.
+"app/probes.py" = ["BLE001"]
+
 [tool.coverage.run]
 source = ["app"]
 branch = true

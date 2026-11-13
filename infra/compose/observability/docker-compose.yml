@@ -111,6 +111,30 @@ services:
     networks:
       - observability
 
+  # Textfile bridge for the backup and restore-drill metrics (O01/O02). Host
+  # scripts write *.prom files under /var/lib/ibex/backup; this container mounts
+  # that directory read-only and exposes the textfile collector. Defaults are
+  # disabled on purpose: it is not a host-metrics collector, so it needs no
+  # /host root mount and no extra privilege. The digest is the multi-arch
+  # manifest list for v1.8.2.
+  node-exporter:
+    image: docker.io/prom/node-exporter:v1.8.2@sha256:4032c6d5bfd752342c3e631c2f1de93ba6b86c41db6b167b9a35372c139e7706
+    container_name: ibex-obs-node-exporter
+    command:
+      - --collector.disable-defaults
+      - --collector.textfile
+      - --collector.textfile.directory=/var/lib/ibex/backup
+    volumes:
+      - ${IBEX_BACKUP_STATE_DIR:-/var/lib/ibex/backup}:/var/lib/ibex/backup:ro
+    ports:
+      - "127.0.0.1:${IBEX_OBS_NODE_EXPORTER_PORT:-9100}:9100"
+    # Distroless image: no shell or wget. Readiness is the Prometheus target
+    # health, not a container healthcheck.
+    healthcheck:
+      disable: true
+    networks:
+      - observability
+
   grafana:
     image: docker.io/grafana/grafana@sha256:fa801ab6e1ae035135309580891e09f7eb94d1abdbd2106bdc288030b028158c
     container_name: ibex-obs-grafana

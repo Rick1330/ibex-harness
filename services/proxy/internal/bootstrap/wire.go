@@ -494,16 +494,17 @@ func newCredentialResolver(client authv1.AuthServiceClient, rpcTimeout time.Dura
 }
 
 func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pgDB *sql.DB, tokenizerReg *tokenizer.Registry) *healthcheck.Server {
-	healthSrv := &healthcheck.Server{
-		CriticalCheckers: map[string]healthcheck.Checker{
-			"auth_grpc": healthcheck.AuthGRPC(authClient, cfg.AuthValidateTimeout),
-			"redis":     healthcheck.RedisPing(cfg.RedisURL),
-		},
+	critical := map[string]healthcheck.Checker{
+		"auth_grpc": healthcheck.AuthGRPC(authClient, cfg.AuthValidateTimeout),
+		"redis":     healthcheck.RedisPing(cfg.RedisURL),
 	}
-	advisory := map[string]healthcheck.Checker{}
+	// Postgres is a hard dependency for directive, session, and idempotency
+	// storage: a failed SELECT 1 must fail readiness (503) rather than degrade.
 	if pgDB != nil {
-		advisory["postgres"] = healthcheck.PostgresSelect1(pgDB)
+		critical["postgres"] = healthcheck.PostgresSelect1(pgDB)
 	}
+	healthSrv := &healthcheck.Server{CriticalCheckers: critical}
+	advisory := map[string]healthcheck.Checker{}
 	if cfg.SelfHosted.Enabled {
 		advisory["selfhosted_llm"] = newSelfHostedReadyChecker(
 			cfg.SelfHosted.NormalizeBaseURL(),

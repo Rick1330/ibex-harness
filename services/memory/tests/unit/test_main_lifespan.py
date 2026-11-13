@@ -223,6 +223,7 @@ def test_create_app_full_lifespan_mocked() -> None:
     mock_engine.connect = MagicMock(return_value=mock_conn)
     mock_redis = MagicMock()
     mock_redis.aclose = AsyncMock()
+    mock_redis.ping = AsyncMock(return_value=True)
     mock_client = MagicMock()
     mock_client.aclose = AsyncMock()
 

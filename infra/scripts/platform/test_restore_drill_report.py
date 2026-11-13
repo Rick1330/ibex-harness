@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Unit tests for restore_drill_report (outbox RPO + pg_dump honesty)."""
+"""Unit tests for restore_drill_report (outbox RPO + pg_dump honesty + O02/O03)."""
 
 from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -40,6 +41,12 @@ def _base_env(**overrides: str) -> dict[str, str]:
         "KYVERNO_OK": "false",
         "TRANSCRIPT": _TRANSCRIPT_FIXTURE,
         "CH_REACHABLE": "false",
+        "FIXTURE_ROWS": "50000",
+        "FIXTURE_ORGS": "2",
+        "FIXTURE_ROWS_ACTUAL": "50000",
+        "FIXTURE_ROWS_RESTORED": "50000",
+        "DRILL_MIN_FIXTURE_ROWS": "1000",
+        "DRILL_DURATION_SEC": "42",
     }
     env.update(overrides)
     return env
@@ -102,6 +109,113 @@ class BuildReportTests(unittest.TestCase):
         report = _mod.build_report(_base_env(ALLOW_NO_DB="1", ISO_OK="false"))
         self.assertFalse(report["evidence_eligible"])
         self.assertTrue(report["allow_no_db"])
+
+    def test_fixture_size_is_recorded(self) -> None:
+        report = _mod.build_report(_base_env())
+        self.assertEqual(report["fixture"]["rows"], 50000)
+        self.assertEqual(report["fixture"]["orgs"], 2)
+        self.assertEqual(report["fixture"]["rows_verified"], 50000)
+        self.assertEqual(report["fixture"]["rows_restored"], 50000)
+        self.assertTrue(report["postgres"]["rto_evidence_pass"])
+
+    def test_unverified_fixture_cannot_claim_rto_evidence(self) -> None:
+        # A smoke run (ALLOW_NO_DB) seeds nothing, so the requested row count
+        # must not be used as if it had been observed.
+        report = _mod.build_report(
+            _base_env(FIXTURE_ROWS="50000", FIXTURE_ROWS_ACTUAL="", FIXTURE_ROWS_RESTORED="")
+        )
+        self.assertFalse(report["postgres"]["rto_evidence_pass"])
+        self.assertIsNone(report["fixture"]["rows_verified"])
+        self.assertIsNone(report["fixture"]["rows_restored"])
+
+    def test_two_row_fixture_cannot_claim_rto_evidence(self) -> None:
+        # The defect O03 names: a ~1 s restore of two rows used to report
+        # rto_pass=true with nothing recording how little data that was.
+        report = _mod.build_report(
+            _base_env(FIXTURE_ROWS="2", FIXTURE_ROWS_ACTUAL="2", FIXTURE_ROWS_RESTORED="2")
+        )
+        self.assertTrue(report["postgres"]["rto_pass"])
+        self.assertFalse(report["postgres"]["rto_evidence_pass"])
+        self.assertEqual(report["fixture"]["rows"], 2)
+
+    def test_rto_target_is_configurable(self) -> None:
+        fast = _mod.build_report(_base_env(PG_RTO_MEASURED="10", PG_RTO_SEC="1800"))
+        slow = _mod.build_report(_base_env(PG_RTO_MEASURED="10", PG_RTO_SEC="5"))
+        self.assertTrue(fast["postgres"]["rto_pass"])
+        self.assertFalse(slow["postgres"]["rto_pass"])
+
+
+class DrillMetricsTests(unittest.TestCase):
+    def test_success_advances_last_success_and_reports_rto(self) -> None:
+        report = _mod.build_report(_base_env())
+        metrics = _mod.drill_metrics(
+            report,
+            now=1_700_000_000,
+            duration_seconds=42,
+            previous_last_success=None,
+        )
+        self.assertEqual(metrics["ibex_restore_drill_last_success_unixtime"], 1_700_000_000)
+        self.assertEqual(metrics["ibex_restore_drill_duration_seconds"], 42)
+        self.assertEqual(metrics["ibex_restore_drill_rto_pass"], 1)
+        self.assertEqual(metrics["ibex_restore_drill_rto_evidence_pass"], 1)
+        self.assertEqual(metrics["ibex_restore_drill_fixture_rows"], 50000)
+
+    def test_failed_run_preserves_previous_success(self) -> None:
+        report = _mod.build_report(_base_env(PG_RESTORE_OK="false"))
+        metrics = _mod.drill_metrics(
+            report,
+            now=1_700_000_000,
+            duration_seconds=1,
+            previous_last_success=1_690_000_000,
+        )
+        self.assertEqual(metrics["ibex_restore_drill_last_success_unixtime"], 1_690_000_000)
+        self.assertEqual(metrics["ibex_restore_drill_rto_pass"], 0)
+
+    def test_no_previous_success_omits_metric(self) -> None:
+        report = _mod.build_report(_base_env(PG_RESTORE_OK="false"))
+        metrics = _mod.drill_metrics(
+            report,
+            now=1_700_000_000,
+            duration_seconds=None,
+            previous_last_success=None,
+        )
+        self.assertNotIn("ibex_restore_drill_last_success_unixtime", metrics)
+        self.assertNotIn("ibex_restore_drill_duration_seconds", metrics)
+        self.assertEqual(metrics["ibex_restore_drill_rto_pass"], 0)
+
+    def test_small_fixture_sets_rto_evidence_zero(self) -> None:
+        report = _mod.build_report(
+            _base_env(FIXTURE_ROWS="2", FIXTURE_ROWS_ACTUAL="2", FIXTURE_ROWS_RESTORED="2")
+        )
+        metrics = _mod.drill_metrics(
+            report,
+            now=1_700_000_000,
+            duration_seconds=1,
+            previous_last_success=None,
+        )
+        self.assertEqual(metrics["ibex_restore_drill_rto_pass"], 1)
+        self.assertEqual(metrics["ibex_restore_drill_rto_evidence_pass"], 0)
+        self.assertEqual(metrics["ibex_restore_drill_fixture_rows"], 2)
+
+    def test_render_and_write_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ibex_restore_drill_metrics.prom"
+            metrics = {
+                "ibex_restore_drill_last_success_unixtime": 1_700_000_000,
+                "ibex_restore_drill_duration_seconds": 42,
+                "ibex_restore_drill_rto_pass": 1,
+            }
+            _mod.write_metrics(path, metrics)
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("# TYPE ibex_restore_drill_last_success_unixtime gauge", text)
+            self.assertIn("ibex_restore_drill_last_success_unixtime 1700000000", text)
+            self.assertIn("ibex_restore_drill_rto_pass 1", text)
+            self.assertEqual(_mod.read_last_success(path), 1_700_000_000)
+
+    def test_read_last_success_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "absent.prom"
+            self.assertIsNone(_mod.read_last_success(path))
 
 
 if __name__ == "__main__":

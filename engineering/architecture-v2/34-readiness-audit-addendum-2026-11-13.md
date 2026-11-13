@@ -183,3 +183,15 @@ The CI `repo-guards` job (`.github/workflows/ci.yml`:25-185) runs the layout, la
 - `python3 benchmarks/scripts/check_reproducibility.py` → exit 0, 4 warnings, 81 unrecorded runs.
 - Not verified: no hosted origin, cluster, PITR run, or p99 measurement was available to this addendum; rows that need one are recorded with their blocker, not scored.
 - Staging record: [`35-v1-remaining-gaps-staged-2026-11-13.md`](35-v1-remaining-gaps-staged-2026-11-13.md) classifies every remaining row into four stages with the exit gate and the traceability arithmetic, re-verified at `55a62bc4`.
+
+## 6. Stage 2 pass — recovery and operability
+
+A stage-2 pass closed 15 of the 25 rows in `35-v1-remaining-gaps-staged-2026-11-13.md` §4; §4.1 records each with its evidence. In summary:
+
+- **Readiness and runbooks.** Proxy treats Postgres as critical (`services/proxy/internal/bootstrap/wire.go`:501-506), memory and API readiness check their live dependencies (`services/memory/app/probes.py`:38-75; `services/api/app/probes.py`:34-90), and six missing runbooks now exist under `engineering/runbooks/` with an index entry each.
+- **Observability and drills.** The backup-freshness and restore-drill metrics are scraped through a node-exporter textfile collector, the drill seeds a real fixture and computes `rto_pass` against a configurable target, the Tempo assertion is bound to one request's trace id, and Console `/metrics` exists. Context and memory SLIs are recorded with absence alerts; the burn thresholds remain unratified, so this pass records SLIs, not SLOs.
+- **Recovery surface.** `make v1-backup`, `make v1-restore` and `make v1-pitr` exist, and a restore-replay test proves a restore carries forget markers and receipts. `pgbackrest-restore.sh` still has no PITR target support, so `make v1-pitr` refuses; a live backup/restore was not run here.
+
+Ten rows remain, each with its blocker in §4.2: `P0-09`, `P0-10`, `P0-11`, `P0-19`, `P1-47`, `P2-12`, `GAP-011`, `O04` (broker decision), `D4`, `D11`.
+
+**One correction worth recording.** The stage-1 migration work (P2-10) tried per-run database isolation and deliberately removed it: the migrations create and drop **cluster-global** roles (`000004`, `000036`, `000064`, `000068`), so a second database holding their grants blocks `DROP ROLE` with SQLSTATE `2BP01`, and the error names that other database (`infra/migrations/postgres/migrate_integration_main_test.go`:14-55). The harness repairs an interrupted predecessor instead (`:63-88,115-135).

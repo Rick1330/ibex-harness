@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID
 
+import httpx
 from authclient.permissions import OPERATOR_METADATA_READ
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -46,6 +47,19 @@ _DRILL_REPORT = Path(
     )
 )
 
+# Ingestion lag reads the newest event the platform actually persisted. ClickHouse
+# has no RLS (AGENTS.md §4.3), so the org filter below is the isolation boundary
+# and `_ingestion_lag_query` refuses to render without an org.
+# `maxOrNull` keeps an org with no rows distinguishable from an event at the epoch;
+# `dateDiff` in milliseconds keeps sub-second precision without a float date.
+_INGESTION_LAG_QUERY = """
+SELECT
+  count() AS event_count,
+  dateDiff('millisecond', maxOrNull(occurred_at), now64(3)) / 1000.0 AS lag_seconds
+FROM ibex.usage_facts
+WHERE org_id = toUUID('{org_id}')
+""".strip()
+
 
 class PlatformHealthResponse(BaseModel):
     dependency_health: dict[str, str] = Field(
@@ -54,7 +68,13 @@ class PlatformHealthResponse(BaseModel):
     last_backup_at: datetime | None = None
     last_restore_drill: dict[str, Any] | None = None
     retention_horizon_days: int = _DEFAULT_RETENTION_DAYS
-    ingestion_lag_seconds: float | None = None
+    ingestion_lag_seconds: float | None = Field(
+        default=None,
+        description=(
+            "Seconds since the newest ingested event for this organization; "
+            "null when ClickHouse is unavailable or the org has no events"
+        ),
+    )
     dlq_depth: int | None = None
     degraded_mode: bool = False
     outbox_max_aggregate_seq: int | None = None
@@ -188,6 +208,93 @@ def _parse_dlq_depth() -> int | None:
         return None
 
 
+def _clickhouse_dsn(settings: Any) -> str | None:
+    """ClickHouse HTTP endpoint, from settings first and the shared env second."""
+    for candidate in (
+        getattr(settings, "clickhouse_http_url", None),
+        os.environ.get("CLICKHOUSE_HTTP_URL"),
+        os.environ.get("IBEX_CLICKHOUSE_HTTP_URL"),
+    ):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    return None
+
+
+def _ingestion_lag_query(org_id: UUID | None) -> str:
+    """Render the org-scoped lag query; refuse to run without a tenant.
+
+    ClickHouse has no RLS, so an unscoped query would read every tenant's events
+    (AGENTS.md §4.3). A missing org is a programming error, not an empty result.
+    """
+    if not isinstance(org_id, UUID):
+        raise TypeError("ingestion lag requires an explicit org_id")
+    return _INGESTION_LAG_QUERY.replace("{org_id}", str(org_id))
+
+
+async def _post_lag_query(dsn: str, sql: str) -> tuple[int, str]:
+    """POST the rendered SQL to ClickHouse's HTTP interface."""
+    try:
+        async with httpx.AsyncClient(timeout=_DEP_TIMEOUT_SEC) as client:
+            resp = await client.post(
+                dsn.rstrip("/") + "/",
+                content=sql + "\nFORMAT JSONEachRow\n",
+                headers={"Content-Type": "text/plain"},
+            )
+    except httpx.HTTPError as exc:
+        raise OSError("clickhouse ingestion lag transport failed") from exc
+    return resp.status_code, resp.text
+
+
+def _lag_from_row(row: Any) -> float | None:
+    """Convert one JSONEachRow object to seconds, or None when it carries no event."""
+    if not isinstance(row, dict):
+        return None
+    try:
+        if int(row.get("event_count") or 0) < 1:
+            return None
+        raw = row.get("lag_seconds")
+        return None if raw is None else max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_lag_payload(status_code: int, body: str) -> float | None:
+    """Parse the aggregate row; an error status or empty result is unknown."""
+    if status_code >= 400:
+        logger.warning("clickhouse ingestion lag failed status=%s", status_code)
+        return None
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            return _lag_from_row(json.loads(stripped))
+        except json.JSONDecodeError:
+            logger.warning("clickhouse ingestion lag returned a non-JSON row")
+            return None
+    return None
+
+
+async def _ingestion_lag_seconds(dsn: str | None, org_id: UUID) -> float | None:
+    """Seconds since the newest ingested event for ``org_id``; None if unknown.
+
+    Never raises and never guesses: an unconfigured ClickHouse, a transport
+    failure, an error status, or an org with no events all return None so the
+    operator sees "unknown" rather than a fabricated freshness number.
+    """
+    if not dsn:
+        return None
+    try:
+        sql = _ingestion_lag_query(org_id)
+        if f"toUUID('{org_id}')" not in sql:
+            raise ValueError("ingestion lag query is missing the org filter")
+        status, body = await _post_lag_query(dsn, sql)
+        return _parse_lag_payload(status, body)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        logger.debug("ingestion lag unavailable", exc_info=True)
+        return None
+
+
 @router.get("/health")
 async def platform_health(
     request: Request,
@@ -208,9 +315,10 @@ async def platform_health(
         except (SQLAlchemyError, OSError, RuntimeError):
             outbox_seq = None
 
-    last_backup, last_drill = await asyncio.gather(
+    last_backup, last_drill, ingestion_lag = await asyncio.gather(
         asyncio.to_thread(_parse_backup_stamp),
         asyncio.to_thread(_load_drill),
+        _ingestion_lag_seconds(_clickhouse_dsn(_settings(request)), claims.org_id),
     )
 
     return PlatformHealthResponse(
@@ -220,7 +328,7 @@ async def platform_health(
         retention_horizon_days=int(
             getattr(_settings(request), "platform_retention_horizon_days", _DEFAULT_RETENTION_DAYS)
         ),
-        ingestion_lag_seconds=None,  # residual: wire CH ingestion lag in 4.D.1
+        ingestion_lag_seconds=ingestion_lag,
         dlq_depth=_parse_dlq_depth(),
         degraded_mode=degraded,
         outbox_max_aggregate_seq=outbox_seq,

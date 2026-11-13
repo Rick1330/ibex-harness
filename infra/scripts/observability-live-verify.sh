@@ -73,31 +73,24 @@ tempo_ready() {
   curl -fsS --connect-timeout 2 --max-time 5 "$TEMPO_URL/ready" >/dev/null 2>&1
 }
 
-# TRACE_SERVICE is the resource service.name the proxy actually exports, not a
-# guess: services/proxy/internal/bootstrap/run.go pins bootstrapServiceName =
-# "ibex-proxy" and passes it to telemetry.InitTracer, and
-# packages/telemetry/resource.go turns that into semconv.ServiceName. Tempo's
-# search returns every service in the window, so without this filter a trace from
-# auth, the embedder or an earlier run satisfies the assertion.
-TRACE_SERVICE="ibex-proxy"
-
-# tempo_search asks for the newest single ibex-proxy trace that started after
-# this script did. Both bounds are sent explicitly:
-#   * `q={service.name="ibex-proxy"}` keeps another service's traffic from
-#     standing in for the proxy's export path;
-#   * `start=${RUN_START}` keeps an earlier run's trace from masking a current
-#     export failure — the failure mode that made this assertion unfalsifiable.
-# Relying on Tempo's default window would silently test a different range than
-# the operator expects.
+# tempo_search asks Tempo for the exact trace id this script sent in a
+# traceparent header (P1-49). A service-scoped "newest trace after the run"
+# search proved only that *a* proxy trace existed; it could not fail for a
+# request whose export was broken while another request succeeded. The trace id
+# is the binding: packages/telemetry/spanmiddleware.go extracts the incoming
+# traceparent, so the proxy's server span and its children share this id.
+# The start/end bounds are still sent explicitly, so an earlier run's trace with
+# the same id (impossible in practice, but not assumed) cannot satisfy the
+# window by default.
 tempo_search() {
-  local end
+  local trace_id="$1" end
   end=$(date +%s)
   # Keep the window non-degenerate: the first iteration can run inside the same
   # second as RUN_START, and start == end is an empty range.
   [[ "$end" -le "$RUN_START" ]] && end=$((RUN_START + 1))
   curl -fsS --connect-timeout 2 --max-time 10 --get \
     --data-urlencode "limit=1" \
-    --data-urlencode 'q={service.name="'"$TRACE_SERVICE"'"}' \
+    --data-urlencode "q={traceID=\"${trace_id}\"}" \
     --data-urlencode "start=${RUN_START}" \
     --data-urlencode "end=${end}" \
     "$TEMPO_URL/api/search"
@@ -256,6 +249,22 @@ for i in $(seq 1 10); do
     -d '{"jsonrpc":"2.0","id":'"$i"',"method":"tools/call","params":{"name":"search_memory","arguments":{"query":"obs'"$i"'"}}}' || true
 done
 curl -fsS -o /dev/null "$MCP_ADDR/metrics"
+
+# P1-49: bind the trace assertion to one request this script made. The proxy
+# extracts an incoming traceparent, so this trace id is the exact id the server
+# span (and its children) will carry. The request must succeed: a failed request
+# would make the trace assertion ambiguous about which failure it observed.
+TRACE_ID="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+SPAN_ID="$(python3 -c 'import secrets; print(secrets.token_hex(8))')"
+TRACEPARENT="00-${TRACE_ID}-${SPAN_ID}-01"
+trace_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$PROXY_ADDR/v1/chat/completions" \
+  -H "$JSON_CONTENT_TYPE" \
+  -H "Authorization: Bearer $DEV_TOKEN" \
+  -H "X-IBEX-Agent-ID: $DEV_AGENT" \
+  -H "traceparent: $TRACEPARENT" \
+  -d "$CHAT_BODY" || true)"
+[[ "$trace_code" == "200" ]] || fail "traceparent-bound chat request returned ${trace_code:-<no response>} (want 200)"
+pass "traceparent-bound request sent (trace id ${TRACE_ID})"
 pass "traffic generated"
 
 echo "waiting for Prometheus scrape (25s)..."
@@ -312,10 +321,11 @@ echo "=== Tempo trace round-trip ==="
 # replaced an assertion that queried Prometheus `up` while claiming to check
 # Tempo, which could never fail for a Tempo problem.
 #
-# The search is narrowed twice (see tempo_search): to service.name="ibex-proxy"
-# and to traces that started after RUN_START. An unfiltered "newest trace in the
-# last hour" passed on leftovers from an earlier run, so a broken export path
-# stayed green for as long as one old trace remained in the window.
+# The search is bound to the trace id this script sent in the traceparent
+# header, and still bounded to traces that started after RUN_START. A
+# service-scoped "newest trace in the window" passed on any successful request,
+# so a broken export for the request under test stayed green; a stale trace from
+# an earlier run could mask a current failure. Neither is accepted as evidence.
 if ! tempo_ready; then
   fail "Tempo unreachable at ${TEMPO_URL}/ready: start it with 'make observability-up' (services export OTLP to ${OTEL_EXPORTER_OTLP_ENDPOINT})"
 fi
@@ -323,16 +333,20 @@ pass "tempo ready"
 
 trace_id=""
 for _ in $(seq 1 30); do
-  if trace_id="$(tempo_search 2>/dev/null | tempo_first_trace_id 2>/dev/null)"; then
-    [[ -n "$trace_id" ]] && break
+  found=""
+  if found="$(tempo_search "$TRACE_ID" 2>/dev/null | tempo_first_trace_id 2>/dev/null)"; then
+    if [[ "$found" == "$TRACE_ID" ]]; then
+      trace_id="$found"
+      break
+    fi
+    fail "Tempo search for traceID=${TRACE_ID} returned ${found}, a different trace; the trace id is not bound to the request"
   fi
-  trace_id=""
   sleep 2
 done
 if [[ -z "$trace_id" ]]; then
-  fail "Tempo is reachable at ${TEMPO_URL} but returned no ${TRACE_SERVICE} trace that started after this run began (${RUN_START}): either OTLP export from the proxy is not reaching it (check the otel-collector log; endpoint ${OTEL_EXPORTER_OTLP_ENDPOINT}, service.name=${TRACE_SERVICE}) or its search API returned an unparseable response. A stale trace from an earlier run is not accepted as evidence."
+  fail "Tempo is reachable at ${TEMPO_URL} but returned no trace for traceID=${TRACE_ID}, the id sent in the traceparent header of a chat request that returned 200: either OTLP export from the proxy is not reaching it (check the otel-collector log; endpoint ${OTEL_EXPORTER_OTLP_ENDPOINT}) or its search API returned an unparseable response. A service-scoped or stale trace is not accepted as evidence."
 fi
-pass "tempo trace found: ${trace_id}"
+pass "tempo trace found for the traceparent request: ${trace_id}"
 
 echo ""
 echo "observability-live-verify passed"

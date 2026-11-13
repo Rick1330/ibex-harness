@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+from typing import Self
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY, generate_latest
 
@@ -21,7 +24,7 @@ def test_health_and_ready() -> None:
         embedding_api_token="unit-test-token",
     )
     with (
-        patch("app.main._postgres_ready", AsyncMock(return_value=True)),
+        patch("app.probes.postgres_ready", AsyncMock(return_value=True)),
         TestClient(
             create_app(
                 settings=settings,
@@ -70,10 +73,191 @@ def test_http_metrics_count_status_and_latency() -> None:
 
 
 def test_ready_returns_503_when_state_has_error() -> None:
-    application = create_app()
+    application = create_app(settings=Settings(database_url=None))
     state = MemoryAppState(ready=False, ready_error="db unavailable")
     application.state.memory = state
     with TestClient(application) as client:
         response = client.get("/ready")
         assert response.status_code == 503
         assert response.json()["error"]["code"] == "service_not_ready"
+        assert response.json()["error"]["dependency"] == "bootstrap"
+
+
+# --- P1-06: /ready is live, not startup-only -------------------------------
+
+
+class _FakeConnection:
+    """Minimal async connection; ``error`` is raised from execute()."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self._error = error
+
+    async def execute(self, _statement: object) -> None:
+        if self._error is not None:
+            raise self._error
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
+
+
+class _FakeEngine:
+    def __init__(self, error: Exception | None = None) -> None:
+        self._error = error
+        self.connect_calls = 0
+
+    def connect(self) -> _FakeConnection:
+        self.connect_calls += 1
+        return _FakeConnection(self._error)
+
+
+class _FakeRedis:
+    def __init__(self, *, pong: object = True, error: Exception | None = None) -> None:
+        self._pong = pong
+        self._error = error
+
+    async def ping(self) -> object:
+        if self._error is not None:
+            raise self._error
+        return self._pong
+
+
+class _SlowValidator:
+    def __init__(self, delay: float = 5.0) -> None:
+        self._delay = delay
+        self.calls = 0
+
+    async def ready(self) -> bool:
+        self.calls += 1
+        await asyncio.sleep(self._delay)
+        return True
+
+
+def _ready_client(state: MemoryAppState) -> TestClient:
+    """App with injected state; the lifespan mutates only the original object."""
+    application = create_app(settings=Settings(database_url=None))
+    application.state.memory = state
+    return TestClient(application)
+
+
+def _live_state(
+    *,
+    validator: object | None = None,
+    engine: object | None = None,
+    redis: object | None = None,
+) -> MemoryAppState:
+    return MemoryAppState(
+        ready=True,
+        validator=validator if validator is not None else StaticTokenValidator({}, available=True),
+        engine=engine if engine is not None else _FakeEngine(),
+        redis=redis,
+    )
+
+
+def test_ready_live_checks_pass() -> None:
+    engine = _FakeEngine()
+    state = _live_state(engine=engine, redis=None)
+    with _ready_client(state) as client:
+        response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready", "service": "memory"}
+    assert engine.connect_calls == 1
+
+
+def test_ready_reports_failing_auth() -> None:
+    state = _live_state(validator=StaticTokenValidator({}, available=False))
+    with _ready_client(state) as client:
+        response = client.get("/ready")
+    assert response.status_code == 503
+    body = response.json()["error"]
+    assert body["dependency"] == "auth"
+    assert body["message"] == "auth gRPC not reachable"
+    assert body["code"] == "service_not_ready"
+
+
+def test_ready_reports_failing_postgres() -> None:
+    state = _live_state(engine=_FakeEngine(OSError("connection refused")))
+    with _ready_client(state) as client:
+        response = client.get("/ready")
+    assert response.status_code == 503
+    body = response.json()["error"]
+    assert body["dependency"] == "postgres"
+    assert body["message"] == "database not reachable"
+
+
+def test_ready_reports_failing_redis() -> None:
+    state = _live_state(redis=_FakeRedis(error=ConnectionError("redis down")))
+    with _ready_client(state) as client:
+        response = client.get("/ready")
+    assert response.status_code == 503
+    body = response.json()["error"]
+    assert body["dependency"] == "redis"
+    assert body["message"] == "redis not reachable"
+
+
+def test_ready_treats_a_false_redis_ping_as_failing() -> None:
+    state = _live_state(redis=_FakeRedis(pong=False))
+    with _ready_client(state) as client:
+        response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["error"]["dependency"] == "redis"
+
+
+def test_ready_ignores_an_unconfigured_redis() -> None:
+    state = _live_state(redis=None)
+    with _ready_client(state) as client:
+        response = client.get("/ready")
+    assert response.status_code == 200
+
+
+def test_ready_bootstrap_failure_fails_fast_without_probing() -> None:
+    validator = StaticTokenValidator({}, available=True)
+    state = MemoryAppState(
+        ready=False,
+        ready_error="IBEX_MEMORY_DATABASE_URL not set",
+        validator=validator,
+        engine=_FakeEngine(),
+    )
+    with _ready_client(state) as client:
+        response = client.get("/ready")
+    assert response.status_code == 503
+    body = response.json()["error"]
+    assert body["dependency"] == "bootstrap"
+    assert body["message"] == "IBEX_MEMORY_DATABASE_URL not set"
+
+
+def test_ready_without_state_reports_not_ready() -> None:
+    application = create_app(settings=Settings(database_url=None))
+    application.state.memory = None
+    with TestClient(application) as client:
+        response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["error"]["dependency"] == "memory"
+
+
+def test_ready_overall_budget_exceeded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import probes
+
+    monkeypatch.setattr(probes, "_READY_OVERALL_TIMEOUT_S", 0.01)
+    validator = _SlowValidator(delay=5.0)
+    state = _live_state(validator=validator)
+    with _ready_client(state) as client:
+        response = client.get("/ready")
+    assert response.status_code == 503
+    body = response.json()["error"]
+    assert body["dependency"] == "timeout"
+    assert body["message"] == "readiness checks timed out"
+
+
+def test_ready_per_check_budget_exceeded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import probes
+
+    monkeypatch.setattr(probes, "_READY_CHECK_TIMEOUT_S", 0.01)
+    validator = _SlowValidator(delay=5.0)
+    state = _live_state(validator=validator)
+    with _ready_client(state) as client:
+        response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["error"]["dependency"] == "auth"

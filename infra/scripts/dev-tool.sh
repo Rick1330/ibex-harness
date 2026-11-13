@@ -201,7 +201,12 @@ PY
   return 1
 }
 
-v1_bootstrap_pat() {
+# v1_bootstrap_pat_read prints the one-time PAT on stdout. It returns 3 when the
+# file is absent (a re-run after the operator consumed it), and 1 when the file
+# exists but is not operator-only: a world-readable credential is a refusal, not
+# a warning. The banner belongs to v1_bootstrap_pat, so the smoke path can read
+# the value without printing it.
+v1_bootstrap_pat_read() {
   # The PAT is written by the one-shot into a host bind mount, so it outlives
   # the container. Reading the host file avoids `cp` (which streams a tar
   # archive) and any rootful/rootless container-store mismatch.
@@ -210,14 +215,13 @@ v1_bootstrap_pat() {
   local -a engine
   if [[ ! -f "$path" ]]; then
     echo "no bootstrap PAT at $path; a first install writes it once during make v1-up" >&2
-    return 1
+    return 3
   fi
   mode="$(stat -c %a "$path")"
   if [[ "$mode" != "600" ]]; then
-    echo "refusing to print $path: mode $mode, expected 600" >&2
+    echo "refusing to read $path: mode $mode, expected 600" >&2
     return 1
   fi
-  echo "bootstrap PAT (store it in your secret manager, then delete $path):" >&2
   if [[ -r "$path" ]]; then
     cat "$path"
     return 0
@@ -232,6 +236,344 @@ v1_bootstrap_pat() {
   run_args+=(--security-opt label=disable)
   run_args+=(-v "$dir:/run/ibex:ro" ibex-v1-auth:local /run/ibex/bootstrap.pat)
   "${run_args[@]}"
+}
+
+v1_bootstrap_pat() {
+  local pat rc
+  # `! cmd` reports the inverted status, so capture the function's real exit
+  # code before testing it. A missing file is exit 3, not a success with no
+  # output.
+  pat="$(v1_bootstrap_pat_read)" && rc=0 || rc=$?
+  if (( rc != 0 )); then
+    return "$rc"
+  fi
+  echo "bootstrap PAT (store it in your secret manager, then delete infra/compose/v1-single-node/bootstrap/bootstrap.pat):" >&2
+  printf '%s\n' "$pat"
+}
+
+# v1_pg_exec runs one SQL statement against the profile's Postgres through
+# Compose, using the profile's own POSTGRES_USER/POSTGRES_DB. It is the only
+# way the smoke can resolve the bootstrap org and agent ids without guessing:
+# the bootstrap command generates them with uuid.New().
+v1_pg_exec() {
+  local sql="$1" user db
+  user="$(v1_env_value POSTGRES_USER)"; user="${user:-ibex}"
+  db="$(v1_env_value POSTGRES_DB)"; db="${db:-ibex}"
+  compose_with_mode v1 exec -T postgres psql -U "$user" -d "$db" -Atc "$sql"
+}
+
+v1_is_uuid() {
+  python3 -c 'import sys, uuid
+try:
+    uuid.UUID(sys.argv[1])
+except (ValueError, AttributeError):
+    sys.exit(1)
+' "$1" 2>/dev/null
+}
+
+# v1_smoke_org_id resolves the bootstrap organization id. IBEX_V1_ORG_ID wins so
+# an operator can run the smoke against a profile whose slug they changed.
+v1_smoke_org_id() {
+  local org="${IBEX_V1_ORG_ID:-}" slug
+  if [[ -n "$org" ]]; then
+    printf '%s\n' "$org"
+    return 0
+  fi
+  slug="$(v1_env_value IBEX_BOOTSTRAP_ORG_SLUG)"; slug="${slug:-ibex}"
+  if [[ ! "$slug" =~ ^[a-z0-9-]+$ ]]; then
+    echo "refusing to query an invalid organization slug: $slug" >&2
+    return 1
+  fi
+  v1_pg_exec "SELECT id FROM ibex_core.organizations WHERE slug = '$slug' AND deleted_at IS NULL ORDER BY created_at LIMIT 1"
+}
+
+v1_smoke_agent_id() {
+  local org="$1" slug
+  if [[ -n "${IBEX_V1_AGENT_ID:-}" ]]; then
+    printf '%s\n' "$IBEX_V1_AGENT_ID"
+    return 0
+  fi
+  slug="$(v1_env_value IBEX_BOOTSTRAP_AGENT_SLUG)"; slug="${slug:-default}"
+  if [[ ! "$slug" =~ ^[a-z0-9-]+$ ]]; then
+    echo "refusing to query an invalid agent slug: $slug" >&2
+    return 1
+  fi
+  v1_pg_exec "SELECT id FROM ibex_core.agents WHERE org_id = '$org'::uuid AND slug = '$slug' AND deleted_at IS NULL ORDER BY created_at LIMIT 1"
+}
+
+v1_edge_port() {
+  local port="${IBEX_EDGE_PORT:-}"
+  [[ -n "$port" ]] || port="$(v1_env_value IBEX_EDGE_PORT)"
+  printf '%s\n' "${port:-443}"
+}
+
+v1_edge_ca() {
+  printf '%s\n' "$ROOT_DIR/infra/compose/v1-single-node/secrets/ca.crt"
+}
+
+# v1_smoke_http is the one curl call the assertion uses. Keeping it separate
+# lets the self-test replace `curl` with a stub and exercise the parsing and
+# status assertions without a running profile.
+#
+# The bootstrap PAT is an admin credential, so it must not appear in curl's
+# argv: OpenCode (and any process monitor) logs argv. The bearer header is
+# written to a 0600 curl config file and passed with --config; only the file
+# path is visible.
+v1_smoke_http() {
+  local url="$1" token="$2" agent="$3" body="$4"
+  local -a args=(--cacert "$(v1_edge_ca)" -sS -o "$body" -w '%{http_code}')
+  local cfg="" status
+  if [[ -n "$token" ]]; then
+    cfg="$(mktemp "${TMPDIR:-/tmp}/ibex-v1-smoke-curl.XXXXXX")"
+    chmod 0600 "$cfg"
+    printf 'header = "Authorization: Bearer %s"\n' "$token" >"$cfg"
+    args+=(--config "$cfg")
+  fi
+  [[ -n "$agent" ]] && args+=(-H "X-IBEX-Agent-ID: $agent")
+  status="$(curl "${args[@]}" "$url" || true)"
+  [[ -n "$cfg" ]] && rm -f "$cfg"
+  printf '%s' "$status"
+}
+
+# v1_smoke_body_org asserts the JSON body's org_id equals the requested org.
+v1_smoke_body_org() {
+  local body="$1" expected="$2"
+  python3 - "$body" "$expected" <<'PY'
+import json
+import sys
+
+path, expected = sys.argv[1], sys.argv[2].strip().lower()
+try:
+    with open(path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+except (OSError, ValueError):
+    sys.exit(1)
+actual = str(payload.get("org_id", "")).strip().lower()
+sys.exit(0 if actual == expected else 1)
+PY
+}
+
+# v1_smoke_assert proves the profile serves an authenticated request, and that
+# the two negative paths stay closed. It returns 1 instead of exiting so the
+# self-test can assert a failure.
+v1_smoke_assert() {
+  local base="$1" org="$2" agent="$3" pat="$4" body="$5" status wrong_org
+  status="$(v1_smoke_http "$base/v1/orgs/$org/auth-probe" "$pat" "$agent" "$body" || true)"
+  [[ "$status" == "200" ]] || { echo "auth-probe with the bootstrap PAT returned $status, want 200" >&2; return 1; }
+  v1_smoke_body_org "$body" "$org" || { echo "auth-probe body org_id does not match $org" >&2; return 1; }
+
+  status="$(v1_smoke_http "$base/v1/orgs/$org/auth-probe" "" "$agent" "$body" || true)"
+  [[ "$status" == "401" ]] || { echo "auth-probe without a token returned $status, want 401" >&2; return 1; }
+
+  wrong_org="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+  status="$(v1_smoke_http "$base/v1/orgs/$wrong_org/auth-probe" "$pat" "$agent" "$body" || true)"
+  [[ "$status" == "403" ]] || { echo "auth-probe for a different org returned $status, want 403" >&2; return 1; }
+  return 0
+}
+
+# v1_smoke is the O06 proof: an authenticated edge request through Caddy, not a
+# static /_edge/health string. It reads the one-time bootstrap PAT (mode 600),
+# resolves the org and agent ids from the profile database, then asserts 200 +
+# matching org and the 401/403 negatives. --from-up turns an absent, already
+# consumed PAT into a loud SKIP so a re-run of `make v1-up` stays usable; the
+# standalone `make v1-smoke` treats it as a failure.
+v1_smoke() {
+  local from_up=0
+  if [[ "${1:-}" == "--from-up" ]]; then
+    from_up=1
+    shift
+  fi
+  local attempts="${IBEX_V1_SMOKE_ATTEMPTS:-15}" i rc=3 pat="" org="" agent="" port base
+  for ((i = 1; i <= attempts; i++)); do
+    # The assignment inherits the function's status; `|| rc=$?` keeps `set -e`
+    # from exiting on the expected "file absent" (3) result.
+    pat="$(v1_bootstrap_pat_read 2>/dev/null)" && rc=0 || rc=$?
+    if (( rc == 0 )); then
+      break
+    fi
+    if (( rc != 3 )); then
+      echo "bootstrap PAT is present but unreadable (mode check failed); fix its mode instead of retrying" >&2
+      return 1
+    fi
+    sleep 2
+  done
+  if (( rc != 0 )); then
+    if (( from_up )); then
+      echo "SKIP: bootstrap PAT absent (the one-time credential was already consumed); authenticated v1 liveness is unproven on this run. Run 'make v1-smoke' with the PAT restored to prove it." >&2
+      return 0
+    fi
+    echo "cannot prove v1 liveness: no readable bootstrap PAT" >&2
+    return 1
+  fi
+  # The org/agent lookup and the edge port default to the profile .env. An
+  # explicit triple lets the smoke run without it, but a missing .env with any
+  # default still needed is a setup error, not a probe failure.
+  if [[ ! -f "$V1_ENV" && ( -z "${IBEX_V1_ORG_ID:-}" || -z "${IBEX_V1_AGENT_ID:-}" || -z "${IBEX_EDGE_PORT:-}" ) ]]; then
+    echo "missing $V1_ENV; run: make v1-secrets (or set IBEX_V1_ORG_ID, IBEX_V1_AGENT_ID and IBEX_EDGE_PORT)" >&2
+    return 1
+  fi
+  for ((i = 1; i <= attempts; i++)); do
+    org="$(v1_smoke_org_id 2>/dev/null || true)"
+    if [[ -n "$org" ]] && v1_is_uuid "$org"; then
+      agent="$(v1_smoke_agent_id "$org" 2>/dev/null || true)"
+      if [[ -n "$agent" ]] && v1_is_uuid "$agent"; then
+        break
+      fi
+    fi
+    org="" agent=""
+    sleep 2
+  done
+  if [[ -z "$org" || -z "$agent" ]]; then
+    echo "cannot resolve the bootstrap org/agent ids from the profile database; run 'make v1-ps' and 'make v1-logs'" >&2
+    return 1
+  fi
+  port="$(v1_edge_port)"
+  base="https://localhost:${port}"
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/ibex-v1-smoke.XXXXXX")"
+  if ! v1_smoke_assert "$base" "$org" "$agent" "$pat" "$tmp/body.json"; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  rm -rf "$tmp"
+  echo "PASS: v1 auth-probe 200 through the edge with the bootstrap PAT (org_id matches $org)"
+  echo "PASS: v1 auth-probe 401 without a token"
+  echo "PASS: v1 auth-probe 403 for a different org path"
+  return 0
+}
+
+# v1_smoke_selftest exercises v1_smoke_assert against a stub curl, so the
+# parsing and status assertions are tested even when no profile is running.
+v1_smoke_selftest() {
+  local org="11111111-1111-4111-8111-111111111111"
+  local agent="22222222-2222-4222-8222-222222222222"
+  local pat="ibex_pat_selftest"
+  V1_SMOKE_SELFTEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/ibex-v1-smoke-selftest.XXXXXX")"
+  # The trap runs at script exit, after this function's locals are gone, so the
+  # directory is held in a global and the expansion is guarded.
+  trap 'rm -rf "${V1_SMOKE_SELFTEST_TMP:-}"' EXIT
+  local tmp="$V1_SMOKE_SELFTEST_TMP"
+
+  stub_curl() {
+    local out="" url="" token="" cfg=""
+    while (( $# )); do
+      case "$1" in
+        -o) out="$2"; shift 2 ;;
+        --cacert|-w) shift 2 ;;
+        --config) cfg="$2"; shift 2 ;;
+        -H)
+          case "$2" in
+            "Authorization: Bearer "*) token="${2#Authorization: Bearer }" ;;
+            *) : ;;
+          esac
+          shift 2 ;;
+        -sS) shift ;;
+        *) url="$1"; shift ;;
+      esac
+    done
+    if [[ -n "$cfg" ]]; then
+      token="$(sed -n 's/^header = "Authorization: Bearer \(.*\)"$/\1/p' "$cfg")"
+    fi
+    local status=200 body="{\"org_id\":\"$org\"}"
+    if [[ "$url" != *"/orgs/$org/auth-probe" ]]; then
+      status=403; body='{"error":"forbidden"}'
+    elif [[ -z "$token" ]]; then
+      status=401; body='{"error":"missing token"}'
+    fi
+    [[ -n "$out" ]] && printf '%s' "$body" >"$out"
+    printf '%s' "$status"
+  }
+
+  if (
+    curl() { stub_curl "$@"; }
+    v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json"
+  ); then
+    echo "PASS: v1-smoke self-test accepts a 200+matching-org, 401 and 403 stub"
+  else
+    echo "FAIL: v1-smoke self-test rejected a well-formed stub" >&2
+    return 1
+  fi
+
+  if (
+    curl() {
+      local out="" url=""
+      while (( $# )); do
+        case "$1" in
+          -o) out="$2"; shift 2 ;;
+          --cacert|-w) shift 2 ;;
+          --config) shift 2 ;;
+          -H) shift 2 ;;
+          -sS) shift ;;
+          *) url="$1"; shift ;;
+        esac
+      done
+      [[ -n "$out" ]] && printf '%s' '{"org_id":"33333333-3333-4333-8333-333333333333"}' >"$out"
+      printf '200'
+    }
+    v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json"
+  ) 2>/dev/null; then
+    echo "FAIL: v1-smoke self-test accepted a body whose org_id does not match" >&2
+    return 1
+  fi
+  echo "PASS: v1-smoke self-test rejects a mismatched org_id body"
+  return 0
+}
+
+# v1_pgbackrest_conf resolves the repository config the platform scripts use and
+# refuses the .example. It is the same path resolution as pgbackrest-backup.sh,
+# so the wrapper fails before a destructive restore can start.
+v1_pgbackrest_conf() {
+  local conf="${PGBACKREST_CONF:-$ROOT_DIR/infra/backup/pgbackrest/pgbackrest.conf}"
+  if [[ ! -f "$conf" ]]; then
+    cat >&2 <<EOF
+missing pgBackRest config: $conf
+The repository ships only infra/backup/pgbackrest/pgbackrest.conf.example.
+Copy it to the path above and fill the repository credentials; do not point
+PGBACKREST_CONF at the example.
+EOF
+    return 1
+  fi
+  printf '%s\n' "$conf"
+}
+
+v1_backup() {
+  local type="${1:-full}"
+  case "$type" in
+    full|diff|incr) : ;;
+    *) echo "usage: make v1-backup TYPE=full|diff|incr" >&2; return 2 ;;
+  esac
+  v1_pgbackrest_conf >/dev/null || return 1
+  bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-backup.sh" "$type"
+}
+
+v1_restore() {
+  v1_pgbackrest_conf >/dev/null || return 1
+  bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh"
+}
+
+# v1_pitr forwards a timestamp target to the restore script. That script does
+# not implement --type=time/--target yet, so this wrapper probes for support and
+# refuses instead of running a latest restore and labelling it PITR.
+v1_pitr() {
+  local target="${1:-}"
+  if [[ -z "$target" ]]; then
+    echo "usage: make v1-pitr TARGET=2026-11-14T03:00:00Z" >&2
+    return 2
+  fi
+  v1_pgbackrest_conf >/dev/null || return 1
+  local restore_script="$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh"
+  if ! grep -qE -- '--type=time|--target=|PGBACKREST_RESTORE_TARGET' "$restore_script"; then
+    cat >&2 <<EOF
+v1-pitr: $restore_script has no PITR target support.
+Refusing to run a latest restore and label it PITR. Add --type=time --target
+handling to that script (or a PGBACKREST_RESTORE_TARGET pass-through) before
+using this target; this wrapper will forward PGBACKREST_RESTORE_TARGET once the
+script honours it. This is an owner decision on that file, not a repository
+invention here.
+EOF
+    return 1
+  fi
+  PGBACKREST_RESTORE_TARGET="$target" bash "$restore_script"
 }
 
 v1_up() {
@@ -413,6 +755,8 @@ case "${1:-help}" in
       '  compose-test-up/down   Manage test stack' '  observability-up/down/smoke  Manage observability' '  alert-delivery-test   Prove alerts reach a real webhook receiver' \
       '  v1-secrets             Generate the v1-single-node .env and file secrets' \
       '  v1-up/down/migrate/provision/logs/ps  Manage the v1-single-node profile (use --no-build for rollback image reuse)' \
+      '  v1-smoke               Prove the profile with an authenticated edge request (O06)' \
+      '  v1-backup/v1-restore/v1-pitr  pgBackRest backup/restore wrappers (W4.6; PITR needs script support)' \
       '  db-migrate/down/version/seed  Manage Postgres migrations' \
       '  clickhouse-migrate/down/version  Manage ClickHouse migrations' \
       '  test-embedder/test-memory/test-memory-integration/test-worker/test-worker-integration/test-mcp-memory' \
@@ -503,7 +847,12 @@ case "${1:-help}" in
       provision) v1_provision "$@" ;;
       logs) compose_with_mode v1 logs -f "$@" ;;
       ps) compose_with_mode v1 ps "$@" ;;
-      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-provision|v1-logs|v1-ps|v1-bootstrap-pat or v1 build|up|down|stop|wait|url|secrets|bootstrap-pat|migrate|provision|logs|ps' >&2; exit 2 ;;
+      smoke) v1_smoke "$@" ;;
+      smoke-selftest) v1_smoke_selftest ;;
+      backup) v1_backup "${1:-full}" ;;
+      restore) v1_restore ;;
+      pitr) v1_pitr "${1:-}" ;;
+      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-provision|v1-logs|v1-ps|v1-bootstrap-pat|v1-smoke|v1-backup|v1-restore|v1-pitr or v1 build|up|down|stop|wait|url|secrets|bootstrap-pat|migrate|provision|logs|ps|smoke|smoke-selftest|backup|restore|pitr' >&2; exit 2 ;;
     esac ;;
   *) echo "unknown command: $1" >&2; echo 'run: make help' >&2; exit 2 ;;
 esac

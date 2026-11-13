@@ -40,6 +40,21 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["127.0.0.1:8010"]
+  # Host-run console (services/console). /metrics is served by
+  # server/routes/metrics.get.ts: process and Node runtime metrics only, no
+  # tenant data and no request-derived labels. Nothing deploys the console as a
+  # container, so this is the host dev/start port (PORT defaults to 3000).
+  - job_name: console
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:3000"]
+  # Backup/drill textfile collector (O01/O02). The host overlay does not run the
+  # node-exporter container yet, so this target is DOWN until one listens on
+  # 127.0.0.1:9100; it is listed so both profiles expose the same job name and a
+  # host-run collector is scraped without a config edit.
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["127.0.0.1:9100"]
   # Host-run evidence relay. IBEX_PORT must be set to 8082: the daemon defaults it
   # to 8081, which is auth's port (services/relay/internal/config/env_config.go:40).
   - job_name: relay

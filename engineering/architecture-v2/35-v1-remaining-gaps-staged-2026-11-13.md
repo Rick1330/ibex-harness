@@ -2,7 +2,7 @@
 
 **Title:** Every gap still standing between the tree and an honest `v1.0.0`, classified into four stages with the evidence that closes each stage.
 **Base:** `main` at `55a62bc4` (2026-11-13).
-**Status:** Discovery record, updated by the 2026-11-13 stage-1 pass. It classifies; the pass closed 20 stage-1 rows and is recorded in §3.1 with one line of evidence each. No other stage is re-staged, no ledger row changes value, and no review date moves. The only repository change in the original record was this file plus one link line in [`34-readiness-audit-addendum-2026-11-13.md`](34-readiness-audit-addendum-2026-11-13.md) §5; the stage-1 pass also lands the code, workflow, and documentation changes its rows name.
+**Status:** Discovery record, updated by the 2026-11-13 stage-1 pass and the stage-2 recovery pass. It classifies; the stage-1 pass closed 20 stage-1 rows, recorded in §3.1, and the stage-2 pass closed 15 stage-2 rows, recorded in §4.1. Rows the stage-2 pass could not close keep their blocker and residual in the §4 table. No ledger row changes value and no review date moves. The original record was this file plus one link line in [`34-readiness-audit-addendum-2026-11-13.md`](34-readiness-audit-addendum-2026-11-13.md) §5; the two passes also land the code, workflow, and documentation changes their rows name.
 
 ## 1. Purpose and method
 
@@ -97,7 +97,7 @@ A closed row is closed by its own merged change, not by this classification.
 
 **Decisions needed.** An owner for the claim set so GAP-001 stops drifting, and the `check-status-vocabulary.py` script that would make the drift fail instead of relying on hand edits (GAP-001). A signed support window and support matrix (P1-46). Whether the claims checker is widened to `app/components/**` and `public/benchmarks/*.json` (R02). **D-B** — confirm ADR-0097 §10 is the final word on Kubernetes/Helm for 1.0 (`31`:188). D-B decides P2-24: if the chart stays, the digest guard is wired into CI; the default retires the chart and the row goes with it.
 
-## 4. Stage 2 — Survive failure (recovery and operability) — 25 rows
+## 4. Stage 2 — Survive failure (recovery and operability) — 25 rows (15 closed; 10 remaining)
 
 **Goal.** A host loss is survivable from an off-host copy, every dependency failure has a declared behaviour that matches its runbook, and the operator has a backup/restore path that is one command each.
 
@@ -121,33 +121,40 @@ A closed row is closed by its own merged change, not by this classification.
 
 Rows no gate item names: none — all 25 are evidenced above.
 
-**Decisions needed.** D-D: repository type and the signed RPO/RTO table (P0-11, P0-19's delivery half). Whether Redis is allowed to remain the Celery broker while the recovery record calls it ephemeral — the two cannot both be true (O04). Who owns the six missing runbooks (O07). Whether durable-before-ack is a 1.0 claim at all, which decides D4 and D11 rather than closing them by default.
+**Decisions needed.** D-D: repository type and the signed RPO/RTO table (P0-11, P0-19's delivery half). Whether Redis is allowed to remain the Celery broker while the recovery record calls it ephemeral — the two cannot both be true (O04). Whether durable-before-ack is a 1.0 claim at all, which decides D4 and D11 rather than closing them by default. A live backup/restore run in an environment with a real WAL archive (P0-09/W4.6) and a PITR restore once the script supports a target (P0-10) are still needed to exit the stage; the targets and the drill now exist, but this change did not run them.
+
+### 4.1 Closed in this change (15 rows)
+
+| ID | What the tree now shows |
+|---|---|
+| O05 | Proxy registers `postgres` as a **critical** checker when a pool exists, so a failed `SELECT 1` returns 503 instead of degrading (`services/proxy/internal/bootstrap/wire.go`:501-506; test `services/proxy/internal/bootstrap/main_test.go`) |
+| O07 | Six runbooks added under `engineering/runbooks/` — embedder, context assembly, MinIO/S3, master-key loss, TLS expiry, and restore — and indexed in `engineering/runbooks/RUNBOOKS.md` §9 |
+| O08 | `engineering/runbooks/RUNBOOKS.md` now describes the bounded in-memory trace buffer and the deferred-pool drop; the "Redis or disk spill" claim is gone (`packages/clickhouse/writer.go`:70-75; `services/proxy/internal/http/session/snapshot.go`:168-174,185-193) |
+| P1-06 | Memory `/ready` re-checks auth, Postgres and Redis live on every call under a 0.75 s budget (`services/memory/app/probes.py`:28,38-75); covered by `services/memory/tests/unit/test_probes.py` |
+| P2-20 | API `/ready` checks Redis when configured, as a live dependency (`services/api/app/probes.py`:34-59,118-130); covered by `services/api/tests/unit/test_probes.py` |
+| P1-48 | The Console serves `/metrics` (`services/console/server/routes/metrics.get.ts`; test `services/console/tests/metrics-route.test.ts`) and Prometheus scrapes `job="console"` (`infra/monitoring/prometheus/prometheus.yml`:91-100; `prometheus-host.yml`:47-52). Context stays gRPC-only observation, as the exit gate records |
+| O01 | The backup-freshness `.prom` is scraped through node-exporter's textfile collector (`infra/compose/observability/docker-compose.yml`:114-135; `infra/monitoring/prometheus/prometheus.yml`:150-158), not left in an unread file |
+| O02 | The drill writes `ibex_restore_drill_last_success_unixtime`, advancing only on an evidence-eligible run (`infra/scripts/platform/restore_drill_report.py`:1-8,27-31,276-300`), and the same scrape job reads it |
+| O03 | The drill seeds a ≥1000-row fixture across two orgs and computes `rto_pass` against a configurable target rather than a constant every fast run clears (`infra/scripts/platform/restore-drill.sh`:14-27,53-61,200-245) |
+| O06 | `make v1-up` now proves liveness with an authenticated edge request (200 + org match, plus 401/403 negatives) (`infra/scripts/dev-tool.sh`:356-371,380-443`) |
+| P1-49 | The Tempo assertion searches the exact trace id the script sent in a `traceparent` header, not a service-scoped "newest trace" (`infra/scripts/observability-live-verify.sh`:77-95,254-267,324-349). Residual: it is still operator-invoked via `make observability-live-verify`, not a scheduled workflow |
+| P2-21 | Platform ingestion lag is a real org-scoped ClickHouse query, null only when ClickHouse is unavailable or the org has no events (`services/api/app/routers/platform.py`:50-58,223-300`) |
+| W4.6 | `v1-backup`, `v1-restore` and `v1-pitr` targets exist (`Makefile`:221-228) and forward to the pgBackRest scripts. **A live backup/restore was not run in this change, so a working backup remains unverified** |
+| R05 | A restore-replay integration test seeds a sentinel, runs the forget path, restores, and asserts the tombstone, lifecycle-outbox marker and deletion receipt survive while the sentinel is gone (`infra/migrations/postgres/restore_replay_integration_test.go`:1-30) |
+| W6.3 | Context-assembly and memory-retrieval SLIs and absence alerts are recorded (`infra/monitoring/prometheus/rules/ibex-slo.yml`:293-370) with promtool unit tests (`infra/monitoring/prometheus/rules/test/unit/ibex-slo-context-memory.test.yml`). **This records SLIs; the burn thresholds await ratification, so it does not claim SLOs** |
+
+### 4.2 Remaining (10 rows)
 
 | ID | Gap | Evidence | Blocker | Source |
 |---|---|---|---|---|
-| P0-09 | No backup in the profile; `pgbackrest` config is `.example` only; no WAL archive | 34:79; 31:44 | infrastructure | 27:64 |
-| P0-10 | The committed drill is a `pg_dump` fallback with `rpo_pass: false` | `infra/scripts/platform/evidence/4p5-restore-drill/restore-drill-report.json`:13,15; 34:80 | infrastructure | 27:65 |
+| P0-09 | No backup service or WAL archive in the supported profile; `pgbackrest` config is `.example` only; a runnable environment and D-D are needed | 34:79; 31:44 | infrastructure | 27:64 |
+| P0-10 | No PITR evidence: the committed drill is a `pg_dump` fallback and `pgbackrest-restore.sh` has no target support, so `make v1-pitr` refuses | `infra/scripts/platform/evidence/4p5-restore-drill/restore-drill-report.json`:13,15; `infra/scripts/dev-tool.sh`:554-576; 34:80 | infrastructure | 27:65 |
 | P0-11 | RPO/RTO classes defined, no signed numbers | 34:81; `15-runtime-operations-and-recovery.md`:11 | owner decision (D-D) | 27:66 |
-| P0-19 | Routing built, no human paging destination; routing gate not in CI | 34:125; 31:55 | owner decision + workflow | 27:84 |
-| P1-06 | Python `/ready` is startup-only for memory; embedder/reranker/Redis absent from readiness | 27:97 | code | 27:97 |
-| P1-47 | No load/soak evidence; the one k6 run had 15.7 % failures | 27:137 | benchmark stack | 27:137 |
-| P1-48 | Console has no `/metrics` route to scrape and context is gRPC-only (observed indirectly, not scraped); the `api` and `relay` jobs landed 2026-11-12 | 31:146; no `metrics` match under `services/console/server`; 27:138 | code | 27:138 |
-| P1-49 | `infra/scripts/observability-live-verify.sh`:319-345 now performs a real Tempo `/ready` + `/api/search` round-trip and prints a proxy trace id, but the search is service-scoped (started after the run) rather than bound to a chosen request, and it runs only via `make observability-live-verify`, not in a workflow | 27:139; 31:146; `infra/scripts/observability-live-verify.sh`:72-73,99-107,319-345 | code | 27:139 |
-| P2-12 | `usage_facts` has no TTL/retention class | 27:159 | product | 27:159 |
-| P2-20 | `/ready` ignores Redis though operator SSE depends on it | 27:167 | code | 27:167 |
-| P2-21 | Platform ingestion lag is a live field hardcoded to null | 27:168 | product | 27:168 |
+| P0-19 | Routing built, no human paging destination; the paging destination is deployment config | 34:125; 31:55 | owner decision + workflow | 27:84 |
+| P1-47 | No soak evidence; the one k6 run had 15.7 % failures | 27:137 | benchmark stack | 27:137 |
+| P2-12 | `usage_facts` has no TTL/retention class; retention is a finance decision | 27:159 | product | 27:159 |
 | GAP-011 | Backup/restore/migration/incident/operator evidence is incomplete | 18:17 | infrastructure | 18:17 |
-| O01 | The backup freshness metric is written to a `.prom` file no scrape config reads | `infra/scripts/platform/pgbackrest-backup.sh`:60; no match under `infra/monitoring/` | infrastructure | sweep 3 |
-| O02 | `IBEXRestoreDrillMissing` has no producer, so `absent()` fires permanently | `infra/monitoring/prometheus/rules/ibex-platform-backup.yml`:22 | code | sweep 3 |
-| O03 | The drill's RTO is ~1 s against a two-row fixture (`INSERT 0 2`) | `restore-drill-report.json`:10,14; `transcript.txt`:7 | code | sweep 3 |
-| O04 | Redis is the Celery broker while recovery treats Redis as ephemeral; Redis loss 503s chat; the runbook claims a fallback limiter that does not exist | `infra/compose/v1-single-node/compose.yml`:264; `services/proxy/internal/http/ratelimit_middleware.go`:81-88; `engineering/runbooks/RUNBOOKS.md`:301 | owner decision | sweep 3 |
-| O05 | Proxy `/ready` treats PostgreSQL as advisory | `services/proxy/internal/bootstrap/wire.go`:498-506 | code | sweep 3 |
-| O06 | `make v1-up`'s proof is a static edge reply with no authenticated request | `infra/compose/v1-single-node/edge/Caddyfile`:19-22 | code | sweep 3 |
-| O07 | No runbook for embedder, context, MinIO/S3, master-key loss, TLS expiry, or restore itself | `engineering/runbooks/RUNBOOKS.md` §1-§8 cover proxy, proxy SLO, auth, Redis, PostgreSQL, ClickHouse, worker, isolation only | product | sweep 3 |
-| O08 | `RUNBOOKS.md` claims traces spill to disk; the code drops them | `engineering/runbooks/RUNBOOKS.md`:389; `services/proxy/internal/http/session/snapshot.go`:185-193 | product | sweep 3 |
-| W6.3 | Context-assembly and memory-retrieval have no SLOs or burn rules (the unshipped half of W6.3); only the proxy overhead rules exist | 31:145; `infra/monitoring/prometheus/rules/ibex-slo.yml` | code | sweep 3 |
-| W4.6 | No `v1-backup` / `v1-restore` Makefile targets exist; `Makefile` carries `v1-secrets/up/bootstrap-pat/down/migrate/provision/logs/ps` only | `Makefile`:166-206; 31:98 | code | sweep 3 |
-| R05 | The release DoD line "a restore replays markers and receipts" has no row and no gate | 31:209; forget path `services/memory/app/lifecycle.py`:145-177 | code | sweep 3 |
+| O04 | Redis is the Celery broker while recovery treats Redis as ephemeral; Redis loss 503s chat. **The runbook half is closed** — `RUNBOOKS.md` now states the proxy fails closed with 503 + `Retry-After: 5` and has no local fallback limiter. **The broker decision is still open** | `infra/compose/v1-single-node/compose.yml`:264; `services/proxy/internal/http/ratelimit_middleware.go`:84-92,127-132; `engineering/runbooks/RUNBOOKS.md` §4 | owner decision | sweep 3 |
 | D4 | No `required_evidence` relay gate exists; the relay is default-off | `00-status-and-evidence.md`:76 | owner decision | sweep 1 |
 | D11 | No synchronous response-bound acknowledgement; the finalizer is post-response | `00-status-and-evidence.md`:75 | owner decision | sweep 1 |
 
@@ -301,7 +308,9 @@ The completeness proof: per stage and per exclusion, the exact ID sets, then the
 Remaining: `P1-11` `P1-25` `P1-46` `GAP-001` `R02` (5).
 Closed in §3.1: `P0-12` `P0-13` `P0-14` `P1-01` `P1-02` `P1-03` `P1-43` `P1-44` `P1-45` `P2-03` `P2-04` `P2-10` `P2-11` `P2-23` `G01` `G02` `G03` `R01` `R03` `R04` (20); `GAP-003` is an alias recorded on the `P0-14` row, not a second row.
 
-**Stage 2 (25 rows).**
+**Stage 2 (25 rows: 15 closed, 10 remaining).**
+Remaining: `P0-09` `P0-10` `P0-11` `P0-19` `P1-47` `P2-12` `GAP-011` `O04` `D4` `D11` (10). `O04`'s documentation half is closed; its broker decision is open, so the row stays here.
+Closed in §4.1: `O01` `O02` `O03` `O05` `O06` `O07` `O08` `P1-06` `P1-48` `P1-49` `P2-20` `P2-21` `W4.6` `R05` `W6.3` (15).
 P0: `P0-09` `P0-10` `P0-11` `P0-19` (4).
 P1: `P1-06` `P1-47` `P1-48` `P1-49` (4).
 P2: `P2-12` `P2-20` `P2-21` (3).
@@ -332,6 +341,8 @@ Ledger: `D1` `G9` (2).
 
 **Closed in the 2026-11-13 stage-1 pass (20 rows).** `P0-12` `P0-13` `P0-14`; `P1-01` `P1-02` `P1-03` `P1-43` `P1-44` `P1-45`; `P2-03` `P2-04` `P2-10` `P2-11` `P2-23`; `G01` `G02` `G03` `R01` `R03` `R04`. Each has its own row and evidence in §3.1; none is re-listed in a stage table. `P1-11`, `P1-25` and `P1-46` are **partially** closed and stay in §3.2 with their residual named.
 
+**Closed in the 2026-11-13 stage-2 pass (15 rows).** `O01` `O02` `O03` `O05` `O06` `O07` `O08`; `P1-06` `P1-48` `P1-49` `P2-20` `P2-21`; `W4.6` `R05` `W6.3`. Each has its own row and evidence in §4.1; none is re-listed in the §4.2 table. `O04` is **partially** closed (documentation half) and stays in §4.2 with the broker decision named.
+
 **Arithmetic.**
 
 - **P0: 22 = 11 in stages + 11 closed.** 11 = S1 0 + S2 4 + S3 2 + S4 5; closed = 8 since the audit + `P0-12` `P0-13` `P0-14`.
@@ -339,7 +350,7 @@ Ledger: `D1` `G9` (2).
 - **P2: 25 = 18 in stages + 2 not in v1 + 5 closed.** 18 = S1 0 + S2 3 + S3 8 + S4 7; closed = `P2-03` `P2-04` `P2-10` `P2-11` `P2-23`.
 - **GAP: 12 IDs = 11 rows + 1 alias.** 8 stage rows (S1 1 + S2 1 + S3 5 + S4 1) + 3 in §7 = 11; `GAP-003` aliases `P0-14` for routes, gRPC methods and MCP tools, with event contracts recorded out of scope on that row, and adds no row.
 - **NEW and ledger rows: 38 = 30 in stages + 2 in §7 + 6 closed.** 30 = S1 1 + S2 13 + S3 12 + S4 4; §7 holds `D1` and `G9`; closed = `G01` `G02` `G03` `R01` `R03` `R04`.
-- **Staged rows still open: 100 = S1 5 + S2 25 + S3 38 + S4 32.** 120 original staged rows minus the 20 closed in this pass.
+- **Staged rows still open: 85 = S1 5 + S2 10 + S3 38 + S4 32.** 120 original staged rows minus the 20 closed in the stage-1 pass and the 15 closed in the stage-2 pass.
 - **W-waves: 38 items, each mapped once.** 38 = W0 3 + W4 6 + W5 5 + W6 4 + W7 5 + W8 6 + W9 4 + W10 5.
 
 **W-wave → stage map.** Every item in `31-v1-release-plan-2026-11-09.md` §4, accounted for once:

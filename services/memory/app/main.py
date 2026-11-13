@@ -12,10 +12,9 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from ibex_idempotency import PostgresIdempotencyLedger
 from redis.asyncio import Redis
-from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app import probes
 from app.auth.client import GRPCTokenValidator, TokenValidator
 from app.clients.embedding import EmbeddingClient
 from app.clients.rerank import RerankClient, RerankClientConfig
@@ -255,7 +254,7 @@ async def _refresh_readiness(
     if not await auth.ready():
         state.ready = False
         state.ready_error = "auth gRPC not reachable"
-    elif not await _postgres_ready(engine):
+    elif not await probes.postgres_ready(engine):
         state.ready = False
         state.ready_error = "database not reachable"
     else:
@@ -340,19 +339,6 @@ def _build_rerank(cfg: Settings) -> RerankClient | None:
             client_batch_size=cfg.rerank_client_batch_size,
         ),
     )
-
-
-async def _postgres_ready(engine: AsyncEngine) -> bool:
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        return True
-    except (OSError, SQLAlchemyError) as exc:
-        logger.warning(
-            "postgres readiness check failed error_class=%s",
-            type(exc).__name__,
-        )
-        return False
 
 
 app = create_app()

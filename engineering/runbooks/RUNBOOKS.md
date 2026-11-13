@@ -298,7 +298,9 @@ drop (if timeouts occur).
    - memory usage / evictions
    - replication lag (if HA)
 3. Determine impact:
-   - proxy uses local fallback for rate limits? (should)
+   - rate limiting fails closed: the proxy returns **503** with `Retry-After: 5`
+     and `code: service_degraded` while the shared store is unreachable; there is
+     no local fallback limiter (`services/proxy/internal/http/ratelimit_middleware.go`:84-92,127-132)
    - session heartbeats impacted? (likely)
    - memory cache misses spike? (expected)
 
@@ -310,13 +312,16 @@ drop (if timeouts occur).
   - temporarily reduce caching writes (if safe)
   - increase TTLs cautiously (avoid stampede)
 - In extreme cases:
-  - proxy uses conservative local limiter (already designed)
+  - do **not** look for a local fallback limiter; the proxy fails closed by design.
+    Every request that reaches the rate-limit middleware during the outage returns
+    `503` with `Retry-After: 5` until Redis recovers; restore Redis instead of
+    lowering the limit
   - disable non-critical Redis features temporarily (analytics buffers, pubsub usage)
 
 ### Verification
 
 - Redis latency back to baseline
-- proxy fallbacks stop increasing
+- `ibex_proxy_rate_limit_redis_errors_total` stops increasing
 - session suspensions return to normal
 
 ---
@@ -386,13 +391,24 @@ drop (if timeouts occur).
 
 1. Determine whether ingestion is failing or only querying failing
 2. Check buffers:
-   - proxy should buffer trace writes (Redis or disk spill)
+   - the proxy does **not** spill trace writes to Redis or disk. Trace rows sit in
+     a bounded in-memory buffer (`MaxBufferSize` defaults to 2000) and the oldest
+     row is dropped when it fills (`packages/clickhouse/writer.go`:70-75); a failed
+     flush discards its batch and logs `clickhouse flush failed; discarding batch`
+     (`writer.go`:157-163)
+   - deferred evidence and usage-fact writes are dropped when the post-response
+     pool is full, logging `evidence persist dropped: pool full`
+     (`services/proxy/internal/http/session/snapshot.go`:168-174,185-193)
+   - expect **evidence loss** under ClickHouse pressure, not replay. Confirm it on
+     `ibex_clickhouse_dropped_rows_total` (`packages/metrics/registry_proxy_clickhouse.go`:15,47-49)
+     and the two log lines above; if they are advancing, traces are being lost
    - billing events must not be dropped
 
 ### Mitigation
 
 - restore clickhouse availability (infra team)
-- ensure buffered events replay with rate limiting (avoid overload after recovery)
+- accept that rows dropped before recovery are gone: there is no buffer to replay,
+  and the only recovery is to stop the drop by restoring ClickHouse
 - if disk full: increase storage or drop old partitions (if retention policy allows)
 
 ### Verification
@@ -501,6 +517,12 @@ drop (if timeouts occur).
 - ClickHouse down (P2)
 - Worker backlog (P2)
 - Tenant isolation violation (P1)
+- [Embedder down/degraded (P1/P2)](./RUNBOOK-embedder.md)
+- [Context assembly failures/timeouts (P2)](./RUNBOOK-context-assembly.md)
+- [MinIO/S3 object store down (P2)](./RUNBOOK-object-store.md)
+- [Credentials master key lost/rotated (P1)](./RUNBOOK-master-key.md)
+- [TLS certificate expiry (P1/P2)](./RUNBOOK-tls-expiry.md)
+- [Restore PostgreSQL from backup (P1)](./RUNBOOK-restore.md)
 - [Re-embed the memory corpus onto a new embedding model](./re-embed.md) — procedure and prerequisites for switching the stored vector generation.
 
 Add runbooks whenever you add a new P1/P2 alert.
