@@ -13,7 +13,7 @@ COPY engineering/architecture-v2/contracts/deprecations.json \
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
     go build -trimpath -o /out/proxy ./services/proxy/cmd/proxy
 
-FROM alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 # CVE-2026-14456: openssl 3.5.7 → 3.5.8 (alpine 3.24 image lag vs package index)
 # CVE-2026-85091: zlib 1.3.2-r0 → 1.3.2-r1
 # CVE-2026-107891: musl and musl-utils 1.2.6-r2 → 1.2.6-r3
