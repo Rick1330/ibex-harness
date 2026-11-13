@@ -189,3 +189,4 @@ The CI `repo-guards` job (`.github/workflows/ci.yml`:25-140) runs the layout, la
 - `node site/scripts/check-claims.mjs` → pass (this file is outside the scanned roots).
 - `python3 benchmarks/scripts/check_reproducibility.py` → exit 0, 4 warnings, 81 unrecorded runs.
 - Not verified: no hosted origin, cluster, PITR run, or p99 measurement was available to this addendum; rows that need one are recorded with their blocker, not scored.
+- Staging record: [`35-v1-remaining-gaps-staged-2026-11-13.md`](35-v1-remaining-gaps-staged-2026-11-13.md) classifies every remaining row into four stages with the exit gate and the traceability arithmetic, re-verified at `55a62bc4`.
