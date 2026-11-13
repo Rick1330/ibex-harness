@@ -667,17 +667,23 @@ jobs:
   #
   # Trigger: only what can change the bundle definition. run_compose covers
   # infra/compose/**, the smoke script itself (infra/scripts/bundle-smoke.sh), plus any
-  # full run; the raw `docker` filter covers Dockerfiles.
-  # run_go/run_python are deliberately absent: both are set by any services/** or
-  # packages/** edit, which spent the full 40-minute build on PRs that cannot alter the
-  # bundle. The raw `docker` output is used instead of run_docker because detect-changes
-  # sets run_docker=true for every Go change, which would restore that cost. No explicit
-  # push condition is needed: force-full sets run_compose=true on push to main, on the
-  # nightly schedule, and on force_full dispatch.
+  # full run; the raw `docker` filter covers Dockerfiles; the raw `go` filter covers Go
+  # source, because the auth image compiles packages/healthcheck and services/auth, so a
+  # Go edit can break the build this job is the only check on. That costs up to 40
+  # minutes on a Go-only PR and is accepted deliberately: the alternative is a green CI
+  # run over an image that does not compile. The raw `go` output is used instead of
+  # run_go because run_go is also set by workflows/deps changes, where this job adds no
+  # signal beyond the full matrix. run_python stays absent: it is set by any services/**
+  # edit, which cannot alter the bundle. No explicit push condition is needed: force-full
+  # sets run_compose=true on push to main, on the nightly schedule, and on force_full
+  # dispatch.
   bundle-smoke:
     name: bundle-smoke
     needs: [changes]
-    if: needs.changes.outputs.run_compose == 'true' || needs.changes.outputs.docker == 'true'
+    if: >-
+      needs.changes.outputs.run_compose == 'true' ||
+      needs.changes.outputs.docker == 'true' ||
+      needs.changes.outputs.go == 'true'
     timeout-minutes: 40
     runs-on: ubuntu-latest
     permissions:
@@ -691,6 +697,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The auth image compiles packages/healthcheck, which imports the generated
+      # protobuf stubs under packages/proto/gen. That tree is gitignored and absent from
+      # a fresh checkout, so `docker compose build` fails with "no required module
+      # provides package .../packages/proto/gen/go/ibex/auth/v1" unless the stubs are
+      # generated first. Generation is ephemeral and does not dirty the tracked tree, so
+      # the smoke's clean-checkout precondition still holds.
+      - uses: ./.github/actions/setup-buf
+      - name: Generate protobuf stubs (ephemeral; not committed)
+        working-directory: packages/proto
+        run: buf generate
       - name: Run memory-context bundle smoke
         run: bash infra/scripts/bundle-smoke.sh
       # The artifact is the input release-manifest.py --smoke-results needs to promote a
@@ -1398,6 +1414,9 @@ jobs:
     env:
       # Dedicated URL so Settings.redis_url (REDIS_URL alias) stays empty in unit tests.
       IBEX_MCP_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+      # P1-02: the descriptor gate compares against the PR base commit, not the moving
+      # base branch tip. Empty on push, where the script falls back to the local --check.
+      IBEX_MCP_DESCRIPTOR_BASE_REF: ${{ github.event.pull_request.base.sha }}
     services:
       redis:
         image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
@@ -1425,19 +1444,25 @@ jobs:
         with:
           enable-cache: true
 
-      # P1-02: the descriptor gate diffs the committed record against the PR base
-      # branch, and GITHUB_BASE_REF is a branch name, so the ref has to exist in the
-      # clone. The checkout is shallow and drops its credentials, so fetch exactly one
-      # branch, depth 1, unauthenticated — the repository is public, the same trade the
-      # api-breaking job makes. On push GITHUB_BASE_REF is empty and the script falls
-      # back to the local `--check`; the PR run that produced the merge commit already
-      # ran this gate against the base.
-      - name: Fetch the PR base branch for the descriptor gate
+      # P1-02: the descriptor gate diffs the committed record against the commit this PR
+      # targets. A branch name is not enough — refs/heads/<base> moves, so once the base
+      # branch advanced after the PR opened the gate compared the record against a tree
+      # the PR never contained and judged the wrong base. The job env passes
+      # github.event.pull_request.base.sha as IBEX_MCP_DESCRIPTOR_BASE_REF and this step
+      # fetches exactly that commit, so the script's `git show <ref>:<path>` resolves to
+      # the PR base. The checkout is shallow and drops its credentials, so the fetch is
+      # depth 1 and unauthenticated — the repository is public, the same trade the
+      # api-breaking job makes. On push the event carries no base SHA, the variable is
+      # empty, and the script falls back to the local `--check`; the PR run that produced
+      # the merge commit already ran this gate against the base.
+      - name: Fetch the PR base commit for the descriptor gate
         if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          base_ref="${GITHUB_BASE_REF:?GITHUB_BASE_REF is required on pull_request}"
-          git fetch --no-tags --depth=1 origin "+refs/heads/${base_ref}:refs/remotes/origin/${base_ref}"
+          base_sha="${BASE_SHA:?github.event.pull_request.base.sha is required on pull_request}"
+          git fetch --no-tags --depth=1 origin "$base_sha"
       - name: MCP memory unit tests (pytest + ruff)
         run: bash infra/scripts/mcp-memory-test-ci.sh
 
@@ -1474,6 +1499,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # P1-02: the descriptor gate compares against the PR base commit, not the moving
+      # base branch tip. Empty on push, where the script falls back to the local --check.
+      IBEX_MCP_DESCRIPTOR_BASE_REF: ${{ github.event.pull_request.base.sha }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -1491,19 +1520,25 @@ jobs:
         with:
           enable-cache: true
 
-      # P1-02: the descriptor gate diffs the committed record against the PR base
-      # branch, and GITHUB_BASE_REF is a branch name, so the ref has to exist in the
-      # clone. The checkout is shallow and drops its credentials, so fetch exactly one
-      # branch, depth 1, unauthenticated — the repository is public, the same trade the
-      # api-breaking job makes. On push GITHUB_BASE_REF is empty and the script falls
-      # back to the local `--check`; the PR run that produced the merge commit already
-      # ran this gate against the base.
-      - name: Fetch the PR base branch for the descriptor gate
+      # P1-02: the descriptor gate diffs the committed record against the commit this PR
+      # targets. A branch name is not enough — refs/heads/<base> moves, so once the base
+      # branch advanced after the PR opened the gate compared the record against a tree
+      # the PR never contained and judged the wrong base. The job env passes
+      # github.event.pull_request.base.sha as IBEX_MCP_DESCRIPTOR_BASE_REF and this step
+      # fetches exactly that commit, so the script's `git show <ref>:<path>` resolves to
+      # the PR base. The checkout is shallow and drops its credentials, so the fetch is
+      # depth 1 and unauthenticated — the repository is public, the same trade the
+      # api-breaking job makes. On push the event carries no base SHA, the variable is
+      # empty, and the script falls back to the local `--check`; the PR run that produced
+      # the merge commit already ran this gate against the base.
+      - name: Fetch the PR base commit for the descriptor gate
         if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          base_ref="${GITHUB_BASE_REF:?GITHUB_BASE_REF is required on pull_request}"
-          git fetch --no-tags --depth=1 origin "+refs/heads/${base_ref}:refs/remotes/origin/${base_ref}"
+          base_sha="${BASE_SHA:?github.event.pull_request.base.sha is required on pull_request}"
+          git fetch --no-tags --depth=1 origin "$base_sha"
       - name: MCP operator gateway unit tests (pytest + ruff + coverage)
         run: bash infra/scripts/mcp-operator-test-ci.sh
 
@@ -2826,6 +2861,9 @@ jobs:
       contents: read
     env:
       IBEX_MCP_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+      # P1-02: the descriptor gate compares against the PR base commit, not the moving
+      # base branch tip. Empty on push, where the script falls back to the local --check.
+      IBEX_MCP_DESCRIPTOR_BASE_REF: ${{ github.event.pull_request.base.sha }}
     services:
       redis:
         image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
@@ -2854,16 +2892,19 @@ jobs:
           enable-cache: true
 
       # Same fetch as mcp-memory-test: this job runs the same descriptor gate, and the
-      # default shallow checkout (fetch-depth 1, credentials dropped) has no
-      # origin/<base> ref. Without the fetch the script warns and degrades to the weaker
-      # local `--check`, so the enforcing job would print a fallback it did not intend.
-      # One branch, depth 1, unauthenticated — the repository is public.
-      - name: Fetch the PR base branch for the descriptor gate
+      # default shallow checkout (fetch-depth 1, credentials dropped) has neither
+      # origin/<base> nor the base commit. Without the fetch the script warns and
+      # degrades to the weaker local `--check`, so the enforcing job would print a
+      # fallback it did not intend. The env above names the PR base commit; this step
+      # fetches exactly that SHA, depth 1, unauthenticated — the repository is public.
+      - name: Fetch the PR base commit for the descriptor gate
         if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          base_ref="${GITHUB_BASE_REF:?GITHUB_BASE_REF is required on pull_request}"
-          git fetch --no-tags --depth=1 origin "+refs/heads/${base_ref}:refs/remotes/origin/${base_ref}"
+          base_sha="${BASE_SHA:?github.event.pull_request.base.sha is required on pull_request}"
+          git fetch --no-tags --depth=1 origin "$base_sha"
       - name: MCP memory pytest coverage
         run: bash infra/scripts/mcp-memory-test-ci.sh
       - name: MCP memory coverage gate

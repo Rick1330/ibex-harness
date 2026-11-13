@@ -101,6 +101,17 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Every input the three collectors consume, not just the code they bench. A
+      # collector that loads an unchanged script, schema, or lockfile measures a tree the
+      # PR did not change, so a regression in that file would pass the gate it should
+      # have failed. Grouped: benched code and benches; the published-data schemas; the
+      # validators; the scripts the collector steps call (memory-bench.sh, the
+      # db-migrate.sh it runs, the memory-uv-sync.sh every collector runs and the wheel
+      # builders that script calls); the migrations db-migrate.sh applies; the dependency
+      # files read at run time (the Go module the migrate command builds from, the wheel
+      # sources, the hash-locked jsonschema set the validators install); and this
+      # workflow. `.github/scripts/test-evaluate-memory-benchmark-gate.sh` asserts every
+      # entry below still matches, so a path cannot be dropped silently.
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
         if: github.event_name == 'pull_request' || github.event_name == 'push'
@@ -114,7 +125,23 @@ jobs:
               - 'benchmarks/data-schema/hnsw-benchmark-data.schema.json'
               - 'benchmarks/data-schema/ranking-quality-benchmark-data.schema.json'
               - 'benchmarks/data-schema/write-pipeline-benchmark-data.schema.json'
+              - 'benchmarks/scripts/check_hnsw_gate_status.py'
+              - 'benchmarks/scripts/validate_published_hnsw.py'
+              - 'benchmarks/scripts/validate_published_memory_suite.py'
               - 'infra/scripts/memory-bench.sh'
+              - 'infra/scripts/db-migrate.sh'
+              - 'infra/scripts/memory-uv-sync.sh'
+              - 'infra/scripts/build-authclient-wheel.sh'
+              - 'infra/scripts/build-ibex-async-db-wheel.sh'
+              - 'infra/scripts/build-ibex-idempotency-wheel.sh'
+              - 'infra/migrations/postgres/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'packages/authclient/**'
+              - 'packages/ibex_async_db/**'
+              - 'packages/ibex_idempotency/**'
+              - '.github/requirements/jsonschema.in'
+              - '.github/requirements/jsonschema.txt'
               - '.github/workflows/memory-benchmark.yml'
 
       - id: decide
