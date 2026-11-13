@@ -1,0 +1,410 @@
+"""RFC 9745 ``Deprecation`` and RFC 8594 ``Sunset`` headers for REST deprecations (P1-01).
+
+``engineering/architecture-v2/contracts/deprecations.json`` is the notice of record, and
+``scripts/check_deprecations.py`` gates it at commit time. This module is the REST emitter half:
+it turns the entries a response can carry into headers.
+
+The work happens once, when the application is constructed. ``load_deprecation_headers`` reads
+the record and the committed route registry
+(``engineering/architecture-v2/contracts/rest-route-registry.json``) and returns
+``"METHOD /path" -> ((b"deprecation", value), (b"sunset", value))`` for every registry route whose
+contract is deprecated. The middleware then does one dict lookup per response and nothing else, and
+``create_app`` mounts it only when that map is non-empty: an empty record leaves the middleware
+stack exactly as it was, so the 1.0 state costs no hop, no closure and no lookup. The middleware
+also guards on an empty map itself, so a direct user of it gets the same no-op.
+
+The registry is the only route map. A second hand-maintained list of paths would drift from it, so
+a contract is resolved by its ``contract_id`` and the route is the registry row's ``key``.
+
+Three rules decide whether a route is in that map:
+
+* the entry is ``surface: "rest"``, its ``status`` is ``proposed`` or ``announced``, and it declares
+  ``headers_implemented: true``. A header is a claim, and the record only carries one for an entry
+  that declares the emitter;
+* its ``contract_id`` is the ``contract_id`` of a registry row, which names the route;
+* its ``sunset_date`` is not in the past, and not before its announcement date, so the ``Sunset``
+  value never precedes the ``Deprecation`` value. A deprecation whose removal date has passed is no
+  longer a notice to give: the contract should have been removed, and a ``Sunset`` in the past tells
+  a consumer to migrate by a date that has already gone. The entry is skipped rather than fatal, so
+  one expired deprecation cannot silence a live one. An entry with an empty ``sunset_date``, or with
+  neither ``announced_on`` nor ``notice_date``, is skipped for the same reason: the emitter cannot
+  invent the date it is missing.
+
+``Deprecation`` carries an RFC 9651 Date (``@<epoch seconds>``) for the same anchor the policy
+measures the window from — ``announced_on`` when recorded, otherwise ``notice_date`` — so the
+header and the record cannot disagree about when the clock started. ``Sunset`` carries the RFC 8594
+HTTP-date.
+
+Failure behaviour is fail-closed on the claim: an unreadable record, an unreadable registry, or a
+record that is structurally invalid yields an empty map and one logged error per failure, so the
+process serves without headers rather than serving a header the record does not support. Partial
+trust is how a wrong date reaches a consumer, and the emitter cannot choose between two entries
+that deprecate the same contract.
+
+Structural validity mirrors the checker for the fields this module reads: schema id, ``entries``
+array, the id, surface, stability, status, boolean, selector and date fields, duplicate ids, entry
+order, and a duplicate emitting contract. The policy rules — the 180/31-day window, evidence
+existence, the registry and MCP cross-checks, and the announcement timing — stay in that gate and
+are not copied here, because a second copy of a business rule drifts from the first.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
+from email.utils import format_datetime
+from pathlib import Path
+from typing import Final
+
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+logger = logging.getLogger(__name__)
+
+_REPO_ROOT: Final = Path(__file__).resolve().parents[4]
+DEFAULT_RECORD: Final = _REPO_ROOT / "engineering/architecture-v2/contracts/deprecations.json"
+DEFAULT_REGISTRY: Final = (
+    _REPO_ROOT / "engineering/architecture-v2/contracts/rest-route-registry.json"
+)
+
+SCHEMA: Final = "ibex.deprecations.v1"
+_HEADER_SURFACE: Final = "rest"
+_EMITTING_STATUSES: Final = frozenset({"proposed", "announced"})
+_SURFACES: Final = frozenset({"rest", "grpc", "mcp"})
+_STABILITIES: Final = frozenset({"stable", "beta"})
+_STATUSES: Final = frozenset({"proposed", "announced", "withdrawn"})
+_ENUMS: Final = (("surface", _SURFACES), ("stability", _STABILITIES), ("status", _STATUSES))
+# ``announced_on`` is optional and may be explicitly null; an empty string is treated the same
+# way, which is how the checker treats an empty date field.
+_DATE_FIELDS: Final = ("notice_date", "sunset_date", "announced_on")
+
+HeaderPairs = tuple[tuple[bytes, bytes], ...]
+
+
+@dataclass(frozen=True)
+class DeprecationHeaders:
+    """What this process will emit, and why it may emit nothing.
+
+    ``routes`` is empty in the normal 1.0 state (the committed record has no entries) and empty
+    when the record could not be trusted. ``failures`` says which of the two, so an operator can
+    tell "nothing is deprecated" from "the notice of record did not load".
+    """
+
+    routes: Mapping[str, HeaderPairs] = field(default_factory=dict)
+    failures: tuple[str, ...] = ()
+
+
+def load_deprecation_headers(
+    record: Path | None = None,
+    registry: Path | None = None,
+    *,
+    today: date | None = None,
+) -> DeprecationHeaders:
+    """Read the record and the registry once, and build the per-route header map.
+
+    ``today`` exists so a test can pin the sunset boundary; production passes nothing.
+    """
+    routes, registry_failures = _load_routes(registry or DEFAULT_REGISTRY)
+    entries, record_failures = _load_entries(record or DEFAULT_RECORD)
+    failures = sorted([*registry_failures, *record_failures])
+    if failures:
+        for failure in failures:
+            logger.error("deprecation headers disabled: %s", failure)
+        return DeprecationHeaders(failures=tuple(failures))
+    headers = _route_headers(routes, entries, today or datetime.now(UTC).date())
+    if headers:
+        logger.info("deprecation headers active: %d route(s)", len(headers))
+    return DeprecationHeaders(routes=headers)
+
+
+class DeprecationHeadersMiddleware:
+    """Attach the deprecation headers to the responses of deprecated REST routes.
+
+    Pure ASGI, so no request state is kept and no file is read per request. The router has already
+    merged the matched route into ``scope`` by the time ``http.response.start`` reaches this layer;
+    ``_route_key`` states why that is true and what happens when it is not.
+    """
+
+    def __init__(self, app: ASGIApp, routes: Mapping[str, HeaderPairs] | None = None) -> None:
+        self.app = app
+        self._routes = routes or {}
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not self._routes:
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message = _add_headers(message, self._routes.get(_route_key(scope)))
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+def _route_key(scope: Scope) -> str | None:
+    """The registry key for the route the router matched, or ``None``.
+
+    FastAPI's ``APIRoute.matches`` returns the route in the child scope, and the router merges that
+    child scope into the request ``scope`` before the route handles the request, so this layer sees
+    ``scope["route"]`` once the response starts. A plain Starlette ``Route`` does not set it, and an
+    unmatched request (404) has no route, so both resolve to ``None`` and emit nothing. The
+    template path is used, not ``scope["path"]``: the registry key is ``GET /v1/agents/{agent_id}``,
+    which no request path with a real id would ever equal.
+    """
+    path = getattr(scope.get("route"), "path", None)
+    if not isinstance(path, str):
+        return None
+    return f"{scope.get('method', '')} {path}"
+
+
+def _add_headers(message: Message, headers: HeaderPairs | None) -> Message:
+    """Append the headers the route declared, never overwriting one the route already set."""
+    if headers is None:
+        return message
+    present = {name.lower() for name, _ in message.get("headers", [])}
+    added = [(name, value) for name, value in headers if name not in present]
+    if not added:
+        return message
+    return {**message, "headers": [*message.get("headers", []), *added]}
+
+
+def _route_headers(
+    routes: Mapping[str, str],
+    entries: list[dict[str, object]],
+    today: date,
+) -> dict[str, HeaderPairs]:
+    """``"METHOD /path" -> header pairs`` for every deprecated registry route."""
+    keys_by_contract: dict[str, list[str]] = {}
+    for key, contract_id in routes.items():
+        keys_by_contract.setdefault(contract_id, []).append(key)
+    headers: dict[str, HeaderPairs] = {}
+    for entry in entries:
+        values = _emit_values(entry, today)
+        if values is None:
+            continue
+        for key in keys_by_contract.get(str(entry["contract_id"]), ()):
+            headers[key] = values
+    return headers
+
+
+def _emit_values(entry: Mapping[str, object], today: date) -> HeaderPairs | None:
+    """The header pair for one entry, or ``None`` when it does not carry a live notice."""
+    if not _is_emitting(entry):
+        return None
+    sunset = _parse_date(entry.get("sunset_date"))
+    announced = _parse_date(entry.get("announced_on")) or _parse_date(entry.get("notice_date"))
+    if sunset is None or announced is None or sunset < announced or sunset < today:
+        return None
+    return (
+        (b"deprecation", f"@{_epoch(announced)}".encode("ascii")),
+        (b"sunset", _http_date(sunset).encode("ascii")),
+    )
+
+
+def _is_emitting(entry: Mapping[str, object]) -> bool:
+    return (
+        entry.get("surface") == _HEADER_SURFACE
+        and entry.get("status") in _EMITTING_STATUSES
+        and entry.get("headers_implemented") is True
+    )
+
+
+def _epoch(day: date) -> int:
+    return int(datetime(day.year, day.month, day.day, tzinfo=UTC).timestamp())
+
+
+def _http_date(day: date) -> str:
+    return format_datetime(datetime(day.year, day.month, day.day, tzinfo=UTC), usegmt=True)
+
+
+def _load_routes(path: Path) -> tuple[dict[str, str], list[str]]:
+    """``"METHOD /path" -> contract_id`` from the committed registry."""
+    payload, failures = _read_json_object(path, "rest-registry")
+    if failures:
+        return {}, failures
+    rows = payload.get("routes")
+    if not isinstance(rows, list):
+        return {}, [f'missing-field: {path} needs a "routes" array']
+    return _index_routes(rows, path)
+
+
+def _index_routes(rows: list[object], path: Path) -> tuple[dict[str, str], list[str]]:
+    routes: dict[str, str] = {}
+    failures: list[str] = []
+    for index, row in enumerate(rows):
+        key, contract_id = _route_row(row)
+        if key is None or contract_id is None:
+            failures.append(
+                f'invalid-route: {path} routes[{index}] needs a "METHOD /path" key and a '
+                "contract_id"
+            )
+        elif key in routes:
+            failures.append(f"duplicate-route: {path} lists {key!r} more than once")
+        else:
+            routes[key] = contract_id
+    return routes, failures
+
+
+def _route_row(row: object) -> tuple[str | None, str | None]:
+    if not isinstance(row, dict):
+        return None, None
+    key, contract_id = row.get("key"), row.get("contract_id")
+    if not _non_empty_str(key) or not _non_empty_str(contract_id):
+        return None, None
+    method, _, path = str(key).partition(" ")
+    if not method or not path.startswith("/"):
+        return None, None
+    return f"{method} {path}", str(contract_id)
+
+
+def _load_entries(path: Path) -> tuple[list[dict[str, object]], list[str]]:
+    record, failures = _read_json_object(path, "record")
+    if failures:
+        return [], failures
+    if record.get("schema") != SCHEMA:
+        return [], [f"unknown-enum: record schema is {record.get('schema')!r}; expected {SCHEMA!r}"]
+    entries = record.get("entries")
+    if not isinstance(entries, list):
+        return [], ['missing-field: record needs an "entries" array']
+    return _checked_entries(entries)
+
+
+def _checked_entries(entries: list[object]) -> tuple[list[dict[str, object]], list[str]]:
+    failures: list[str] = []
+    valid: list[dict[str, object]] = []
+    for index, entry in enumerate(entries):
+        entry_failures = _entry_failures(entry, index)
+        failures.extend(entry_failures)
+        if not entry_failures and isinstance(entry, dict):
+            valid.append(entry)
+    failures.extend(_id_failures(valid))
+    failures.extend(_contract_failures(valid))
+    return valid, failures
+
+
+def _entry_failures(entry: object, index: int) -> list[str]:
+    if not isinstance(entry, dict):
+        return [f"invalid-entry: entries[{index}] is not a JSON object"]
+    label = _entry_label(entry, index)
+    failures = _field_failures(entry, label)
+    failures.extend(_enum_failures(entry, label))
+    failures.extend(_date_failures(entry, label))
+    return failures
+
+
+def _field_failures(entry: dict[str, object], label: str) -> list[str]:
+    """The fields the emitter reads, with the checker's type strictness."""
+    failures: list[str] = []
+    if not _non_empty_str(entry.get("id")):
+        failures.append(f"invalid-field: {label}.id must be a non-empty string")
+    headers = entry.get("headers_implemented")
+    if not isinstance(headers, bool):
+        failures.append(
+            f"invalid-field: {label}.headers_implemented must be a boolean, not {headers!r}"
+        )
+    if entry.get("surface") == _HEADER_SURFACE and not _non_empty_str(entry.get("contract_id")):
+        failures.append(
+            f"invalid-field: {label}.contract_id must be a non-empty string on a rest entry"
+        )
+    return failures
+
+
+def _enum_failures(entry: dict[str, object], label: str) -> list[str]:
+    failures: list[str] = []
+    for name, allowed in _ENUMS:
+        value = entry.get(name)
+        if not (isinstance(value, str) and value in allowed):
+            failures.append(
+                f"unknown-enum: {label} has {name} {value!r}; expected one of {sorted(allowed)}"
+            )
+    return failures
+
+
+def _date_failures(entry: dict[str, object], label: str) -> list[str]:
+    failures: list[str] = []
+    for name in _DATE_FIELDS:
+        value = entry.get(name)
+        if value is None or value == "":
+            continue
+        if _parse_date(value) is None:
+            failures.append(f"invalid-date: {label}.{name} is {value!r}; expected YYYY-MM-DD")
+    return failures
+
+
+def _id_failures(entries: list[dict[str, object]]) -> list[str]:
+    ids = [str(entry["id"]) for entry in entries]
+    failures: list[str] = []
+    seen: set[str] = set()
+    for entry_id in ids:
+        if entry_id in seen:
+            failures.append(f"duplicate-id: {entry_id} appears more than once")
+        seen.add(entry_id)
+    ordered = sorted(ids)
+    if ids != ordered:
+        index = next(
+            position
+            for position, (actual, expected) in enumerate(zip(ids, ordered, strict=True))
+            if actual != expected
+        )
+        failures.append(
+            f"unsorted-record: entries[{index}] is {ids[index]!r}; expected {ordered[index]!r} "
+            "(entries are sorted by id)"
+        )
+    return failures
+
+
+def _contract_failures(entries: list[dict[str, object]]) -> list[str]:
+    """Two live entries for one contract are a contradiction the emitter must not resolve."""
+    first_entry: dict[str, str] = {}
+    failures: list[str] = []
+    for entry in entries:
+        if not _is_emitting(entry):
+            continue
+        contract_id = str(entry["contract_id"])
+        first = first_entry.get(contract_id)
+        if first is None:
+            first_entry[contract_id] = str(entry["id"])
+            continue
+        failures.append(
+            f"duplicate-contract: {first} and {entry['id']} both deprecate {contract_id}; the "
+            "emitter cannot choose between them"
+        )
+    return failures
+
+
+def _read_json_object(path: Path, label: str) -> tuple[dict[str, object], list[str]]:
+    if not path.exists():
+        return {}, [f"missing-{label}: {path} does not exist"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as error:
+        return {}, [f"unreadable-{label}: {path}: {error}"]
+    except json.JSONDecodeError as error:
+        return {}, [f"invalid-{label}: {path}: {error}"]
+    except RecursionError:
+        return {}, [f"invalid-{label}: {path}: JSON is nested too deeply to read"]
+    if not isinstance(payload, dict):
+        return {}, [f"invalid-{label}: {path} must be a JSON object"]
+    return payload, []
+
+
+def _parse_date(value: object) -> date | None:
+    """Return the date only for an exact ``YYYY-MM-DD`` string."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.isoformat() == value else None
+
+
+def _non_empty_str(value: object) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _entry_label(entry: dict[str, object], index: int) -> str:
+    return str(entry["id"]) if _non_empty_str(entry.get("id")) else f"entries[{index}]"
