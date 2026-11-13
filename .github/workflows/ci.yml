@@ -109,6 +109,19 @@ jobs:
       - name: Database schema doc drift guard
         run: python3 infra/scripts/check-schema-doc.py
 
+      # P0-14 / P1-01: both checkers used to run only from `services/api/tests/unit`,
+      # which is gated on `run_python`, and `engineering/**` matches only the `site`
+      # filter. So a PR that edited a contract record alone — including
+      # `engineering/architecture-v2/contracts/deprecations.json`, the documented way to
+      # record a deprecation — executed neither checker. Running them here makes the
+      # trigger path-independent instead of adding another path to a filter: they are
+      # stdlib-only, offline, and take ~0.1 s each.
+      - name: Contract registry guard
+        run: python3 services/api/scripts/check_contract_registry.py
+
+      - name: Deprecation record guard
+        run: python3 services/api/scripts/check_deprecations.py
+
       # G01: the checker fails closed without jsonschema, so it is installed from the
       # hash-locked requirement file into the interpreter that runs it. Warnings are
       # reported, not enforced: as of this change 146 published runs are still unrecorded
@@ -397,14 +410,45 @@ jobs:
       - uses: ./.github/actions/setup-buf
       # P0-12: this is a gate, not a report. A break fails the job, and the job is a
       # child of ci-gate-go, so it cannot be merged past.
+      #
+      # The step body had no `set -euo pipefail`, so a failed baseline fetch was
+      # indistinguishable from a real absence: `git cat-file -e FETCH_HEAD:...` failed on
+      # the stale FETCH_HEAD, the `else` branch printed "no proto baseline on main yet",
+      # and the step exited 0. A blocking gate reported success without comparing.
+      #
+      # The fix separates the two cases instead of tolerating both:
+      #   1. a failed fetch is a failed gate (`set -e` on `git fetch`), so a network,
+      #      auth, or missing-branch error fails the job and can be re-run;
+      #   2. FETCH_HEAD must resolve to a commit before it is trusted as a baseline; if it
+      #      does not, the step fails closed rather than skipping;
+      #   3. only then is an absent `packages/proto/buf.yaml` read as the legitimate
+      #      first-run case (a base ref that predates the proto directory), which is now
+      #      provable from the two checks above rather than assumed. `main` carries the
+      #      file today, so this branch is dormant until a base ref lacks it.
+      # On a push to main the base is main itself, so that run compares the tree against
+      # itself; the pull_request run is the enforcing one.
       - name: buf breaking (blocking gate)
         working-directory: packages/proto
         run: |
-          git fetch origin main --depth=1
+          set -euo pipefail
+          head_sha="$(git rev-parse --verify HEAD)"
+          # A FETCH_HEAD left by the checkout would make the baseline check below read
+          # stale data, so it is removed first: after this line, a baseline that resolves
+          # is one this step fetched.
+          rm -f "$(git rev-parse --git-path FETCH_HEAD)"
+          if ! git fetch --no-tags origin main --depth=1; then
+            echo "buf breaking: fetching the main baseline failed; refusing to pass without comparing" >&2
+            exit 1
+          fi
+          if ! baseline_sha="$(git rev-parse --verify 'FETCH_HEAD^{commit}')"; then
+            echo "buf breaking: FETCH_HEAD does not resolve to a commit; refusing to pass without a baseline" >&2
+            exit 1
+          fi
+          echo "buf breaking: baseline ${baseline_sha}, head ${head_sha}"
           if git cat-file -e "FETCH_HEAD:packages/proto/buf.yaml" 2>/dev/null; then
             buf breaking --against "https://github.com/${{ github.repository }}.git#branch=main,subdir=packages/proto"
           else
-            echo "Skipping buf breaking: no proto baseline on main yet (initial proto import)"
+            echo "buf breaking: main (${baseline_sha}) has no packages/proto/buf.yaml; treating this as the initial proto import"
           fi
 
   # P0-13: check-openapi-snapshot.sh only proves the committed snapshot is fresh, so

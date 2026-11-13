@@ -89,6 +89,14 @@ site:
   - '.github/actions/setup-pnpm-node/**'
 console:
   - 'services/console/**'
+  # `services/console/tests/surfaces.test.ts` reads the REST/gRPC/MCP registry and fails
+  # on a surface that names a contract the registry does not carry (R01). The registry
+  # lives under engineering/**, which matched only the `site` filter, so a registry-only
+  # edit skipped the very test that guards it. Running that one test inside repo-guards
+  # would need pnpm plus the full Console dependency tree on a job that has no Node
+  # toolchain; widening this filter costs one already-defined job and keeps the check
+  # with the package that owns it.
+  - 'engineering/architecture-v2/contracts/**'
 proto:
   - 'packages/proto/**'
 docker:
