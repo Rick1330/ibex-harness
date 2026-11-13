@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.exc import DBAPIError
 
-from app.config import resolve_embedding_model
+from app.config import resolve_embedding_identity
 from app.vectorstore.base import UpsertRequest, VectorStore
 from app.write.cache import MemoryCacheWriter
 from app.write.metrics import WRITE_CACHE_ERRORS
@@ -22,8 +22,8 @@ class AfterCommitHandler:
     store: VectorStore | None
     # Fallback identity for outcomes that carry an embedding but no model id. Resolved
     # from configuration rather than a literal so a profile switch cannot label a vector
-    # with a model that did not produce it.
-    embedding_model: str = field(default_factory=resolve_embedding_model)
+    # with a generation that did not produce it.
+    embedding_model: str = field(default_factory=resolve_embedding_identity)
 
     async def __call__(self, outcome: WriteOutcome) -> None:
         if outcome.kind != WriteOutcomeKind.CREATED:

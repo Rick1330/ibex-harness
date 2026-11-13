@@ -16,16 +16,20 @@ class SearchMemoriesRequest(BaseModel):
     limit: int = Field(default=10, ge=1, le=MAX_SEARCH_LIMIT)
     min_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
     min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    # Model-generation fence: only rows recorded under this embedding model are
-    # eligible. Omitted keeps every generation eligible (historical behaviour).
-    # Without it a query embedded by one model is scored against vectors another
-    # model produced, so cosine similarity stops meaning "related".
+    # Model-generation fence for the vector channel: only rows recorded under this
+    # embedding identity are vector candidates. The full-text channels are not fenced,
+    # so a keyword hit from another generation can still be returned.
+    # Omitted keeps every generation eligible (historical behaviour). Without the
+    # fence a query embedded by one model is scored against vectors another model
+    # produced, so cosine similarity stops meaning "related".
     embedding_model: str | None = Field(
         default=None,
         max_length=256,
         description=(
-            "Only return memories whose vector was recorded under this embedding "
-            "model id (ibex_core.memories.embedding_model). Omit to search across "
+            "Restricts vector candidates to memories whose vector was recorded under "
+            "this embedding identity (ibex_core.memories.embedding_model: `id` or "
+            "`id@revision`). Full-text results are not fenced, so a keyword hit from "
+            "another generation can still be returned. Omit to search across "
             "generations."
         ),
     )

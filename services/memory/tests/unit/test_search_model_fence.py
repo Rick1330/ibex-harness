@@ -44,6 +44,12 @@ def test_schema_accepts_and_trims_a_model_id() -> None:
     assert request.embedding_model == "bge-m3"
 
 
+def test_schema_accepts_a_composite_identity_fence() -> None:
+    """The fence is the full recorded identity, not just the model id."""
+    request = SearchMemoriesRequest(agent_id=uuid4(), query="q", embedding_model="  bge-m3@r1 ")
+    assert request.embedding_model == "bge-m3@r1"
+
+
 @pytest.mark.parametrize("value", ["", "   "])
 def test_schema_refuses_a_blank_fence(value: str) -> None:
     """A blank fence must be a 422, not a vector-store ValueError surfacing as a 500."""
@@ -179,6 +185,7 @@ def _store_with(rows: list[dict[str, Any]]) -> tuple[PgVectorStore, _RecordingSe
     [
         pytest.param(None, None, id="omitted"),
         pytest.param("bge-m3", "bge-m3", id="set"),
+        pytest.param("bge-m3@r1", "bge-m3@r1", id="composite"),
     ],
 )
 @pytest.mark.asyncio

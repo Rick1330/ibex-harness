@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.config import resolve_embedding_model
+from app.config import resolve_embedding_identity
 from app.conflict.persist import apply_supersession_session
 from app.conflict.types import SupersedeApply
 from app.dedup.persist import (
@@ -72,8 +72,8 @@ class MemoryWriteOrchestrator:
         self._factory = session_factory
         self._after_commit = after_commit
         # Named, not assumed: a deployment on another embedding profile must record the
-        # model it actually used. None falls back to the process configuration.
-        self._embedding_model = resolve_embedding_model(embedding_model)
+        # generation it actually used. None falls back to the process configuration.
+        self._embedding_identity = resolve_embedding_identity(embedding_model)
 
     async def create(self, command: CreateMemoryCommand) -> WriteOutcome:
         ctx = await self._run_pipeline(command)
@@ -263,7 +263,7 @@ class MemoryWriteOrchestrator:
         embedding_tuple: tuple[float, ...] | None = None
         if ctx.embedding is not None:
             embedding_tuple = tuple(ctx.embedding)
-            embedding_model = self._embedding_model
+            embedding_model = self._embedding_identity
         return WriteOutcome(
             kind=WriteOutcomeKind.CREATED,
             memory=memory,
