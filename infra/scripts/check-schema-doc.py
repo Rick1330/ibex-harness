@@ -42,18 +42,42 @@ CH_HEADING = "### ClickHouse Schema"
 
 PLANNING_MARKER = "schema-doc: not-migrated"
 
+# A quoted or unquoted SQL identifier. A quoted identifier may contain a dot, so
+# `"my.schema"."table"` stays two identifier tokens rather than three.
+_IDENTIFIER = r'(?:"[^"]*"|`[^`]*`|\[[^\]]*\]|[A-Za-z_][\w$]*)'
+
 # `CREATE TABLE [IF NOT EXISTS] <schema>.<name>` and the unqualified form.
 # UNLOGGED/TEMP are accepted so a future migration is parsed, not silently
 # skipped: an unparsed CREATE TABLE would be an invisible gap in the gate.
 CREATE_TABLE_RE = re.compile(
-    r"\bCREATE\s+(?:UNLOGGED\s+|GLOBAL\s+|LOCAL\s+|TEMPORARY\s+|TEMP\s+)?TABLE\s+"
+    r"\bCREATE\s+(?:UNLOGGED\s+|GLOBAL\s+|LOCAL\s+|TEMPORARY\s+|TEMP\s+|FOREIGN\s+)?TABLE\s+"
     r"(?:IF\s+NOT\s+EXISTS\s+)?"
-    r"(?P<first>[A-Za-z_][\w$]*)"
-    r"(?:\s*\.\s*(?P<second>[A-Za-z_][\w$]*))?",
+    rf"(?P<first>{_IDENTIFIER})"
+    rf"(?:\s*\.\s*(?P<second>{_IDENTIFIER}))?",
     re.IGNORECASE,
 )
 
-FENCE_RE = re.compile(r"^\s*```(?P<info>[\w+-]*)\s*$")
+# The qualifiers PostgreSQL accepts between CREATE and TABLE. The keyword scan
+# matches any single word there and validates it against this set, so the pattern
+# stays simple and the accepted set stays readable in one place.
+CREATE_TABLE_QUALIFIERS = frozenset(
+    {"UNLOGGED", "GLOBAL", "LOCAL", "TEMPORARY", "TEMP", "FOREIGN"}
+)
+
+# Every `CREATE TABLE` keyword sequence, used to prove each one parses. A
+# CREATE TABLE the identifier pattern cannot follow is a structural error, not a
+# table the gate may skip. The word before TABLE is matched loosely and filtered
+# through CREATE_TABLE_QUALIFIERS; the lookahead keeps a table literally named
+# `table` (`CREATE TABLE table`) parsing as the unqualified form.
+CREATE_TABLE_KEYWORD_RE = re.compile(
+    r"\bCREATE\s+(?:(?P<qualifier>(?!TABLE\b)\w+)\s+)?TABLE\b", re.IGNORECASE
+)
+
+# A fenced-code opener's marker: an optional indent, then three or more
+# backticks or three or more tildes. The info string is the rest of the line and
+# is sliced off after the match, so no quantifier can overlap the marker run and
+# the match stays linear.
+FENCE_MARKER_RE = re.compile(r"^\s*(?P<marker>`{3,}|~{3,})")
 
 # A per-table heading, e.g. ##### `ibex_core.memory_feedback` (migration `000023`).
 # This is the compact entry form used by the "applied tables" section; a table is
@@ -64,27 +88,216 @@ HEADING_TABLE_RE = re.compile(
     r"|(?P<bare>[A-Za-z_][\w$]*\.[A-Za-z_][\w$]*))"
 )
 
-LINE_COMMENT_RE = re.compile(r"--[^\n]*")
-BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+# `$tag$` or `$$`, the PostgreSQL dollar-quote delimiter. `re.ASCII` keeps `\w`
+# exactly `[A-Za-z0-9_]`, so a non-ASCII tag is still ordinary SQL.
+DOLLAR_TAG_RE = re.compile(r"\$([A-Za-z_]\w*)?\$", re.ASCII)
+
+_QUOTE_PAIRS = (('"', '"'), ("`", "`"), ("[", "]"))
 
 
 class DocError(Exception):
     """The doc is structurally unreadable; the gate must fail loudly."""
 
 
-def strip_sql_comments(text: str) -> str:
-    """Blank SQL comments, keeping newlines so line numbers stay meaningful."""
-    text = BLOCK_COMMENT_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
-    return LINE_COMMENT_RE.sub(lambda m: " " * len(m.group(0)), text)
+def _blank(text: str) -> str:
+    """Spaces with newlines preserved, so line numbers stay meaningful."""
+    return "".join("\n" if char == "\n" else " " for char in text)
+
+
+def strip_sql_comments_and_literals(sql: str) -> str:
+    """Blank comments and string literals, keeping newlines and byte offsets.
+
+    Quoted identifiers are copied verbatim because a CREATE TABLE may quote its
+    schema and table names; their contents are skipped so an apostrophe inside
+    one does not open a string. String literals (single-quoted and
+    dollar-quoted) are blanked so a `CREATE TABLE` inside one is not DDL.
+    """
+    out: list[str] = []
+    index = 0
+    while index < len(sql):
+        end = _blank_token(sql, index, out)
+        if end is None:
+            out.append(sql[index])
+            index += 1
+        else:
+            index = end
+    return "".join(out)
+
+
+def _blank_token(sql: str, index: int, out: list[str]) -> int | None:
+    """Blank the comment or literal starting at index, or None for ordinary SQL.
+
+    Returns the index just past the token. Every branch keeps the byte count, so
+    the caller can treat the result as an offset-preserving replacement.
+    """
+    if sql.startswith("--", index):
+        return _blank_line_comment(sql, index, out)
+    if sql.startswith("/*", index):
+        return _blank_block_comment(sql, index, out)
+    if sql[index] == "'":
+        return _blank_quoted(sql, index, out, "'")
+    if sql[index] == '"':
+        return _keep_quoted(sql, index, out, '"')
+    tag = _dollar_tag(sql, index) if sql[index] == "$" else None
+    if tag:
+        return _blank_dollar_quoted(sql, index, out, tag)
+    return None
+
+
+def _blank_line_comment(sql: str, index: int, out: list[str]) -> int:
+    end = sql.find("\n", index)
+    if end == -1:
+        end = len(sql)
+    out.append(_blank(sql[index:end]))
+    return end
+
+
+def _blank_block_comment(sql: str, index: int, out: list[str]) -> int:
+    """Blank `/* … */`, tracking depth: PostgreSQL nests block comments."""
+    depth = 0
+    while index < len(sql):
+        closed, depth, index = _consume_block_token(sql, index, out, depth)
+        if closed:
+            return index
+    return index
+
+
+def _consume_block_token(
+    sql: str, index: int, out: list[str], depth: int
+) -> tuple[bool, int, int]:
+    """Consume one token inside a block comment.
+
+    Returns (closed, depth, index): `closed` is True when the token was the `*/`
+    that ended the outermost comment, in which case `index` is already past it.
+    """
+    if sql.startswith("/*", index):
+        out.append("  ")
+        return False, depth + 1, index + 2
+    if sql.startswith("*/", index):
+        out.append("  ")
+        return depth == 1, depth - 1, index + 2
+    out.append(_blank(sql[index]))
+    return False, depth, index + 1
+
+
+def _blank_quoted(sql: str, index: int, out: list[str], quote: str) -> int:
+    """Blank a quoted string, honouring doubled quotes and backslash escapes."""
+    out.append(quote)
+    index += len(quote)
+    while index < len(sql):
+        if sql.startswith(quote * 2, index):
+            out.append(_blank(quote * 2))
+            index += 2
+        elif sql.startswith(quote, index):
+            out.append(quote)
+            return index + len(quote)
+        elif sql[index] == "\\":
+            out.append(_blank(sql[index : index + 2]))
+            index += 2
+        else:
+            out.append(_blank(sql[index]))
+            index += 1
+    return index
+
+
+def _keep_quoted(sql: str, index: int, out: list[str], quote: str) -> int:
+    """Copy a quoted identifier verbatim, skipping doubled-quote escapes."""
+    out.append(quote)
+    index += 1
+    while index < len(sql):
+        if sql.startswith(quote * 2, index):
+            out.append(quote * 2)
+            index += 2
+        elif sql[index] == quote:
+            out.append(quote)
+            return index + 1
+        else:
+            out.append(sql[index])
+            index += 1
+    return index
+
+
+def _dollar_tag(sql: str, index: int) -> str | None:
+    match = DOLLAR_TAG_RE.match(sql, index)
+    return match.group(0) if match else None
+
+
+def _blank_dollar_quoted(sql: str, index: int, out: list[str], tag: str) -> int:
+    """Blank a `$tag$ … $tag$` literal; dollar-quoted text has no escapes.
+
+    The delimiters are blanked too: a tag could spell a keyword, and neither the
+    body nor the tag is executable SQL.
+    """
+    blank_tag = _blank(tag)
+    out.append(blank_tag)
+    start = index + len(tag)
+    end = sql.find(tag, start)
+    if end == -1:
+        out.append(_blank(sql[start:]))
+        return len(sql)
+    out.append(_blank(sql[start:end]))
+    out.append(blank_tag)
+    return end + len(tag)
 
 
 def normalise(identifier: str) -> str:
-    return identifier.strip().strip('"`[]').lower()
+    """Lower-case an identifier and remove one surrounding quote pair."""
+    return _unquote(identifier.strip()).lower()
+
+
+def _unquote(ident: str) -> str:
+    """The identifier without one surrounding quote pair, or unchanged."""
+    for left, right in _QUOTE_PAIRS:
+        if _wrapped_in(ident, left, right):
+            return ident[1:-1]
+    return ident
+
+
+def _wrapped_in(ident: str, left: str, right: str) -> bool:
+    """True when ident is at least two characters and starts and ends with the pair."""
+    if len(ident) < 2:
+        return False
+    return ident[0] == left and ident[-1] == right
 
 
 def table_keys(sql: str) -> list[str]:
     """Return canonical `schema.name` (or bare `name`) keys, in file order."""
-    return [_table_key(match) for match in CREATE_TABLE_RE.finditer(strip_sql_comments(sql))]
+    cleaned = strip_sql_comments_and_literals(sql)
+    return [_table_key(match) for match in _create_table_matches(cleaned)]
+
+
+def _create_table_keywords(cleaned: str) -> list[re.Match[str]]:
+    """Every `CREATE [<qualifier>] TABLE` whose qualifier PostgreSQL accepts."""
+    return [
+        match
+        for match in CREATE_TABLE_KEYWORD_RE.finditer(cleaned)
+        if _accepted_qualifier(match.group("qualifier"))
+    ]
+
+
+def _accepted_qualifier(word: str | None) -> bool:
+    """True for the unqualified form and for a qualifier PostgreSQL accepts."""
+    return word is None or word.upper() in CREATE_TABLE_QUALIFIERS
+
+
+def _create_table_matches(cleaned: str) -> list[re.Match[str]]:
+    """Match every CREATE TABLE, failing loudly when one cannot be parsed."""
+    matches: list[re.Match[str]] = []
+    for keyword in _create_table_keywords(cleaned):
+        match = CREATE_TABLE_RE.match(cleaned, keyword.start())
+        if match is None:
+            line = cleaned.count("\n", 0, keyword.start()) + 1
+            raise DocError(
+                f"cannot parse CREATE TABLE at line {line}: {_line_at(cleaned, keyword.start())!r}"
+            )
+        matches.append(match)
+    return matches
+
+
+def _line_at(text: str, index: int) -> str:
+    start = text.rfind("\n", 0, index) + 1
+    end = text.find("\n", index)
+    return text[start : len(text) if end == -1 else end].strip()
 
 
 def _table_key(match: re.Match[str]) -> str:
@@ -114,7 +327,9 @@ def postgres_region(doc_text: str) -> tuple[int, list[str]]:
     start = _heading_index(lines, PG_HEADING)
     end = _heading_index(lines, CH_HEADING)
     if end <= start:
-        raise DocError(f"doc headings are out of order: {PG_HEADING!r} must precede {CH_HEADING!r}")
+        raise DocError(
+            f"doc headings are out of order: {PG_HEADING!r} must precede {CH_HEADING!r}"
+        )
     return start, lines[start:end]
 
 
@@ -130,21 +345,51 @@ def fenced_sql_blocks(lines: list[str]) -> list[tuple[int, str]]:
     blocks: list[tuple[int, str]] = []
     index = 0
     while index < len(lines):
-        opening = FENCE_RE.match(lines[index])
-        if not opening:
+        opener = _fence_opener(lines[index])
+        if opener is None:
             index += 1
             continue
-        info = opening.group("info").lower()
+        marker, info = opener
         body: list[str] = []
         body_start = index + 1
         index += 1
-        while index < len(lines) and not FENCE_RE.match(lines[index]):
+        while index < len(lines) and not _is_fence_closer(lines[index], marker):
             body.append(lines[index])
             index += 1
-        if info in ("", "sql", "postgres", "postgresql"):
+        if info.lower() in ("", "sql", "postgres", "postgresql"):
             blocks.append((body_start, "\n".join(body)))
         index += 1
     return blocks
+
+
+def _fence_opener(line: str) -> tuple[str, str] | None:
+    """The (marker, info string) of a fence opener, or None for any other line.
+
+    A backtick fence's info string may not contain a backtick, so a line of
+    backticks inside a backtick fence is body text rather than a new opener.
+    `line` is a single line: every caller passes an element of `splitlines()`.
+    """
+    match = FENCE_MARKER_RE.match(line)
+    if match is None:
+        return None
+    marker = match.group("marker")
+    info = line[match.end() :].strip()
+    if marker[0] == "`" and "`" in info:
+        return None
+    return marker, info
+
+
+def _is_fence_closer(line: str, marker: str) -> bool:
+    """True when `line` closes a fence opened with `marker`.
+
+    A closer must use the opener's marker character, be at least as long as the
+    opener, and carry nothing but whitespace after it. A shorter run or a
+    different marker is body text.
+    """
+    stripped = line.strip()
+    if len(stripped) < len(marker):
+        return False
+    return stripped == marker[0] * len(stripped)
 
 
 def is_planning_only(block_lines: list[str], statement_offset: int) -> bool:
@@ -180,7 +425,9 @@ def doc_tables(doc_text: str) -> tuple[dict[str, int], set[str]]:
     return documented, planning
 
 
-def _fenced_tables(region: list[str], heading_index: int) -> tuple[dict[str, int], set[str]]:
+def _fenced_tables(
+    region: list[str], heading_index: int
+) -> tuple[dict[str, int], set[str]]:
     """Tables the sql fences document, split into applied DDL and planning-only sketches."""
     documented: dict[str, int] = {}
     planning: set[str] = set()
@@ -206,16 +453,31 @@ def _collect_fence(
 
 def _block_tables(block: str) -> list[tuple[str, int]]:
     """(table key, line offset within the block) for each CREATE TABLE in a fence."""
+    cleaned = strip_sql_comments_and_literals(block)
     return [
-        (_table_key(match), block.count("\n", 0, match.start()))
-        for match in CREATE_TABLE_RE.finditer(strip_sql_comments(block))
+        (_table_key(match), cleaned.count("\n", 0, match.start()))
+        for match in _create_table_matches(cleaned)
     ]
 
 
 def _heading_tables(region: list[str], heading_index: int) -> dict[str, int]:
-    """Tables documented by a per-table heading, keyed the same way as the fences."""
+    """Tables documented by a per-table heading, keyed the same way as the fences.
+
+    Headings inside a fenced code block are examples, not documentation, so the
+    scan tracks fence state and ignores everything between an opener and its
+    matching closer.
+    """
     documented: dict[str, int] = {}
+    marker: str | None = None
     for offset, line in enumerate(region):
+        if marker is not None:
+            if _is_fence_closer(line, marker):
+                marker = None
+            continue
+        opener = _fence_opener(line)
+        if opener is not None:
+            marker = opener[0]
+            continue
         key = _heading_key(line)
         if key is not None:
             documented.setdefault(key, heading_index + offset + 1)
@@ -268,7 +530,9 @@ def _drift_problems(
     return [*_missing_lines(missing, migrations), *_unknown_lines(unknown, documented)]
 
 
-def _undocumented(migrations: dict[str, list[str]], documented: dict[str, int]) -> list[str]:
+def _undocumented(
+    migrations: dict[str, list[str]], documented: dict[str, int]
+) -> list[str]:
     """Tables a migration creates that the doc never names."""
     documented_keys = set(documented)
     return sorted(key for key in migrations if not covered(key, documented_keys))
@@ -282,7 +546,9 @@ def _unmigrated(
     """Tables the doc names that no migration creates and no planning marker exempts."""
     migration_keys = set(migrations)
     return sorted(
-        key for key in documented if key not in planning and not covered(key, migration_keys)
+        key
+        for key in documented
+        if key not in planning and not covered(key, migration_keys)
     )
 
 
@@ -339,7 +605,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if problems:
-        print(f"FAIL: {doc_path} is out of sync with {MIGRATIONS_GLOB}", file=sys.stderr)
+        print(
+            f"FAIL: {doc_path} is out of sync with {MIGRATIONS_GLOB}", file=sys.stderr
+        )
         for line in problems:
             print(line, file=sys.stderr)
         return 1

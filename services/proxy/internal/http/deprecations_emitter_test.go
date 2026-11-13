@@ -334,10 +334,10 @@ func TestUnit_deprecationHeaders_streamingStillStreams(t *testing.T) {
 	t.Parallel()
 	stream := openGatedStream(t)
 
-	if got := stream.headers.Get(headerDeprecation); got == "" {
+	if stream.headers.Get(headerDeprecation) == "" {
 		t.Fatalf("streaming response missing Deprecation: %v", stream.headers)
 	}
-	if got := stream.headers.Get(headerSunset); got == "" {
+	if stream.headers.Get(headerSunset) == "" {
 		t.Fatalf("streaming response missing Sunset: %v", stream.headers)
 	}
 	if !strings.Contains(stream.first, `"content":"a"`) {

@@ -7,11 +7,18 @@ it turns the entries a response can carry into headers.
 The work happens once, when the application is constructed. ``load_deprecation_headers`` reads
 the record and the committed route registry
 (``engineering/architecture-v2/contracts/rest-route-registry.json``) and returns
-``"METHOD /path" -> ((b"deprecation", value), (b"sunset", value))`` for every registry route whose
-contract is deprecated. The middleware then does one dict lookup per response and nothing else, and
-``create_app`` mounts it only when that map is non-empty: an empty record leaves the middleware
-stack exactly as it was, so the 1.0 state costs no hop, no closure and no lookup. The middleware
-also guards on an empty map itself, so a direct user of it gets the same no-op.
+``"METHOD /path" -> RouteNotice`` for every registry route whose contract is deprecated. A
+``RouteNotice`` carries the header pair and the sunset boundary it stops at. The middleware then
+does one dict lookup and one date comparison per response and nothing else, and ``create_app``
+mounts it only when that map is non-empty: an empty record leaves the middleware stack exactly as
+it was, so the 1.0 state costs no hop, no closure and no lookup. The middleware also guards on an
+empty map itself, so a direct user of it gets the same no-op.
+
+The sunset boundary is rechecked on every request, not only when the application is built. A
+process that starts inside a window would otherwise keep announcing a removal date that has
+already passed until someone restarted it; the notice stops on the day after its sunset without a
+restart. The record is still read once, so a record edited while the process runs is not picked
+up: only the passage of time is.
 
 The registry is the only route map. A second hand-maintained list of paths would drift from it, so
 a contract is resolved by its ``contract_id`` and the route is the registry row's ``key``.
@@ -97,6 +104,19 @@ HeaderPairs = tuple[tuple[bytes, bytes], ...]
 
 
 @dataclass(frozen=True)
+class RouteNotice:
+    """One route's headers and the sunset boundary they stop at.
+
+    The boundary is kept beside the headers, not only compared when the application is
+    built: a process that starts before a sunset keeps serving until it restarts, so the
+    emitter rechecks the day on every response and stops on the day after the sunset.
+    """
+
+    headers: HeaderPairs
+    sunset: date
+
+
+@dataclass(frozen=True)
 class DeprecationHeaders:
     """What this process will emit, and why it may emit nothing.
 
@@ -105,7 +125,7 @@ class DeprecationHeaders:
     tell "nothing is deprecated" from "the notice of record did not load".
     """
 
-    routes: Mapping[str, HeaderPairs] = field(default_factory=dict)
+    routes: Mapping[str, RouteNotice] = field(default_factory=dict)
     failures: tuple[str, ...] = ()
 
 
@@ -126,7 +146,7 @@ def load_deprecation_headers(
         for failure in failures:
             logger.error("deprecation headers disabled: %s", failure)
         return DeprecationHeaders(failures=tuple(failures))
-    headers = _route_headers(routes, entries, today or datetime.now(UTC).date())
+    headers = _route_headers(routes, entries, today or _utc_today())
     if headers:
         logger.info("deprecation headers active: %d route(s)", len(headers))
     return DeprecationHeaders(routes=headers)
@@ -140,7 +160,7 @@ class DeprecationHeadersMiddleware:
     ``_route_key`` states why that is true and what happens when it is not.
     """
 
-    def __init__(self, app: ASGIApp, routes: Mapping[str, HeaderPairs] | None = None) -> None:
+    def __init__(self, app: ASGIApp, routes: Mapping[str, RouteNotice] | None = None) -> None:
         self.app = app
         self._routes = routes or {}
 
@@ -148,13 +168,20 @@ class DeprecationHeadersMiddleware:
         if scope["type"] != "http" or not self._routes:
             await self.app(scope, receive, send)
             return
+        today = _utc_today()
 
         async def send_with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
-                message = _add_headers(message, self._routes.get(_route_key(scope)))
+                notice = self._routes.get(_route_key(scope))
+                message = _add_headers(message, notice, today)
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
+
+
+def _utc_today() -> date:
+    """The current UTC day, read per request so a long-running process can cross a sunset."""
+    return datetime.now(UTC).date()
 
 
 def _route_key(scope: Scope) -> str | None:
@@ -173,12 +200,17 @@ def _route_key(scope: Scope) -> str | None:
     return f"{scope.get('method', '')} {path}"
 
 
-def _add_headers(message: Message, headers: HeaderPairs | None) -> Message:
-    """Append the headers the route declared, never overwriting one the route already set."""
-    if headers is None:
+def _add_headers(message: Message, notice: RouteNotice | None, today: date) -> Message:
+    """Append the headers the route declared, never overwriting one the route already set.
+
+    A notice whose sunset day has passed is not emitted: the record is read once, so the day
+    has to be rechecked here or a process that started inside the window would keep announcing
+    a removal date that has already gone.
+    """
+    if notice is None or not _not_before(notice.sunset, today):
         return message
     present = {name.lower() for name, _ in message.get("headers", [])}
-    added = [(name, value) for name, value in headers if name not in present]
+    added = [(name, value) for name, value in notice.headers if name not in present]
     if not added:
         return message
     return {**message, "headers": [*message.get("headers", []), *added]}
@@ -188,23 +220,23 @@ def _route_headers(
     routes: Mapping[str, str],
     entries: list[dict[str, object]],
     today: date,
-) -> dict[str, HeaderPairs]:
-    """``"METHOD /path" -> header pairs`` for every deprecated registry route."""
+) -> dict[str, RouteNotice]:
+    """``"METHOD /path" -> notice`` for every deprecated registry route."""
     keys_by_contract: dict[str, list[str]] = {}
     for key, contract_id in routes.items():
         keys_by_contract.setdefault(contract_id, []).append(key)
-    headers: dict[str, HeaderPairs] = {}
+    headers: dict[str, RouteNotice] = {}
     for entry in entries:
-        values = _emit_values(entry, today)
-        if values is None:
+        notice = _emit_notice(entry, today)
+        if notice is None:
             continue
         for key in keys_by_contract.get(str(entry["contract_id"]), ()):
-            headers[key] = values
+            headers[key] = notice
     return headers
 
 
-def _emit_values(entry: Mapping[str, object], today: date) -> HeaderPairs | None:
-    """The header pair for one entry, or ``None`` when it does not carry a live notice."""
+def _emit_notice(entry: Mapping[str, object], today: date) -> RouteNotice | None:
+    """The notice for one entry, or ``None`` when it does not carry a live notice."""
     if not _is_emitting(entry):
         return None
     announced = _announced_date(entry)
@@ -213,6 +245,10 @@ def _emit_values(entry: Mapping[str, object], today: date) -> HeaderPairs | None
         return None
     if not _is_live_notice(announced, sunset, today):
         return None
+    return RouteNotice(headers=_header_pairs(announced, sunset), sunset=sunset)
+
+
+def _header_pairs(announced: date, sunset: date) -> HeaderPairs:
     return (
         (b"deprecation", f"@{_epoch(announced)}".encode("ascii")),
         (b"sunset", _http_date(sunset).encode("ascii")),

@@ -95,8 +95,14 @@ def derive_contract_id(method: str, path: str) -> str:
 
 
 def _kebab(name: str) -> str:
-    """``BeginTotpEnrollment`` -> ``begin-totp-enrollment`` (acronym-safe)."""
-    spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1-\2", name)
+    """``BeginTotpEnrollment`` -> ``begin-totp-enrollment`` (acronym-safe).
+
+    Both boundary rules are a single character plus a fixed-width lookahead, so each
+    pass is linear in the length of ``name``. The previous ``([A-Z]+)([A-Z][a-z])``
+    form backtracked over the whole run of capitals at every start position, which is
+    quadratic in a name that carries a long acronym.
+    """
+    spaced = re.sub(r"([A-Z])(?=[A-Z][a-z])", r"\1-", name)
     spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", spaced)
     return spaced.lower()
 

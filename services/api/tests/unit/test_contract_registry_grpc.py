@@ -20,6 +20,7 @@ import pytest
 
 from tests.unit.contract_registry_test_support import (
     GRPC_METHOD_KEY,
+    PROTO_SOURCE,
     WorkspaceSpec,
     cli,
     derive,
@@ -79,6 +80,21 @@ def test_rpc_derivation_is_mechanical() -> None:
         == "grpc.context.assemble-context.v1"
     )
     assert derive.grpc_contract_id("nonsense") == ""
+
+
+def test_an_indented_service_declaration_is_read(
+    tmp_path: Path, registry_check: ModuleType
+) -> None:
+    """Proto allows an indented declaration; missing one would hide every rpc it declares."""
+    indented = PROTO_SOURCE.replace("service TestService {", "\tservice TestService {")
+    assert proto.service_bodies(indented) == proto.service_bodies(PROTO_SOURCE)
+
+    paths = workspace(tmp_path, [("GET", "/v1/agents")], WorkspaceSpec(grpc_methods=[]))
+    (paths.proto_root / "test.proto").write_text(indented, encoding="utf-8")
+    assert any(
+        failure.startswith(f"missing-registration: rpc {GRPC_METHOD_KEY} ")
+        for failure in registry_check.check(paths)
+    )
 
 
 def test_rpc_declared_but_not_registered_fails(tmp_path: Path, registry_check: ModuleType) -> None:

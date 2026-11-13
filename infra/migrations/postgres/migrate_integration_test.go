@@ -16,13 +16,11 @@ import (
 
 const defaultTestDSN = "postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable"
 
-// testDSN is the DSN every test must use. TestMain points it at the per-run
-// database when it could create one (see migrate_integration_main_test.go);
-// otherwise it is the operator-configured database.
+// testDSN is the DSN every test must use: the database the operator configured,
+// which TestMain repairs once before the suite runs. The harness no longer
+// rewrites it (see migrate_integration_main_test.go for why a per-run database
+// was abandoned).
 func testDSN() string {
-	if testRun.dsn != "" {
-		return testRun.dsn
-	}
 	return baseTestDSN()
 }
 
@@ -51,12 +49,18 @@ func resetSchema(t *testing.T, db *sql.DB) {
 // resetSchemaConn empties the migrated schemas and clears the migration
 // bookkeeping so the next Up starts from nothing.
 //
-// Capability roles are dropped on a best-effort basis. PostgreSQL roles are
-// cluster-global, so a role that another database in the same cluster still
-// uses cannot be dropped (SQLSTATE 2BP01); that is not a harness failure. The
-// migration files normalise a pre-existing role through their own idempotent
-// guards (000004, 000036, 000064, 000068), which is what a provisioned
-// second database relies on too.
+// The schema drop is what makes the capability roles droppable: PostgreSQL roles
+// are cluster-global, and `DROP ROLE` fails with SQLSTATE 2BP01 while the role
+// still owns or is granted an object anywhere in the cluster. Dropping
+// `ibex_core` and `ibex_billing` CASCADE removes every object and every grant
+// those roles hold in this database, so the drops below normally succeed and the
+// down migrations' own `DROP ROLE` statements work.
+//
+// The role drops stay best effort. A role that another database in the same
+// cluster still uses cannot be dropped here (2BP01 names that database), which is
+// not a harness failure: the migration files normalise a pre-existing role
+// through their own idempotent guards (000004, 000036, 000064, 000068), which is
+// what a provisioned second database relies on too.
 func resetSchemaConn(ctx context.Context, db *sql.DB) error {
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_billing CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_core CASCADE`)
@@ -115,6 +119,74 @@ func TestMigrateUpIdempotent(t *testing.T) {
 	if v != want {
 		t.Fatalf("expected version %d, got %d", want, v)
 	}
+}
+
+// evidencePlaneVersion is 000036, the migration that creates the two evidence
+// capability roles. Rolling back below it runs the down file's
+// `DROP ROLE ibex_evidence_relay` and `DROP ROLE ibex_service`.
+const evidencePlaneVersion = 36
+
+// TestEvidencePlane_MigrationDownDropsClusterGlobalRoles proves the one thing the
+// per-run database could not give the suite: 000036's role drops succeeding.
+//
+// Both roles are cluster-global, and they hold privileges on objects in this
+// database. The drop therefore succeeds only because the schema reset removed the
+// schemas that carried those privileges — the same reset TestMain runs before the
+// suite. Under the per-run-database harness this rollback failed with SQLSTATE
+// 2BP01 naming the migrated database the roles still held grants in, which is why
+// that harness was removed (see migrate_integration_main_test.go).
+func TestEvidencePlane_MigrationDownDropsClusterGlobalRoles(t *testing.T) {
+	dsn := testDSN()
+	db := openTestDB(t)
+	defer db.Close()
+	resetSchema(t, db)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	requireRolesExist(t, db, "ibex_service", "ibex_evidence_relay")
+
+	downToVersion(t, dsn, evidencePlaneVersion-1)
+
+	requireRolesDropped(t, db, "ibex_service", "ibex_evidence_relay")
+
+	// The up files recreate both roles, so a rollback that left an object behind
+	// would surface here rather than in a later test.
+	if err := Up(dsn); err != nil {
+		t.Fatalf("re-up after rollback: %v", err)
+	}
+	requireRolesExist(t, db, "ibex_service", "ibex_evidence_relay")
+}
+
+// requireRolesExist fails unless every named role exists in the cluster.
+func requireRolesExist(t *testing.T, db *sql.DB, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if !roleExists(t, db, name) {
+			t.Fatalf("role %s is missing; the migration set must create it", name)
+		}
+	}
+}
+
+// requireRolesDropped fails if any named role still exists in the cluster.
+func requireRolesDropped(t *testing.T, db *sql.DB, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if roleExists(t, db, name) {
+			t.Fatalf("role %s survived the rollback; its down migration did not drop it", name)
+		}
+	}
+}
+
+// roleExists reports whether name is a cluster role. Roles are cluster-global, so
+// the answer does not depend on the database the connection is attached to.
+func roleExists(t *testing.T, db *sql.DB, name string) bool {
+	t.Helper()
+	var exists bool
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`, name).Scan(&exists); err != nil {
+		t.Fatalf("check role %s: %v", name, err)
+	}
+	return exists
 }
 
 func TestSchemaObjectsExist(t *testing.T) {

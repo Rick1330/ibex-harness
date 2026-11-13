@@ -150,6 +150,7 @@ def _missing_tool_failures(missing: set[tuple[str, str]], context: CheckContext)
 def _stale_tool_message(server: str, tool: str, context: CheckContext) -> str:
     path = context.mcp_surfaces.get(server, (None, frozenset()))[0]
     where = display_path(path) if path is not None else "any committed mcp_tools.json"
+    # nosemgrep: semgrep.rules.ibex-no-raw-sql-format -- diagnostic message, not a query
     return (
         f"stale-registration: mcp tool {server}/{tool} is registered but is not recorded in {where}"
     )

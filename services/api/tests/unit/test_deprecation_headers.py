@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -28,7 +29,11 @@ from starlette.types import Message, Receive, Scope, Send
 
 from app.config import Settings
 from app.main import ApiRuntimeOverrides, create_app
-from app.middleware.deprecations import DeprecationHeadersMiddleware, load_deprecation_headers
+from app.middleware.deprecations import (
+    DeprecationHeadersMiddleware,
+    RouteNotice,
+    load_deprecation_headers,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _REST_REGISTRY = _REPO_ROOT / "engineering/architecture-v2/contracts/rest-route-registry.json"
@@ -260,7 +265,8 @@ def test_route_headers_are_not_overwritten() -> None:
         (b"deprecation", _DEPRECATION_VALUE.encode("ascii")),
         (b"sunset", _SUNSET_VALUE.encode("ascii")),
     )
-    middleware = DeprecationHeadersMiddleware(route_app, {f"GET {_DEPRECATED_ROUTE}": declared})
+    notice = RouteNotice(headers=declared, sunset=date(2099, 12, 31))
+    middleware = DeprecationHeadersMiddleware(route_app, {f"GET {_DEPRECATED_ROUTE}": notice})
     sent: list[Message] = []
 
     async def capture(message: Message) -> None:
@@ -334,10 +340,37 @@ def test_expired_entry_does_not_silence_a_live_one(tmp_path: Path) -> None:
     assert set(loaded.routes) == {f"GET {_DEPRECATED_ROUTE}"}
 
 
+def test_a_notice_stops_on_the_day_after_its_sunset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A process that starts inside a window must stop on its own when the window closes.
+
+    The record is read once, so the sunset boundary travels with the notice and is
+    rechecked against the current UTC day on every response. The sunset day itself still
+    emits: the notice is good through the day it names.
+    """
+    today = datetime.now(UTC).date()
+    record = _record(
+        tmp_path,
+        _entry(
+            notice_date=(today - timedelta(days=1)).isoformat(),
+            announced_on=(today - timedelta(days=1)).isoformat(),
+            sunset_date=today.isoformat(),
+        ),
+    )
+    with _app(record) as client:
+        assert "deprecation" in client.get(_DEPRECATED_ROUTE).headers
+        monkeypatch.setattr(
+            "app.middleware.deprecations._utc_today", lambda: today + timedelta(days=1)
+        )
+        _assert_no_deprecation_headers(client.get(_DEPRECATED_ROUTE))
+
+
 def test_missing_record_fails_closed(tmp_path: Path) -> None:
     loaded = load_deprecation_headers(record=tmp_path / "absent.json", registry=_REST_REGISTRY)
     assert dict(loaded.routes) == {}
-    assert loaded.failures and loaded.failures[0].startswith("missing-record:")
+    assert loaded.failures
+    assert loaded.failures[0].startswith("missing-record:")
 
 
 def test_invalid_json_fails_closed(tmp_path: Path) -> None:
@@ -391,7 +424,8 @@ def test_missing_registry_fails_closed(tmp_path: Path) -> None:
         record=_record(tmp_path, _entry()), registry=tmp_path / "absent.json"
     )
     assert dict(loaded.routes) == {}
-    assert loaded.failures and loaded.failures[0].startswith("missing-rest-registry:")
+    assert loaded.failures
+    assert loaded.failures[0].startswith("missing-rest-registry:")
 
 
 def test_registry_without_a_routes_array_fails_closed(tmp_path: Path) -> None:
@@ -456,7 +490,10 @@ def test_two_registry_keys_for_one_contract_both_emit(tmp_path: Path) -> None:
         (b"deprecation", _DEPRECATION_VALUE.encode("ascii")),
         (b"sunset", _SUNSET_VALUE.encode("ascii")),
     )
-    assert dict(loaded.routes) == {f"GET {_DEPRECATED_ROUTE}": expected, legacy: expected}
+    assert {key: notice.headers for key, notice in loaded.routes.items()} == {
+        f"GET {_DEPRECATED_ROUTE}": expected,
+        legacy: expected,
+    }
 
 
 def test_record_without_an_entries_array_fails_closed(tmp_path: Path) -> None:
@@ -540,7 +577,8 @@ def test_unreadable_record_fails_closed(tmp_path: Path) -> None:
     path.mkdir()
     loaded = load_deprecation_headers(record=path, registry=_REST_REGISTRY)
     assert dict(loaded.routes) == {}
-    assert loaded.failures and loaded.failures[0].startswith("unreadable-record:")
+    assert loaded.failures
+    assert loaded.failures[0].startswith("unreadable-record:")
 
 
 def test_deeply_nested_record_fails_closed(tmp_path: Path) -> None:

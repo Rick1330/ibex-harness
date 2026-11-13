@@ -80,11 +80,11 @@ that an emitter exists. Two emitters write these headers today:
 ``services/api/app/middleware/deprecations.py`` for ``rest`` and
 ``services/proxy/internal/http/deprecations.go`` for ``proxy``.
 
-A ``grpc`` entry is validated structurally and against the window only. There is
-no committed gRPC method registry to cross-check yet: the REST registry declares
-gRPC shapes out of scope (``out_of_scope.grpc``), where ``buf-breaking`` (W5.1)
-and P0-12 govern them. That gap is stated in the policy document rather than
-papered over.
+A ``grpc`` entry is validated structurally and against the window, and its
+``contract_id`` is resolved against the contract registry's ``grpc_methods`` rows
+for existence and stability, the same rule a ``rest`` entry gets. The registry
+still declares gRPC message shapes out of scope (``out_of_scope.grpc``), where
+``buf-breaking`` (W5.1) and P0-12 govern them.
 
 No network access, no third-party dependency, deterministic sorted output. This
 script never writes; it only reads the record and the two registries.

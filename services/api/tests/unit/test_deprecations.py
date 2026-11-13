@@ -125,6 +125,14 @@ def test_successor_must_be_named_and_must_differ_from_the_contract(tmp_path: Pat
     ), empty
 
 
+def test_a_proxy_entry_cannot_name_its_own_path_as_its_successor(tmp_path: Path) -> None:
+    """The proxy selector is ``path``, so that is the name the self-check must compare."""
+    failures = checked(tmp_path, [proxy_entry(successor="/v1/chat/completions")])
+    assert failures == [
+        "successor-is-self: dep.agents.read names '/v1/chat/completions' as its own successor"
+    ]
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -292,10 +300,20 @@ def test_grpc_entry_carrying_mcp_selectors_fails(tmp_path: Path) -> None:
     assert failures == ["unknown-field: dep.agents.read has server, tool"]
 
 
-def test_grpc_contract_id_resolves_against_no_registry(tmp_path: Path) -> None:
-    """No gRPC method registry is committed, so the id is not cross-checked; the field set is."""
-    unknown = grpc_entry(contract_id="ibex.ghost.v1.GhostService/Missing")
-    assert checked(tmp_path, [unknown]) == []
+def test_grpc_contract_id_must_resolve_against_a_grpc_method_row(tmp_path: Path) -> None:
+    """A gRPC entry names a contract, and the registry's ``grpc_methods`` rows are the list.
+
+    The structural rules still apply to the entry; this is the cross-check that a
+    phantom method cannot be deprecated.
+    """
+    unknown = grpc_entry(contract_id="grpc.ghost.missing.v1")
+    failures = checked(tmp_path, [unknown])
+    assert failures == [
+        (
+            "unknown-contract: dep.agents.read deprecates grpc.ghost.missing.v1, which has no row "
+            f"in {tmp_path / 'rest-route-registry.json'}"
+        )
+    ]
 
 
 def test_announced_with_missing_evidence_fails(tmp_path: Path) -> None:

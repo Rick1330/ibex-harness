@@ -106,7 +106,10 @@ type deprecationNotices map[string]deprecationNotice
 // Announcing nothing because a record was silently misread is the failure this
 // loader exists to prevent.
 func loadProxyDeprecationNotices(configured string) (deprecationNotices, error) {
-	path, ok := resolveDeprecationsFile(configured)
+	path, ok, err := resolveDeprecationsFile(configured)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, nil
 	}
@@ -124,27 +127,55 @@ func loadProxyDeprecationNotices(configured string) (deprecationNotices, error) 
 	return buildDeprecationNotices(record)
 }
 
-// resolveDeprecationsFile returns the record path to read. The second result is
-// false when no default record exists anywhere above the working directory.
-func resolveDeprecationsFile(configured string) (string, bool) {
+// resolveDeprecationsFile returns the record path to read, and whether one was
+// found at all. A candidate that exists but cannot be inspected is an error
+// rather than a miss: skipping it would keep searching upwards, so a permission
+// problem or a broken checkout could silently announce a different record — or
+// none at all — instead of failing startup. A working directory that cannot be
+// read is the one case still treated as "no record", because there is no
+// candidate to inspect.
+func resolveDeprecationsFile(configured string) (string, bool, error) {
 	if path := strings.TrimSpace(configured); path != "" {
-		return path, true
+		return path, true, nil
 	}
 	dir, err := os.Getwd()
 	if err != nil {
-		return "", false
+		return "", false, nil
 	}
 	for {
 		candidate := filepath.Join(dir, DefaultDeprecationsFile)
-		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
-			return candidate, true
+		found, err := isDeprecationsFile(candidate)
+		if err != nil {
+			return "", false, err
+		}
+		if found {
+			return candidate, true, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", false
+			return "", false, nil
 		}
 		dir = parent
 	}
+}
+
+// isDeprecationsFile reports whether candidate is the record. Only a candidate
+// that is absent is a miss; every other failure is returned, because an
+// unreadable record must fail startup rather than be searched past. A directory
+// at the record path is such a failure: it can never be read, and treating it as
+// a miss would let a stale copy higher up the tree take its place.
+func isDeprecationsFile(candidate string) (bool, error) {
+	info, err := os.Stat(candidate)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", candidate, err)
+	}
+	if info.IsDir() {
+		return false, fmt.Errorf("%s: is a directory, not the deprecation record", candidate)
+	}
+	return true, nil
 }
 
 func decodeDeprecationRecord(data []byte) (deprecationRecord, error) {
@@ -169,28 +200,38 @@ func decodeDeprecationRecord(data []byte) (deprecationRecord, error) {
 func buildDeprecationNotices(record deprecationRecord) (deprecationNotices, error) {
 	notices := make(deprecationNotices, len(record.Entries))
 	for _, entry := range record.Entries {
-		if err := checkEntrySurface(entry); err != nil {
+		if err := addDeprecationNotice(notices, entry); err != nil {
 			return nil, err
 		}
-		if entry.Surface != proxySurface {
-			continue
-		}
-		notice, err := proxyNoticeFor(entry)
-		if err != nil {
-			return nil, err
-		}
-		if notice == nil {
-			continue
-		}
-		if _, duplicate := notices[entry.Path]; duplicate {
-			return nil, fmt.Errorf("entry %q: path %q is already announced by another proxy entry", entry.ID, entry.Path)
-		}
-		notices[entry.Path] = *notice
 	}
 	if len(notices) == 0 {
 		return nil, nil
 	}
 	return notices, nil
+}
+
+// addDeprecationNotice validates one entry and records the notice it announces.
+// An entry for another surface, and a proxy entry that announces nothing, are
+// both dropped without touching the map.
+func addDeprecationNotice(notices deprecationNotices, entry deprecationEntry) error {
+	if err := checkEntrySurface(entry); err != nil {
+		return err
+	}
+	if entry.Surface != proxySurface {
+		return nil
+	}
+	notice, err := proxyNoticeFor(entry)
+	if err != nil {
+		return err
+	}
+	if notice == nil {
+		return nil
+	}
+	if _, duplicate := notices[entry.Path]; duplicate {
+		return fmt.Errorf("entry %q: path %q is already announced by another proxy entry", entry.ID, entry.Path)
+	}
+	notices[entry.Path] = *notice
+	return nil
 }
 
 func checkEntrySurface(entry deprecationEntry) error {

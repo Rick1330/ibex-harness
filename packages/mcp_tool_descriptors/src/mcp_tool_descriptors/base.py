@@ -10,17 +10,33 @@ checkout, no working-tree mutation — and compares it with the record on disk.
 It fails, naming the tool, when:
 
 - ``removed-tool-without-deprecation``: a tool recorded at the base ref is absent
-  from the record now, and no live deprecation entry covers it;
+  from the record now, and no deprecation entry covered it at the base ref;
 - ``schema-change-without-deprecation``: a tool recorded in both carries a
   different ``version``, description hash, input schema hash, or output schema
   hash, and no live deprecation entry covers it.
 
 An additive change passes: a tool recorded now and not at the base ref is a new
-contract, not a broken one. A live deprecation entry is one in
-``engineering/architecture-v2/contracts/deprecations.json`` with ``surface:
-"mcp"``, the matching ``server`` (``operator`` or ``memory``) and ``tool``, and
-``status`` ``proposed`` or ``announced``. A ``withdrawn`` entry authorises
-nothing.
+contract, not a broken one.
+
+The two halves of the policy are recorded at different times, so they are read at
+different times. A *change* to a tool that is still published is authorised by a live
+entry in the record on disk: one in
+``engineering/architecture-v2/contracts/deprecations.json`` with ``surface: "mcp"``,
+the matching ``server`` (``operator`` or ``memory``) and ``tool``, and ``status``
+``proposed`` or ``announced``. A ``withdrawn`` entry authorises nothing.
+
+A *removal* is authorised by the same entry read at the base ref, because the policy
+removes a tool and its entry in one change: by the time the tool is gone, the entry
+that announced the removal is gone from the record too. That is also the definition
+``services/api/scripts/check_deprecations.py`` enforces from the other side — it
+rejects a record whose entry names a tool the descriptor no longer records
+(``unknown-tool``) — so the two checks cannot disagree about what a completed removal
+is. A tool that never existed is never treated as removed: it was not recorded at the
+base ref, so no entry there can cover it.
+
+The record itself is validated before any entry is read: the schema id must be
+``ibex.deprecations.v1`` and every entry must carry its surface's required fields, so
+a malformed entry cannot waive a removal by being skipped.
 
 The comparison is against the committed record, not the live surface, because
 the record is the contract artefact that ships. Running ``--check`` first (the
@@ -39,7 +55,8 @@ at the base ref against the record now.
 from __future__ import annotations
 
 import json
-import subprocess
+import re
+import subprocess  # nosec B404 # the only call is git, run with an argv list and no shell
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -49,9 +66,36 @@ from mcp_tool_descriptors.paths import confine
 from mcp_tool_descriptors.record import Surface
 
 DEPRECATIONS_PATH: Final = Path("engineering/architecture-v2/contracts/deprecations.json")
+DEPRECATIONS_SCHEMA: Final = "ibex.deprecations.v1"
 MCP_SURFACE: Final = "mcp"
 LIVE_DEPRECATION_STATUSES: Final = frozenset({"proposed", "announced"})
+DEPRECATION_STATUSES: Final = frozenset({"proposed", "announced", "withdrawn"})
 MCP_SERVER_PREFIX: Final = "ibex-mcp-"
+#: The fields every entry carries, and the selector each surface adds. The record's
+#: schema is owned by ``services/api/scripts/deprecations_model.py``; this is the part
+#: of it this module needs to refuse a record whose entries cannot be trusted.
+COMMON_ENTRY_FIELDS: Final = (
+    "id",
+    "surface",
+    "stability",
+    "notice_date",
+    "sunset_date",
+    "status",
+    "successor",
+    "headers_implemented",
+    "evidence",
+)
+ENTRY_SELECTORS: Final = {
+    "rest": ("contract_id",),
+    "grpc": ("contract_id",),
+    "mcp": ("tool", "server"),
+    "proxy": ("path",),
+}
+SURFACES: Final = frozenset(ENTRY_SELECTORS)
+#: A ref that names an object: a letter or digit first, then only the characters a
+#: branch, tag, or ``refs/...`` path uses. A leading ``-`` is refused, so a caller
+#: cannot hand git an option through the ref.
+REF_PATTERN: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
 #: Recorded field and the name a human reads in the failure message.
 COMPARED_FIELDS: Final = (
     ("version", "version"),
@@ -78,14 +122,28 @@ class ReadScope:
 
 @dataclass(frozen=True, slots=True)
 class Deprecations:
-    """A live deprecation record: the path a failure names and the pairs it covers."""
+    """The deprecation record: the path a failure names and the pairs it covers.
+
+    Two sets, because the two halves of the policy are recorded at different times.
+    ``covered`` is the record on disk: a live entry there authorises a *change* to a
+    tool that is still published. ``covered_at_base`` is the same record read at
+    ``base_ref``, and it is what authorises a *removal*: the policy removes a tool and
+    its entry in one change, so by the time the tool is gone the entry that announced
+    the removal is gone from the record too. A record that never named the tool
+    authorises nothing, so a tool that never existed is not treated as removed.
+    """
 
     path: Path
     covered: frozenset[tuple[str, str]]
+    covered_at_base: frozenset[tuple[str, str]]
 
-    def covers(self, leaf: str, tool: str) -> bool:
+    def covers_change(self, leaf: str, tool: str) -> bool:
         """Whether a live entry authorises changing ``tool`` on the ``leaf`` server."""
         return (leaf, tool) in self.covered
+
+    def covers_removal(self, leaf: str, tool: str) -> bool:
+        """Whether the entry that announced ``tool``'s removal covered it at ``base_ref``."""
+        return (leaf, tool) in self.covered_at_base
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,10 +180,12 @@ class Comparison:
         self, name: str, recorded: dict[str, Any], rows_now: dict[str, dict[str, Any]]
     ) -> list[str]:
         """The failures one tool recorded at ``base_ref`` carries."""
-        if self.deprecations.covers(self.leaf, name):
-            return []
         if name not in rows_now:
+            if self.deprecations.covers_removal(self.leaf, name):
+                return []
             return [self._removal(name)]
+        if self.deprecations.covers_change(self.leaf, name):
+            return []
         return self._change_failures(name, recorded, rows_now[name])
 
     def _removal(self, name: str) -> str:
@@ -166,16 +226,33 @@ def check_base(
     if failures:
         return failures
     deprecations_path = _deprecations_path(path, read)
-    deprecations, failures = _deprecations(deprecations_path)
+    deprecations, failures = _deprecations(deprecations_path, base_ref, read)
     if failures:
         return failures
     return sorted(Comparison(previous, current, surface, base_ref, deprecations).failures())
+
+
+def ref_failure(ref: str) -> str | None:
+    """Why ``ref`` cannot be handed to git, or ``None`` when it is a plain object name.
+
+    The ref is a caller-supplied string that becomes an argv element, so it is checked
+    before git sees it: an empty ref, a leading ``-`` (which git would read as an
+    option), whitespace, a ``..`` range, and a trailing ``/`` are all refused.
+    """
+    if not REF_PATTERN.fullmatch(ref):
+        return f"unreadable-base-ref: {ref!r} is not a usable git ref"
+    if ".." in ref or ref.endswith("/"):
+        return f"unreadable-base-ref: {ref!r} is not a usable git ref"
+    return None
 
 
 def load_at_ref(
     path: Path, ref: str, allow_root: Path | None = None
 ) -> tuple[dict[str, Any], list[str]]:
     """Read and validate ``<ref>:<path>`` through ``git show`` (never a checkout)."""
+    refused = ref_failure(ref)
+    if refused is not None:
+        return {}, [refused]
     checked = confine(path, allow_root)
     toplevel, failures = git_toplevel(checked)
     if failures:
@@ -185,7 +262,7 @@ def load_at_ref(
     except ValueError:
         return {}, [f"unreadable-base-ref: {checked} is outside the git tree at {toplevel}"]
     label = f"{ref}:{relative.as_posix()}"
-    output, failures = _git(toplevel, "show", label)
+    output, failures = _git(toplevel, "show", "--end-of-options", label)
     if failures:
         return {}, failures
     return _parse_record(output, label)
@@ -201,10 +278,17 @@ def git_toplevel(path: Path) -> tuple[Path, list[str]]:
 
 
 def _git(directory: Path, *arguments: str) -> tuple[str, list[str]]:
-    """Run one read-only git command; return its stdout or a named failure."""
+    """Run one read-only git command; return its stdout or a named failure.
+
+    ``arguments`` is an argv list and never a shell string, and a caller-supplied ref has
+    already been checked by ``ref_failure`` and placed after ``--end-of-options``, so git
+    cannot read it as an option.
+    """
     command = ["git", "-C", str(directory), *arguments]
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        completed = subprocess.run(  # nosec B603 # argv list, no shell, ref pre-checked
+            command, capture_output=True, text=True, check=False
+        )
     except OSError as error:
         return "", [f"unreadable-base-ref: cannot run {' '.join(command)}: {error}"]
     if completed.returncode == 0:
@@ -240,10 +324,14 @@ def _deprecations_path(path: Path, scope: ReadScope) -> Path:
     return toplevel / DEPRECATIONS_PATH
 
 
-def _deprecations(path: Path) -> tuple[Deprecations, list[str]]:
-    """The live deprecation record at ``path``; an unreadable one is a named failure."""
+def _deprecations(path: Path, base_ref: str, scope: ReadScope) -> tuple[Deprecations, list[str]]:
+    """The deprecation record at ``path``, and the pairs it covered at ``base_ref``.
+
+    An unreadable, wrongly-schemad, or malformed record is a named failure and covers
+    nothing: an entry the module cannot validate must not waive a removal.
+    """
     if not path.is_file():
-        return Deprecations(path, frozenset()), [
+        return _uncovered(path), [
             (
                 f"missing-deprecation-record: {path} does not exist; a removed or changed tool "
                 "needs a recorded deprecation"
@@ -251,21 +339,118 @@ def _deprecations(path: Path) -> tuple[Deprecations, list[str]]:
         ]
     entries, failures = _deprecation_entries(path)
     if failures:
-        return Deprecations(path, frozenset()), failures
+        return _uncovered(path), failures
     covered = frozenset(pair for pair in map(_live_pair, entries) if pair is not None)
-    return Deprecations(path, covered), []
+    return Deprecations(path, covered, _covered_at_base(covered, path, base_ref, scope)), []
+
+
+def _uncovered(path: Path) -> Deprecations:
+    return Deprecations(path, frozenset(), frozenset())
+
+
+def _covered_at_base(
+    covered: frozenset[tuple[str, str]], path: Path, base_ref: str, scope: ReadScope
+) -> frozenset[tuple[str, str]]:
+    """The pairs the record covered at ``base_ref``, which is what authorises a removal.
+
+    A record that did not exist at that ref, or that cannot be read there, covered
+    nothing: a first commit that adds the record is not evidence that any tool was ever
+    deprecated. When the caller supplies the record itself (``--deprecations``), that
+    record is the notice of record for the run, so it stands for the base-ref one too:
+    there is no repository copy to read at the ref.
+    """
+    if scope.deprecations is not None:
+        return covered
+    toplevel, failures = git_toplevel(confine(path, scope.allow_root))
+    if failures:
+        return frozenset()
+    try:
+        relative = path.relative_to(toplevel).as_posix()
+    except ValueError:
+        return frozenset()
+    output, failures = _git(toplevel, "show", "--end-of-options", f"{base_ref}:{relative}")
+    if failures:
+        return frozenset()
+    entries, _failures = _entries_from_text(output, f"{base_ref}:{relative}")
+    return frozenset(pair for pair in map(_live_pair, entries) if pair is not None)
 
 
 def _deprecation_entries(path: Path) -> tuple[list[object], list[str]]:
-    """The ``entries`` array of the deprecation record, or why it cannot be read."""
+    """The ``entries`` array of a valid record, or why the record cannot be trusted."""
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as error:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
         return [], [f"invalid-deprecation-record: {path}: {error}"]
-    entries = payload.get("entries") if isinstance(payload, dict) else None
+    return _entries_from_text(text, path)
+
+
+def _entries_from_text(text: str, label: str | Path) -> tuple[list[object], list[str]]:
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, RecursionError) as error:
+        return [], [f"invalid-deprecation-record: {label}: {error}"]
+    return _entries_from_payload(payload, label)
+
+
+def _entries_from_payload(payload: object, label: str | Path) -> tuple[list[object], list[str]]:
+    """Validate the record's schema and every entry before any entry is read."""
+    if not isinstance(payload, dict):
+        return [], [f"invalid-deprecation-record: {label} must be a JSON object"]
+    schema = payload.get("schema")
+    if schema != DEPRECATIONS_SCHEMA:
+        return [], [
+            (
+                f"invalid-deprecation-record: {label}: schema is {schema!r}; "
+                f"expected {DEPRECATIONS_SCHEMA!r}"
+            )
+        ]
+    entries = payload.get("entries")
     if not isinstance(entries, list):
-        return [], [f'invalid-deprecation-record: {path} needs an "entries" array']
-    return entries, []
+        return [], [f'invalid-deprecation-record: {label} needs an "entries" array']
+    invalid = [
+        f"invalid-deprecation-record: {label}: {reason}"
+        for reason in (_entry_failure(entry, index) for index, entry in enumerate(entries))
+        if reason is not None
+    ]
+    return entries, invalid
+
+
+def _entry_failure(entry: object, index: int) -> str | None:
+    """The reason one entry is not a usable record entry, or ``None`` when it is."""
+    label = f"entries[{index}]"
+    if not isinstance(entry, dict):
+        return f"{label} is not a JSON object"
+    surface = entry.get("surface")
+    if surface not in SURFACES:
+        return f"{label} has surface {surface!r}; expected one of {sorted(SURFACES)}"
+    required = COMMON_ENTRY_FIELDS + ENTRY_SELECTORS[str(surface)]
+    missing = [field for field in required if field not in entry]
+    if missing:
+        return f"{label} lacks {', '.join(missing)}"
+    return _entry_value_failure(entry, label, required)
+
+
+def _entry_value_failure(
+    entry: dict[str, object], label: str, required: tuple[str, ...]
+) -> str | None:
+    """The value rules: the boolean flag, the non-empty strings, and the status vocabulary."""
+    headers = entry["headers_implemented"]
+    if not isinstance(headers, bool):
+        return f"{label}.headers_implemented must be a boolean, not {headers!r}"
+    invalid = [
+        field
+        for field in required
+        if field != "headers_implemented"
+        and (not isinstance(entry[field], str) or not entry[field])
+    ]
+    if invalid:
+        return f"{label} has non-string or empty {', '.join(invalid)}"
+    if entry["status"] not in DEPRECATION_STATUSES:
+        return (
+            f"{label} has status {entry['status']!r}; "
+            f"expected one of {sorted(DEPRECATION_STATUSES)}"
+        )
+    return None
 
 
 def _live_pair(entry: object) -> tuple[str, str] | None:

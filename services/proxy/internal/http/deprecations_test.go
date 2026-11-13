@@ -10,9 +10,15 @@ import (
 	"time"
 )
 
+// The announcement fixtures use a far-future sunset rather than a near one: the
+// emitter stops announcing after its sunset date, so a date a few years out
+// would silently turn every "the headers are present" assertion into a failure
+// on a calendar boundary. Fixed dates are kept because the serialization tests
+// assert the exact Deprecation and Sunset values derived from them; a date
+// derived from the clock would make those assertions move every day.
 const (
-	testDeprecationNotice = "2027-01-01"
-	testDeprecationSunset = "2027-06-30"
+	testDeprecationNotice = "2099-01-01"
+	testDeprecationSunset = "2099-06-30"
 )
 
 func writeDeprecationRecord(t *testing.T, entries string) string {
@@ -422,26 +428,121 @@ func TestUnit_loadProxyDeprecationNotices_rejectsBadAnnouncedOn(t *testing.T) {
 	}
 }
 
+// TestUnit_resolveDeprecationsFile pins the two resolution outcomes: an
+// explicit setting is honoured, and an unset one falls back to the committed
+// record. The assertions live in helpers so each outcome reads as its own
+// precondition, and a failure names the outcome that broke.
 func TestUnit_resolveDeprecationsFile(t *testing.T) {
 	t.Parallel()
 	t.Run("configured path wins", func(t *testing.T) {
 		t.Parallel()
-		got, ok := resolveDeprecationsFile(" /tmp/record.json ")
-		if !ok || got != "/tmp/record.json" {
-			t.Fatalf("got (%q, %v)", got, ok)
-		}
+		assertConfiguredPathWins(t)
 	})
 	t.Run("default resolves to the committed record", func(t *testing.T) {
 		t.Parallel()
-		got, ok := resolveDeprecationsFile("")
-		if !ok {
-			t.Fatal("default record not found; run the test from inside the repository")
-		}
-		if !strings.HasSuffix(got, DefaultDeprecationsFile) {
-			t.Fatalf("resolved %q, want a path ending in %q", got, DefaultDeprecationsFile)
-		}
-		if info, err := os.Stat(got); err != nil || info.IsDir() {
-			t.Fatalf("resolved %q is not a file: %v", got, err)
-		}
+		assertDefaultResolvesToCommittedRecord(t)
 	})
+}
+
+// assertConfiguredPathWins requires an explicit setting to be trimmed and used
+// verbatim, with no fallback to the default record.
+func assertConfiguredPathWins(t *testing.T) {
+	t.Helper()
+	got, ok, err := resolveDeprecationsFile(" /tmp/record.json ")
+	if err != nil {
+		t.Fatalf("resolve configured record: %v", err)
+	}
+	if !ok {
+		t.Fatalf("configured record not used: got %q", got)
+	}
+	if got != "/tmp/record.json" {
+		t.Fatalf("got %q want %q", got, "/tmp/record.json")
+	}
+}
+
+// assertDefaultResolvesToCommittedRecord requires an unset setting to resolve to
+// the committed record that ships in the repository.
+func assertDefaultResolvesToCommittedRecord(t *testing.T) {
+	t.Helper()
+	got, ok, err := resolveDeprecationsFile("")
+	if err != nil {
+		t.Fatalf("resolve default record: %v", err)
+	}
+	if !ok {
+		t.Fatal("default record not found; run the test from inside the repository")
+	}
+	if !strings.HasSuffix(got, DefaultDeprecationsFile) {
+		t.Fatalf("resolved %q, want a path ending in %q", got, DefaultDeprecationsFile)
+	}
+	assertRegularFile(t, got)
+}
+
+// assertRegularFile requires path to resolve to a regular file, not a directory.
+func assertRegularFile(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("resolved %q is not a file: %v", path, err)
+	}
+	if info.IsDir() {
+		t.Fatalf("resolved %q is a directory, want a file", path)
+	}
+}
+
+// TestUnit_resolveDeprecationsFile_unreadableCandidateFailsStartup pins that only
+// an absent candidate is searched past. A candidate that exists but cannot be
+// used is an error, because continuing the search would announce a different
+// record — or nothing — while the operator's record was never read.
+//
+// The test changes the working directory to a scratch tree, so it cannot run in
+// parallel: t.Chdir is process-wide.
+func TestUnit_resolveDeprecationsFile_unreadableCandidateFailsStartup(t *testing.T) {
+	tests := []struct {
+		name  string
+		build func(t *testing.T, root string)
+	}{
+		{
+			name: "candidate is a directory",
+			build: func(t *testing.T, root string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Join(root, DefaultDeprecationsFile), 0o700); err != nil {
+					t.Fatalf("create directory at the record path: %v", err)
+				}
+			},
+		},
+		{
+			name: "a path component is a file",
+			build: func(t *testing.T, root string) {
+				t.Helper()
+				// A regular file where the record's parent directory belongs makes
+				// os.Stat report ENOTDIR rather than ENOENT: the candidate cannot be
+				// reached, so it is not absent.
+				if err := os.WriteFile(filepath.Join(root, "engineering"), []byte("not a directory"), 0o600); err != nil {
+					t.Fatalf("write blocking file: %v", err)
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			tc.build(t, root)
+			t.Chdir(root)
+
+			got, ok, err := resolveDeprecationsFile("")
+			if err == nil {
+				t.Fatalf("expected an error for an unreadable record, got (%q, %v)", got, ok)
+			}
+			if !strings.Contains(err.Error(), DefaultDeprecationsFile) {
+				t.Fatalf("error %q does not name the record path %q", err, DefaultDeprecationsFile)
+			}
+			if ok {
+				t.Fatalf("an unreadable record must not resolve: got %q", got)
+			}
+			if _, loadErr := loadProxyDeprecationNotices(""); loadErr == nil {
+				t.Fatal("loadProxyDeprecationNotices must fail startup for an unreadable record")
+			}
+		})
+	}
 }
