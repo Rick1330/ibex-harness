@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -106,6 +107,13 @@ func NewRouter(deps RouterDeps) (http.Handler, error) {
 	if protectedRoutesRequirePolicySnapshot(deps) {
 		return nil, fmt.Errorf("proxy %s profile requires policy snapshot fetcher and verifier when protected routes are mounted", deps.Config.Environment)
 	}
+	notices, err := loadProxyDeprecationNotices(deps.Config.DeprecationsFile)
+	if err != nil {
+		return nil, fmt.Errorf("deprecations: %w", err)
+	}
+	if len(notices) > 0 && deps.Logger != nil {
+		deps.Logger.InfoCtx(context.Background(), "deprecation headers active", "routes", len(notices))
+	}
 	mux := http.NewServeMux()
 	providerReg, err := resolveProviderRegistry(deps.ProviderRegistry)
 	if err != nil {
@@ -121,7 +129,7 @@ func NewRouter(deps RouterDeps) (http.Handler, error) {
 		prd.mux = mux
 		registerProtectedRoutes(prd)
 	}
-	return wrapRouterHandler(deps, mux), nil
+	return wrapRouterHandler(deps, mux, notices), nil
 }
 
 func protectedRoutesRequireLimiter(deps RouterDeps) bool {
@@ -214,12 +222,15 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry, mo
 	}
 }
 
-func wrapRouterHandler(deps RouterDeps, mux *http.ServeMux) http.Handler {
+// wrapRouterHandler builds the middleware chain. The deprecation emitter sits
+// inside loggingMiddleware and wraps the mux, so it covers exactly the surface
+// the log line reports and sets its headers before any handler writes them.
+func wrapRouterHandler(deps RouterDeps, mux *http.ServeMux, notices deprecationNotices) http.Handler {
 	return RequestContextMiddleware(deps.Config)(
 		telemetry.SpanMiddleware(deps.Tracer)(
 			metrics.HTTPMiddleware(deps.Metrics)(
 				ResponseHeadersMiddleware(deps.Config)(
-					loggingMiddleware(deps.Logger, mux),
+					loggingMiddleware(deps.Logger, deprecationHeadersMiddleware(notices)(mux)),
 				),
 			),
 		),

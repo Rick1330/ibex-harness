@@ -26,6 +26,7 @@ type envConfig struct {
 	PolicyPublicKeysJSON      string            `env:"IBEX_PROXY_POLICY_PUBLIC_KEYS"`
 	PolicyPublicKeysFile      string            `env:"IBEX_PROXY_POLICY_PUBLIC_KEYS_FILE"`
 	PolicyMinEpoch            int64             `env:"IBEX_PROXY_POLICY_MIN_EPOCH"`
+	DeprecationsFile          string            `env:"IBEX_PROXY_DEPRECATIONS_FILE"`
 	ContextGRPCTarget         string            `env:"IBEX_CONTEXT_GRPC_TARGET"`
 	ContextAssembleTimeout    time.Duration     `env:"IBEX_CONTEXT_ASSEMBLE_TIMEOUT"`
 	ContextGRPCServiceToken   ibexconfig.Secret `env:"IBEX_CONTEXT_GRPC_SERVICE_TOKEN" secret:"true"`
@@ -256,6 +257,7 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		AuthGRPCAddr:            envCfg.AuthGRPCAddr,
 		AuthGRPCCACertFile:      strings.TrimSpace(envCfg.AuthGRPCCACertFile),
 		PolicyPublicKeysJSON:    strings.TrimSpace(envCfg.PolicyPublicKeysJSON),
+		DeprecationsFile:        strings.TrimSpace(envCfg.DeprecationsFile),
 		ContextGRPCTarget:       envCfg.ContextGRPCTarget,
 		ContextGRPCServiceToken: envCfg.ContextGRPCServiceToken.String(),
 		RequestIDHeader:         envCfg.RequestIDHeader,
