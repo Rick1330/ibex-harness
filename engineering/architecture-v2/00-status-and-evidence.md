@@ -12,6 +12,8 @@ A claim becomes `shipped-accepted` only when the ledger contains:
 - Owner and verification date.
 - Known limitations and review/expiry date.
 
+A dated addendum, [`34-readiness-audit-addendum-2026-11-13.md`](34-readiness-audit-addendum-2026-11-13.md), records what has closed since the 2026-11-09 readiness audit, what remains open and on which blocker, and which checks are documented as running but do not run in CI. It changes no status here and closes no gap; the rows below keep the values and dates they already carry.
+
 ## Current baseline
 
 | Area | Current documented status | What must not be inferred |
