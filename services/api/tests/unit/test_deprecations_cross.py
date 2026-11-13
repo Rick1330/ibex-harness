@@ -16,6 +16,8 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from tests.unit.deprecations_test_support import (
     GRPC_CONTRACT,
     REST_CONTRACT,
@@ -144,3 +146,27 @@ def test_grpc_stable_method_accepts_a_stable_entry(tmp_path: Path) -> None:
     """A resolved contract with the recorded class is the state the check is meant to pass."""
     paths = workspace(tmp_path, [grpc_entry(stability="stable")])
     assert cli.check(paths, today=TODAY) == []
+
+
+def test_a_relative_registry_path_is_read_from_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gRPC rows are read from the path the run loaded, not from a label.
+
+    ``rest_label`` is how a failure names the registry, and it is relative to the
+    repository root when the registry is inside it; a relative ``--rest-registry`` is
+    relative to the caller's working directory. Rebuilding a path from the label would
+    resolve against the repository root and read the wrong file, so the context
+    carries the loaded path and this run names the registry from outside the
+    repository.
+    """
+    absolute = workspace(tmp_path, [grpc_entry()])
+    monkeypatch.chdir(tmp_path)
+    relative = cli.DeprecationPaths(
+        record=absolute.record,
+        rest_registry=absolute.rest_registry.relative_to(tmp_path),
+        mcp_root=absolute.mcp_root,
+        root=absolute.root,
+    )
+
+    assert cli.check(relative, today=TODAY) == []

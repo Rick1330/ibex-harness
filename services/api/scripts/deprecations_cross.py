@@ -18,16 +18,16 @@ tool that never existed is not a completed removal in either place: it fails
 cover it.
 
 Standard library only; the record and the REST registry are loaded by
-``deprecations_model``. The ``grpc_methods`` rows live in that same registry, which the
-context names by its display path; ``_grpc_stabilities`` reads them from there.
+``deprecations_model``. The ``grpc_methods`` rows live in that same registry, so the
+context carries the path it was loaded from; ``_grpc_stabilities`` reads them from
+that path, never from the display label a failure prints.
 """
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-from deprecations_model import MCP_SERVERS, REPO_ROOT, CheckContext, display_path, non_empty_str
+from deprecations_model import MCP_SERVERS, CheckContext, display_path, non_empty_str
 
 
 def _unknown_contract_failure(contract_id: object, label: str, context: CheckContext) -> str:
@@ -68,26 +68,20 @@ def _rest_failures(entry: dict[str, object], label: str, context: CheckContext) 
     return _contract_failures(entry, label, context, context.rest)
 
 
-def _registry_path(context: CheckContext) -> Path:
-    """The contract registry this run was built from.
-
-    ``CheckContext`` carries the registry's display path, and ``display_path`` is
-    lossless: a path inside the repository is relative to its root, anything else is
-    absolute. So the file can be named from the label without a second path on the
-    context.
-    """
-    label = Path(context.rest_label)
-    return label if label.is_absolute() else REPO_ROOT / label
-
-
 def _grpc_stabilities(context: CheckContext) -> dict[str, str]:
     """``contract_id -> stability`` for the registry's ``grpc_methods`` rows.
+
+    The rows are read from the path the registry was loaded from, so a relative
+    ``--rest-registry`` resolves against the caller's working directory, exactly as
+    the initial load did. ``rest_label`` is a display string, not a path: rebuilding
+    one from it would resolve against the repository root instead, and would read the
+    wrong file (or none) whenever the run is started outside the repository.
 
     ``load_rest_registry`` has already failed the run on an unreadable or malformed
     registry, so only the rows themselves are read here.
     """
     try:
-        payload = json.loads(_registry_path(context).read_text(encoding="utf-8"))
+        payload = json.loads(context.rest_registry.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
         return {}
     rows = payload.get("grpc_methods") if isinstance(payload, dict) else None

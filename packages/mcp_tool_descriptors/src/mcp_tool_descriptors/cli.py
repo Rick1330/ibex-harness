@@ -9,10 +9,10 @@ interrupted run cannot truncate it. ``--path`` must stay inside ``--allow-root``
 (the working directory unless set, or ``IBEX_MCP_DESCRIPTOR_ALLOW_ROOT``).
 
 ``--check-base <ref>`` runs ``--check`` and then compares the committed record
-with the same file at ``<ref>`` (read with ``git show``). A tool that was removed
-or whose version, description, or schemas changed needs a live deprecation entry;
-an additive change passes. ``--deprecations`` points the comparison at a
-deprecation record other than
+with the same file at ``<ref>`` (read with ``git cat-file --batch``, the request
+on stdin). A tool that was removed or whose version, description, or schemas
+changed needs a live deprecation entry; an additive change passes.
+``--deprecations`` points the comparison at a deprecation record other than
 ``engineering/architecture-v2/contracts/deprecations.json`` beside the
 repository root.
 """
@@ -66,8 +66,8 @@ def parse_args(
         default=None,
         help=(
             "run --check, then compare the committed record with the same file at REF "
-            "(git show REF:<path>); a removed tool or a changed version, description, or "
-            "schema needs a deprecation entry"
+            "(git cat-file --batch, REF:<path> on stdin); a removed tool or a changed "
+            "version, description, or schema needs a deprecation entry"
         ),
     )
     parser.add_argument("--path", type=Path, default=default_path)

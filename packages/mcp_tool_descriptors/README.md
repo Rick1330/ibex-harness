@@ -23,9 +23,9 @@ services run, so the two gates cannot drift apart.
   `missing-descriptor`, `unreadable-descriptor`, `schema-mismatch`. A differing
   `generator` is a warning, not a failure.
 - **Base-ref comparison** (`base.py`) — `check_base()` reads the record at a git
-  ref with `git show <ref>:<path>` (never a checkout) and compares it with the
-  record on disk. A tool that was removed, or whose version, description, or
-  schemas changed, fails as `removed-tool-without-deprecation` /
+  ref with `git cat-file --batch` (`<ref>:<path>` on stdin, never a checkout) and
+  compares it with the record on disk. A tool that was removed, or whose version,
+  description, or schemas changed, fails as `removed-tool-without-deprecation` /
   `schema-change-without-deprecation` unless a live entry in
   `engineering/architecture-v2/contracts/deprecations.json` covers it. Additive
   changes pass. This is the gate that `check()` cannot provide: deleting a tool
@@ -56,7 +56,7 @@ committed `mcp_tools.json`; everything else is here.
 The negative matrix lives here and runs against a synthetic surface, so it does
 not need a service, a database, or an access token. The base-ref tests build a
 throwaway git repository under `tmp_path`, so they exercise the real
-`git show <ref>:<path>` path without touching this repository.
+`git cat-file --batch` path without touching this repository.
 
 ```bash
 cd packages/mcp_tool_descriptors

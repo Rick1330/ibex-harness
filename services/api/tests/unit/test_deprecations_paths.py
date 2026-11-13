@@ -13,11 +13,12 @@ The field rules live in ``test_deprecations.py`` and the registry cross-checks i
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
 
-from tests.unit.deprecations_test_support import checked, entry, proxy_entry
+from tests.unit.deprecations_test_support import checked, entry, path_rules, proxy_entry
 
 
 def test_announced_proxy_deprecation_with_an_exact_path_passes(tmp_path: Path) -> None:
@@ -118,3 +119,22 @@ def test_path_on_a_non_proxy_entry_fails(tmp_path: Path, value: object) -> None:
     record_entry["path"] = value
     failures = checked(tmp_path, [record_entry])
     assert failures == ["unknown-field: dep.agents.read has path"]
+
+
+def test_a_long_adversarial_path_is_judged_in_one_pass() -> None:
+    """The grammar is decided by a single pass over the segments, not a regex.
+
+    A nested quantifier can be driven into catastrophic backtracking by a long input
+    whose last segment is invalid; the bound below is a blowup detector, not a
+    benchmark — this input is a few milliseconds of linear work.
+    """
+    segments = 20_000
+    accepted = "/" + "/".join(["a"] * segments)
+    rejected = accepted + "/"
+
+    started = time.perf_counter()
+    verdicts = (path_rules.is_exact_path(accepted), path_rules.is_exact_path(rejected))
+    elapsed = time.perf_counter() - started
+
+    assert verdicts == (True, False)
+    assert elapsed < 2.0, f"{elapsed:.3f}s for {len(accepted)} characters"

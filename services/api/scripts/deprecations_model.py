@@ -96,9 +96,18 @@ DEFAULT_PATHS: Final = DeprecationPaths()
 
 @dataclass(frozen=True)
 class CheckContext:
-    """Inputs every entry check shares, resolved once per ``check`` run."""
+    """Inputs every entry check shares, resolved once per ``check`` run.
+
+    ``rest_registry`` is the path the registry was actually loaded from, so a rule
+    that needs to read another part of that file uses it rather than reconstructing a
+    path from a label. ``rest_label`` is how a failure names the registry: relative to
+    the repository root when the file is inside it, absolute otherwise. The two are
+    kept apart because the label is not a path: a relative ``--rest-registry`` is
+    relative to the caller's working directory, not to the repository root.
+    """
 
     rest: dict[str, str]
+    rest_registry: Path
     rest_label: str
     mcp: dict[str, dict[str, str]]
     mcp_paths: dict[str, Path]

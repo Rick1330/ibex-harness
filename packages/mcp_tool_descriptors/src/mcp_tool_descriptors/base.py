@@ -4,7 +4,7 @@
 *now*. It cannot see what the record looked like before, so it cannot tell a
 deliberate removal from a forgotten one: deleting a tool from the surface and
 regenerating the record passes ``check``. This module closes that gap. Given a
-base ref it reads the record *at that ref* with ``git show <ref>:<path>`` — no
+base ref it reads the record *at that ref* with ``git cat-file --batch`` — no
 checkout, no working-tree mutation — and compares it with the record on disk.
 
 It fails, naming the tool, when:
@@ -48,15 +48,19 @@ it one field at a time: ``ReadScope`` is where a run may read from,
 ``Deprecations`` is the live deprecation record, and ``Comparison`` is the record
 at the base ref against the record now.
 
-``git show`` is the only git command this module runs, apart from
-``rev-parse --show-toplevel`` to locate the repository; both are read-only.
+``git cat-file --batch`` is the only git command that reads a record, apart from
+``rev-parse --show-toplevel`` to locate the repository; both are read-only. Both
+run a static argv: the caller's ref reaches git on stdin, never as an argument,
+and the child's environment drops the variables that would point git at another
+repository.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
-import subprocess  # nosec B404 # the only call is git, run with an argv list and no shell
+import subprocess  # nosec B404 # the only calls are git, run with a literal argv and no shell
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -93,9 +97,19 @@ ENTRY_SELECTORS: Final = {
 }
 SURFACES: Final = frozenset(ENTRY_SELECTORS)
 #: A ref that names an object: a letter or digit first, then only the characters a
-#: branch, tag, or ``refs/...`` path uses. A leading ``-`` is refused, so a caller
-#: cannot hand git an option through the ref.
+#: branch, tag, or ``refs/...`` path uses. A leading ``-`` is refused: an
+#: option-shaped ref is not a base ref, and it is refused before any reader sees it.
 REF_PATTERN: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
+#: Variables that point git at another repository, index, or object store. They are
+#: dropped from the child's environment so a read cannot be redirected away from the
+#: tree the record lives in, whatever the calling shell exported.
+REDIRECTING_ENV_VARS: Final = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+)
 #: Recorded field and the name a human reads in the failure message.
 COMPARED_FIELDS: Final = (
     ("version", "version"),
@@ -233,11 +247,13 @@ def check_base(
 
 
 def ref_failure(ref: str) -> str | None:
-    """Why ``ref`` cannot be handed to git, or ``None`` when it is a plain object name.
+    """Why ``ref`` cannot be used as a base ref, or ``None`` when it is a plain object name.
 
-    The ref is a caller-supplied string that becomes an argv element, so it is checked
-    before git sees it: an empty ref, a leading ``-`` (which git would read as an
-    option), whitespace, a ``..`` range, and a trailing ``/`` are all refused.
+    The grammar is the contract for what a base ref may be: a branch, tag, or
+    ``refs/...`` path, never an empty string, a ``..`` range, or a trailing ``/``. It is
+    checked before git sees the ref even though the ref now reaches git on stdin and
+    not as an argv element, so an option-shaped or malformed ref is refused at the door
+    rather than left to the reader to interpret.
     """
     if not REF_PATTERN.fullmatch(ref):
         return f"unreadable-base-ref: {ref!r} is not a usable git ref"
@@ -249,7 +265,7 @@ def ref_failure(ref: str) -> str | None:
 def load_at_ref(
     path: Path, ref: str, allow_root: Path | None = None
 ) -> tuple[dict[str, Any], list[str]]:
-    """Read and validate ``<ref>:<path>`` through ``git show`` (never a checkout)."""
+    """Read and validate ``<ref>:<path>`` with ``git cat-file --batch`` (never a checkout)."""
     refused = ref_failure(ref)
     if refused is not None:
         return {}, [refused]
@@ -262,7 +278,7 @@ def load_at_ref(
     except ValueError:
         return {}, [f"unreadable-base-ref: {checked} is outside the git tree at {toplevel}"]
     label = f"{ref}:{relative.as_posix()}"
-    output, failures = _git(toplevel, "show", "--end-of-options", label)
+    output, failures = _git_cat_file(toplevel, label)
     if failures:
         return {}, failures
     return _parse_record(output, label)
@@ -271,32 +287,99 @@ def load_at_ref(
 def git_toplevel(path: Path) -> tuple[Path, list[str]]:
     """The repository root that owns ``path``."""
     directory = path.parent if path.parent.is_dir() else Path.cwd()
-    output, failures = _git(directory, "rev-parse", "--show-toplevel")
+    output, failures = _git_toplevel(directory)
     if failures:
         return directory, failures
     return Path(output.strip()), []
 
 
-def _git(directory: Path, *arguments: str) -> tuple[str, list[str]]:
-    """Run one read-only git command; return its stdout or a named failure.
+def _git_environment() -> dict[str, str]:
+    """Our environment minus the variables that redirect git to another repository."""
+    return {name: value for name, value in os.environ.items() if name not in REDIRECTING_ENV_VARS}
 
-    ``arguments`` is an argv list and never a shell string, and a caller-supplied ref has
-    already been checked by ``ref_failure`` and placed after ``--end-of-options``, so git
-    cannot read it as an option.
+
+def _git_failure(completed: subprocess.CompletedProcess[bytes], command: str) -> list[str]:
+    """The named failure one non-zero git exit produces."""
+    detail = completed.stderr.decode("utf-8", "replace").strip() or "no output"
+    return [f"unreadable-base-ref: {command} failed ({completed.returncode}): {detail}"]
+
+
+def _git_toplevel(directory: Path) -> tuple[str, list[str]]:
+    """Run ``git rev-parse --show-toplevel`` in ``directory``; return its stdout or a failure.
+
+    The argv is a literal list, so no caller value is an argument, and the child's
+    environment cannot point git at another repository.
     """
-    command = ["git", "-C", str(directory), *arguments]
+    described = f"git rev-parse --show-toplevel in {directory}"
     try:
-        completed = subprocess.run(  # nosec B603 # argv list, no shell, ref pre-checked
-            command, capture_output=True, text=True, check=False
+        completed = subprocess.run(  # nosec B603, B607 # literal argv, no shell; git from PATH
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=directory,
+            capture_output=True,
+            check=False,
+            env=_git_environment(),
         )
     except OSError as error:
-        return "", [f"unreadable-base-ref: cannot run {' '.join(command)}: {error}"]
-    if completed.returncode == 0:
-        return completed.stdout, []
-    detail = completed.stderr.strip() or completed.stdout.strip() or "no output"
-    return "", [
-        f"unreadable-base-ref: {' '.join(command)} failed ({completed.returncode}): {detail}"
-    ]
+        return "", [f"unreadable-base-ref: cannot run {described}: {error}"]
+    if completed.returncode != 0:
+        return "", _git_failure(completed, described)
+    return completed.stdout.decode("utf-8", "replace"), []
+
+
+def _git_cat_file(directory: Path, label: str) -> tuple[str, list[str]]:
+    """Read ``label`` (``<ref>:<path>``) with ``git cat-file --batch``, over stdin.
+
+    ``label`` is built from a caller-supplied ref, so it is never an argv element:
+    ``--batch`` reads the object names it should print from stdin, which keeps the
+    command static and the caller's value out of the process arguments. The child
+    runs in ``directory`` with the redirecting variables removed from its
+    environment, so neither the ref nor the calling shell can aim the read at
+    another repository.
+    """
+    if "\n" in label or "\r" in label:
+        return "", [f"unreadable-base-ref: {label!r} is not a usable git object name"]
+    described = f"git cat-file --batch in {directory}"
+    try:
+        completed = subprocess.run(  # nosec B603, B607 # literal argv, no shell; git from PATH
+            ["git", "cat-file", "--batch"],
+            cwd=directory,
+            input=f"{label}\n".encode(),
+            capture_output=True,
+            check=False,
+            env=_git_environment(),
+        )
+    except OSError as error:
+        return "", [f"unreadable-base-ref: cannot run {described}: {error}"]
+    if completed.returncode != 0:
+        return "", _git_failure(completed, described)
+    return _batch_content(completed.stdout, label)
+
+
+def _batch_content(output: bytes, label: str) -> tuple[str, list[str]]:
+    """The content of one ``cat-file --batch`` reply, or why there is none.
+
+    A reply is a header line — ``<object> <type> <size>`` — then exactly ``size``
+    bytes of content and a newline, or the header alone ending in ``missing`` when
+    the object is not in the repository.
+    """
+    header, separator, body = output.partition(b"\n")
+    fields = header.split(b" ")
+    if len(fields) == 2 and fields[1] == b"missing":
+        return "", [f"unreadable-base-ref: {label} is not in the repository"]
+    if not separator or len(fields) != 3:
+        return "", [f"unreadable-base-ref: {label}: unexpected git cat-file reply {header!r}"]
+    try:
+        size = int(fields[2])
+    except ValueError:
+        return "", [f"unreadable-base-ref: {label}: unexpected git cat-file size {fields[2]!r}"]
+    if len(body) < size:
+        return "", [
+            f"unreadable-base-ref: {label}: git cat-file returned {len(body)} of {size} bytes"
+        ]
+    try:
+        return body[:size].decode("utf-8"), []
+    except UnicodeDecodeError as error:
+        return "", [f"unreadable-base-ref: {label}: {error}"]
 
 
 def _parse_record(text: str, label: str) -> tuple[dict[str, Any], list[str]]:
@@ -328,7 +411,8 @@ def _deprecations(path: Path, base_ref: str, scope: ReadScope) -> tuple[Deprecat
     """The deprecation record at ``path``, and the pairs it covered at ``base_ref``.
 
     An unreadable, wrongly-schemad, or malformed record is a named failure and covers
-    nothing: an entry the module cannot validate must not waive a removal.
+    nothing, whether it is the record on disk or the copy at ``base_ref``: an entry the
+    module cannot validate must not waive a removal.
     """
     if not path.is_file():
         return _uncovered(path), [
@@ -341,7 +425,10 @@ def _deprecations(path: Path, base_ref: str, scope: ReadScope) -> tuple[Deprecat
     if failures:
         return _uncovered(path), failures
     covered = frozenset(pair for pair in map(_live_pair, entries) if pair is not None)
-    return Deprecations(path, covered, _covered_at_base(covered, path, base_ref, scope)), []
+    covered_at_base, failures = _covered_at_base(covered, path, base_ref, scope)
+    if failures:
+        return _uncovered(path), failures
+    return Deprecations(path, covered, covered_at_base), []
 
 
 def _uncovered(path: Path) -> Deprecations:
@@ -350,29 +437,37 @@ def _uncovered(path: Path) -> Deprecations:
 
 def _covered_at_base(
     covered: frozenset[tuple[str, str]], path: Path, base_ref: str, scope: ReadScope
-) -> frozenset[tuple[str, str]]:
-    """The pairs the record covered at ``base_ref``, which is what authorises a removal.
+) -> tuple[frozenset[tuple[str, str]], list[str]]:
+    """The pairs the record covered at ``base_ref``, and why the record cannot be trusted.
 
-    A record that did not exist at that ref, or that cannot be read there, covered
+    A record that did not exist at that ref, or that git cannot read there, covered
     nothing: a first commit that adds the record is not evidence that any tool was ever
     deprecated. When the caller supplies the record itself (``--deprecations``), that
     record is the notice of record for the run, so it stands for the base-ref one too:
     there is no repository copy to read at the ref.
+
+    A record that *is* there but does not validate is a named failure and covers
+    nothing, the same rule the on-disk record gets: an entry the module cannot
+    validate must not waive a removal, and skipping it silently would report the
+    removal as unauthorised without saying why.
     """
     if scope.deprecations is not None:
-        return covered
+        return covered, []
     toplevel, failures = git_toplevel(confine(path, scope.allow_root))
     if failures:
-        return frozenset()
+        return frozenset(), []
     try:
         relative = path.relative_to(toplevel).as_posix()
     except ValueError:
-        return frozenset()
-    output, failures = _git(toplevel, "show", "--end-of-options", f"{base_ref}:{relative}")
+        return frozenset(), []
+    label = f"{base_ref}:{relative}"
+    output, failures = _git_cat_file(toplevel, label)
     if failures:
-        return frozenset()
-    entries, _failures = _entries_from_text(output, f"{base_ref}:{relative}")
-    return frozenset(pair for pair in map(_live_pair, entries) if pair is not None)
+        return frozenset(), []
+    entries, failures = _entries_from_text(output, label)
+    if failures:
+        return frozenset(), failures
+    return frozenset(pair for pair in map(_live_pair, entries) if pair is not None), []
 
 
 def _deprecation_entries(path: Path) -> tuple[list[object], list[str]]:
