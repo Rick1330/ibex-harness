@@ -36,11 +36,12 @@ async def health() -> dict[str, str]:
 
 @probe_router.get("/ready")
 async def ready(request: Request) -> JSONResponse:
-    """Live readiness: bootstrap flag first, then the real dependencies.
+    """Live readiness: bootstrap state first, then the real dependencies.
 
-    The startup flag stays authoritative as a fast-fail. A process that never
-    wired its dependencies must not claim ready because a later probe happens to
-    reach one of them; otherwise the answer is per-request.
+    A process that never wired its dependencies fast-fails with ``bootstrap``:
+    it must not claim ready because a later probe happens to reach one of them.
+    A fully wired process runs the live checks even when its startup refresh
+    failed, so a transient auth or Postgres outage can recover without a restart.
 
     A 503 body is ``{"error": {"code": "service_not_ready", "message": ...,
     "dependency": ...}}`` where ``dependency`` is one of ``auth``, ``postgres``,
@@ -49,10 +50,26 @@ async def ready(request: Request) -> JSONResponse:
     state = getattr(request.app.state, "memory", None)
     if state is None:
         return _not_ready("memory state unavailable", "memory")
-    if getattr(state, "ready", True) is False:
-        message = getattr(state, "ready_error", None) or "memory service failed to bootstrap"
-        return _not_ready(message, "bootstrap")
+    bootstrap_failure = _bootstrap_failure(state)
+    if bootstrap_failure is not None:
+        return bootstrap_failure
+    return await _live_readiness(state)
 
+
+def _bootstrap_failure(state: object) -> JSONResponse | None:
+    """Fast-fail only when startup never configured the dependencies.
+
+    A fully wired process returns None so the live checks decide, which lets a
+    transient auth or Postgres outage recover without a restart.
+    """
+    if getattr(state, "ready", True) is not False or _is_fully_wired(state):
+        return None
+    message = getattr(state, "ready_error", None) or "memory service failed to bootstrap"
+    return _not_ready(message, "bootstrap")
+
+
+async def _live_readiness(state: object) -> JSONResponse:
+    """Run the dependency checks under the overall budget and map the result."""
     try:
         async with asyncio.timeout(_READY_OVERALL_TIMEOUT_S):
             auth_ok, postgres_ok, redis_ok = await asyncio.gather(
@@ -64,7 +81,11 @@ async def ready(request: Request) -> JSONResponse:
         # The per-check budget did not settle the overall one; name the budget
         # rather than guessing which dependency hung.
         return _not_ready("readiness checks timed out", "timeout")
+    return _readiness_response(auth_ok, postgres_ok, redis_ok)
 
+
+def _readiness_response(auth_ok: bool, postgres_ok: bool, redis_ok: bool) -> JSONResponse:
+    """Map the three check results to a stable ready or unready response."""
     if not auth_ok:
         return _not_ready("auth gRPC not reachable", "auth")
     if not postgres_ok:
@@ -72,6 +93,18 @@ async def ready(request: Request) -> JSONResponse:
     if not redis_ok:
         return _not_ready("redis not reachable", "redis")
     return JSONResponse({"status": "ready", "service": "memory"})
+
+
+def _is_fully_wired(state: object) -> bool:
+    """True when startup configured every dependency a request needs.
+
+    ``engine`` is the discriminator: the not-ready lifespan path (no database
+    URL) never builds one, while a startup refresh that merely failed to reach
+    auth or Postgres leaves both the validator and the engine in place.
+    """
+    return (
+        getattr(state, "validator", None) is not None and getattr(state, "engine", None) is not None
+    )
 
 
 def _not_ready(message: str, dependency: str) -> JSONResponse:

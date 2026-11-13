@@ -38,10 +38,12 @@ _METRIC_HELP = {
     "ibex_restore_drill_duration_seconds": (
         "Wall-clock duration of the restore drill that wrote this file"
     ),
-    "ibex_restore_drill_rto_pass": (
+    # Bandit B105 reads the "_pass" suffix as a password-like literal. These are
+    # Prometheus metric names and their help text, not credentials.
+    "ibex_restore_drill_rto_pass": (  # nosec B105
         "1 when the measured Postgres RTO met IBEX_RTO_TARGET_SEC, 0 otherwise"
     ),
-    "ibex_restore_drill_rto_evidence_pass": (
+    "ibex_restore_drill_rto_evidence_pass": (  # nosec B105
         "1 when the RTO passed and the restored fixture was at least the minimum "
         "evidence size, 0 otherwise"
     ),
@@ -106,10 +108,10 @@ def _fixture_block(e: dict[str, str]) -> dict[str, Any]:
     """Record how much data the RTO was measured on (O03).
 
     A restore of two rows finishes in about a second, so an RTO reported without
-    its fixture size is not evidence for a real database. Both the seeded and
-    the post-restore row counts are kept; ``rto_evidence_pass`` uses the
-    post-restore count when present and requires it to clear the configured
-    floor.
+    its fixture size is not evidence for a real database. The requested, the
+    post-seed and the post-restore row counts are all recorded; only the
+    post-restore count can satisfy ``rto_evidence_pass``, which also requires it
+    to clear the configured floor.
     """
     min_rows = parse_int_or_none(e.get("DRILL_MIN_FIXTURE_ROWS", ""))
     return {
@@ -123,26 +125,41 @@ def _fixture_block(e: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def _fixture_rows(fixture: dict[str, Any]) -> int | None:
-    """Rows the RTO was measured on: an observed count, never the requested one.
+def _restored_rows(fixture: dict[str, Any]) -> int | None:
+    """Rows counted in the database *after* the restore: the only evidence count.
 
-    ``rows`` is what the script was asked to seed. Only ``rows_verified`` (after
-    the seed) and ``rows_restored`` (after the restore) prove that data existed.
-    An ALLOW_NO_DB smoke seeds nothing, so both are absent and the evidence
-    claim fails closed instead of falling back to the requested number.
+    ``rows`` is what the script was asked to seed and ``rows_verified`` is a
+    pre-backup count. Neither proves that the restored database contained the
+    data, so neither can stand in for an observed post-restore count: a drill
+    that seeds 50k rows, backs up, and restores an empty volume would otherwise
+    report evidence for a fixture it no longer had. A missing or non-integer
+    value fails closed.
     """
     restored = fixture.get("rows_restored")
-    if isinstance(restored, int):
+    return restored if isinstance(restored, int) else None
+
+
+def _fixture_rows(fixture: dict[str, Any]) -> int | None:
+    """Best observed row count, for the reporting gauge only (never evidence).
+
+    The gauge may fall back to the post-seed count so an operator still sees how
+    much data the drill ran with; ``rto_evidence_pass`` does not, because only
+    the post-restore count proves the data survived the restore.
+    """
+    restored = _restored_rows(fixture)
+    if restored is not None:
         return restored
     verified = fixture.get("rows_verified")
-    if isinstance(verified, int):
-        return verified
-    return None
+    return verified if isinstance(verified, int) else None
 
 
 def rto_evidence_pass(*, rto_pass: bool, fixture: dict[str, Any]) -> bool:
-    """RTO evidence needs both a target pass and a fixture above the floor."""
-    rows = _fixture_rows(fixture)
+    """RTO evidence needs both a target pass and an observed restored fixture.
+
+    ``rto_pass`` alone grades a stopwatch: the floor is what makes the number
+    mean something, and it is measured against the post-restore count only.
+    """
+    rows = _restored_rows(fixture)
     floor = fixture.get("min_rows_for_rto_evidence")
     if not isinstance(floor, int):
         floor = DEFAULT_MIN_FIXTURE_ROWS

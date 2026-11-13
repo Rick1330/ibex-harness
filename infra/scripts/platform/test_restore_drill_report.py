@@ -118,6 +118,18 @@ class BuildReportTests(unittest.TestCase):
         self.assertEqual(report["fixture"]["rows_restored"], 50000)
         self.assertTrue(report["postgres"]["rto_evidence_pass"])
 
+    def test_pre_backup_count_cannot_claim_rto_evidence(self) -> None:
+        # The restore is the step under test. A post-seed count proves the data
+        # existed before the backup, not that it came back, so it must not stand
+        # in for the post-restore count.
+        report = _mod.build_report(
+            _base_env(FIXTURE_ROWS_ACTUAL="50000", FIXTURE_ROWS_RESTORED="")
+        )
+        self.assertTrue(report["postgres"]["rto_pass"])
+        self.assertFalse(report["postgres"]["rto_evidence_pass"])
+        self.assertEqual(report["fixture"]["rows_verified"], 50000)
+        self.assertIsNone(report["fixture"]["rows_restored"])
+
     def test_unverified_fixture_cannot_claim_rto_evidence(self) -> None:
         # A smoke run (ALLOW_NO_DB) seeds nothing, so the requested row count
         # must not be used as if it had been observed.
@@ -203,7 +215,9 @@ class DrillMetricsTests(unittest.TestCase):
             metrics = {
                 "ibex_restore_drill_last_success_unixtime": 1_700_000_000,
                 "ibex_restore_drill_duration_seconds": 42,
-                "ibex_restore_drill_rto_pass": 1,
+                # Metric name, not a credential: Bandit B105 reads the "_pass"
+                # suffix as a password-like literal.
+                "ibex_restore_drill_rto_pass": 1,  # nosec B105
             }
             _mod.write_metrics(path, metrics)
             text = path.read_text(encoding="utf-8")

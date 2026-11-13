@@ -272,9 +272,7 @@ async def test_require_session_permissions_zero() -> None:
     req = _authed_request()
     claims = _claims(permissions=0)
     with (
-        patch.object(
-            platform_mod, "require_operator_session", new=AsyncMock(return_value=claims)
-        ),
+        patch.object(platform_mod, "require_operator_session", new=AsyncMock(return_value=claims)),
         pytest.raises(ApiError) as exc,
     ):
         await _require_operator_session(req)
@@ -503,6 +501,82 @@ async def test_ingestion_lag_seconds_reports_newest_event(
     assert await _ingestion_lag_seconds("http://clickhouse:8123", org_id) == 12.5
     assert len(calls) == 1
     assert calls[0]["url"] == "http://clickhouse:8123/"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dsn", "expected"),
+    [
+        ("http://clickhouse:8123", "http://clickhouse:8123/"),
+        ("http://clickhouse:8123/", "http://clickhouse:8123/"),
+        ("http://clickhouse:8123/ch", "http://clickhouse:8123/ch/"),
+        ("http://clickhouse:8123?database=ibex", "http://clickhouse:8123/?database=ibex"),
+        ("http://clickhouse:8123/?database=ibex", "http://clickhouse:8123/?database=ibex"),
+        (
+            "http://clickhouse:8123/ch?database=ibex&compress=1",
+            "http://clickhouse:8123/ch/?database=ibex&compress=1",
+        ),
+    ],
+)
+async def test_ingestion_lag_url_keeps_the_query_and_adds_one_slash(
+    monkeypatch: pytest.MonkeyPatch, dsn: str, expected: str
+) -> None:
+    """The trailing slash belongs to the path; a DSN query string must survive."""
+    calls = _install_clickhouse(
+        monkeypatch, _clickhouse_response('{"event_count": 1, "lag_seconds": 1.0}')
+    )
+    await _ingestion_lag_seconds(dsn, uuid4())
+    assert calls[0]["url"] == expected
+
+
+@pytest.mark.asyncio
+async def test_ingestion_lag_seconds_none_without_a_dsn() -> None:
+    """An unconfigured ClickHouse is unknown, not zero and not a request."""
+    assert await _ingestion_lag_seconds(None, uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_ingestion_lag_seconds_none_for_a_non_object_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A JSON array is not an aggregate row; it carries no event."""
+    _install_clickhouse(monkeypatch, _clickhouse_response("[1, 2, 3]"))
+    assert await _ingestion_lag_seconds("http://clickhouse:8123", uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_ingestion_lag_seconds_none_for_an_unparseable_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row whose lag field is not numeric is unknown, never a guess."""
+    _install_clickhouse(
+        monkeypatch, _clickhouse_response('{"event_count": 1, "lag_seconds": "abc"}')
+    )
+    assert await _ingestion_lag_seconds("http://clickhouse:8123", uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_ingestion_lag_seconds_skips_blank_lines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ClickHouse may separate rows with blank lines; they carry no event."""
+    _install_clickhouse(
+        monkeypatch, _clickhouse_response('\n{"event_count": 1, "lag_seconds": 2.5}\n')
+    )
+    assert await _ingestion_lag_seconds("http://clickhouse:8123", uuid4()) == 2.5
+
+
+@pytest.mark.asyncio
+async def test_ingestion_lag_seconds_none_when_the_query_loses_the_org_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defense in depth (AGENTS.md §4.3): an unscoped query never runs."""
+    calls = _install_clickhouse(
+        monkeypatch, _clickhouse_response('{"event_count": 1, "lag_seconds": 1.0}')
+    )
+    monkeypatch.setattr(platform_mod, "_ingestion_lag_query", lambda _org: "SELECT 1")
+    assert await _ingestion_lag_seconds("http://clickhouse:8123", uuid4()) is None
+    assert calls == []
 
 
 @pytest.mark.asyncio

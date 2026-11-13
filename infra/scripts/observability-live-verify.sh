@@ -82,6 +82,12 @@ tempo_ready() {
 # The start/end bounds are still sent explicitly, so an earlier run's trace with
 # the same id (impossible in practice, but not assumed) cannot satisfy the
 # window by default.
+#
+# The query is TraceQL and the intrinsic is `trace:id`. The older bare `traceID`
+# tag does not exist in the pinned Tempo: 2.6.1 rejects
+# `q={traceID="<id>"}` with `parse error ... unexpected traceID` (HTTP 400) and
+# accepts `q={trace:id="<id>"}` (HTTP 200), so the broken form failed every run
+# as a search error rather than as a missing trace.
 tempo_search() {
   local trace_id="$1" end
   end=$(date +%s)
@@ -90,7 +96,7 @@ tempo_search() {
   [[ "$end" -le "$RUN_START" ]] && end=$((RUN_START + 1))
   curl -fsS --connect-timeout 2 --max-time 10 --get \
     --data-urlencode "limit=1" \
-    --data-urlencode "q={traceID=\"${trace_id}\"}" \
+    --data-urlencode "q={trace:id=\"${trace_id}\"}" \
     --data-urlencode "start=${RUN_START}" \
     --data-urlencode "end=${end}" \
     "$TEMPO_URL/api/search"

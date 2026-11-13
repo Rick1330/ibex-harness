@@ -659,11 +659,31 @@ check_population() {
 #     assembly="enabled" — the population whose SLI can go missing;
 #   * the memory SLI and its guard both pin route="/v1/memories/search", so a
 #     different route cannot satisfy the retrieval assertion.
+# It also requires the absence alert to subtract the advancing targets with
+# `unless on(job, instance)`. The alert is the only place where the guard and the
+# SLI meet, and the pairing has to be per scrape target: `and on()` with no
+# shared labels collapses the guard into one global match, so a single proxy
+# whose histogram advances keeps the alert silent for a proxy whose histogram is
+# missing. A body that reads both the histogram and the enabled guard without
+# that exclusion is rejected.
 # Like check_population it is pure: it does not touch FAILURES, so the
 # self-tests can run it on a mutant.
 check_context_memory() {
   awk '
     function indent(line) { match(line, /^[[:space:]]*/); return RLENGTH }
+    # close_body ends the expression body being scanned and, when it is the
+    # context-assembly absence alert, requires the per-target exclusion. The
+    # histogram alone is the recording rule (no guard), so the requirement is
+    # keyed on both selectors appearing in the same body.
+    function close_body() {
+      if (!in_body) return
+      if (body_context && body_guard && !body_unless) {
+        printf "FAIL %s:%d: context-assembly absence rule selects ibex_proxy_context_assemble_seconds and the assembly=\"enabled\" guard without \"unless on(job, instance)\"; an and-on() guard matches every target at once, so one advancing proxy silences the alert for a proxy whose histogram is missing\n", FILENAME, body_line > "/dev/stderr"
+        bad = 1
+      }
+      in_body = 0
+      body_context = body_guard = body_unless = 0
+    }
     function label_set(tail,   end) {
       if (substr(tail, 1, 1) != "{") return ""
       end = index(tail, "}")
@@ -684,8 +704,9 @@ check_context_memory() {
         labels = label_set(rest)
         if (metric == "ibex_proxy_context_assemble_seconds") {
           context++
+          body_context = 1
         } else if (metric == "ibex_proxy_nonstreaming_requests_total") {
-          if (has_label(labels, "assembly=\"enabled\"")) { guard++ }
+          if (has_label(labels, "assembly=\"enabled\"")) { guard++; body_guard = 1 }
           else {
             printf "FAIL %s:%d: context-assembly traffic guard %s must pin assembly=\"enabled\"\n", FILENAME, nr, metric > "/dev/stderr"
             bad = 1
@@ -705,17 +726,24 @@ check_context_memory() {
         }
       }
     }
-    /^[[:space:]]*-[[:space:]]+name:[[:space:]]*/ { group = $3; next }
+    /^[[:space:]]*-[[:space:]]+name:[[:space:]]*/ { close_body(); group = $3; next }
     {
-      if (in_body && $0 !~ /^[[:space:]]*$/ && indent($0) <= body_indent) in_body = 0
+      if (in_body && $0 !~ /^[[:space:]]*$/ && indent($0) <= body_indent) close_body()
       if ($0 ~ /^[[:space:]]*expr:[[:space:]]*\|[[:space:]]*$/) {
+        close_body()
         in_body = 1
         body_indent = indent($0)
+        body_line = FNR
+        body_context = body_guard = body_unless = 0
         next
       }
-      if (in_body && $0 !~ /^[[:space:]]*$/ && group == "ibex.slo.context_memory") analyse($0, FNR)
+      if (in_body && $0 !~ /^[[:space:]]*$/) {
+        if ($0 ~ /^[[:space:]]*unless[[:space:]]+on[[:space:]]*\(job,[[:space:]]*instance\)[[:space:]]*$/) body_unless = 1
+        if (group == "ibex.slo.context_memory") analyse($0, FNR)
+      }
     }
     END {
+      close_body()
       if (context == 0) {
         printf "FAIL %s: no ibex_proxy_context_assemble_seconds selector in the ibex.slo.context_memory group\n", FILENAME > "/dev/stderr"
         bad = 1
@@ -892,9 +920,12 @@ fi
 # assembly="enabled", and the memory SLI/guard must both pin the search route.
 # check_context_memory proves each of those, so a later edit cannot silently
 # grade the wrong series while the recording rule still returns a number.
+# It also proves the absence alert excludes advancing targets per scrape target
+# (`unless on(job, instance)`), because that exclusion is what makes a missing
+# histogram fire for one proxy while another proxy records the SLI.
 if [[ "${#production_slo_files[@]}" -gt 0 ]]; then
   if context_output="$(check_context_memory "${production_slo_files[@]}" 2>&1)"; then
-    pass "context/memory SLO selectors pin their populations (context_assemble, memory search route, assembly=\"enabled\" guard)"
+    pass "context/memory SLO selectors pin their populations (context_assemble, memory search route, assembly=\"enabled\" guard) and the absence alert excludes advancing targets per target (unless on(job, instance))"
   else
     printf '%s\n' "$context_output" | sed "$INDENT_FILTER" >&2
     fail "a context/memory SLO selector reads the wrong population or route"
@@ -925,6 +956,23 @@ if [[ "${#production_slo_files[@]}" -gt 0 ]]; then
     fail "self-test: a memory SLI pinned to a non-search route was accepted; the context check cannot catch the defect it exists for"
   else
     pass "self-test: a memory selector pinned to a non-search route is rejected — $(head -n 1 <<<"$mutant_output")"
+  fi
+
+  # Self-mutation 3: delete the per-target exclusion from the absence alert. The
+  # check must reject it. Without the exclusion the alert can only fire when no
+  # target advances the histogram at all, so a single healthy proxy masks a
+  # proxy whose context-assembly SLI never appeared — the defect this selector
+  # exists to close. Built by transformation, so this gate holds no copy of the
+  # expression it forbids.
+  context_unless_mutant="$TMP_DIR/ibex-slo.context-unless-missing.yml"
+  sed -E '/unless[[:space:]]+on[[:space:]]*\(job,[[:space:]]*instance\)/d' \
+    "$SLO_HEADER_RULES" >"$context_unless_mutant"
+  if cmp -s "$SLO_HEADER_RULES" "$context_unless_mutant"; then
+    fail "self-test could not build the context-unless mutant: $(basename "$SLO_HEADER_RULES") has no 'unless on(job, instance)' clause to delete, so the mutation is vacuous"
+  elif mutant_output="$(check_context_memory "$context_unless_mutant" 2>&1)"; then
+    fail "self-test: a context-assembly absence rule without 'unless on(job, instance)' was accepted; one advancing proxy would silence the alert for a proxy whose histogram is missing"
+  else
+    pass "self-test: a context-assembly absence rule without the per-target exclusion is rejected — $(head -n 1 <<<"$mutant_output")"
   fi
 fi
 

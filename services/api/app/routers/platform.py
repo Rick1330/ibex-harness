@@ -16,6 +16,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 import httpx
@@ -62,9 +63,7 @@ WHERE org_id = toUUID('{org_id}')
 
 
 class PlatformHealthResponse(BaseModel):
-    dependency_health: dict[str, str] = Field(
-        description="ok|degraded|unavailable per dependency"
-    )
+    dependency_health: dict[str, str] = Field(description="ok|degraded|unavailable per dependency")
     last_backup_at: datetime | None = None
     last_restore_drill: dict[str, Any] | None = None
     retention_horizon_days: int = _DEFAULT_RETENTION_DAYS
@@ -231,12 +230,23 @@ def _ingestion_lag_query(org_id: UUID | None) -> str:
     return _INGESTION_LAG_QUERY.replace("{org_id}", str(org_id))
 
 
+def _clickhouse_endpoint(dsn: str) -> str:
+    """ClickHouse HTTP endpoint with exactly one trailing slash on the path.
+
+    The slash belongs to the path, not the whole URL: a DSN may already carry a
+    query string (``?database=ibex``), and concatenating onto the raw string
+    would append the slash after the parameters.
+    """
+    parts = urlsplit(dsn)
+    return urlunsplit(parts._replace(path=parts.path.rstrip("/") + "/"))
+
+
 async def _post_lag_query(dsn: str, sql: str) -> tuple[int, str]:
     """POST the rendered SQL to ClickHouse's HTTP interface."""
     try:
         async with httpx.AsyncClient(timeout=_DEP_TIMEOUT_SEC) as client:
             resp = await client.post(
-                dsn.rstrip("/") + "/",
+                _clickhouse_endpoint(dsn),
                 content=sql + "\nFORMAT JSONEachRow\n",
                 headers={"Content-Type": "text/plain"},
             )

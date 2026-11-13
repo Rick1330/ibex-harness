@@ -300,10 +300,18 @@ groups:
   #
   # The absence alert still needs a traffic guard, because a profile with
   # context assembly disabled never creates the context histogram and an idle
-  # memory service never creates the search series. `and on()` matches the
-  # unlabelled absence vector to the labelled traffic vector without pretending
-  # the two share a label set; a plain `and` would intersect on labels and stay
-  # empty, which would make the alert unable to fire.
+  # memory service never creates the search series. The guard is per scrape
+  # target: select the targets serving assembly="enabled" traffic and subtract
+  # (`unless on(job, instance)`) the targets whose context histogram is
+  # advancing. Each proxy is therefore evaluated on its own, so one proxy whose
+  # histogram never appears fires while another proxy that records the SLI stays
+  # silent. The `and on()` form this replaced could not do that — with no shared
+  # labels it collapsed the guard into a single global match, so any advancing
+  # target suppressed the alert for every missing one.
+  #
+  # `sum by (job, instance)` is what keeps that per-target vector free of the
+  # selector's own labels: the guard sums the enabled traffic per target, so the
+  # alert instance is named by job/instance and not by assembly="enabled".
   - name: ibex.slo.context_memory
     rules:
       - record: ibex:context_assemble:p95_5m
@@ -327,13 +335,11 @@ groups:
 
       - alert: IbexContextAssemblySLIAbsent
         expr: |
-          (
-            absent(ibex_proxy_context_assemble_seconds_count)
-            or
-            rate(ibex_proxy_context_assemble_seconds_count[10m]) == 0
-          )
-          and on()
-          (rate(ibex_proxy_nonstreaming_requests_total{assembly="enabled"}[10m]) > 0)
+          sum by (job, instance) (
+            rate(ibex_proxy_nonstreaming_requests_total{assembly="enabled"}[10m])
+          ) > 0
+          unless on(job, instance)
+          rate(ibex_proxy_context_assemble_seconds_count[10m]) > 0
         for: 15m
         labels:
           severity: ticket
