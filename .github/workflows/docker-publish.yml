@@ -179,7 +179,7 @@ jobs:
           cache-from: type=gha,scope=auth
           cache-to: type=gha,mode=max,scope=auth
       - name: Upload auth OCI artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: oci-auth
           path: /tmp/auth.tar
@@ -218,7 +218,7 @@ jobs:
           cache-from: type=gha,scope=proxy
           cache-to: type=gha,mode=max,scope=proxy
       - name: Upload proxy OCI artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: oci-proxy
           path: /tmp/proxy.tar
@@ -252,7 +252,7 @@ jobs:
           cache-from: type=gha,scope=embedder
           cache-to: type=gha,mode=max,scope=embedder
       - name: Upload embedder OCI artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: oci-embedder
           path: /tmp/embedder.tar
@@ -286,7 +286,7 @@ jobs:
           cache-from: type=gha,scope=mcp-memory
           cache-to: type=gha,mode=max,scope=mcp-memory
       - name: Upload mcp-memory OCI artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: oci-mcp-memory
           path: /tmp/mcp-memory.tar
@@ -321,7 +321,7 @@ jobs:
           cache-from: type=gha,scope=memory
           cache-to: type=gha,mode=max,scope=memory
       - name: Upload memory OCI artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: oci-memory
           path: /tmp/memory.tar
@@ -355,7 +355,7 @@ jobs:
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
       - name: Upload api OCI artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: oci-api
           path: /tmp/api.tar
@@ -389,7 +389,7 @@ jobs:
           cache-from: type=gha,scope=worker
           cache-to: type=gha,mode=max,scope=worker
       - name: Upload worker OCI artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: oci-worker
           path: /tmp/worker.tar
