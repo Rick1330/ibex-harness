@@ -14,6 +14,10 @@ from starlette.responses import Response
 
 from app.errors import ResponseOpts, envelope_response
 
+# One Redis verdict for both surfaces: /v1/operator/platform/health reports the
+# same helper's result, so /ready cannot contradict operator SSE readiness.
+from app.routers.platform import _redis_status
+
 probe_router = APIRouter(tags=["probes"])
 
 # Mirror packages/healthcheck budgets (overall ~750ms, per-check ~500ms).
@@ -29,6 +33,9 @@ async def health() -> dict[str, str]:
 @probe_router.get("/ready")
 async def ready(request: Request) -> JSONResponse:
     """Live, per-request dependency checks (Postgres + auth gRPC) — F4-020."""
+    # Redis is checked too when configured: it backs the operator SSE fan-in, so
+    # a dead Redis is a degraded operator plane. The docstring stays byte-identical
+    # because FastAPI publishes it as the OpenAPI operation description.
     state = getattr(request.app.state, "api", None)
     settings = getattr(request.app.state, "settings", None)
     if state is None:
@@ -46,9 +53,10 @@ async def ready(request: Request) -> JSONResponse:
 
     try:
         async with asyncio.timeout(_READY_OVERALL_TIMEOUT_S):
-            auth_ok, db_ok = await asyncio.gather(
+            auth_ok, db_ok, redis_ok = await asyncio.gather(
                 _check_auth(state),
                 _check_postgres(state),
+                _check_redis(settings),
             )
     except TimeoutError:
         return envelope_response(
@@ -67,6 +75,14 @@ async def ready(request: Request) -> JSONResponse:
         return envelope_response(
             code=SERVICE_DEGRADED,
             message="database not reachable",
+            opts=ResponseOpts(settings=settings, status_code=503),
+        )
+    if not redis_ok:
+        # Operator SSE fan-in reads Redis; a configured-but-down Redis is a
+        # degraded operator plane even though request paths still work.
+        return envelope_response(
+            code=SERVICE_DEGRADED,
+            message="redis not reachable",
             opts=ResponseOpts(settings=settings, status_code=503),
         )
     return JSONResponse({"status": "ready", "service": "api"})
@@ -90,12 +106,24 @@ async def _check_postgres(state: object) -> bool:
         # No DB configured → not ready for operator/management plane.
         return False
     try:
-        async with asyncio.timeout(_READY_CHECK_TIMEOUT_S):
-            async with engine.connect() as conn:
-                await conn.execute(text("SELECT 1"))
+        async with asyncio.timeout(_READY_CHECK_TIMEOUT_S), engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
         return True
     except (SQLAlchemyError, OSError):
         # TimeoutError is an OSError subclass.
+        return False
+
+
+async def _check_redis(settings: object) -> bool:
+    """Redis is optional; when configured it backs operator SSE fan-in."""
+    redis_url = getattr(settings, "redis_url", None)
+    if not redis_url:
+        return True
+    try:
+        async with asyncio.timeout(_READY_CHECK_TIMEOUT_S):
+            return (await _redis_status(redis_url)) == "ok"
+    except Exception:  # a probe fails closed on any error, it must never 500
+        # TimeoutError is an OSError subclass; a malformed URL raises ValueError.
         return False
 
 

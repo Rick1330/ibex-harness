@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Self
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from apierror_py import INSUFFICIENT_PERMISSIONS, INVALID_TOKEN
 from authclient.permissions import OPERATOR_METADATA_READ
@@ -15,6 +17,9 @@ from authclient.permissions import OPERATOR_METADATA_READ
 from app.errors import ApiError
 from app.routers import platform as platform_mod
 from app.routers.platform import (
+    _clickhouse_dsn,
+    _ingestion_lag_query,
+    _ingestion_lag_seconds,
     _load_drill,
     _parse_backup_stamp,
     _parse_dlq_depth,
@@ -445,3 +450,172 @@ async def test_postgres_status_ok_and_error() -> None:
     cm_err.__aenter__ = AsyncMock(side_effect=OSError("db"))
     cm_err.__aexit__ = AsyncMock(return_value=None)
     assert await platform_mod._postgres_status(MagicMock(return_value=cm_err)) == "unavailable"
+
+
+# --- P2-21: ingestion lag is measured, never fabricated ---------------------
+
+
+_CLICKHOUSE_CALLS: list[dict[str, object]] = []
+
+
+class _FakeClickHouseClient:
+    """Async httpx client stand-in that records the SQL it is asked to run."""
+
+    def __init__(self, outcome: object) -> None:
+        self._outcome = outcome
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+    async def post(
+        self, url: str, content: str | None = None, headers: dict[str, str] | None = None
+    ) -> object:
+        _CLICKHOUSE_CALLS.append({"url": url, "content": content, "headers": headers})
+        if isinstance(self._outcome, BaseException):
+            raise self._outcome
+        return self._outcome
+
+
+def _install_clickhouse(
+    monkeypatch: pytest.MonkeyPatch, outcome: object
+) -> list[dict[str, object]]:
+    _CLICKHOUSE_CALLS.clear()
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *_a, **_k: _FakeClickHouseClient(outcome))
+    return _CLICKHOUSE_CALLS
+
+
+def _clickhouse_response(body: str, status_code: int = 200) -> MagicMock:
+    return MagicMock(status_code=status_code, text=body)
+
+
+@pytest.mark.asyncio
+async def test_ingestion_lag_seconds_reports_newest_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _install_clickhouse(
+        monkeypatch,
+        _clickhouse_response('{"event_count": 3, "lag_seconds": 12.5}'),
+    )
+    org_id = uuid4()
+    assert await _ingestion_lag_seconds("http://clickhouse:8123", org_id) == 12.5
+    assert len(calls) == 1
+    assert calls[0]["url"] == "http://clickhouse:8123/"
+
+
+@pytest.mark.asyncio
+async def test_ingestion_lag_seconds_clamps_clock_skew(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A newest event dated in the future is 0 seconds old, not a negative lag."""
+    _install_clickhouse(
+        monkeypatch, _clickhouse_response('{"event_count": 1, "lag_seconds": -3.0}')
+    )
+    assert await _ingestion_lag_seconds("http://clickhouse:8123", uuid4()) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_ingestion_lag_seconds_none_when_org_has_no_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No rows must be unknown, not zero: an empty org has no freshness to report."""
+    for body in (
+        '{"event_count": 0, "lag_seconds": null}',
+        '{"event_count": 0, "lag_seconds": 0.0}',
+        "",
+    ):
+        _install_clickhouse(monkeypatch, _clickhouse_response(body))
+        assert await _ingestion_lag_seconds("http://clickhouse:8123", uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_ingestion_lag_seconds_none_on_clickhouse_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_clickhouse(monkeypatch, _clickhouse_response("boom", status_code=500))
+    assert await _ingestion_lag_seconds("http://clickhouse:8123", uuid4()) is None
+
+    _install_clickhouse(monkeypatch, httpx.ConnectError("refused"))
+    assert await _ingestion_lag_seconds("http://clickhouse:8123", uuid4()) is None
+
+    _install_clickhouse(monkeypatch, _clickhouse_response("not-json"))
+    assert await _ingestion_lag_seconds("http://clickhouse:8123", uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_ingestion_lag_query_carries_the_org_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AGENTS.md §4.3: the org filter is the ClickHouse isolation boundary."""
+    calls = _install_clickhouse(
+        monkeypatch, _clickhouse_response('{"event_count": 1, "lag_seconds": 1.0}')
+    )
+    org_id = uuid4()
+    await _ingestion_lag_seconds("http://clickhouse:8123", org_id)
+
+    sql = str(calls[0]["content"])
+    assert "org_id = toUUID(" in sql, "the lag query must filter on org_id"
+    assert f"toUUID('{org_id}')" in sql, "the caller's org must be the bound tenant"
+    assert "ibex.usage_facts" in sql
+    assert "FORMAT JSONEachRow" in sql
+
+
+@pytest.mark.asyncio
+async def test_ingestion_lag_refuses_without_an_org(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _install_clickhouse(
+        monkeypatch, _clickhouse_response('{"event_count": 1, "lag_seconds": 1.0}')
+    )
+    with pytest.raises(TypeError, match="explicit org_id"):
+        _ingestion_lag_query(None)
+    assert await _ingestion_lag_seconds("http://clickhouse:8123", None) is None
+    assert calls == [], "an unscoped query must never reach ClickHouse"
+
+
+def test_clickhouse_dsn_prefers_settings_and_ignores_blank_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CLICKHOUSE_HTTP_URL", raising=False)
+    monkeypatch.delenv("IBEX_CLICKHOUSE_HTTP_URL", raising=False)
+    assert _clickhouse_dsn(MagicMock(clickhouse_http_url="http://ch:8123")) == "http://ch:8123"
+    assert _clickhouse_dsn(MagicMock(clickhouse_http_url=None)) is None
+    monkeypatch.setenv("IBEX_CLICKHOUSE_HTTP_URL", "http://env-ch:8123")
+    assert _clickhouse_dsn(MagicMock(clickhouse_http_url="")) == "http://env-ch:8123"
+
+
+@pytest.mark.asyncio
+async def test_platform_health_reports_ingestion_lag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    req = _authed_request()
+    claims = _claims()
+    with (
+        patch.object(platform_mod, "_require_operator_session", return_value=claims),
+        patch.object(platform_mod, "_redis_status", AsyncMock(return_value="ok")),
+        patch.object(platform_mod, "_ingestion_lag_seconds", AsyncMock(return_value=4.5)) as lag,
+    ):
+        out = await platform_health(req, claims)
+    assert out.ingestion_lag_seconds == 4.5
+    lag.assert_awaited_once()
+    assert lag.await_args.args[1] == claims.org_id, "the probe must be scoped to the caller"
+
+
+@pytest.mark.asyncio
+async def test_platform_health_ingestion_lag_unknown_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No ClickHouse DSN means unknown, and no HTTP call is attempted."""
+    monkeypatch.delenv("CLICKHOUSE_HTTP_URL", raising=False)
+    monkeypatch.delenv("IBEX_CLICKHOUSE_HTTP_URL", raising=False)
+    calls = _install_clickhouse(monkeypatch, _clickhouse_response("{}"))
+    req = _authed_request()
+    with (
+        patch.object(platform_mod, "_require_operator_session", return_value=_claims()),
+        patch.object(platform_mod, "_redis_status", AsyncMock(return_value="ok")),
+    ):
+        out = await platform_health(req, _claims())
+    assert out.ingestion_lag_seconds is None
+    assert calls == []

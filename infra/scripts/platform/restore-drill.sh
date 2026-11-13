@@ -10,6 +10,22 @@ REPORT="$REPORT_DIR/restore-drill-report.json"
 TRANSCRIPT="$REPORT_DIR/transcript.txt"
 # Fresh transcript per run (do not append prior smoke runs into evidence).
 : >"$TRANSCRIPT"
+
+# O03: an RTO measured on a two-row fixture is not evidence. The fixture is
+# generated before the backup and the restored row count is recorded in the
+# report, so a one-second RTO can never be presented as a real restore time.
+DRILL_STARTED_UNIX="$(date +%s)"
+FIXTURE_ROWS="${IBEX_DRILL_FIXTURE_ROWS:-50000}"
+FIXTURE_ORGS=2
+DRILL_MIN_FIXTURE_ROWS="${IBEX_DRILL_MIN_FIXTURE_ROWS:-1000}"
+case "$FIXTURE_ROWS" in
+  '' | *[!0-9]*) echo "[drill] ERROR: IBEX_DRILL_FIXTURE_ROWS must be a non-negative integer (got '$FIXTURE_ROWS')" >&2; exit 2 ;;
+  *) : ;;
+esac
+case "$DRILL_MIN_FIXTURE_ROWS" in
+  '' | *[!0-9]*) echo "[drill] ERROR: IBEX_DRILL_MIN_FIXTURE_ROWS must be a non-negative integer (got '$DRILL_MIN_FIXTURE_ROWS')" >&2; exit 2 ;;
+  *) : ;;
+esac
 exec > >(tee -a "$TRANSCRIPT") 2>&1
 
 echo "=== IBEX 4.P.5 restore drill ==="
@@ -36,7 +52,13 @@ fi
 
 # Locked targets (decision 4) — do not invent different numbers.
 PG_RPO_SEC=$((5 * 60))
-PG_RTO_SEC=$((30 * 60))
+# The target is operator-configurable (O03): the report computes rto_pass
+# against this value, not against a constant a fast run always clears.
+PG_RTO_SEC="${IBEX_RTO_TARGET_SEC:-$((30 * 60))}"
+case "$PG_RTO_SEC" in
+  '' | *[!0-9]* | 0) echo "[drill] ERROR: IBEX_RTO_TARGET_SEC must be a positive integer (got '$PG_RTO_SEC')" >&2; exit 2 ;;
+  *) : ;;
+esac
 CH_RPO_SEC=$((24 * 3600))
 CH_RTO_SEC=$((60 * 60))
 OBJ_RPO_SEC=$((24 * 3600))
@@ -175,6 +197,51 @@ then
   fi
 fi
 
+# Fixture agents: memories carry a composite FK to (agent_id, org_id), so a
+# fixture without agents cannot be inserted. Both tables are FORCE-RLS, so the
+# seed runs with app.is_service_account for this controlled, per-run fixture.
+AGENT_A="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+AGENT_B="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+FIXTURE_ROWS_ACTUAL=""
+if [[ "${ALLOW_NO_DB:-0}" != "1" ]]; then
+  echo "[drill] seeding fixture agents"
+  if ! psql_cmd -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+SET LOCAL app.is_service_account = 'true';
+INSERT INTO ibex_core.agents (id, org_id, name, slug)
+VALUES
+  ('$AGENT_A'::uuid, '$ORG_A'::uuid, 'Drill Agent A', 'drill-agent'),
+  ('$AGENT_B'::uuid, '$ORG_B'::uuid, 'Drill Agent B', 'drill-agent')
+ON CONFLICT (org_id, slug) DO NOTHING;
+COMMIT;
+SQL
+  then
+    echo "[drill] ERROR: fixture agent seed failed" >&2
+    exit 1
+  fi
+  echo "[drill] seeding fixture rows=$FIXTURE_ROWS across orgs=$FIXTURE_ORGS"
+  if ! psql_cmd -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+SET LOCAL app.is_service_account = 'true';
+INSERT INTO ibex_core.memories (org_id, agent_id, content, content_hash, content_tokens, status)
+SELECT
+  CASE WHEN g % 2 = 0 THEN '$ORG_A'::uuid ELSE '$ORG_B'::uuid END,
+  CASE WHEN g % 2 = 0 THEN '$AGENT_A'::uuid ELSE '$AGENT_B'::uuid END,
+  'drill fixture row ' || g,
+  md5('drill-fixture-' || g),
+  4,
+  'active'
+FROM generate_series(1, $FIXTURE_ROWS) AS g;
+COMMIT;
+SQL
+  then
+    echo "[drill] ERROR: fixture insert failed" >&2
+    exit 1
+  fi
+  FIXTURE_ROWS_ACTUAL="$(psql_cmd -Atc "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories WHERE org_id IN ('$ORG_A'::uuid, '$ORG_B'::uuid)" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
+  echo "[drill] fixture rows verified=${FIXTURE_ROWS_ACTUAL:-unknown}"
+fi
+
 PG_BACKUP_OK=false
 PG_RESTORE_OK=false
 PG_BACKUP_SEC=""
@@ -215,7 +282,18 @@ echo "[drill] inducing data loss (delete org B marker)"
 if [[ "${ALLOW_NO_DB:-0}" == "1" ]]; then
   echo "[drill] SKIP destructive delete (ALLOW_NO_DB=1 smoke — NOT_EVIDENCE)"
 else
-  if ! psql_cmd -v ON_ERROR_STOP=1 -c "DELETE FROM ibex_core.organizations WHERE id='$ORG_B'::uuid"; then
+  # The fixture children are ON DELETE RESTRICT, so the org marker cannot be
+  # removed while they exist. The backup was taken before this block, so the
+  # restore still has to bring every fixture row back.
+  if ! psql_cmd -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+SET LOCAL app.is_service_account = 'true';
+DELETE FROM ibex_core.memories WHERE org_id='$ORG_B'::uuid;
+DELETE FROM ibex_core.agents WHERE org_id='$ORG_B'::uuid;
+DELETE FROM ibex_core.organizations WHERE id='$ORG_B'::uuid;
+COMMIT;
+SQL
+  then
     echo "[drill] ERROR: failed to induce data loss" >&2
     exit 1
   fi
@@ -332,6 +410,12 @@ COMMIT;
   echo "[drill] tenant isolation A_own=$ISO_A_OWN A_cross=$ISO_A_CROSS B_own=$ISO_B_OWN B_cross=$ISO_B_CROSS ok=$ISO_OK"
 fi
 
+FIXTURE_ROWS_RESTORED=""
+if [[ "${ALLOW_NO_DB:-0}" != "1" && -n "$FIXTURE_ROWS_ACTUAL" ]]; then
+  FIXTURE_ROWS_RESTORED="$(psql_cmd -Atc "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories WHERE org_id IN ('$ORG_A'::uuid, '$ORG_B'::uuid)" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
+  echo "[drill] post-restore fixture rows=${FIXTURE_ROWS_RESTORED:-unknown}"
+fi
+
 CH_RTO_MEASURED=""
 CH_RPO_MEASURED=""
 OBJ_RTO_MEASURED=""
@@ -387,6 +471,9 @@ export CH_RPO_SEC CH_RTO_SEC CH_RPO_MEASURED CH_RTO_MEASURED CH_REACHABLE
 export OBJ_RPO_SEC OBJ_RTO_SEC OBJ_RPO_MEASURED OBJ_RTO_MEASURED
 export OUTBOX_SEQ OUTBOX_PENDING ISO_OK KIND_OK KYVERNO_OK TRANSCRIPT PG_MECHANISM
 export PG_BACKUP_OK PG_RESTORE_OK ALLOW_NO_DB
+DRILL_DURATION_SEC=$(( $(date +%s) - DRILL_STARTED_UNIX ))
+export FIXTURE_ROWS FIXTURE_ORGS FIXTURE_ROWS_ACTUAL FIXTURE_ROWS_RESTORED
+export DRILL_MIN_FIXTURE_ROWS DRILL_DURATION_SEC
 python3 "$ROOT/infra/scripts/platform/restore_drill_report.py"
 
 echo "report=$REPORT"

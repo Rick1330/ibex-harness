@@ -325,7 +325,7 @@ def test_main_auth_not_ready() -> None:
         patch("app.main.PgVectorStore", return_value=MagicMock()),
         patch("app.main.PiiService", return_value=MagicMock()),
         patch("app.main.build_write_orchestrator", return_value=MagicMock()),
-        patch("app.main._postgres_ready", AsyncMock(return_value=True)),
+        patch("app.probes.postgres_ready", AsyncMock(return_value=True)),
     ):
         app = create_app(settings=settings, validator=validator)
         with TestClient(app) as client:

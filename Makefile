@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help setup setup-check check check-tools env-doctor stack-init readiness lint-docs lint-go security-scan repo-guards check-schema-doc reproducibility-check slo-rules-check proto-lint proto-breaking api-breaking proto-gen proto-test proto-test-integration test-integration test-integration-auth test-embedder test-authclient test-mcp-memory test-memory test-memory-integration test-worker test-worker-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate coverage-worker-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify alert-delivery-test db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory e2e-smoke-p3.5 verify-phase15 verify-phase25 mcp-conformance worker-dev worker-beat-dev worker-ping v1-secrets v1-up v1-down v1-migrate v1-provision v1-logs v1-ps v1-bootstrap-pat
+.PHONY: help setup setup-check check check-tools env-doctor stack-init readiness lint-docs lint-go security-scan repo-guards check-schema-doc reproducibility-check slo-rules-check proto-lint proto-breaking api-breaking proto-gen proto-test proto-test-integration test-integration test-integration-auth test-embedder test-authclient test-mcp-memory test-memory test-memory-integration test-worker test-worker-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate coverage-worker-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify alert-delivery-test db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory e2e-smoke-p3.5 verify-phase15 verify-phase25 mcp-conformance worker-dev worker-beat-dev worker-ping v1-secrets v1-up v1-down v1-migrate v1-provision v1-logs v1-ps v1-bootstrap-pat v1-smoke v1-backup v1-restore v1-pitr
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -190,6 +190,10 @@ v1-up: ## Start the v1-single-node supported profile and wait for every service
 	@"$(BASH)" "$(DEV_TOOL)" v1 up -d
 	@"$(BASH)" "$(DEV_TOOL)" v1 wait
 	@"$(BASH)" "$(DEV_TOOL)" v1 url
+	@# O06: the URL check only proves the edge answers a static string. Follow it
+	@# with an authenticated request. A re-run whose one-time PAT was already
+	@# consumed prints SKIP rather than failing the start; make v1-smoke is strict.
+	@"$(BASH)" "$(DEV_TOOL)" v1 smoke --from-up
 
 v1-bootstrap-pat: ## Print the one-time bootstrap PAT from the host bind mount
 	@"$(BASH)" "$(DEV_TOOL)" v1 bootstrap-pat
@@ -210,6 +214,18 @@ v1-logs: ## Tail v1-single-node logs (SERVICE=<name> for one service)
 
 v1-ps: ## Show v1-single-node service status
 	@"$(BASH)" "$(DEV_TOOL)" v1 ps
+
+v1-smoke: ## Prove the v1 profile with an authenticated edge request (O06)
+	@"$(BASH)" "$(DEV_TOOL)" v1 smoke
+
+v1-backup: ## Back up the v1-single-node Postgres with pgBackRest (TYPE=full|diff|incr)
+	@"$(BASH)" "$(DEV_TOOL)" v1 backup "$(if $(TYPE),$(TYPE),full)"
+
+v1-restore: ## Restore the latest pgBackRest backup into the v1-single-node profile
+	@"$(BASH)" "$(DEV_TOOL)" v1 restore
+
+v1-pitr: ## Restore to a timestamp target (TARGET=<ISO8601>; requires pgbackrest-restore.sh support)
+	@"$(BASH)" "$(DEV_TOOL)" v1 pitr "$(TARGET)"
 
 observability-up: ## Start local LGTM observability stack (Prometheus/Grafana/Tempo/Loki)
 	@"$(BASH)" infra/scripts/observability-up.sh

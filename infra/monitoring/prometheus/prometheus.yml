@@ -80,6 +80,22 @@ scrape_configs:
           service: api
           port_profile: default
 
+  # Console (services/console, Nuxt/Nitro BFF). server/routes/metrics.get.ts
+  # serves process and Node runtime metrics only — no tenant data, and no label
+  # derived from a request. It is reachable here when the console runs on the
+  # host (`pnpm --filter @ibex/console dev` or `start`, port 3000), which is how
+  # the default observability stack runs it: no compose profile deploys the
+  # console as a container. Under the v1-single-node profile the console shares
+  # the edge network namespace and publishes no host port, so this target reads
+  # DOWN there until the console is exposed on the host or scraped in-cluster.
+  - job_name: console
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:3000"]
+        labels:
+          service: console
+          port_profile: default
+
   # Evidence relay (services/relay) — default off, see IBEX_RELAY_ENABLED.
   # Port: the daemon has one HTTP listener (internal/bootstrap/health.go serves
   # /health, /ready and /metrics) bound to IBEX_PORT. services/relay/internal/
@@ -127,6 +143,17 @@ scrape_configs:
           service: embedder
           port_profile: demo
 
+  # Backup/drill freshness metrics are written by host scripts to a textfile
+  # directory and exposed by node-exporter (O01/O02). Without this job the
+  # IBEXPostgresBackupStale and IBEXRestoreDrillMissing alerts can only fire on
+  # absent(), which is permanent silence for a metric nobody scrapes.
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          service: node-exporter
+          port_profile: default
+
   - job_name: mcp-memory-demo
     metrics_path: /metrics
     static_configs:
@@ -138,10 +165,6 @@ scrape_configs:
   # Deliberately NOT scraped (W6.4 gap record; see
   # engineering/architecture-v2/31-v1-release-plan-2026-11-09.md §W6 6.4 and
   # 14-failure-modes-and-readiness.md):
-  #   * services/console — the Nuxt/Nitro BFF has no /metrics route
-  #     (`grep -rn metrics services/console/server` is empty). A scrape job would
-  #     add a permanently DOWN target, not an observation. The operator plane can
-  #     only be observed from outside until instrumentation lands.
   #   * services/context — gRPC only, loopback-only by construction (it refuses
   #     any non-loopback bind, ADR-0096) and no HTTP metrics surface. It is
   #     observed indirectly through the proxy's own context metrics
