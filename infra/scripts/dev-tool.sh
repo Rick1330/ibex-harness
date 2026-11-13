@@ -400,7 +400,7 @@ case "${1:-help}" in
       '  stack-init [dev|test]  Wait for a stack and create required object-store buckets' \
       '  readiness              Run stack-init readiness probes' \
       '  lint-docs              Run markdownlint' '  security-scan          Run gitleaks locally' \
-      '  repo-guards            Run repository layout and hygiene guards (incl. alert routing, SLO rules, reproducibility)' '  proto-lint              Run Buf lint' \
+      '  repo-guards            Run repository layout and hygiene guards (incl. alert routing, schema doc, SLO rules, reproducibility)' '  proto-lint              Run Buf lint' \
       '  reproducibility-check  Fail when a published benchmark artifact cannot support its claim' \
       '                         Runs on .cache/reproducibility-venv, provisioned once from' \
       '                         .github/requirements/jsonschema.txt with pip --require-hashes' \
@@ -432,7 +432,7 @@ case "${1:-help}" in
     "$markdownlint" "**/*.md" "#node_modules"
     ;;
   security-scan) cd "$ROOT_DIR"; require_tool gitleaks 'gitleaks is required for security-scan'; gitleaks detect --source . --config .gitleaks.toml --redact --verbose ;;
-  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py; bash infra/scripts/slo-rules-check.sh; reproducibility_check ;;
+  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py; python3 infra/scripts/check-schema-doc.py; bash infra/scripts/slo-rules-check.sh; reproducibility_check ;;
   reproducibility-check) reproducibility_check ;;
   slo-rules-check) cd "$ROOT_DIR"; bash infra/scripts/slo-rules-check.sh ;;
   proto-lint) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf lint ;;
