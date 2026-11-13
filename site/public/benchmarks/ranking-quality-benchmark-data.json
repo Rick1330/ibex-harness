@@ -3,12 +3,12 @@
   "benchmark": "ranking_quality",
   "runs": [
     {
-      "sha": "4268200bf006391e9f6bdf4e3dfdeb70752530f9",
-      "short_sha": "4268200",
-      "timestamp": "2026-11-12T16:11:34.119705+00:00",
+      "sha": "966c23cc0e15465a2831d9c2a011509adda4989a",
+      "short_sha": "966c23c",
+      "timestamp": "2026-11-13T21:08:19.905759+00:00",
       "branch": "main",
-      "run_number": 585,
-      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/43255605321",
+      "run_number": 598,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/43507666451",
       "gold_set": "v1",
       "query_count": 20,
       "memory_count": 51,
@@ -48,6 +48,20 @@
             "ok": true
           }
         ]
+      },
+      "provenance": {
+        "status": "recorded",
+        "producer": "benchmarks/memory/provenance.py",
+        "runner_cpu_model": "AMD EPYC 7763 64-Core Processor",
+        "runner_cpu_count": 4,
+        "runner_ram_mib": 15983,
+        "corpus_hash": "5db8becdf6d24ad2e10efa7ca1ead4c1d43d961ed378e228366193d5064d4b92",
+        "corpus_hash_algo": "sha256",
+        "corpus_manifest": "gold_set_v1.json=5db8becdf6d24ad2e10efa7ca1ead4c1d43d961ed378e228366193d5064d4b92",
+        "corpus_status": "current",
+        "dirty": false,
+        "gold_set_hash": "5db8becdf6d24ad2e10efa7ca1ead4c1d43d961ed378e228366193d5064d4b92",
+        "gold_set_name": "gold_set_v1.json"
       }
     },
     {
