@@ -45,7 +45,8 @@ There is no provider chain in the worker: an unusable provider is an error, not 
 `IBEX_EMBEDDING_DIM` override the profile defaults (`services/embedder/app/config.py:155-166`). The resolved pair is the
 identity the service reports. The memory write path records a separate setting, `IBEX_MEMORY_EMBEDDING_MODEL`
 (`services/memory/app/config.py:160-180`), which is the operator's claim about that identity rather than a value read
-back from it.
+back from it. When `IBEX_MEMORY_EMBEDDING_MODEL_REVISION` is configured it is appended as `@revision` (`bge-m3@r1`), so
+two revisions of one model id cannot share a stored identity; with no revision set the recorded value is the bare id.
 
 The identity is enforced at startup, not merely declared: the `gpu` backend compares the TEI `/info` `model_id` and the
 reported dimensions against the configured pair and refuses readiness on either mismatch
@@ -110,11 +111,12 @@ The shipped `v1-single-node` profile does not share the defect: it sets `gpu`, `
 
 ### `memories.embedding_model` records a configuration value, not the producing model
 
-The write path records `Settings.embedding_model`, resolved through `resolve_embedding_model`
-(`services/memory/app/config.py:160-180,426-436`), and the after-commit handler defaults to the same resolver
+The write path records `Settings.embedding_model`, resolved through `resolve_embedding_identity`
+(`services/memory/app/config.py:160-180,428-465`), and the after-commit handler defaults to the same resolver
 (`services/memory/app/write/after_commit.py:23-26,50`). The default is `bge-m3`
 (`services/memory/app/config.py:163-165`), so the id is no longer a hardcoded literal: it is configurable through
-`IBEX_MEMORY_EMBEDDING_MODEL` (`services/memory/app/write/orchestrator.py:76,262-273`). The embedder's response does
+`IBEX_MEMORY_EMBEDDING_MODEL` (`services/memory/app/write/orchestrator.py:76,262-273`), with
+`IBEX_MEMORY_EMBEDDING_MODEL_REVISION` appended as `@revision`. The embedder's response does
 carry a `model_id` (`services/memory/app/clients/embedding.py:79,276-281`), but `build_embedding_callable` returns only
 `result.vectors[0]` and drops it (`services/memory/app/write/factory.py:85-92`). The stored value is therefore the
 operator's configured claim, not the model the embedder reported: an operator who sets the variable to the wrong id

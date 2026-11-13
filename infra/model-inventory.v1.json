@@ -345,10 +345,10 @@
     },
     {
       "id": "embedding-model-is-declared-not-observed",
-      "summary": "The write path now stamps the configured Settings.embedding_model (default bge-m3) instead of a literal, but that value is the operator's declaration, not the model the embedder reports: write/factory.py still discards result.model_id, so a deployment whose embedder serves a different model than IBEX_MEMORY_EMBEDDING_MODEL records a name that never ran.",
+      "summary": "The write path records the configured identity -- IBEX_MEMORY_EMBEDDING_MODEL, plus @<revision> when IBEX_MEMORY_EMBEDDING_MODEL_REVISION is set -- rather than the model the embedder reports: write/factory.py still discards result.model_id, and nothing compares the configured identity with the embedder's /v1/models before a write. A deployment whose embedder serves a different model, or the same id at different weights without the revision variable set, records an identity that does not describe the vector.",
       "sources": [
-        "services/memory/app/config.py:163-180,426-436",
-        "services/memory/app/write/orchestrator.py:262-273",
+        "services/memory/app/config.py:164-184,428-465",
+        "services/memory/app/write/orchestrator.py:76,266",
         "services/memory/app/write/after_commit.py:26,50",
         "services/memory/app/write/factory.py:85-92",
         "services/memory/app/clients/embedding.py:79,276-281"
@@ -358,18 +358,18 @@
       "id": "search-fence-is-post-filter",
       "summary": "SEARCH_SQL and SearchRequest.embedding_model now carry a model fence, but it is off by default and evaluated as a post-filter over the HNSW candidate set, so a fenced search can lose recall while two generations share one column; the full-text channel is not fenced at all. The durable fix is one index per live generation during a re-embed, not a predicate.",
       "sources": [
-        "services/memory/app/vectorstore/pgvector_store.py:42-43,96-119",
-        "services/memory/app/schemas/search.py:19-48",
-        "services/memory/app/read/repository.py:194-216"
+        "services/memory/app/vectorstore/pgvector_store.py:43-44,96-119",
+        "services/memory/app/schemas/search.py:25-46",
+        "services/memory/app/read/repository.py:188-216"
       ]
     },
     {
       "id": "cache-revision-unset-by-default",
       "summary": "The embedding cache digest now covers model_id, dimensions and the weights revision, but the revision is hashed only when IBEX_EMBEDDING_MODEL_REVISION is set; leaving it unset keeps the pre-revision byte layout for compatibility, so two deployments that differ only in weights still share digests. Pinning --revision obliges the operator to set the variable, and nothing enforces that pairing.",
       "sources": [
-        "services/embedder/app/cache/keys.py:28-55",
-        "services/embedder/app/cache/backend.py:97-105",
-        "services/embedder/app/config.py"
+        "services/embedder/app/cache/keys.py:13-56",
+        "services/embedder/app/cache/backend.py:76-87",
+        "services/embedder/app/config.py:42-52"
       ]
     }
   ]

@@ -12,8 +12,8 @@ from app.scoring.composite import RankWeights
 _WEIGHT_EPS = 1e-9
 
 # ibex_core.memories.embedding_model is TEXT with memories_embedding_model_len_chk
-# (char_length <= 256). An id longer than that is refused at startup, not at INSERT
-# time against a live row.
+# (char_length <= 256). The composed identity (`id` or `id@revision`) longer than that
+# is refused before the write, not at INSERT time against a live row.
 _EMBEDDING_MODEL_MAX_CHARS = 256
 
 # Bundled CNN models in services/memory (uv.lock). Transformers / arbitrary names rejected.
@@ -158,24 +158,28 @@ class Settings(BaseSettings):
     embedding_max_retries: int = Field(default=2, ge=0)
 
     # Stored vector identity. The write path records this on every row it embeds, so
-    # ibex_core.memories.embedding_model names the model that produced the vector instead
-    # of a literal. The default preserves the id written before it was configurable.
+    # ibex_core.memories.embedding_model names the generation that produced the vector
+    # instead of a literal. The default preserves the id written before it was
+    # configurable.
     embedding_model: str = Field(
         default="bge-m3",
         validation_alias="IBEX_MEMORY_EMBEDDING_MODEL",
         description=(
-            "Embedding model id recorded on stored vectors; non-empty, max 256 chars "
-            "(ibex_core.memories.embedding_model)"
+            "Embedding model id; non-empty, max 256 chars "
+            "(ibex_core.memories.embedding_model). The recorded value is this id, or "
+            "`id@revision` when IBEX_MEMORY_EMBEDDING_MODEL_REVISION is set; the "
+            "composite is what lands in the column"
         ),
     )
     embedding_model_revision: str = Field(
         default="",
         validation_alias="IBEX_MEMORY_EMBEDDING_MODEL_REVISION",
         description=(
-            "Optional revision of the embedding model (weights digest, tag, or build). "
-            "Empty means this deployment does not distinguish revisions of the same id. "
-            "Part of the embedding identity: a vector cached or indexed under one "
-            "revision must never be served as the output of another"
+            "Optional revision of the embedding model (weights digest, tag, or build), "
+            "appended to the model id as `@revision` to form the recorded identity "
+            "(`bge-m3@r1`). Empty means this deployment does not distinguish revisions "
+            "and the recorded value stays the bare id. A vector cached or indexed under "
+            "one revision must never be served as the output of another"
         ),
     )
 
@@ -421,14 +425,41 @@ def get_settings() -> Settings:
     return Settings()
 
 
-def resolve_embedding_model(explicit: str | None = None) -> str:
-    """The embedding model id a stored vector is recorded under.
+def resolve_embedding_identity(explicit: str | None = None) -> str:
+    """The opaque embedding identity a stored vector is recorded under.
 
-    ``explicit`` wins when it is a non-blank string (a composition root or a test
-    pinning the identity); otherwise process configuration decides. Both write-path
-    writers resolve through here so the outcome and the after-commit upsert cannot
-    disagree about which model produced the vector.
+    The identity is the model id, plus ``@<revision>`` when
+    ``IBEX_MEMORY_EMBEDDING_MODEL_REVISION`` is non-empty: ``bge-m3``, or
+    ``bge-m3@r1`` when revision ``r1`` is configured. ``@`` is the separator and the
+    value is opaque: the search fence must be given the same full string, because
+    ``ibex_core.memories.embedding_model`` compares byte-identically. With no
+    revision configured the identity is exactly the model id, so rows written before
+    the revision existed keep matching.
+
+    ``explicit`` supplies the model id when it is a non-blank string (a composition
+    root or a test pinning the identity); the revision still comes from configuration.
+    Otherwise process configuration decides. Both write-path writers resolve through
+    here so the outcome and the after-commit upsert cannot disagree about which
+    generation produced the vector.
+
+    Raises:
+        ValueError: the composed identity exceeds the 256-character
+            ``memories_embedding_model_len_chk`` limit, which would otherwise fail the
+            INSERT after the caller was told the write succeeded.
     """
-    if explicit is not None and explicit.strip():
-        return explicit.strip()
-    return get_settings().embedding_model
+    settings = get_settings()
+    model_id = explicit.strip() if explicit is not None else ""
+    if not model_id:
+        model_id = settings.embedding_model
+    revision = settings.embedding_model_revision
+    identity = f"{model_id}@{revision}" if revision else model_id
+    if len(identity) > _EMBEDDING_MODEL_MAX_CHARS:
+        msg = (
+            f"embedding identity {identity!r} is {len(identity)} characters; "
+            f"ibex_core.memories.embedding_model accepts at most "
+            f"{_EMBEDDING_MODEL_MAX_CHARS} (memories_embedding_model_len_chk). "
+            "Shorten IBEX_MEMORY_EMBEDDING_MODEL or "
+            "IBEX_MEMORY_EMBEDDING_MODEL_REVISION."
+        )
+        raise ValueError(msg)
+    return identity

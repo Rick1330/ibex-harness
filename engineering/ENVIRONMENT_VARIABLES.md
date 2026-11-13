@@ -535,6 +535,8 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | `IBEX_MEMORY_EMBEDDING_TIMEOUT_SECONDS` | No | `30.0` | Embedder read timeout | |
 | `IBEX_MEMORY_EMBEDDING_CONNECT_TIMEOUT_SECONDS` | No | `2.0` | Embedder connect timeout | |
 | `IBEX_MEMORY_EMBEDDING_MAX_RETRIES` | No | `2` | Retries for 429/502/503 + transport | |
+| `IBEX_MEMORY_EMBEDDING_MODEL` | No | `bge-m3` | Model id recorded on every vector the write path produces. The stored identity is `id`, or `id@revision` when `IBEX_MEMORY_EMBEDDING_MODEL_REVISION` is set | Non-empty; the composite must fit the 256-character `ibex_core.memories.embedding_model` column (`memories_embedding_model_len_chk`). This is the operator's declaration, not the embedder's reported `model_id` — nothing compares the two |
+| `IBEX_MEMORY_EMBEDDING_MODEL_REVISION` | No | (empty) | Weights revision of the embedding model (digest, tag, or build), appended to the model id as `@revision` so two revisions cannot share one stored identity | Trimmed; empty means revisions are not distinguished and the recorded value stays the bare id (byte-identical to rows written before the setting existed). The composite is what a search fence must match |
 | `IBEX_MEMORY_RERANK_ENABLED` | No | `false` | Cross-encoder rerank of the fused hybrid window via TEI `POST /rerank` (5.A.3) | Requires hybrid retrieval; metric `ibex_memory_rerank_total{result}` (`applied`, `degraded`, `emptied`, `skipped`) |
 | `IBEX_MEMORY_RERANK_BASE_URL` | No | `http://127.0.0.1:8006` | TEI reranker base URL | Only read when rerank is enabled |
 | `IBEX_MEMORY_RERANK_API_TOKEN` | No | (none) | Optional bearer for the reranker | Never logged |

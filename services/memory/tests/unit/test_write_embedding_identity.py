@@ -1,10 +1,10 @@
-"""The configured embedding model id reaches storage instead of a literal (W10.3).
+"""The configured embedding identity reaches storage instead of a literal (W10.3).
 
-Two writers name the model on a stored vector: ``WriteOutcome.embedding_model`` from
-the orchestrator and the ``AfterCommitHandler`` fallback used for an outcome that
-carries an embedding but no id. They must resolve to the same configured identity,
-otherwise the row and its vector index entry can disagree about which model produced
-the numbers.
+Two writers name the generation on a stored vector: ``WriteOutcome.embedding_model``
+from the orchestrator and the ``AfterCommitHandler`` fallback used for an outcome that
+carries an embedding but no id. They must resolve to the same configured identity
+(``id`` or ``id@revision``), otherwise the row and its vector index entry can disagree
+about which generation produced the numbers.
 """
 
 from __future__ import annotations
@@ -146,3 +146,23 @@ async def test_after_commit_prefers_the_outcome_identity() -> None:
 
     request = store.upsert.await_args.args[0]
     assert request.embedding_model == "from-outcome"
+
+
+@pytest.mark.asyncio
+async def test_configured_revision_reaches_the_outcome_and_the_upsert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One composite identity, not an id from one writer and a revision from the other."""
+    monkeypatch.setattr(
+        "app.config.get_settings",
+        lambda: Settings(embedding_model="bge-m3", embedding_model_revision="r1"),
+    )
+    store = MagicMock()
+    store.upsert = AsyncMock()
+    handler = AfterCommitHandler(cache=None, store=store)
+
+    outcome = await _create(after_commit=handler)
+
+    assert outcome.embedding_model == "bge-m3@r1"
+    request = store.upsert.await_args.args[0]
+    assert request.embedding_model == outcome.embedding_model
