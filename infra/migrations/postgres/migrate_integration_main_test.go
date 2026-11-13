@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,9 +50,32 @@ import (
 // and the orphan keeps cluster-global privileges for `ibex_service` /
 // `ibex_evidence_relay`; the next run's *down* migrations then fail with SQLSTATE
 // 2BP01 when they `DROP ROLE`. TestMain therefore drops every stale
-// `ibex_test_<8 hex>` database before creating its own. The reap uses a plain
-// `DROP DATABASE` (no FORCE), so it fails with `object_in_use` while a
-// concurrent run is connected and leaves that run alone.
+// `ibex_test_<8 hex>` database before creating its own.
+//
+// A reap must never destroy a concurrent run's database, and "a plain DROP fails
+// while another session is connected" does not achieve that: between another
+// run's CREATE DATABASE and its first session there is no connection to fail on,
+// so the DROP succeeds and the victim then either fails in Up or silently skips,
+// because openTestDB turns a ping failure into t.Skipf. Two advisory locks close
+// that window:
+//
+//   - reapLockKey is taken before the reap and released once this run's database
+//     exists. Reap and create are therefore one critical section, so a reaper
+//     never sees a database whose owner has not leased it yet, and only one run
+//     scans and drops at a time.
+//   - runLeaseKey(<name>) is taken by a run *before* it creates its database and
+//     held until it drops it. The reaper drops a database only when it can take
+//     that lease, so "does a live run own this database?" is answerable at any
+//     instant, including the create-to-first-session gap.
+//
+// Advisory locks are cluster-global and session-scoped: PostgreSQL releases them
+// when the session ends, so a killed run cannot leave either lock held. A run
+// that cannot take the reap lock reaps nothing and proceeds — its own database is
+// protected by its lease, not by the reap lock — and a later run collects the
+// orphan. The consequence is stated rather than hidden: skipping the reap can
+// leave an orphan behind that makes a *down* migration in that run fail with
+// 2BP01. That failure is loud and retryable; destroying a live run's database is
+// silent.
 
 // Isolation modes reported by testRun.
 const (
@@ -63,10 +88,40 @@ const (
 // It is never the database under test.
 const maintenanceDatabase = "postgres"
 
+// runDatabasePrefix is the fixed part of every per-run database name.
+const runDatabasePrefix = "ibex_test_"
+
 // runDatabasePattern is the only shape a generated database name may take. The
 // name is concatenated into CREATE/DROP DATABASE (PostgreSQL does not accept
 // parameters there), so the shape is asserted before every statement.
-var runDatabasePattern = regexp.MustCompile(`^ibex_test_[0-9a-f]{8}$`)
+var runDatabasePattern = regexp.MustCompile("^" + runDatabasePrefix + `[0-9a-f]{8}$`)
+
+// Advisory-lock keys. A key is a 64-bit integer built from a fixed tag (0x1B3E,
+// deliberately unusual), a 16-bit purpose word, and — for a per-run database
+// lease — the database name's 32 random bits:
+//
+//	0x1B3E_0002_00000000  reap lock, no suffix
+//	0x1B3E_0001_xxxxxxxx  lease of ibex_test_xxxxxxxx
+//
+// The tag cannot collide with pgprovision's bare 0x69626578 key, and the purpose
+// word keeps the harness's own two keys apart, so no lease can ever equal the
+// reap lock. Both keys are cluster-global and session-scoped: PostgreSQL releases
+// them when the session ends, so a killed run cannot leave one held.
+const (
+	// lockPurposeLease tags a per-run database lease.
+	lockPurposeLease int64 = 0x1B3E0001
+	// lockPurposeReap tags the cluster-wide reap lock.
+	lockPurposeReap int64 = 0x1B3E0002
+
+	// reapLockKey serialises reap and create across runs.
+	reapLockKey int64 = lockPurposeReap << 32
+
+	// runDatabaseAttempts bounds the name/lease retry loop. A collision needs two
+	// runs to draw the same 32 random bits, or a reaper to be mid-drop of that
+	// exact name, so the first attempt succeeds in practice; the bound keeps a
+	// pathological cluster from looping forever.
+	runDatabaseAttempts = 8
+)
 
 // testRun is the state TestMain publishes to the rest of the package.
 var testRun struct {
@@ -93,9 +148,22 @@ func runIsolated(m *testing.M) int {
 	}
 	defer func() { _ = admin.Close() }()
 
-	reapStaleRunDatabases(admin)
+	// Reap and create are one critical section: a reaper must never see a
+	// database another run has created but not yet leased. The lock is released
+	// as soon as this run's database exists, because from then on the database is
+	// protected by its own lease.
+	reapLock, lockErr := tryAdvisoryLock(admin, reapLockKey)
+	switch {
+	case lockErr != nil:
+		fmt.Fprintf(os.Stderr, "migration harness: reap lock unavailable (%v); not reaping\n", lockErr)
+	case !reapLock.held:
+		fmt.Fprintln(os.Stderr, "migration harness: another run is reaping; not reaping")
+	default:
+		reapStaleRunDatabases(admin)
+	}
 
-	name, err := createRunDatabase(admin)
+	name, lease, err := createRunDatabase(admin)
+	reapLock.release()
 	if err != nil {
 		// Not permitted (or not supported): fall back to the shared database and
 		// repair whatever an interrupted run left behind.
@@ -106,6 +174,7 @@ func runIsolated(m *testing.M) int {
 		reportMode()
 		return m.Run()
 	}
+	defer lease.release()
 
 	runDSN, err := dsnWithDatabase(base, name)
 	if err != nil {
@@ -186,11 +255,60 @@ func dsnWithDatabase(dsn, database string) (string, error) {
 	return parsed.String(), nil
 }
 
-// reapStaleRunDatabases drops per-run databases a killed run could not drop.
+// advisoryLock is one session-scoped PostgreSQL advisory lock. It is taken on a
+// pinned connection because a lock belongs to the session that took it, and a
+// *sql.DB hands out a different session per statement.
+type advisoryLock struct {
+	conn *sql.Conn
+	key  int64
+	held bool
+}
+
+// tryAdvisoryLock takes key without waiting. A lock that is not taken is not an
+// error: it means another session owns what the key protects.
+func tryAdvisoryLock(admin *sql.DB, key int64) (advisoryLock, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := admin.Conn(ctx)
+	if err != nil {
+		return advisoryLock{}, fmt.Errorf("advisory lock %#x connection: %w", key, err)
+	}
+	var held bool
+	// nosemgrep: go_sql_rule-concat-sqli -- constant advisory-lock statement; the key is a bound parameter.
+	if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, key).Scan(&held); err != nil {
+		_ = conn.Close()
+		return advisoryLock{}, fmt.Errorf("advisory lock %#x: %w", key, err)
+	}
+	if !held {
+		_ = conn.Close()
+		return advisoryLock{}, nil
+	}
+	return advisoryLock{conn: conn, key: key, held: true}, nil
+}
+
+// release unlocks and returns the session. It is safe on the zero value, so a
+// caller can defer it unconditionally. A killed process needs no release:
+// PostgreSQL drops a session's locks with the session.
+func (l advisoryLock) release() {
+	if !l.held {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var unlocked bool
+	// nosemgrep: go_sql_rule-concat-sqli -- constant advisory-unlock statement; the key is a bound parameter.
+	_ = l.conn.QueryRowContext(ctx, `SELECT pg_advisory_unlock($1)`, l.key).Scan(&unlocked)
+	_ = l.conn.Close()
+}
+
+// reapStaleRunDatabases drops the per-run databases no live run owns.
 //
-// Plain `DROP DATABASE` is deliberate: it fails with SQLSTATE 55006 while
-// another session is connected, which is exactly the case where the database
-// belongs to a concurrent run and must be left alone. FORCE is never used here.
+// Ownership is a lease, not a connection count. A plain `DROP DATABASE` only
+// fails while another session is connected, and between another run's CREATE
+// DATABASE and its first session there is nothing to fail on, so the DROP
+// succeeded and destroyed a live run. reapRunDatabase therefore drops a database
+// only when it can take that database's lease. FORCE is never used here.
 func reapStaleRunDatabases(admin *sql.DB) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -201,22 +319,45 @@ func reapStaleRunDatabases(admin *sql.DB) {
 		return
 	}
 	for _, name := range names {
-		if !runDatabasePattern.MatchString(name) {
-			continue
-		}
-		if _, err := admin.ExecContext(ctx, "DROP DATABASE IF EXISTS "+name); err != nil {
-			fmt.Fprintf(os.Stderr, "migration harness: keeping database %s (%v)\n", name, err)
-			continue
-		}
-		fmt.Fprintf(os.Stderr, "migration harness: reaped stale database %s\n", name)
+		reapRunDatabase(admin, name)
 	}
+}
+
+// reapRunDatabase drops name only if no live run holds its lease.
+func reapRunDatabase(admin *sql.DB, name string) {
+	if !runDatabasePattern.MatchString(name) {
+		return
+	}
+	key, err := runLeaseKey(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "migration harness: keeping database %s (%v)\n", name, err)
+		return
+	}
+	lease, err := tryAdvisoryLock(admin, key)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "migration harness: keeping database %s (lease unavailable: %v)\n", name, err)
+		return
+	}
+	if !lease.held {
+		fmt.Fprintf(os.Stderr, "migration harness: keeping database %s (owned by a live run)\n", name)
+		return
+	}
+	defer lease.release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := admin.ExecContext(ctx, "DROP DATABASE IF EXISTS "+name); err != nil {
+		fmt.Fprintf(os.Stderr, "migration harness: keeping database %s (%v)\n", name, err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "migration harness: reaped stale database %s\n", name)
 }
 
 func staleRunDatabases(ctx context.Context, admin *sql.DB) ([]string, error) {
 	rows, err := admin.QueryContext(ctx, `
 		SELECT datname FROM pg_database
-		WHERE datname ~ '^ibex_test_[0-9a-f]{8}$'
-		ORDER BY datname`)
+		WHERE datname ~ $1
+		ORDER BY datname`, runDatabasePattern.String())
 	if err != nil {
 		return nil, err
 	}
@@ -233,20 +374,63 @@ func staleRunDatabases(ctx context.Context, admin *sql.DB) ([]string, error) {
 	return names, rows.Err()
 }
 
-func createRunDatabase(admin *sql.DB) (string, error) {
-	name, err := runDatabaseName()
-	if err != nil {
-		return "", fmt.Errorf("generate database name: %w", err)
+// createRunDatabase creates the per-run database and returns the lease that keeps
+// a concurrent reaper away.
+//
+// The lease is taken before CREATE DATABASE, so a database that exists always has
+// an owner that already announced itself: a reaper can never observe the gap
+// between creation and ownership.
+func createRunDatabase(admin *sql.DB) (string, advisoryLock, error) {
+	var lastErr error
+	for attempt := 0; attempt < runDatabaseAttempts; attempt++ {
+		name, err := runDatabaseName()
+		if err != nil {
+			return "", advisoryLock{}, fmt.Errorf("generate database name: %w", err)
+		}
+		lease, err := leaseRunDatabase(admin, name)
+		if err != nil {
+			return "", advisoryLock{}, err
+		}
+		if !lease.held {
+			// Another session holds this name: a reaper mid-drop, or a run that
+			// drew the same 32 random bits. Draw again.
+			lastErr = fmt.Errorf("lease of %s is held by another session", name)
+			continue
+		}
+		if err := createDatabase(admin, name); err != nil {
+			lease.release()
+			return "", advisoryLock{}, err
+		}
+		return name, lease, nil
 	}
+	return "", advisoryLock{}, fmt.Errorf("no free run database name in %d attempts: %w", runDatabaseAttempts, lastErr)
+}
+
+// leaseRunDatabase takes name's lease, so a reaper that scans between this call
+// and CREATE DATABASE already sees the database as owned.
+func leaseRunDatabase(admin *sql.DB, name string) (advisoryLock, error) {
+	key, err := runLeaseKey(name)
+	if err != nil {
+		return advisoryLock{}, err
+	}
+	lease, err := tryAdvisoryLock(admin, key)
+	if err != nil {
+		return advisoryLock{}, fmt.Errorf("lease database %s: %w", name, err)
+	}
+	return lease, nil
+}
+
+// createDatabase runs CREATE DATABASE after re-asserting the name's shape.
+func createDatabase(admin *sql.DB, name string) error {
 	if !runDatabasePattern.MatchString(name) {
-		return "", fmt.Errorf("refusing unsafe database name %q", name)
+		return fmt.Errorf("refusing unsafe database name %q", name)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+name); err != nil {
-		return "", fmt.Errorf("create database %s: %w", name, err)
+		return fmt.Errorf("create database %s: %w", name, err)
 	}
-	return name, nil
+	return nil
 }
 
 // dropRunDatabase removes the per-run database. FORCE terminates connections a
@@ -264,12 +448,27 @@ func dropRunDatabase(admin *sql.DB, name string) error {
 	return err
 }
 
+// runDatabaseName returns a fresh per-run database name.
 func runDatabaseName() (string, error) {
 	var suffix [4]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("ibex_test_%x", suffix), nil
+	return fmt.Sprintf("%s%x", runDatabasePrefix, suffix), nil
+}
+
+// runLeaseKey is the advisory-lock key that leases name: the lease purpose word
+// in the high 32 bits and the name's random suffix in the low 32 bits, so the key
+// is unique per database and can be recomputed from the name alone.
+func runLeaseKey(name string) (int64, error) {
+	if !runDatabasePattern.MatchString(name) {
+		return 0, fmt.Errorf("refusing unsafe database name %q", name)
+	}
+	suffix, err := strconv.ParseUint(strings.TrimPrefix(name, runDatabasePrefix), 16, 32)
+	if err != nil {
+		return 0, fmt.Errorf("parse suffix of %s: %w", name, err)
+	}
+	return lockPurposeLease<<32 | int64(suffix), nil
 }
 
 // prepareSharedDatabase is the fallback recovery path: clear the schema and any
@@ -312,6 +511,87 @@ func TestHarness_SharedDatabaseRecovery(t *testing.T) {
 	run.recover()
 	run.up()
 	run.requireRecoveredVersion()
+}
+
+// TestHarness_Reaper_LeavesConcurrentRunAlone reproduces the window that made the
+// old reaper destructive: a run has created its database and has not connected to
+// it yet, so a plain DROP DATABASE had nothing to fail on and the victim either
+// failed in Up or skipped silently through openTestDB.
+//
+// The reaper is called directly, so the test proves the reaper's own rule rather
+// than the order TestMain happens to run in. All three parts of the fix are
+// asserted: the reap lock excludes a second session, a reap that runs anyway
+// leaves a leased database alone, and the same reap still collects a database
+// nobody owns.
+func TestHarness_Reaper_LeavesConcurrentRunAlone(t *testing.T) {
+	admin, err := openMaintenanceDB(baseTestDSN())
+	if err != nil {
+		t.Skipf("maintenance database not available: %v", err)
+	}
+	defer func() { _ = admin.Close() }()
+
+	// The concurrent run: lease, then CREATE DATABASE, and never connect.
+	name, lease, err := createRunDatabase(admin)
+	if err != nil {
+		t.Skipf("per-run database not available: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = dropRunDatabase(admin, name)
+		lease.release()
+	})
+
+	reapLock, err := tryAdvisoryLock(admin, reapLockKey)
+	if err != nil {
+		t.Fatalf("take reap lock: %v", err)
+	}
+	if !reapLock.held {
+		t.Fatal("reap lock is not held; the reap+create critical section is open")
+	}
+	second, err := tryAdvisoryLock(admin, reapLockKey)
+	if err != nil {
+		t.Fatalf("second reap lock attempt: %v", err)
+	}
+	if second.held {
+		t.Fatal("a second session took the reap lock; reap and create can interleave")
+	}
+
+	reapStaleRunDatabases(admin)
+	requireDatabaseExists(t, admin, name)
+	reapLock.release()
+
+	// Positive control: once the lease is gone the same reap does collect it.
+	lease.release()
+	reapStaleRunDatabases(admin)
+	requireDatabaseDropped(t, admin, name)
+}
+
+// requireDatabaseExists fails if name is not in pg_database.
+func requireDatabaseExists(t *testing.T, admin *sql.DB, name string) {
+	t.Helper()
+	if !databaseExists(t, admin, name) {
+		t.Fatalf("database %s was destroyed by the reaper; a concurrent run owns it", name)
+	}
+}
+
+// requireDatabaseDropped fails if name is still in pg_database.
+func requireDatabaseDropped(t *testing.T, admin *sql.DB, name string) {
+	t.Helper()
+	if databaseExists(t, admin, name) {
+		t.Fatalf("database %s survived a reap; the reaper no longer collects orphans", name)
+	}
+}
+
+// databaseExists reports whether name is in pg_database.
+func databaseExists(t *testing.T, admin *sql.DB, name string) bool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var exists bool
+	if err := admin.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)`, name).Scan(&exists); err != nil {
+		t.Fatalf("check database %s: %v", name, err)
+	}
+	return exists
 }
 
 // sharedRun is one harness test's database: the DSN under test and the
