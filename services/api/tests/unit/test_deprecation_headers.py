@@ -151,6 +151,15 @@ def test_middleware_is_mounted_only_when_a_route_is_deprecated(tmp_path: Path) -
     assert "DeprecationHeadersMiddleware" in _mounted(_record(tmp_path, _entry()))
 
 
+def test_cors_exposes_the_deprecation_headers() -> None:
+    """A cross-origin consumer can only read a header the CORS layer exposes."""
+    with _app(None) as client:
+        response = client.get("/health", headers={"Origin": "http://localhost:3100"})
+    assert response.headers["access-control-expose-headers"] == (
+        "X-Request-ID, X-IBEX-Drain, Deprecation, Sunset"
+    )
+
+
 def test_past_sunset_is_skipped_not_fatal(tmp_path: Path) -> None:
     expired = _entry(
         id="dep-expired",
