@@ -93,6 +93,8 @@ Each row is closed by a change that exists in this tree; per §3.2 the row close
 
 A closed row is closed by its own merged change, not by this classification.
 
+**Not a row, but a residual of this stage.** `.github/branch-protection-main.json` declares nine required contexts and `.github/scripts/check-required-ci-gates.sh` proves each names exactly one workflow job, so the record and the guard agree with each other; the **live** rule on `main` enforces five of the nine (`gitleaks`, `semantic-pr-title`, `ci-gate-repo`, `ci-gate-go`, `ci-gate-security`), leaving `ci-gate-site`, `ci-gate-python`, `ci-gate-memory-benchmark` and `ci-gate-semgrep` declared but unenforced. Applying the remaining four is a human `gh api` call against the repository rule; no commit, workflow, or script in this tree applies it, and this change does not claim it is applied.
+
 **Decisions needed.** An owner for the claim set so GAP-001 stops drifting, and the `check-status-vocabulary.py` script that would make the drift fail instead of relying on hand edits (GAP-001). A signed support window and support matrix (P1-46). Whether the claims checker is widened to `app/components/**` and `public/benchmarks/*.json` (R02). **D-B** — confirm ADR-0097 §10 is the final word on Kubernetes/Helm for 1.0 (`31`:188). D-B decides P2-24: if the chart stays, the digest guard is wired into CI; the default retires the chart and the row goes with it.
 
 ## 4. Stage 2 — Survive failure (recovery and operability) — 25 rows
