@@ -14,7 +14,9 @@ Eight rows are addressed here. Three are closed outright (P1-34, P1-35, P1-51). 
 Closed part: TEI is pinned for `v1-single-node` — `infra/compose/v1-single-node/compose.yml`:358 and :361-362 digest-pin `text-embeddings-inference:cpu-1.9.4@sha256:2538ea1c…` and pass `--model-id=BAAI/bge-m3` with `--revision=5617a9f61b028005a4858fdac845db406aefb181`.
 Residual (blocker: infrastructure):
 - pgvector is still a mutable `:pg16` tag in `infra/compose/dev/docker-compose.yml`:3 and `site/content/docs/12.deployment/01.docker-compose.md`:48, against the 0.8.6 digest in `infra/compose/bundles/memory-context.yml`:9 and `.github/workflows/ci.yml`:449.
+- pgvector disagrees in the chart as well: `infra/helm/ibex-harness/values.yaml`:15 pins `pgvector/pgvector@sha256:ccc6e83d…` with a zero-run tail, and the file's own comment at :16 says to override it with real digests before a drill. It is neither the mutable dev tag nor the bundle digest.
 - Redis disagrees: `redis/redis-stack:7.4.0-v1` in `infra/compose/dev/docker-compose.yml`:21 (dev/test), `redis:7.4.2` under a sentinel digest in `infra/helm/ibex-harness/values.yaml`:17.
+- Redis is also mutable inside CI: `.github/workflows/ci.yml`:1157 (`embedder-test`), :1975 (`verify-phase25`), and :2548 (`embedder-coverage`) run `image: redis:7`, an unpinned tag with no digest, while the same file pins `redis:7.4.2@sha256:fbdbaea4…` for its other services (`:846`, `:1196`).
 - ClickHouse carries a sentinel Helm digest at `infra/helm/ibex-harness/values.yaml`:18 under the excluded Kubernetes profile.
 - The reference TEI file still floats: `infra/reference/tei-embeddings.compose.yaml`:47 is `text-embeddings-inference:cpu-1.6` and :56-58 passes `--model-id` with no `--revision`. It is marked "REFERENCE ONLY" at :1 and is not started by `make compose-dev-up`.
 
@@ -30,7 +32,7 @@ Residual (blocker: benchmark stack): the corpus-geometry equality itself — `ba
 **P1-30 — search never filters by `embedding_model`; embedding models are version-less IDs.** Audit finding at `27-v1-readiness-audit.md`:120.
 Closed part: the fence. `services/memory/app/schemas/search.py`:25-27 declares `embedding_model` with `default=None`; `services/memory/app/routers/memory_search_support.py`:181 forwards it into `find_similar`; `services/memory/app/read/repository.py`:194-204 documents and threads it; `services/memory/app/vectorstore/pgvector_store.py`:43-44 applies it in `SEARCH_SQL` (`CAST(:embedding_model AS text) IS NULL OR embedding_model = …`).
 Residual (blockers: product, infrastructure):
-- **product** — the fence is off by default (``default=None``) and bounds the vector channel only; the full-text channels are not fenced (`repository.py`:204-212; `schemas/search.py`:20-22). Turning it on would drop the existing corpus, because no re-embed path exists (see P1-31).
+- **product** — the fence is off by default (``default=None``) and bounds the vector channel only; the full-text channels are not fenced (`repository.py`:206-211; `schemas/search.py`:20-21). Turning it on would drop the existing corpus, because no re-embed path exists (see P1-31).
 - **infrastructure** — version-less provenance is not fixed on the serving side: the memory write path records `id@revision` (`MODEL_INVENTORY.md`:48-49), but the embedder records no revision of what it actually served — its TEI request carries only `inputs`, and the served model is whatever the server was started with (`MODEL_INVENTORY.md`:66; `services/embedder/app/tei/client.py`:170-175).
 
 **P1-31 — no model provenance inventory; extraction defaults are floating aliases.** Audit finding at `27-v1-readiness-audit.md`:121.
