@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.exc import DBAPIError
 
+from app.config import resolve_embedding_model
 from app.vectorstore.base import UpsertRequest, VectorStore
 from app.write.cache import MemoryCacheWriter
 from app.write.metrics import WRITE_CACHE_ERRORS
@@ -19,7 +20,10 @@ logger = logging.getLogger(__name__)
 class AfterCommitHandler:
     cache: MemoryCacheWriter | None
     store: VectorStore | None
-    embedding_model: str = "bge-m3"
+    # Fallback identity for outcomes that carry an embedding but no model id. Resolved
+    # from configuration rather than a literal so a profile switch cannot label a vector
+    # with a model that did not produce it.
+    embedding_model: str = field(default_factory=resolve_embedding_model)
 
     async def __call__(self, outcome: WriteOutcome) -> None:
         if outcome.kind != WriteOutcomeKind.CREATED:

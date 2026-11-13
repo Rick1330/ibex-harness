@@ -4,27 +4,55 @@ from __future__ import annotations
 
 import hashlib
 import struct
+from dataclasses import dataclass
 from uuid import UUID
 
 _KEY_PREFIX = "embed:v1"
 
 
-def content_digest(*, model_id: str, dimensions: int, text: str) -> str:
-    """Return hex SHA-256 of length-prefixed (model_id, dim, utf-8 text).
+@dataclass(frozen=True, slots=True)
+class EmbeddingIdentity:
+    """Everything that decides whether two cached vectors are interchangeable.
+
+    A digest that omits any of these fields can address a vector another deployment
+    produced: the same ``model_id`` at another Matryoshka dimension, or the same id
+    serving different weights. The fields are enumerated once, here, so the digest
+    and the key format cannot drift apart.
+    """
+
+    model_id: str
+    dimensions: int
+    model_revision: str | None = None
+
+
+def content_digest(*, identity: EmbeddingIdentity, text: str) -> str:
+    """Return hex SHA-256 of length-prefixed (model_id, dim, [revision], utf-8 text).
 
     Exact UTF-8 bytes only — no NFC/lowercase (must match inference input).
     Length prefixes avoid delimiter collisions with model ids containing ``|``.
+
+    The revision is length-prefixed after ``dimensions`` and is hashed **only when
+    it is non-empty**. ``None`` and ``""`` both mean "this deployment does not
+    distinguish revisions", and that layout stays byte-identical to the
+    pre-revision digest, so a deployment that never sets
+    ``IBEX_EMBEDDING_MODEL_REVISION`` keeps every vector already in Redis. Configure
+    a revision and every digest changes: existing entries become misses and are
+    recomputed from the new weights, never served as if they came from them.
     """
-    model_bytes = model_id.encode("utf-8")
+    model_bytes = identity.model_id.encode("utf-8")
     text_bytes = text.encode("utf-8")
-    payload = (
-        struct.pack(">I", len(model_bytes))
-        + model_bytes
-        + struct.pack(">I", dimensions)
-        + struct.pack(">I", len(text_bytes))
-        + text_bytes
-    )
-    return hashlib.sha256(payload).hexdigest()
+    parts = [
+        struct.pack(">I", len(model_bytes)),
+        model_bytes,
+        struct.pack(">I", identity.dimensions),
+    ]
+    if identity.model_revision:
+        revision_bytes = identity.model_revision.encode("utf-8")
+        parts.append(struct.pack(">I", len(revision_bytes)))
+        parts.append(revision_bytes)
+    parts.append(struct.pack(">I", len(text_bytes)))
+    parts.append(text_bytes)
+    return hashlib.sha256(b"".join(parts)).hexdigest()
 
 
 def redis_key(*, org_id: UUID, digest_hex: str) -> str:
@@ -32,12 +60,9 @@ def redis_key(*, org_id: UUID, digest_hex: str) -> str:
     return f"{org_id}:{_KEY_PREFIX}:{digest_hex}"
 
 
-def cache_key_for_text(
-    *,
-    org_id: UUID,
-    model_id: str,
-    dimensions: int,
-    text: str,
-) -> str:
-    digest = content_digest(model_id=model_id, dimensions=dimensions, text=text)
-    return redis_key(org_id=org_id, digest_hex=digest)
+def cache_key_for_text(*, org_id: UUID, identity: EmbeddingIdentity, text: str) -> str:
+    """Tenant-scoped cache key for one text under one embedding identity."""
+    return redis_key(
+        org_id=org_id,
+        digest_hex=content_digest(identity=identity, text=text),
+    )

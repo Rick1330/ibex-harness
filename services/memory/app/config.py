@@ -11,6 +11,11 @@ from app.scoring.composite import RankWeights
 
 _WEIGHT_EPS = 1e-9
 
+# ibex_core.memories.embedding_model is TEXT with memories_embedding_model_len_chk
+# (char_length <= 256). An id longer than that is refused at startup, not at INSERT
+# time against a live row.
+_EMBEDDING_MODEL_MAX_CHARS = 256
+
 # Bundled CNN models in services/memory (uv.lock). Transformers / arbitrary names rejected.
 _ALLOWED_PII_SPACY_MODELS: frozenset[str] = frozenset(
     {
@@ -152,6 +157,28 @@ class Settings(BaseSettings):
     embedding_connect_timeout_seconds: float = Field(default=2.0, gt=0)
     embedding_max_retries: int = Field(default=2, ge=0)
 
+    # Stored vector identity. The write path records this on every row it embeds, so
+    # ibex_core.memories.embedding_model names the model that produced the vector instead
+    # of a literal. The default preserves the id written before it was configurable.
+    embedding_model: str = Field(
+        default="bge-m3",
+        validation_alias="IBEX_MEMORY_EMBEDDING_MODEL",
+        description=(
+            "Embedding model id recorded on stored vectors; non-empty, max 256 chars "
+            "(ibex_core.memories.embedding_model)"
+        ),
+    )
+    embedding_model_revision: str = Field(
+        default="",
+        validation_alias="IBEX_MEMORY_EMBEDDING_MODEL_REVISION",
+        description=(
+            "Optional revision of the embedding model (weights digest, tag, or build). "
+            "Empty means this deployment does not distinguish revisions of the same id. "
+            "Part of the embedding identity: a vector cached or indexed under one "
+            "revision must never be served as the output of another"
+        ),
+    )
+
     # PII stage (m3.C.1 / ADR-0054) — distinct from injection quarantine threshold.
     pii_redact_min_confidence: float = Field(
         default=0.70,
@@ -256,9 +283,7 @@ class Settings(BaseSettings):
     )
     rerank_api_token: SecretStr | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "IBEX_RERANK_API_TOKEN", "IBEX_MEMORY_RERANK_API_TOKEN"
-        ),
+        validation_alias=AliasChoices("IBEX_RERANK_API_TOKEN", "IBEX_MEMORY_RERANK_API_TOKEN"),
         description="Optional bearer token for the reranker",
     )
     rerank_timeout_ms: int = Field(
@@ -310,6 +335,30 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("embedding_model", mode="after")
+    @classmethod
+    def _validate_embedding_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("embedding_model must be non-empty")
+        if len(normalized) > _EMBEDDING_MODEL_MAX_CHARS:
+            raise ValueError(
+                "embedding_model must be at most "
+                f"{_EMBEDDING_MODEL_MAX_CHARS} characters "
+                "(ibex_core.memories.embedding_model)"
+            )
+        return normalized
+
+    @field_validator("embedding_model_revision", mode="after")
+    @classmethod
+    def _validate_embedding_model_revision(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) > _EMBEDDING_MODEL_MAX_CHARS:
+            raise ValueError(
+                f"embedding_model_revision must be at most {_EMBEDDING_MODEL_MAX_CHARS} characters"
+            )
+        return normalized
 
     @field_validator("pii_spacy_model", mode="after")
     @classmethod
@@ -370,3 +419,16 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def resolve_embedding_model(explicit: str | None = None) -> str:
+    """The embedding model id a stored vector is recorded under.
+
+    ``explicit`` wins when it is a non-blank string (a composition root or a test
+    pinning the identity); otherwise process configuration decides. Both write-path
+    writers resolve through here so the outcome and the after-commit upsert cannot
+    disagree about which model produced the vector.
+    """
+    if explicit is not None and explicit.strip():
+        return explicit.strip()
+    return get_settings().embedding_model

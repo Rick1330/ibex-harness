@@ -73,6 +73,12 @@ export const capabilities: Capability[] = [
     href: '/docs/memory/overview',
   },
   {
+    name: 'Embedding model identity',
+    status: 'PROVISIONAL',
+    detail: 'The embedding identity is recorded and configurable: model id and dimensions per deployment profile, in engineering/MODEL_INVENTORY.md and infra/model-inventory.v1.json. No re-embed path exists — the only embedding task is a no-op, and there is no generation column or backfill task. Licence and weights-revision fields are not recorded for any model; BAAI/bge-m3 carries a revision only in the v1-single-node Compose file. The dev bundle runs deterministic stub geometry at an overridden dimension, so this is a configuration record, not a semantic-quality claim.',
+    href: '/docs/architecture/status-and-evidence',
+  },
+  {
     name: 'Context assembly',
     status: 'PROVISIONAL',
     detail: 'Budget, retrieval, ranking, packing, formatting, and degradation exist. Unauthenticated direct access is closed by a shared caller token; per-user authentication and the deadline boundary remain open.',

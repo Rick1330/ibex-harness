@@ -54,9 +54,7 @@ class InMemoryVectorStore(VectorStore):
     default_min_similarity: float = 0.70
     default_ef_search: int = 64
 
-    def bind_agent(
-        self, memory_id: UUID, agent_id: UUID, *, lifecycle_revision: int
-    ) -> None:
+    def bind_agent(self, memory_id: UUID, agent_id: UUID, *, lifecycle_revision: int) -> None:
         """Register an existing memory with its observed lifecycle revision."""
         if lifecycle_revision < 1:
             raise ValueError("lifecycle_revision must be positive")
@@ -161,13 +159,19 @@ class InMemoryVectorStore(VectorStore):
         return hits[: request.limit]
 
     def _similarity_if_visible(
-        self, request: SearchRequest, row: _StoredEmbedding, query: tuple[float, ...], threshold: float
+        self,
+        request: SearchRequest,
+        row: _StoredEmbedding,
+        query: tuple[float, ...],
+        threshold: float,
     ) -> float | None:
         if row.org_id != request.org_id or row.agent_id != request.agent_id:
             return None
         if not self._row_active(row):
             return None
         if request.mode is SearchMode.USER_RETRIEVAL and not self._row_temporally_visible(row):
+            return None
+        if _excluded_by_model_fence(request, row):
             return None
         similarity = _cosine_similarity(query, row.embedding)
         return similarity if similarity >= threshold else None
@@ -212,6 +216,12 @@ class InMemoryVectorStore(VectorStore):
         ):
             raise LookupError(f"memory {memory_id} lifecycle revision is stale")
         del self._rows[memory_id]
+
+
+def _excluded_by_model_fence(request: SearchRequest, row: _StoredEmbedding) -> bool:
+    """Same fence as SEARCH_SQL: an unset model keeps every generation eligible."""
+    fence = request.embedding_model_fence
+    return fence is not None and row.embedding_model != fence
 
 
 def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:

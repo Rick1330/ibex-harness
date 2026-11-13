@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from uuid import UUID
+from dataclasses import replace
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
@@ -125,10 +126,22 @@ async def test_pgvector_cross_org_isolation(
     vec_a = zero_embedding(hotspot=1)
     vec_b = zero_embedding(hotspot=2)
     await store.upsert(
-        UpsertRequest(memory_id=mem_a, org_id=org_a, embedding=vec_a, embedding_model="bge-m3", expected_revision=1)
+        UpsertRequest(
+            memory_id=mem_a,
+            org_id=org_a,
+            embedding=vec_a,
+            embedding_model="bge-m3",
+            expected_revision=1,
+        )
     )
     await store.upsert(
-        UpsertRequest(memory_id=mem_b, org_id=org_b, embedding=vec_b, embedding_model="bge-m3", expected_revision=1)
+        UpsertRequest(
+            memory_id=mem_b,
+            org_id=org_b,
+            embedding=vec_b,
+            embedding_model="bge-m3",
+            expected_revision=1,
+        )
     )
 
     hits_a = await store.search(
@@ -255,12 +268,21 @@ async def test_search_relaxed_order_returns_descending_similarity(
 
     await store.upsert(
         UpsertRequest(
-            memory_id=mem_near, org_id=org_id, embedding=vec_near, embedding_model="bge-m3",
+            memory_id=mem_near,
+            org_id=org_id,
+            embedding=vec_near,
+            embedding_model="bge-m3",
             expected_revision=1,
         )
     )
     await store.upsert(
-        UpsertRequest(memory_id=mem_far, org_id=org_id, embedding=vec_far, embedding_model="bge-m3", expected_revision=1)
+        UpsertRequest(
+            memory_id=mem_far,
+            org_id=org_id,
+            embedding=vec_far,
+            embedding_model="bge-m3",
+            expected_revision=1,
+        )
     )
     hits = await store.search(
         SearchRequest(
@@ -276,3 +298,134 @@ async def test_search_relaxed_order_returns_descending_similarity(
     assert len(hits) >= 2
     sims = [h.similarity for h in hits]
     assert sims == sorted(sims, reverse=True)
+
+
+async def _insert_memory_in_tenant(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    org_id: UUID,
+    agent_id: UUID,
+    content: str,
+) -> UUID:
+    """Second memory in an existing org/agent, so a fence cannot be confused with RLS."""
+    memory_id = uuid4()
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SELECT set_config('app.is_service_account', 'true', true)"
+            )
+        )
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                """
+                INSERT INTO ibex_core.memories (
+                    id, org_id, agent_id, content, content_hash, content_tokens
+                ) VALUES (
+                    :id, :org_id, :agent_id, :content, :hash, 1
+                )
+                """
+            ),
+            {
+                "id": str(memory_id),
+                "org_id": str(org_id),
+                "agent_id": str(agent_id),
+                "content": content,
+                "hash": f"hash-{memory_id.hex}",
+            },
+        )
+    return memory_id
+
+
+async def _fenced_and_unfenced_hits(
+    store: PgVectorStore,
+    base: SearchRequest,
+    fence: str | None,
+) -> set[UUID]:
+    """Hit ids for ``base`` with ``embedding_model`` replaced by ``fence``."""
+    hits = await store.search(replace(base, embedding_model=fence))
+    return {hit.memory_id for hit in hits}
+
+
+@pytest.mark.asyncio
+async def test_search_model_fence_returns_only_that_generation(
+    store: PgVectorStore,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Same org, same agent, same vector: the model id is the only difference."""
+    org_id, agent_id, mem_current = await seed_org_agent_memory(
+        session_factory, content="current generation"
+    )
+    mem_other = await _insert_memory_in_tenant(
+        session_factory, org_id=org_id, agent_id=agent_id, content="other generation"
+    )
+    query = zero_embedding(hotspot=0)
+    await store.upsert(
+        UpsertRequest(
+            memory_id=mem_current,
+            org_id=org_id,
+            embedding=query,
+            embedding_model="bge-m3",
+            expected_revision=1,
+        )
+    )
+    await store.upsert(
+        UpsertRequest(
+            memory_id=mem_other,
+            org_id=org_id,
+            embedding=query,
+            embedding_model="other-embed",
+            expected_revision=1,
+        )
+    )
+
+    base = SearchRequest(
+        org_id=org_id,
+        agent_id=agent_id,
+        query_embedding=query,
+        limit=10,
+        min_similarity=0.0,
+        ef_search=40,
+    )
+    unfenced = await _fenced_and_unfenced_hits(store, base, None)
+    assert unfenced == {mem_current, mem_other}
+
+    fenced = await _fenced_and_unfenced_hits(store, base, "bge-m3")
+    assert fenced == {mem_current}
+
+    absent = await _fenced_and_unfenced_hits(store, base, "not-indexed-model")
+    assert absent == set()
+
+
+@pytest.mark.asyncio
+async def test_model_fence_keeps_the_ann_select_and_tenant_scope(
+    store: PgVectorStore,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The fence narrows generations; it must not widen the tenant boundary."""
+    org_a, _agent_a, mem_a = await seed_org_agent_memory(session_factory, content="org-a")
+    org_b, agent_b, mem_b = await seed_org_agent_memory(session_factory, content="org-b")
+    vec = zero_embedding(hotspot=1)
+    for org_id, memory_id in ((org_a, mem_a), (org_b, mem_b)):
+        await store.upsert(
+            UpsertRequest(
+                memory_id=memory_id,
+                org_id=org_id,
+                embedding=vec,
+                embedding_model="bge-m3",
+                expected_revision=1,
+            )
+        )
+
+    hits_b = await _fenced_and_unfenced_hits(
+        store,
+        SearchRequest(
+            org_id=org_b,
+            agent_id=agent_b,
+            query_embedding=vec,
+            limit=10,
+            min_similarity=0.0,
+            ef_search=40,
+        ),
+        "bge-m3",
+    )
+    assert hits_b == {mem_b}

@@ -16,7 +16,7 @@ from redis.exceptions import RedisError
 
 from app.cache.backend import CachingEmbeddingBackend
 from app.cache.context import org_context
-from app.cache.keys import cache_key_for_text
+from app.cache.keys import EmbeddingIdentity, cache_key_for_text
 from app.cache.redis_store import RedisEmbeddingStore
 
 pytestmark = pytest.mark.redis
@@ -101,8 +101,7 @@ class TestRedisIntegration:
 
         key = cache_key_for_text(
             org_id=_ORG_A,
-            model_id="test-model",
-            dimensions=8,
+            identity=EmbeddingIdentity(model_id="test-model", dimensions=8),
             text=text,
         )
         values = await store.mget([key])

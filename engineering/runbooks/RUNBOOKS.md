@@ -501,5 +501,6 @@ drop (if timeouts occur).
 - ClickHouse down (P2)
 - Worker backlog (P2)
 - Tenant isolation violation (P1)
+- [Re-embed the memory corpus onto a new embedding model](./re-embed.md) — procedure and prerequisites for switching the stored vector generation.
 
 Add runbooks whenever you add a new P1/P2 alert.

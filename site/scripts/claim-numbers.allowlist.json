@@ -26,25 +26,25 @@
     },
     {
       "file": "app/data/ledger.ts",
-      "line": 138,
+      "line": 144,
       "token": "p99",
       "reason": "Denial inside the v1-single-node row: a measured p99 SLO is one of the open items. No measured p99 artifact exists (GAP-004); the percentile is named only to say it is unmeasured."
     },
     {
       "file": "app/data/ledger.ts",
-      "line": 292,
+      "line": 298,
       "token": "p99",
       "reason": "The p99 in 'p99 ≤20 ms is a ratified warm target' is the ratified target from engineering/PERFORMANCE.md, not a measurement, and the same sentence says it is not a hosted SLO. Tracked as GAP-004."
     },
     {
       "file": "app/data/ledger.ts",
-      "line": 292,
+      "line": 298,
       "token": "20 ms",
       "reason": "The 20 ms figure is the ratified warm target from engineering/PERFORMANCE.md, not a measurement, and the same sentence says it is not a hosted SLO. Tracked as GAP-004."
     },
     {
       "file": "app/data/ledger.ts",
-      "line": 292,
+      "line": 298,
       "token": "p99",
       "reason": "The second p99 on the line says no recent passing full-chat p99 run is published: it records the absence of an artifact, and the same sentence denies a measured hosted SLO. Tracked as GAP-004."
     }

@@ -176,7 +176,10 @@ async def run_memory_search(
     repo: MemoryReadRepository,
     execution: SearchMemoriesExecution,
 ) -> list[MemorySearchResult]:
-    return await repo.find_similar(find_similar_query_from_execution(execution))
+    return await repo.find_similar(
+        find_similar_query_from_execution(execution),
+        embedding_model=execution.request.embedding_model,
+    )
 
 
 def find_similar_query_from_execution(

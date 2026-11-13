@@ -14,6 +14,11 @@ from app.hosted.providers import resolve_hosted_geometry
 from app.limits import MAX_MODEL_ID_LEN
 from app.profiles import Profile, default_geometry, valid_profile
 
+# Weights revision bound. A revision is a commit sha, digest, or tag — 128 characters
+# covers every form with room to spare, and a longer value is a configuration mistake
+# rather than an identity. Kept here (not app/limits.py) because only Settings reads it.
+MAX_MODEL_REVISION_LEN = 128
+
 
 class Settings(CacheEnvMixin, HostedEnvMixin, BaseSettings):
     """All settings are read from IBEX_EMBEDDING_* environment variables.
@@ -35,6 +40,15 @@ class Settings(CacheEnvMixin, HostedEnvMixin, BaseSettings):
     profile: Profile = Field(default="cpu", description="Deployment profile key")
     dim: int | None = Field(default=None, description="Expected vector dimensionality")
     model: str | None = Field(default=None, description="Expected model identifier")
+    model_revision: str | None = Field(
+        default=None,
+        description=(
+            "Weights revision of the embedding model (IBEX_EMBEDDING_MODEL_REVISION): "
+            "commit sha, digest, or tag. None means this deployment does not "
+            "distinguish revisions of the same model id. When set it is part of the "
+            "cache digest, so vectors produced by another revision are never reused"
+        ),
+    )
 
     # TEI sidecar settings — all IBEX_EMBEDDING_TEI_* via env_prefix + field name.
     tei_base_url: str | None = Field(
@@ -100,6 +114,22 @@ class Settings(CacheEnvMixin, HostedEnvMixin, BaseSettings):
         if len(trimmed) > MAX_MODEL_ID_LEN:
             raise ValueError(
                 f"embedding model id exceeds maximum length of {MAX_MODEL_ID_LEN} characters"
+            )
+        return trimmed
+
+    @field_validator("model_revision")
+    @classmethod
+    def _check_model_revision(cls, value: str | None) -> str | None:
+        """Trim, map empty to None (identical bytes to an unconfigured deploy), bound length."""
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        if len(trimmed) > MAX_MODEL_REVISION_LEN:
+            raise ValueError(
+                f"embedding model revision exceeds maximum length of "
+                f"{MAX_MODEL_REVISION_LEN} characters"
             )
         return trimmed
 
@@ -180,9 +210,7 @@ class Settings(CacheEnvMixin, HostedEnvMixin, BaseSettings):
         if self.profile != "hosted":
             return
         if self.hosted_api_key is None or not self.hosted_api_key.get_secret_value().strip():
-            raise ValueError(
-                "IBEX_EMBEDDING_HOSTED_API_KEY is required when profile=hosted"
-            )
+            raise ValueError("IBEX_EMBEDDING_HOSTED_API_KEY is required when profile=hosted")
 
     def _require_cache_redis_url(self) -> None:
         if not self.cache_enabled:

@@ -211,10 +211,18 @@ async def seed_composite_ranking_pair(
         ),
     )
     query_vec = await upsert_embedding(
-        request.store, request.session_factory, org_id=org_id, memory_id=factual_id, hotspot=opts.hotspot
+        request.store,
+        request.session_factory,
+        org_id=org_id,
+        memory_id=factual_id,
+        hotspot=opts.hotspot,
     )
     await upsert_embedding(
-        request.store, request.session_factory, org_id=org_id, memory_id=episodic_id, hotspot=opts.hotspot
+        request.store,
+        request.session_factory,
+        org_id=org_id,
+        memory_id=episodic_id,
+        hotspot=opts.hotspot,
     )
     return CompositeRankingSeed(
         org_id=org_id,
@@ -253,7 +261,8 @@ async def upsert_embedding(
 
     ``embedding`` wins when given, which is what the graded gold set needs: its vectors are
     weighted combinations of topic bases, not one-hot hotspots. Existing callers keep passing
-    ``hotspot`` and are unaffected.
+    ``hotspot`` and are unaffected. The row is recorded under the helper's fixed generation
+    (``"test"``); a test that needs a named generation writes the ``UpsertRequest`` itself.
     """
     vector = list(embedding) if embedding is not None else zero_embedding(hotspot=hotspot)
     async with session_factory() as session:
@@ -299,7 +308,9 @@ async def seed_agent_with_memories(
                 content=f"{params.content_prefix} memory {index} preference dark mode",
             ),
         )
-        await upsert_embedding(store, session_factory, org_id=org_id, memory_id=memory_id, hotspot=params.hotspot)
+        await upsert_embedding(
+            store, session_factory, org_id=org_id, memory_id=memory_id, hotspot=params.hotspot
+        )
         memory_ids.append(memory_id)
     return SeededAgent(org_id=org_id, agent_id=agent_id), memory_ids, query_vec
 
@@ -345,7 +356,9 @@ async def bulk_seed_for_plans(
     async with session_factory() as session, session.begin():
         await with_service_org(session, seeded.org_id)
         await session.execute(
-            text("ANALYZE ibex_core.memories")  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            text(
+                "ANALYZE ibex_core.memories"
+            )  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         )
     return PlanSeed(
         seeded=seeded,

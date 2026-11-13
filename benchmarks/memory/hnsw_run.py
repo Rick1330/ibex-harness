@@ -39,6 +39,7 @@ WARMUP_QUERIES = 100
 # Offset so warm-up indices never share the timed `(q * 97) % size` sequence.
 _WARMUP_INDEX_OFFSET = 10_007
 
+
 def _maintenance_work_mem() -> str:
     return os.environ.get("MEMORY_BENCH_MAINTENANCE_WORK_MEM", "2GB")
 
@@ -150,7 +151,9 @@ async def _explain_search(engine: AsyncEngine, params: ExplainParams) -> dict[st
             {"mode": params.iterative_scan},
         )
         result = await conn.execute(
-            text(explain_sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            text(
+                explain_sql
+            ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             {
                 "query": vec_literal(params.query),
                 "org_id": str(params.org_id),
@@ -158,6 +161,8 @@ async def _explain_search(engine: AsyncEngine, params: ExplainParams) -> dict[st
                 "min_similarity": params.min_similarity,
                 "limit": params.limit,
                 "include_historical_candidates": False,
+                # Bench corpus rows carry one generation; the probe stays unfenced.
+                "embedding_model": None,
             },
         )
         payload = result.scalar()
@@ -188,9 +193,7 @@ def _search_request(params: SizeRunParams, query: list[float]) -> SearchRequest:
 async def _warmup_searches(store: PgVectorStore, params: SizeRunParams) -> None:
     for q in range(WARMUP_QUERIES):
         idx = ((q * 97) + _WARMUP_INDEX_OFFSET) % params.size
-        await store.search(
-            _search_request(params, perturb(unit_vector(idx), seed=idx))
-        )
+        await store.search(_search_request(params, perturb(unit_vector(idx), seed=idx)))
 
 
 async def _timed_search_pass(
@@ -278,7 +281,9 @@ async def _prepare_corpus(
     return org_id, agent_id, build_s
 
 
-async def _measure_cell(engine: AsyncEngine, store: PgVectorStore, cell: CellParams) -> SizeResult:
+async def _measure_cell(
+    engine: AsyncEngine, store: PgVectorStore, cell: CellParams
+) -> SizeResult:
     """Time one (min_similarity × iterative_scan) cell on an already-seeded corpus."""
     plan_summary = await _explain_search(
         engine,
@@ -294,7 +299,11 @@ async def _measure_cell(engine: AsyncEngine, store: PgVectorStore, cell: CellPar
     if cell.prewarm:
         await try_prewarm(engine)
 
-    qn = cell.query_count if cell.query_count is not None else _QUERY_COUNTS.get(cell.size, 200)
+    qn = (
+        cell.query_count
+        if cell.query_count is not None
+        else _QUERY_COUNTS.get(cell.size, 200)
+    )
     before = await idx_scan_count(engine)
     print(
         f"searching size={cell.size} ef={cell.ef_search} min_sim={cell.min_similarity} "
@@ -416,7 +425,9 @@ async def _measure_corpus(
     )
     count = await count_memories(engine)
     if count != params.size:
-        raise RuntimeError(f"row count after upsert expected {params.size}, got {count}")
+        raise RuntimeError(
+            f"row count after upsert expected {params.size}, got {count}"
+        )
     return [
         await _measure_cell(engine, store, cell)
         for cell in _cells_for_corpus(
