@@ -5,6 +5,12 @@ A published run is evidence only if a reader can re-derive what it measured. Thi
 the consumer of the provenance contract in ``benchmarks/memory/provenance.py``: it reads the
 artifacts under ``site/public/benchmarks/`` and refuses the claims that cannot be true.
 
+Five artifacts are published. Four follow the ``*-benchmark-data.json`` naming convention; the
+proxy latency artifact predates it and is published as ``benchmark-data.json``, so it is
+discovered and recognised by its exact name. Each artifact kind is registered in
+``ARTIFACT_KINDS``, which states its provenance corpus kind and the spelling of its percentile
+fields; the JSON Schema is ``<file name stem>.schema.json`` under ``benchmarks/data-schema/``.
+
 What it checks, and why each check exists:
 
 1. **Identity.** ``sha`` is exactly 40 lowercase hex characters, ``short_sha`` is its first
@@ -22,7 +28,11 @@ What it checks, and why each check exists:
    and retaining it does not turn the check red. A recorded run on an artifact kind with no corpus
    identity is unverifiable, so it fails.
 4. **Percentiles.** A p50 above its p95, a p95 above its p99, or a p95 outside its own
-   confidence interval is a broken measurement, not a slow one.
+   confidence interval is a broken measurement, not a slow one. Percentiles are read in the
+   spelling each kind publishes: ``<group>_p50`` on the four suffixed artifacts and
+   ``<group>p50_ms`` on the proxy artifact, whose ``p999_ms`` is compared with its p99 as well.
+   The proxy artifact's ``ci_95_low``/``ci_95_high`` bound a Go benchmark mean (``ns_per_op``),
+   not a p95, so there is no p95 interval to check there.
 5. **Ranking.** ``gold_set`` names a known set, and on every recorded run ``gold_set_name`` must be
    the file that label names (``v1`` is ``gold_set_v1.json``, ``ranking_quality_v2`` is
    ``gold_set_v2.json``) while ``gold_set_hash`` must be the ``corpus_hash`` the same record
@@ -34,7 +44,8 @@ What it checks, and why each check exists:
 6. **Unrecorded runs.** A run with no provenance block, or ``status == "unrecorded"``, is
    counted and reported as a warning. It is *not* evidence, and the count is printed so that
    "28 unrecorded runs" can never be read as "28 verified runs". Enforcement is flipped
-   separately; until then these runs do not fail the check.
+   separately; until then these runs do not fail the check. The whole proxy artifact is in this
+   state: its 65 runs predate the provenance block, so they are counted and warned about.
 
 Anything the checker cannot read -- an unreadable file, an artifact whose kind it does not
 know, a missing or unusable schema -- is a failure. There is no skip flag: an unchecked
@@ -55,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import itertools
 import json
 import re
 import sys
@@ -97,6 +109,9 @@ SCRIPT_NAME: Final = "check_reproducibility"
 SCHEMA_DIR: Final = _BENCH / "data-schema"
 PUBLISHED_DIR: Final = _ROOT / "site" / "public" / "benchmarks"
 ARTIFACT_SUFFIX: Final = "-benchmark-data.json"
+# The proxy latency artifact predates the suffix convention and is published under this exact
+# name, so discovery and kind lookup know it by name rather than by suffix.
+PROXY_ARTIFACT_NAME: Final = "benchmark-data.json"
 SHA_RE: Final = re.compile(r"[0-9a-f]{40}")
 
 
@@ -120,15 +135,9 @@ GOLD_SETS: Final[dict[str, GoldCorpus]] = {
 # Mirrors MODES in benchmarks/memory/ranking_quality/modes.py; a test asserts the parity.
 MODE_NAMES: Final = frozenset({"dense_only", "hybrid", "hybrid_rerank", "full_graph"})
 REQUIRED_MODES: Final = frozenset({"hybrid_rerank", "full_graph"})
-# filename stem -> provenance corpus kind, or None when the artifact records no corpus.
-CORPUS_KINDS: Final[dict[str, str | None]] = {
-    "hnsw": "hnsw",
-    "ranking-quality": "gold_v1",
-    "extraction-quality": None,
-    "write-pipeline": None,
-}
-_P50, _P95, _P99 = "_p50", "_p95", "_p99"
-_PERCENTILES: Final = (_P50, _P95, _P99)
+# The p50/p95/p99 triple every artifact states, as ``(label, key suffix)`` per percentile,
+# lowest first.
+_PERCENTILES: Final = (("p50", "_p50"), ("p95", "_p95"), ("p99", "_p99"))
 _CI_LOW: Final = "_p95_ci_low"
 _CI_HIGH: Final = "_p95_ci_high"
 # The fields a recorded run states its corpus identity with. ``gold_set_hash`` is compared when
@@ -136,6 +145,59 @@ _CI_HIGH: Final = "_p95_ci_high"
 _IDENTITY_FIELDS: Final = ("corpus_hash", "corpus_manifest", "gold_set_hash")
 # A corpus identity: ``(corpus_hash, corpus_manifest)``, as ``provenance.corpus_identity`` returns.
 Identity = tuple[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class PercentileLayout:
+    """How one artifact family spells its percentiles inside a JSON object.
+
+    ``fields`` is ``(label, key suffix)`` per percentile, lowest first, so one ordering rule
+    serves every spelling. ``upper`` is a percentile published above p99 -- the proxy artifact's
+    ``p999_ms`` -- compared with p99 only when the record carries it, so omitting it can never
+    hide a check on the triple. A family whose keys carry no p95 confidence interval is checked
+    for ordering alone: ``_check_interval`` looks for the interval keys and finds none.
+    """
+
+    fields: tuple[tuple[str, str], ...]
+    upper: tuple[str, str] | None = None
+
+
+SUFFIXED_PERCENTILES: Final = PercentileLayout(fields=_PERCENTILES)
+# ``k6.p50_ms`` and ``stages.auth_lru_p50_ms``. The ``ci_95_low``/``ci_95_high`` pair this
+# artifact publishes bounds a Go benchmark mean (``ns_per_op``), not a p95, so the p95-interval
+# rule has nothing to compare here and the artifact is checked for ordering only.
+PROXY_PERCENTILES: Final = PercentileLayout(
+    fields=(("p50", "p50_ms"), ("p95", "p95_ms"), ("p99", "p99_ms")),
+    upper=("p999", "p999_ms"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactKind:
+    """What the checker knows about one published artifact.
+
+    ``corpus`` is the provenance corpus kind the artifact is measured against, or ``None`` when
+    it records no corpus identity. ``percentiles`` is the spelling of its percentile fields. The
+    JSON Schema is ``<file name stem>.schema.json`` under ``SCHEMA_DIR``.
+    """
+
+    name: str
+    corpus: str | None
+    percentiles: PercentileLayout = SUFFIXED_PERCENTILES
+
+
+# Published artifact file name -> what the checker knows about it. The proxy artifact is
+# registered by its exact name, and its schema stem is ``benchmark-data``. It records no corpus
+# identity: the provenance contract knows the hnsw and gold corpora, not the proxy source, so a
+# recorded proxy run is refused as unverifiable -- the rule the extraction-quality and
+# write-pipeline artifacts already carry.
+ARTIFACT_KINDS: Final[dict[str, ArtifactKind]] = {
+    "hnsw-benchmark-data.json": ArtifactKind("hnsw", "hnsw"),
+    "ranking-quality-benchmark-data.json": ArtifactKind("ranking-quality", "gold_v1"),
+    "extraction-quality-benchmark-data.json": ArtifactKind("extraction-quality", None),
+    "write-pipeline-benchmark-data.json": ArtifactKind("write-pipeline", None),
+    PROXY_ARTIFACT_NAME: ArtifactKind("benchmark-data", None, PROXY_PERCENTILES),
+}
 
 
 class ArtifactError(ValueError):
@@ -163,15 +225,22 @@ def _display(path: Path) -> str:
         return str(path)
 
 
-def _kind(path: Path) -> str | None:
-    """Return the corpus kind for ``path``, or raise when the artifact kind is unknown."""
-    if not path.name.endswith(ARTIFACT_SUFFIX):
-        raise ArtifactError(f"not a published artifact name (expected *{ARTIFACT_SUFFIX})")
-    stem = path.name[: -len(ARTIFACT_SUFFIX)]
-    if stem not in CORPUS_KINDS:
-        known = ", ".join(sorted(CORPUS_KINDS))
-        raise ArtifactError(f"unknown artifact kind {stem!r}; known kinds: {known}")
-    return CORPUS_KINDS[stem]
+def _kind_name(path: Path) -> str:
+    """The name a message calls ``path``: its file name without the published suffix."""
+    if path.name.endswith(ARTIFACT_SUFFIX):
+        return path.name[: -len(ARTIFACT_SUFFIX)]
+    return path.stem
+
+
+def _kind(path: Path) -> ArtifactKind:
+    """Return the registered kind for ``path``, or raise when the artifact kind is unknown."""
+    kind = ARTIFACT_KINDS.get(path.name)
+    if kind is None:
+        known = ", ".join(sorted(entry.name for entry in ARTIFACT_KINDS.values()))
+        raise ArtifactError(
+            f"unknown artifact kind {_kind_name(path)!r}; known kinds: {known}"
+        )
+    return kind
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -193,7 +262,9 @@ def _schema(stem: str) -> dict[str, Any]:
     try:
         schema = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
-        raise ArtifactError(f"missing schema {path.name}: {exc.strerror or exc}") from exc
+        raise ArtifactError(
+            f"missing schema {path.name}: {exc.strerror or exc}"
+        ) from exc
     except ValueError as exc:
         raise ArtifactError(f"invalid schema {path.name}: {exc}") from exc
     return schema
@@ -214,9 +285,13 @@ def _path_text(path: Sequence[str | int]) -> str:
 
 def _schema_problems(payload: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     if jsonschema is None:
-        return ["jsonschema is not installed; the artifact cannot be checked against its schema"]
+        return [
+            "jsonschema is not installed; the artifact cannot be checked against its schema"
+        ]
     validator = jsonschema.Draft202012Validator(schema)
-    errors = sorted(validator.iter_errors(payload), key=lambda e: _path_text(e.absolute_path))
+    errors = sorted(
+        validator.iter_errors(payload), key=lambda e: _path_text(e.absolute_path)
+    )
     return [f"schema: {_path_text(e.absolute_path)}: {e.message}" for e in errors]
 
 
@@ -237,12 +312,16 @@ def _prov_status(run: Any) -> str | None:
     return status if isinstance(status, str) else None
 
 
-def _check_identity(run: dict[str, Any], label: str, index: int, seen: dict[str, int]) -> list[str]:
+def _check_identity(
+    run: dict[str, Any], label: str, index: int, seen: dict[str, int]
+) -> list[str]:
     problems: list[str] = []
     sha = run.get("sha")
     if isinstance(sha, str) and SHA_RE.fullmatch(sha):
         if sha in seen:
-            problems.append(f"{label}.sha: duplicate {sha} (first seen at runs[{seen[sha]}])")
+            problems.append(
+                f"{label}.sha: duplicate {sha} (first seen at runs[{seen[sha]}])"
+            )
         else:
             seen[sha] = index
     else:
@@ -279,62 +358,124 @@ def _as_number(value: Any) -> float | None:
     return float(value)
 
 
-def _percentile_prefixes(node: dict[str, Any]) -> list[str]:
+def _group_label(label: str, prefix: str) -> str:
+    """The path of one percentile group.
+
+    The suffixed spelling names the group inside the prefix (``latency_ms``). The proxy spelling
+    leaves its ``k6`` triple unnamed and names a stage group with a trailing underscore
+    (``auth_lru_``), so the separator is added only where the prefix has content.
+    """
+    name = prefix.rstrip("_")
+    return f"{label}.{name}" if name else label
+
+
+def _percentile_prefixes(node: dict[str, Any], layout: PercentileLayout) -> list[str]:
+    """Every group prefix in ``node`` that states the whole percentile triple."""
+    suffixes = [suffix for _name, suffix in layout.fields]
     prefixes = {
-        key[: -len(suffix)] for key in node for suffix in _PERCENTILES if key.endswith(suffix)
+        key[: -len(suffix)]
+        for key in node
+        for suffix in suffixes
+        if key.endswith(suffix)
     }
-    complete = (p for p in prefixes if all(f"{p}{s}" in node for s in _PERCENTILES))
-    return sorted(complete)
+    return sorted(
+        p for p in prefixes if all(f"{p}{suffix}" in node for suffix in suffixes)
+    )
 
 
-def _check_interval(label: str, prefix: str, p95: float, node: dict[str, Any]) -> list[str]:
+def _check_interval(
+    group: str, prefix: str, p95: float, node: dict[str, Any]
+) -> list[str]:
     problems: list[str] = []
     low = _as_number(node.get(f"{prefix}{_CI_LOW}"))
     high = _as_number(node.get(f"{prefix}{_CI_HIGH}"))
     if low is not None and low > p95:
-        problems.append(f"{label}.{prefix}: p95 {p95} below ci_low {low}")
+        problems.append(f"{group}: p95 {p95} below ci_low {low}")
     if high is not None and p95 > high:
-        problems.append(f"{label}.{prefix}: p95 {p95} above ci_high {high}")
+        problems.append(f"{group}: p95 {p95} above ci_high {high}")
     return problems
 
 
-def _check_percentile_group(label: str, node: dict[str, Any], prefix: str) -> list[str]:
-    names = [f"{prefix}{suffix}" for suffix in _PERCENTILES]
+def _check_ordering(group: str, series: Sequence[tuple[str, float]]) -> list[str]:
+    """Each percentile in ``series`` must not fall below the one before it."""
+    return [
+        f"{group}: {lower[0]} {lower[1]} > {higher[0]} {higher[1]}"
+        for lower, higher in itertools.pairwise(series)
+        if lower[1] > higher[1]
+    ]
+
+
+def _numeric_series(
+    label: str, node: dict[str, Any], prefix: str, fields: Sequence[tuple[str, str]]
+) -> tuple[list[tuple[str, float]], list[str]]:
+    """``(name, value)`` per field, or the problem naming the first value that is not a number."""
+    names = [f"{prefix}{suffix}" for _name, suffix in fields]
     values = [_as_number(node[name]) for name in names]
-    broken = next(((n, v) for n, v in zip(names, values, strict=True) if v is None), None)
-    if broken is not None:
-        return [f"{label}.{broken[0]}: not a number ({node[broken[0]]!r})"]
-    p50, p95, p99 = (value for value in values if value is not None)
-    problems: list[str] = []
-    if p50 > p95:
-        problems.append(f"{label}.{prefix}: p50 {p50} > p95 {p95}")
-    if p95 > p99:
-        problems.append(f"{label}.{prefix}: p95 {p95} > p99 {p99}")
-    return problems + _check_interval(label, prefix, p95, node)
+    absent = [name for name, value in zip(names, values, strict=True) if value is None]
+    if absent:
+        return [], [f"{label}.{absent[0]}: not a number ({node[absent[0]]!r})"]
+    numbers = [value for value in values if value is not None]
+    return [(field[0], value) for field, value in zip(fields, numbers, strict=True)], []
+
+
+def _upper_value(
+    node: dict[str, Any], prefix: str, layout: PercentileLayout
+) -> tuple[str, float] | None:
+    """The percentile ``layout`` publishes above p99, when the record states it."""
+    if layout.upper is None:
+        return None
+    name, suffix = layout.upper
+    value = _as_number(node.get(f"{prefix}{suffix}"))
+    return None if value is None else (name, value)
+
+
+def _check_percentile_group(
+    label: str, node: dict[str, Any], prefix: str, layout: PercentileLayout
+) -> list[str]:
+    series, problems = _numeric_series(label, node, prefix, layout.fields)
+    if not series:
+        return problems
+    group = _group_label(label, prefix)
+    problems.extend(_check_ordering(group, series))
+    problems.extend(_check_interval(group, prefix, series[1][1], node))
+    upper = _upper_value(node, prefix, layout)
+    if upper is not None and series[-1][1] > upper[1]:
+        problems.append(
+            f"{group}: {series[-1][0]} {series[-1][1]} > {upper[0]} {upper[1]}"
+        )
+    return problems
 
 
 def _flat(chunks: Iterable[Iterable[str]]) -> list[str]:
     return [item for chunk in chunks for item in chunk]
 
 
-def _check_groups(label: str, node: dict[str, Any]) -> list[str]:
-    prefixes = _percentile_prefixes(node)
-    return _flat(_check_percentile_group(label, node, prefix) for prefix in prefixes)
+def _check_groups(
+    label: str, node: dict[str, Any], layout: PercentileLayout
+) -> list[str]:
+    prefixes = _percentile_prefixes(node, layout)
+    return _flat(
+        _check_percentile_group(label, node, prefix, layout) for prefix in prefixes
+    )
 
 
-def _check_children(label: str, node: Any) -> list[str]:
+def _check_children(label: str, node: Any, layout: PercentileLayout) -> list[str]:
     if isinstance(node, dict):
-        return _flat(_check_percentiles(f"{label}.{key}", node[key]) for key in sorted(node))
+        return _flat(
+            _check_percentiles(f"{label}.{key}", node[key], layout)
+            for key in sorted(node)
+        )
     if isinstance(node, list):
         return _flat(
-            _check_percentiles(f"{label}[{index}]", value) for index, value in enumerate(node)
+            _check_percentiles(f"{label}[{index}]", value, layout)
+            for index, value in enumerate(node)
         )
     return []
 
 
-def _check_percentiles(label: str, node: Any) -> list[str]:
-    groups = _check_groups(label, node) if isinstance(node, dict) else []
-    return groups + _check_children(label, node)
+def _check_percentiles(label: str, node: Any, layout: PercentileLayout) -> list[str]:
+    groups = _check_groups(label, node, layout) if isinstance(node, dict) else []
+    return groups + _check_children(label, node, layout)
 
 
 def _modes_of(run: dict[str, Any]) -> Any:
@@ -360,7 +501,9 @@ def _check_modes(label: str, modes: Any) -> list[str]:
     return problems
 
 
-def _check_ranking(run: dict[str, Any], label: str, cache: dict[str, Identity]) -> list[str]:
+def _check_ranking(
+    run: dict[str, Any], label: str, cache: dict[str, Identity]
+) -> list[str]:
     problems: list[str] = []
     gold = run.get("gold_set")
     if gold is not None and gold not in GOLD_SETS:
@@ -380,7 +523,9 @@ def _newest_recorded(runs: list[Any]) -> tuple[int, dict[str, Any]] | None:
     return None
 
 
-def _current_identity(kind: str, cache: dict[str, Identity]) -> tuple[Identity | None, list[str]]:
+def _current_identity(
+    kind: str, cache: dict[str, Identity]
+) -> tuple[Identity | None, list[str]]:
     """``(corpus_hash, corpus_manifest)`` of the checked-out corpus for ``kind``."""
     if kind in cache:
         return cache[kind], []
@@ -399,21 +544,31 @@ def _identity_values(identity: Identity) -> dict[str, str]:
     it; on the HNSW corpus the field is absent and is not compared.
     """
     corpus_hash, manifest = identity
-    return {"corpus_hash": corpus_hash, "corpus_manifest": manifest, "gold_set_hash": corpus_hash}
+    return {
+        "corpus_hash": corpus_hash,
+        "corpus_manifest": manifest,
+        "gold_set_hash": corpus_hash,
+    }
 
 
 def _mismatched_identity(record: dict[str, Any], identity: Identity) -> list[str]:
     """The identity fields ``record`` declares that do not describe ``identity``."""
     expected = _identity_values(identity)
     return [
-        field for field in _IDENTITY_FIELDS if field in record and record[field] != expected[field]
+        field
+        for field in _IDENTITY_FIELDS
+        if field in record and record[field] != expected[field]
     ]
 
 
-def _describe_mismatch(record: dict[str, Any], identity: Identity, fields: list[str]) -> str:
+def _describe_mismatch(
+    record: dict[str, Any], identity: Identity, fields: list[str]
+) -> str:
     """The mismatched fields as ``field declared != expected``, for one actionable message."""
     expected = _identity_values(identity)
-    return ", ".join(f"{field} {record.get(field)!r} != {expected[field]}" for field in fields)
+    return ", ".join(
+        f"{field} {record.get(field)!r} != {expected[field]}" for field in fields
+    )
 
 
 def _gold_corpus(gold: Any) -> GoldCorpus | None:
@@ -432,7 +587,9 @@ def _gold_field_problem(
     )
 
 
-def _gold_name_problems(label: str, record: dict[str, Any], corpus: GoldCorpus) -> list[str]:
+def _gold_name_problems(
+    label: str, record: dict[str, Any], corpus: GoldCorpus
+) -> list[str]:
     """``gold_set_name`` must be the file the ``gold_set`` label names.
 
     The label-to-file map is fixed, so this needs no checked-out bytes and holds for an older run
@@ -473,7 +630,9 @@ def _gold_checkout_problems(
     return [_gold_field_problem(corpus, record, ("gold_set_hash", expected))]
 
 
-def _check_gold_set(label: str, run: dict[str, Any], cache: dict[str, Identity]) -> list[str]:
+def _check_gold_set(
+    label: str, run: dict[str, Any], cache: dict[str, Identity]
+) -> list[str]:
     """A recorded ranking run must name the gold set it declares, and state one identity.
 
     ``gold_set`` is the label; ``provenance.gold_set_name`` must be the file that label names and
@@ -487,7 +646,9 @@ def _check_gold_set(label: str, run: dict[str, Any], cache: dict[str, Identity])
     corpus = _gold_corpus(run.get("gold_set"))
     if record.get("status") != "recorded" or corpus is None:
         return []
-    problems = _gold_name_problems(label, record, corpus) + _gold_hash_problems(label, record)
+    problems = _gold_name_problems(label, record, corpus) + _gold_hash_problems(
+        label, record
+    )
     if record.get("corpus_status") != "current":
         return problems
     identity, identity_problems = _current_identity(corpus.kind, cache)
@@ -535,7 +696,9 @@ def _corpus_kind(run: dict[str, Any], kind: str | None) -> str | None:
     return kind if corpus is None else corpus.kind
 
 
-def _check_corpus(runs: list[Any], kind: str | None, cache: dict[str, Identity]) -> list[str]:
+def _check_corpus(
+    runs: list[Any], kind: str | None, cache: dict[str, Identity]
+) -> list[str]:
     newest = _newest_recorded(runs)
     if newest is None:
         return []
@@ -555,7 +718,9 @@ def _check_corpus(runs: list[Any], kind: str | None, cache: dict[str, Identity])
     return _identity_verdict(label, _provenance(run), expected_kind, identity)
 
 
-def _run_problems(runs: list[Any], cache: dict[str, Identity]) -> list[str]:
+def _run_problems(
+    runs: list[Any], cache: dict[str, Identity], kind: ArtifactKind
+) -> list[str]:
     problems: list[str] = []
     seen: dict[str, int] = {}
     for index, run in enumerate(runs):
@@ -565,20 +730,20 @@ def _run_problems(runs: list[Any], cache: dict[str, Identity]) -> list[str]:
             continue
         problems.extend(_check_identity(run, label, index, seen))
         problems.extend(_check_source(run, label))
-        problems.extend(_check_percentiles(label, run))
+        problems.extend(_check_percentiles(label, run, kind.percentiles))
         problems.extend(_check_ranking(run, label, cache))
     return problems
 
 
-def _check_payload(payload: dict[str, Any], kind: str | None) -> list[str]:
+def _check_payload(payload: dict[str, Any], kind: ArtifactKind) -> list[str]:
     runs = payload.get("runs")
     if not isinstance(runs, list):
         return ["runs: missing or not an array"]
     cache: dict[str, Identity] = {}
-    return _run_problems(runs, cache) + _check_corpus(runs, kind, cache)
+    return _run_problems(runs, cache, kind) + _check_corpus(runs, kind.corpus, cache)
 
 
-def _inspect(path: Path) -> tuple[dict[str, Any], str | None, dict[str, Any]]:
+def _inspect(path: Path) -> tuple[dict[str, Any], ArtifactKind, dict[str, Any]]:
     return _load(path), _kind(path), _schema(path.stem)
 
 
@@ -608,7 +773,16 @@ def check_path(path: Path, report: Report) -> None:
 
 
 def default_paths() -> list[Path]:
-    return sorted(PUBLISHED_DIR.glob(f"*{ARTIFACT_SUFFIX}"))
+    """Every published artifact: the suffixed kinds plus the exact-named proxy artifact.
+
+    A path that is not on disk is skipped, the way the glob skips an unpublished artifact, and
+    ``main`` refuses an empty set, so an empty directory is still a failure.
+    """
+    candidates = [
+        *PUBLISHED_DIR.glob(f"*{ARTIFACT_SUFFIX}"),
+        PUBLISHED_DIR / PROXY_ARTIFACT_NAME,
+    ]
+    return sorted(path for path in candidates if path.is_file())
 
 
 def check_paths(paths: Sequence[Path]) -> Report:
@@ -639,7 +813,10 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "artifacts",
         nargs="*",
         type=Path,
-        help="artifact paths; default is every site/public/benchmarks/*-benchmark-data.json",
+        help=(
+            "artifact paths; default is every site/public/benchmarks/*-benchmark-data.json"
+            " plus the proxy artifact benchmark-data.json"
+        ),
     )
     return parser.parse_args(argv)
 
@@ -648,7 +825,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     paths: list[Path] = list(args.artifacts) or default_paths()
     if not paths:
-        print(f"{SCRIPT_NAME}: no artifacts found under {PUBLISHED_DIR}", file=sys.stderr)
+        print(
+            f"{SCRIPT_NAME}: no artifacts found under {PUBLISHED_DIR}", file=sys.stderr
+        )
         return 1
     report = check_paths(paths)
     _render(report, len(paths))
