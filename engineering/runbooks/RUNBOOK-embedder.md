@@ -37,7 +37,11 @@ search degrade without it; the proxy's chat path does not.
    The backend is serving different weights than the deployment records. Fix the
    configuration, not the probe.
 3. If the backend is simply unavailable (TEI process down, hosted provider 5xx),
-   restart or restore that dependency and re-poll `/ready`.
+   restore or restart that dependency, then **restart the embedder** and re-poll
+   `/ready`. The startup probe runs once, in the process lifespan
+   (`services/embedder/app/main.py`:159-191, 212-244); restoring TEI alone does
+   not re-run the geometry check or flip `/ready` to 200, because `state.ready`
+   stays false until the process starts again.
 
 ## Recovery
 
@@ -50,7 +54,10 @@ search degrade without it; the proxy's chat path does not.
    - If the revision is left unset, purge `{org_id}:embed:v1:*` for every
      organization before the first write against the new weights; otherwise the
      cache serves vectors from different weights as if they were current.
-2. **TEI process down.** Start or restart TEI, then poll `/ready` until 200.
+2. **TEI process down.** Start or restart TEI, then **restart the embedder** and
+   poll `/ready` until 200. The startup geometry check runs once at process start
+   (`services/embedder/app/main.py`:159-191, 212-244); restoring TEI does not
+   re-run it, so `/ready` stays 503 until the embedder restarts and re-probes.
    `/health` returning 200 does not mean the model has loaded.
 3. **Hosted backend 5xx.** Treat as a provider outage; the embedder reports
    503. Do not switch profiles to a stub to clear the probe: a stub writes

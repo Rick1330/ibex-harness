@@ -22,9 +22,14 @@ declared incident with an incident note, not a routine maintenance command.
 1. Confirm a usable backup exists before you destroy anything:
 
    ```bash
-   PGBACKREST_CONF=infra/backup/pgbackrest/pgbackrest.conf \
-     pgbackrest --stanza=ibex-main info
+   pgbackrest --config=infra/backup/pgbackrest/pgbackrest.conf \
+     --stanza=ibex-main info
    ```
+
+   Pass the repository config explicitly with `--config`. `PGBACKREST_CONF` is a
+   variable the platform scripts read (`pgbackrest-restore.sh`:7-23); the
+   `pgbackrest` binary itself does not read it, so relying on it here queries the
+   default config instead of the repository you are about to restore from.
 
    A real `pgbackrest.conf` must exist; the scripts refuse the `.example`
    (`pgbackrest-restore.sh`:10-25).
@@ -48,9 +53,23 @@ declared incident with an incident note, not a routine maintenance command.
 **Latest restore (supported):**
 
 ```bash
-make v1-backup TYPE=full      # if no recent backup exists and the DB is readable
+pgbackrest --config=infra/backup/pgbackrest/pgbackrest.conf --stanza=ibex-main info
 make v1-restore               # restores the latest backup into the profile
 ```
+
+Do **not** create a backup from the readable database before restoring. A backup
+taken now captures the corrupted or partially lost state and can become the
+"latest" the restore selects, overwriting the evidence you need. Instead:
+
+1. Identify a known-good backup from `pgbackrest info`: a set whose timestamp
+   precedes the incident, with a stuck/last-completed label you can name in the
+   incident note.
+2. Preserve incident evidence separately — copy the current data directory or a
+   `pg_dump` to an evidence location the restore will not overwrite. Do not
+   register it as a repository backup.
+3. If you cannot establish which backup is known-good (no unambiguous
+   pre-incident set, or `info` cannot confirm the repository), **stop** and
+   escalate. Do not restore "the latest" hoping it is correct.
 
 `make v1-restore` forwards to `dev-tool.sh v1 restore`, which first requires a
 real pgBackRest config and then runs `pgbackrest-restore.sh`
@@ -68,13 +87,19 @@ runtime toggle.
 
 **After a restore:**
 
-1. Start the profile (`make v1-up`) and confirm `/ready` on each service.
-2. Confirm forgotten content did **not** come back. The restore-replay
-   integration test is the contract: a restore must carry tombstones, the
-   lifecycle-outbox marker and the deletion receipt, and the sentinel must be
-   absent (`infra/migrations/postgres/restore_replay_integration_test.go`:1-30).
-   A restored provider credential must also decrypt under the recovered
+1. **Before starting the profile**, confirm forgotten content did **not** come
+   back. The restore-replay integration test is the contract: a restore must
+   carry tombstones, the lifecycle-outbox marker and the deletion receipt, and
+   the sentinel must be absent
+   (`infra/migrations/postgres/restore_replay_integration_test.go`:1-30). Run the
+   check against the restored data while traffic is still blocked.
+   - If a forgotten sentinel is present, **do not start the profile**: keep
+     traffic blocked and escalate. A restore that resurrects deleted content is
+     an incident, not a completed recovery.
+2. A restored provider credential must decrypt under the recovered
    `IBEX_CREDENTIALS_MASTER_KEY`; if it does not, use the master-key runbook.
+3. Only after steps 1–2 pass, start the profile (`make v1-up`) and confirm
+   `/ready` on each service.
 
 ## Escalation
 

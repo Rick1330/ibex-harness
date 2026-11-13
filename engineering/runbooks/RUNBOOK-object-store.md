@@ -31,10 +31,12 @@ supplies. Do not assume a bundled MinIO exists where it is not defined.
    script runs this after every backup,
    `infra/scripts/platform/pgbackrest-backup.sh`:38-39). A failed `repo1-s3`
    connect means the backup is not running.
-4. Worker capture behaviour. A missing `S3_ENDPOINT` or master key is **swallowed
-   silently** for the archive step (`services/worker/app/tasks/capture_redaction.py`:210-213
-   returns without uploading); only a transport failure raises. Absence of an
-   archive is not proof the store is healthy.
+4. Worker capture behaviour. **Redaction captures** handled by `_persist_redacted`
+   swallow a missing `S3_ENDPOINT` or master key: the `RuntimeError` is caught and
+   the upload skipped (`services/worker/app/tasks/capture_redaction.py`:208-213).
+   **Full-archive captures** handled by `_archive_payload` do **not** catch it, so
+   the same error propagates and fails the task (`:223-233`). Absence of a
+   redaction archive is not proof the store is healthy.
 
 ## First response
 
@@ -54,8 +56,12 @@ supplies. Do not assume a bundled MinIO exists where it is not defined.
 - **Missing bucket:** recreate `ibex-sessions` / `ibex-exports` and re-run the
   failed capture or backup.
 - **Encrypted blob cannot be read:** this is a master-key problem, not an object
-  store problem. Use the master-key runbook; the archive is unrecoverable
-  without the key that sealed it.
+  store problem, and the key is the **archive** key — `S3_MASTER_KEY_B64` (or its
+  alias `OBJECTSTORE_MASTER_KEY_B64`), read in
+  `services/worker/app/objectstore_client.py`:137-143. That is **not**
+  `IBEX_CREDENTIALS_MASTER_KEY`, which decrypts provider credentials (see the
+  restore and master-key runbooks). Point recovery at the archive key; the
+  archive is unrecoverable without the key that sealed it.
 - **Org-deletion purge incomplete:** after the store recovers, re-run the
   deletion job targeting the recorded object URIs; do not mark the org deleted
   while copies remain.

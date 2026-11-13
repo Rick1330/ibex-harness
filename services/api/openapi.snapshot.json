@@ -4062,6 +4062,7 @@
                 "type": "null"
               }
             ],
+            "description": "Seconds since the newest ingested event for this organization; null when ClickHouse is unavailable or the org has no events",
             "title": "Ingestion Lag Seconds"
           },
           "last_backup_at": {

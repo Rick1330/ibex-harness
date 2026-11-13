@@ -20,16 +20,25 @@
 //     marker — and that the sentinel is gone.
 //
 // A full in-place restore would destroy the database the harness shares, so each
-// restore is a second database created from a real pg_dump/pg_restore round trip.
-// The dump is taken with --no-owner --no-privileges so the copy depends on no
+// restore is a second database created from a real pg_dump/pg_restore round trip:
+// pg_restore renders the custom-format archive to SQL and psql applies it. The
+// dump is taken with --no-owner --no-privileges so the copy depends on no
 // cluster-global role grants and can be dropped without blocking the harness's
 // role cleanup (roles are cluster-global; see migrate_integration_main_test.go).
 //
-// Requires a PostgreSQL 16 client: pg_dump and pg_restore as pg_dump-16 or
-// /usr/lib/postgresql/16/bin/*, falling back to the unversioned binaries.
+// The apply step passes through stripCompatibilityStatement, which removes the
+// one statement a newer client writes and a PostgreSQL 16 server cannot execute
+// (see pgCompatStatement).
+//
+// Requires PostgreSQL client tools: pg_dump, pg_restore, and psql as <name>-16 or
+// /usr/lib/postgresql/16/bin/*, falling back to the unversioned binaries. A newer
+// client is tolerated; psql must come from the same installation as pg_restore,
+// because pg_restore 17.6 and later render \restrict/\unrestrict meta-commands
+// that only a matching psql understands.
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -38,6 +47,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +148,7 @@ type restoreReplay struct {
 	dir       string
 	pgDump    string
 	pgRestore string
+	psql      string
 }
 
 // newRestoreReplay migrates a clean database and resolves the client tools.
@@ -153,6 +165,7 @@ func newRestoreReplay(t *testing.T) *restoreReplay {
 		dir:       t.TempDir(),
 		pgDump:    requirePGTool(t, "pg_dump"),
 		pgRestore: requirePGTool(t, "pg_restore"),
+		psql:      requirePGTool(t, "psql"),
 	}
 }
 
@@ -168,7 +181,8 @@ func (r *restoreReplay) migrate() {
 // requirePGTool resolves a PostgreSQL client binary or fails with the reason.
 // A skip would silently disable the gate, so a missing tool is a failure. The
 // versioned names come first: a client older than the server refuses to dump it,
-// and the migrated image is PostgreSQL 16.
+// and the migrated image is PostgreSQL 16. psql and pg_restore resolve through
+// this same list, so an installation that provides both supplies both.
 func requirePGTool(t *testing.T, name string) string {
 	t.Helper()
 	for _, candidate := range []string{
@@ -180,7 +194,7 @@ func requirePGTool(t *testing.T, name string) string {
 			return path
 		}
 	}
-	t.Fatalf("%s not found: the restore-replay gate needs the PostgreSQL 16 client tools", name)
+	t.Fatalf("%s not found: the restore-replay gate needs the PostgreSQL client tools", name)
 	return ""
 }
 
@@ -241,6 +255,7 @@ func insertReplayIdentity(ctx context.Context, tx *sql.Tx, f replayFixture) erro
 }
 
 func insertReplayMemory(ctx context.Context, tx *sql.Tx, f replayFixture) error {
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a compile-time literal and every value is a bound parameter; only the content-hash parameter concatenates an id.
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO ibex_core.memories
 			(id, org_id, agent_id, content, content_hash, content_tokens)
@@ -283,6 +298,7 @@ func insertReplayRecords(ctx context.Context, tx *sql.Tx, f replayFixture) error
 
 func execAll(ctx context.Context, tx *sql.Tx, statements []seedStatement) error {
 	for _, statement := range statements {
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: every statement is a compile-time literal from the seedStatement table; all values are bound parameters.
 		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
 			return fmt.Errorf("seed statement: %w", err)
 		}
@@ -343,10 +359,24 @@ func forgetOneMemory(ctx context.Context, tx *sql.Tx, f replayFixture) (int, err
 
 // --- dump and restore ------------------------------------------------------
 
+// pgCompatStatement is the one statement a newer pg_dump writes into the archive
+// header that the PostgreSQL 16 server cannot execute. PostgreSQL 17 introduced
+// the transaction_timeout GUC, so pg_dump 17 and later emit
+// "SET transaction_timeout = 0;" in the archive's init block; replaying such an
+// archive against the PostgreSQL 16 server (pgvector/pgvector:pg16) fails with
+// `unrecognized configuration parameter "transaction_timeout"`.
+//
+// The statement sits in the archive's init entry, which pg_restore's table of
+// contents cannot address (pg_restore -l does not list it and --use-list cannot
+// drop it), so the restore is applied from the SQL pg_restore renders and exactly
+// this line is removed. psql runs with ON_ERROR_STOP=1, which is stricter than
+// pg_restore's default of ignoring errors: every other error still fails the test.
+const pgCompatStatement = "SET transaction_timeout = 0;"
+
 func (r *restoreReplay) dump(label string) string {
 	r.t.Helper()
 	path := filepath.Join(r.dir, label+".dump")
-	r.runPG(r.pgDump, append(r.conn.args(),
+	r.runPG("", r.pgDump, append(r.conn.args(),
 		"--no-owner", "--no-privileges", "--format=custom",
 		"--file="+path, "--dbname="+r.conn.database)...)
 	return path
@@ -356,7 +386,7 @@ func (r *restoreReplay) dump(label string) string {
 // database is dropped with the test, after its connections are closed.
 func (r *restoreReplay) restore(label, dumpPath string) *sql.DB {
 	r.t.Helper()
-	name := "ibex_restore_" + label + "_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+	name := newRestoreDatabaseName(r.t, label)
 	r.adminExec("CREATE DATABASE " + pq.QuoteIdentifier(name))
 
 	db := openDatabase(r.t, dsnWithDatabase(r.t, r.dsn, name))
@@ -364,20 +394,131 @@ func (r *restoreReplay) restore(label, dumpPath string) *sql.DB {
 		_ = db.Close()
 		r.adminLog("DROP DATABASE IF EXISTS " + pq.QuoteIdentifier(name) + " WITH (FORCE)")
 	})
-	r.runPG(r.pgRestore, append(r.conn.args(),
-		"--no-owner", "--no-privileges", "--dbname="+name, dumpPath)...)
+	r.applyDump(name, dumpPath)
 	return db
 }
 
-// runPG executes a client tool with the connection arguments and PGPASSWORD in
-// the environment, so no credential appears in argv.
-func (r *restoreReplay) runPG(binary string, args ...string) {
+// applyDump renders the custom-format archive to SQL, drops the statement the
+// server cannot execute, and pipes the rest to psql on standard input.
+func (r *restoreReplay) applyDump(database, dumpPath string) {
 	r.t.Helper()
+	sql, err := r.pgRun("", r.pgRestore, "--no-owner", "--no-privileges", "--file=-", dumpPath)
+	if err != nil {
+		r.t.Fatalf("pg_restore render %s: %v", filepath.Base(dumpPath), err)
+	}
+	patched, dropped := stripCompatibilityStatement(sql)
+	if dropped > 0 {
+		r.t.Logf("compatibility shim: dropped %q from %s (pg_dump 17+ against a PostgreSQL 16 server)",
+			pgCompatStatement, filepath.Base(dumpPath))
+	}
+	r.runPG(patched, r.psql, append(r.conn.args(),
+		"--no-psqlrc", "--quiet", "--set=ON_ERROR_STOP=1",
+		"--dbname="+database, "--file=-")...)
+}
+
+// stripCompatibilityStatement removes pgCompatStatement from the SQL pg_restore
+// renders and returns the remainder with the number of lines dropped. Only an
+// exact whole-line match is dropped, so a different SET, a reformatted statement,
+// or any other failure is left for psql to stop on.
+func stripCompatibilityStatement(sql string) (string, int) {
+	lines := strings.Split(sql, "\n")
+	kept := make([]string, 0, len(lines))
+	dropped := 0
+	for _, line := range lines {
+		if strings.TrimSuffix(line, "\r") == pgCompatStatement {
+			dropped++
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n"), dropped
+}
+
+// TestStripCompatibilityStatementDropsOnlyTheKnownStatement is a unit test (it
+// opens no database): the shim must remove exactly one statement and leave every
+// other SET, and every other line, for psql to execute or fail on.
+func TestStripCompatibilityStatementDropsOnlyTheKnownStatement(t *testing.T) {
+	skewed := "SET statement_timeout = 0;\n" + pgCompatStatement + "\nSET lock_timeout = 0;\n"
+	got, dropped := stripCompatibilityStatement(skewed)
+	if dropped != 1 {
+		t.Fatalf("dropped %d statements, want 1", dropped)
+	}
+	want := "SET statement_timeout = 0;\nSET lock_timeout = 0;\n"
+	if got != want {
+		t.Fatalf("stripped script = %q, want %q", got, want)
+	}
+
+	clean := "SET lock_timeout = 0;\n"
+	if got, dropped := stripCompatibilityStatement(clean); dropped != 0 || got != clean {
+		t.Fatalf("clean script = %q (dropped %d), want it unchanged", got, dropped)
+	}
+}
+
+// restoreDatabasePattern is the exact shape of the scratch database name this
+// file generates: the fixed ibex_restore_ prefix, a scenario label, and eight hex
+// characters from a UUID. The client tools and the DDL only ever receive an
+// identifier that matches it.
+var restoreDatabasePattern = regexp.MustCompile(`^ibex_restore_[a-z]+_[0-9a-f]{8}$`)
+
+// newRestoreDatabaseName generates the scratch database name and refuses to hand
+// out anything outside restoreDatabasePattern.
+func newRestoreDatabaseName(t *testing.T, label string) string {
+	t.Helper()
+	name := "ibex_restore_" + label + "_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
+	if !restoreDatabasePattern.MatchString(name) {
+		t.Fatalf("generated database name %q does not match %s", name, restoreDatabasePattern)
+	}
+	return name
+}
+
+// runPG executes a client tool and fails the test on a non-zero exit.
+func (r *restoreReplay) runPG(stdin string, binary string, args ...string) {
+	r.t.Helper()
+	if _, err := r.pgRun(stdin, binary, args...); err != nil {
+		r.t.Fatalf("%s failed: %v", filepath.Base(binary), err)
+	}
+}
+
+// pgRun executes a client tool with the connection arguments and the DSN's
+// secrets in the environment, so no credential appears in argv, and returns its
+// standard output.
+func (r *restoreReplay) pgRun(stdin string, binary string, args ...string) (string, error) {
+	r.requireSafeDatabaseArgs(args)
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command, go_subproc_rule-subproc -- test harness: binary is one of the fixed PostgreSQL client paths requirePGTool resolved with exec.LookPath over a literal candidate list, and the only argument that is not a fixed flag or a temp-file path is a --dbname validated by requireSafeDatabaseArgs.
 	cmd := exec.Command(binary, args...)
 	cmd.Env = r.conn.env()
-	if out, err := cmd.CombinedOutput(); err != nil {
-		r.t.Fatalf("%s failed: %v\n%s", filepath.Base(binary), err, out)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
 	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return stdout.String(), fmt.Errorf("%w\n%s", err, stderr.String())
+	}
+	return stdout.String(), nil
+}
+
+// requireSafeDatabaseArgs fails the test if a client-tool argument names a
+// database this file did not generate. --dbname is the only argument carrying a
+// database identifier; the rest are fixed flags or paths inside the test's
+// temporary directory.
+func (r *restoreReplay) requireSafeDatabaseArgs(args []string) {
+	for _, arg := range args {
+		value, ok := strings.CutPrefix(arg, "--dbname=")
+		if !ok || r.acceptsDatabase(value) {
+			continue
+		}
+		r.t.Fatalf("refusing client tool database %q: not the configured database and not %s",
+			value, restoreDatabasePattern)
+	}
+}
+
+// acceptsDatabase reports whether a client tool may name this database: the
+// configured database the dump is taken from, or a scratch database this file
+// generated.
+func (r *restoreReplay) acceptsDatabase(name string) bool {
+	return name == r.conn.database || restoreDatabasePattern.MatchString(name)
 }
 
 func (r *restoreReplay) adminExec(statement string) {
@@ -396,6 +537,7 @@ func (r *restoreReplay) adminLog(statement string) {
 func (r *restoreReplay) adminRun(statement string) error {
 	db := openDatabase(r.t, dsnWithDatabase(r.t, r.dsn, "postgres"))
 	defer func() { _ = db.Close() }()
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture DDL: the only interpolated identifier is a quoted database name that newRestoreDatabaseName validated against restoreDatabasePattern.
 	_, err := db.ExecContext(context.Background(), statement)
 	return err
 }
@@ -521,13 +663,17 @@ func readLedgerPayload(t *testing.T, db *sql.DB, f replayFixture) string {
 // --- connection helpers ----------------------------------------------------
 
 // pgConn is the connection a client tool needs, kept separate from the DSN so
-// the password travels in the environment rather than in argv.
+// the password and the TLS key locations travel in the environment rather than in
+// argv.
 type pgConn struct {
-	host     string
-	port     string
-	user     string
-	password string
-	database string
+	host        string
+	port        string
+	user        string
+	password    string
+	database    string
+	sslcert     string
+	sslkey      string
+	sslrootcert string
 }
 
 func parsePGConn(t *testing.T, dsn string) pgConn {
@@ -536,10 +682,14 @@ func parsePGConn(t *testing.T, dsn string) pgConn {
 	if err != nil || parsed.Scheme == "" {
 		t.Fatalf("parse dsn %s: %v", RedactedDSN(dsn), err)
 	}
+	query := parsed.Query()
 	conn := pgConn{
-		host:     parsed.Hostname(),
-		port:     parsed.Port(),
-		database: strings.TrimPrefix(parsed.Path, "/"),
+		host:        parsed.Hostname(),
+		port:        parsed.Port(),
+		database:    strings.TrimPrefix(parsed.Path, "/"),
+		sslcert:     query.Get("sslcert"),
+		sslkey:      query.Get("sslkey"),
+		sslrootcert: query.Get("sslrootcert"),
 	}
 	if parsed.User != nil {
 		conn.user = parsed.User.Username()
@@ -562,11 +712,84 @@ func (c pgConn) args() []string {
 	return args
 }
 
+// env is the client-tool environment: the inherited environment plus the DSN's
+// password and TLS file locations, which libpq reads as PGSSLCERT, PGSSLKEY, and
+// PGSSLROOTCERT. They travel here so no credential and no key path reaches argv.
 func (c pgConn) env() []string {
-	if c.password == "" {
-		return os.Environ()
+	env := os.Environ()
+	for _, pair := range [][2]string{
+		{"PGPASSWORD", c.password},
+		{"PGSSLCERT", c.sslcert},
+		{"PGSSLKEY", c.sslkey},
+		{"PGSSLROOTCERT", c.sslrootcert},
+	} {
+		if pair[1] != "" {
+			env = append(env, pair[0]+"="+pair[1])
+		}
 	}
-	return append(os.Environ(), "PGPASSWORD="+c.password)
+	return env
+}
+
+// tlsProbeDSN is a synthetic DSN: no real host, no real credential. It exists to
+// prove parsePGConn carries the TLS file options into the client environment and
+// keeps the credential out of argv.
+const tlsProbeDSN = "postgres://ibex:probe-credential@db.example.internal:5433/ibex" +
+	"?sslmode=verify-full" +
+	"&sslcert=%2Fetc%2Fibex%2Fclient.crt" +
+	"&sslkey=%2Fetc%2Fibex%2Fclient.key" +
+	"&sslrootcert=%2Fetc%2Fibex%2Fca.crt"
+
+// TestParsePGConnRetainsTLSOptions is a unit test (it opens no database): the
+// client tools must receive the DSN's TLS file locations through libpq's PGSSL*
+// variables, and the DSN's credential must never reach argv.
+func TestParsePGConnRetainsTLSOptions(t *testing.T) {
+	conn := parsePGConn(t, tlsProbeDSN)
+	requireTLSOptions(t, conn)
+	requireClientEnv(t, conn.env())
+	requireNoCredentialInArgv(t, conn.args())
+}
+
+func requireTLSOptions(t *testing.T, conn pgConn) {
+	t.Helper()
+	if conn.sslcert != "/etc/ibex/client.crt" {
+		t.Fatalf("sslcert = %q, want %q", conn.sslcert, "/etc/ibex/client.crt")
+	}
+	if conn.sslkey != "/etc/ibex/client.key" {
+		t.Fatalf("sslkey = %q, want %q", conn.sslkey, "/etc/ibex/client.key")
+	}
+	if conn.sslrootcert != "/etc/ibex/ca.crt" {
+		t.Fatalf("sslrootcert = %q, want %q", conn.sslrootcert, "/etc/ibex/ca.crt")
+	}
+}
+
+// requireClientEnv asserts the libpq variables a client tool inherits, so the
+// TLS files and the credential reach pg_dump, pg_restore, and psql.
+func requireClientEnv(t *testing.T, env []string) {
+	t.Helper()
+	for _, want := range []string{
+		"PGPASSWORD=probe-credential",
+		"PGSSLCERT=/etc/ibex/client.crt",
+		"PGSSLKEY=/etc/ibex/client.key",
+		"PGSSLROOTCERT=/etc/ibex/ca.crt",
+	} {
+		if !slices.Contains(env, want) {
+			t.Fatalf("client environment is missing %s", want)
+		}
+	}
+}
+
+// requireNoCredentialInArgv asserts the process command line carries neither the
+// credential nor a TLS key path.
+func requireNoCredentialInArgv(t *testing.T, argv []string) {
+	t.Helper()
+	for _, arg := range argv {
+		if strings.Contains(arg, "probe-credential") {
+			t.Fatalf("argv carries the DSN credential")
+		}
+		if strings.Contains(arg, "/etc/ibex/") {
+			t.Fatalf("argv carries a TLS path: %q", arg)
+		}
+	}
 }
 
 // dsnWithDatabase points the configured DSN at another database on the same

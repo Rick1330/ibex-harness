@@ -2,7 +2,7 @@
 
 **Title:** Every gap still standing between the tree and an honest `v1.0.0`, classified into four stages with the evidence that closes each stage.
 **Base:** `main` at `55a62bc4` (2026-11-13).
-**Status:** Discovery record, updated by the 2026-11-13 stage-1 pass and the stage-2 recovery pass. It classifies; the stage-1 pass closed 20 stage-1 rows, recorded in §3.1, and the stage-2 pass closed 15 stage-2 rows, recorded in §4.1. Rows the stage-2 pass could not close keep their blocker and residual in the §4 table. No ledger row changes value and no review date moves. The original record was this file plus one link line in [`34-readiness-audit-addendum-2026-11-13.md`](34-readiness-audit-addendum-2026-11-13.md) §5; the two passes also land the code, workflow, and documentation changes their rows name.
+**Status:** Discovery record, updated by the 2026-11-13 stage-1 pass and the stage-2 recovery pass. It classifies; the stage-1 pass closed 20 stage-1 rows, recorded in §3.1, and the stage-2 pass closed 13 stage-2 rows, recorded in §4.1, leaving two rows only partially closed (R05, W6.3) in §4.2 with their residual stated. Rows the stage-2 pass could not close keep their blocker and residual in the §4 table. No ledger row changes value and no review date moves. The original record was this file plus one link line in [`34-readiness-audit-addendum-2026-11-13.md`](34-readiness-audit-addendum-2026-11-13.md) §5; the two passes also land the code, workflow, and documentation changes their rows name.
 
 ## 1. Purpose and method
 
@@ -97,7 +97,7 @@ A closed row is closed by its own merged change, not by this classification.
 
 **Decisions needed.** An owner for the claim set so GAP-001 stops drifting, and the `check-status-vocabulary.py` script that would make the drift fail instead of relying on hand edits (GAP-001). A signed support window and support matrix (P1-46). Whether the claims checker is widened to `app/components/**` and `public/benchmarks/*.json` (R02). **D-B** — confirm ADR-0097 §10 is the final word on Kubernetes/Helm for 1.0 (`31`:188). D-B decides P2-24: if the chart stays, the digest guard is wired into CI; the default retires the chart and the row goes with it.
 
-## 4. Stage 2 — Survive failure (recovery and operability) — 25 rows (15 closed; 10 remaining)
+## 4. Stage 2 — Survive failure (recovery and operability) — 25 rows (13 closed; 12 remaining)
 
 **Goal.** A host loss is survivable from an off-host copy, every dependency failure has a declared behaviour that matches its runbook, and the operator has a backup/restore path that is one command each.
 
@@ -123,7 +123,7 @@ Rows no gate item names: none — all 25 are evidenced above.
 
 **Decisions needed.** D-D: repository type and the signed RPO/RTO table (P0-11, P0-19's delivery half). Whether Redis is allowed to remain the Celery broker while the recovery record calls it ephemeral — the two cannot both be true (O04). Whether durable-before-ack is a 1.0 claim at all, which decides D4 and D11 rather than closing them by default. A live backup/restore run in an environment with a real WAL archive (P0-09/W4.6) and a PITR restore once the script supports a target (P0-10) are still needed to exit the stage; the targets and the drill now exist, but this change did not run them.
 
-### 4.1 Closed in this change (15 rows)
+### 4.1 Closed in this change (13 rows)
 
 | ID | What the tree now shows |
 |---|---|
@@ -140,10 +140,8 @@ Rows no gate item names: none — all 25 are evidenced above.
 | P1-49 | The Tempo assertion searches the exact trace id the script sent in a `traceparent` header, not a service-scoped "newest trace" (`infra/scripts/observability-live-verify.sh`:77-95,254-267,324-349). Residual: it is still operator-invoked via `make observability-live-verify`, not a scheduled workflow |
 | P2-21 | Platform ingestion lag is a real org-scoped ClickHouse query, null only when ClickHouse is unavailable or the org has no events (`services/api/app/routers/platform.py`:50-58,223-300`) |
 | W4.6 | `v1-backup`, `v1-restore` and `v1-pitr` targets exist (`Makefile`:221-228) and forward to the pgBackRest scripts. **A live backup/restore was not run in this change, so a working backup remains unverified** |
-| R05 | A restore-replay integration test seeds a sentinel, runs the forget path, restores, and asserts the tombstone, lifecycle-outbox marker and deletion receipt survive while the sentinel is gone (`infra/migrations/postgres/restore_replay_integration_test.go`:1-30) |
-| W6.3 | Context-assembly and memory-retrieval SLIs and absence alerts are recorded (`infra/monitoring/prometheus/rules/ibex-slo.yml`:293-370) with promtool unit tests (`infra/monitoring/prometheus/rules/test/unit/ibex-slo-context-memory.test.yml`). **This records SLIs; the burn thresholds await ratification, so it does not claim SLOs** |
 
-### 4.2 Remaining (10 rows)
+### 4.2 Remaining (12 rows)
 
 | ID | Gap | Evidence | Blocker | Source |
 |---|---|---|---|---|
@@ -157,6 +155,8 @@ Rows no gate item names: none — all 25 are evidenced above.
 | O04 | Redis is the Celery broker while recovery treats Redis as ephemeral; Redis loss 503s chat. **The runbook half is closed** — `RUNBOOKS.md` now states the proxy fails closed with 503 + `Retry-After: 5` and has no local fallback limiter. **The broker decision is still open** | `infra/compose/v1-single-node/compose.yml`:264; `services/proxy/internal/http/ratelimit_middleware.go`:84-92,127-132; `engineering/runbooks/RUNBOOKS.md` §4 | owner decision | sweep 3 |
 | D4 | No `required_evidence` relay gate exists; the relay is default-off | `00-status-and-evidence.md`:76 | owner decision | sweep 1 |
 | D11 | No synchronous response-bound acknowledgement; the finalizer is post-response | `00-status-and-evidence.md`:75 | owner decision | sweep 1 |
+| R05 | Post-restore erasure is proven for **PostgreSQL only**. The restore-replay test seeds a sentinel, runs the forget path, restores, and asserts the tombstone, the erased ledger payload and the deletion receipt survive while the sentinel is gone — but it does **not** assert ClickHouse or object-storage absence, which the exit gate requires | `infra/migrations/postgres/restore_replay_integration_test.go`:1-30,124-139,567-581; §4 exit gate item 2 | code | sweep 3 |
+| W6.3 | Context-assembly and memory-retrieval **SLIs** and absence alerts are recorded (`infra/monitoring/prometheus/rules/ibex-slo.yml`:293-370) with promtool unit tests (`infra/monitoring/prometheus/rules/test/unit/ibex-slo-context-memory.test.yml`); the **SLOs** are not: the burn thresholds await ratification and no synthetic burn test fires yet, which exit-gate item 7 requires | `ibex-slo.yml`:293-370; §4 exit gate item 7 | owner decision | sweep 3 |
 
 ## 5. Stage 3 — Scope the tenant claim (isolation, authorization, erasure) — 38 rows
 
@@ -308,9 +308,9 @@ The completeness proof: per stage and per exclusion, the exact ID sets, then the
 Remaining: `P1-11` `P1-25` `P1-46` `GAP-001` `R02` (5).
 Closed in §3.1: `P0-12` `P0-13` `P0-14` `P1-01` `P1-02` `P1-03` `P1-43` `P1-44` `P1-45` `P2-03` `P2-04` `P2-10` `P2-11` `P2-23` `G01` `G02` `G03` `R01` `R03` `R04` (20); `GAP-003` is an alias recorded on the `P0-14` row, not a second row.
 
-**Stage 2 (25 rows: 15 closed, 10 remaining).**
-Remaining: `P0-09` `P0-10` `P0-11` `P0-19` `P1-47` `P2-12` `GAP-011` `O04` `D4` `D11` (10). `O04`'s documentation half is closed; its broker decision is open, so the row stays here.
-Closed in §4.1: `O01` `O02` `O03` `O05` `O06` `O07` `O08` `P1-06` `P1-48` `P1-49` `P2-20` `P2-21` `W4.6` `R05` `W6.3` (15).
+**Stage 2 (25 rows: 13 closed, 12 remaining).**
+Remaining: `P0-09` `P0-10` `P0-11` `P0-19` `P1-47` `P2-12` `GAP-011` `O04` `D4` `D11` `R05` `W6.3` (12). `O04`'s documentation half is closed; its broker decision is open, so the row stays here. `R05` and `W6.3` are **partially** closed: the PostgreSQL replay test and the recorded SLIs exist, but the ClickHouse/object-store absence assertions and the ratified burn thresholds do not, so both stay here with their residual.
+Closed in §4.1: `O01` `O02` `O03` `O05` `O06` `O07` `O08` `P1-06` `P1-48` `P1-49` `P2-20` `P2-21` `W4.6` (13).
 P0: `P0-09` `P0-10` `P0-11` `P0-19` (4).
 P1: `P1-06` `P1-47` `P1-48` `P1-49` (4).
 P2: `P2-12` `P2-20` `P2-21` (3).
@@ -341,16 +341,16 @@ Ledger: `D1` `G9` (2).
 
 **Closed in the 2026-11-13 stage-1 pass (20 rows).** `P0-12` `P0-13` `P0-14`; `P1-01` `P1-02` `P1-03` `P1-43` `P1-44` `P1-45`; `P2-03` `P2-04` `P2-10` `P2-11` `P2-23`; `G01` `G02` `G03` `R01` `R03` `R04`. Each has its own row and evidence in §3.1; none is re-listed in a stage table. `P1-11`, `P1-25` and `P1-46` are **partially** closed and stay in §3.2 with their residual named.
 
-**Closed in the 2026-11-13 stage-2 pass (15 rows).** `O01` `O02` `O03` `O05` `O06` `O07` `O08`; `P1-06` `P1-48` `P1-49` `P2-20` `P2-21`; `W4.6` `R05` `W6.3`. Each has its own row and evidence in §4.1; none is re-listed in the §4.2 table. `O04` is **partially** closed (documentation half) and stays in §4.2 with the broker decision named.
+**Closed in the 2026-11-13 stage-2 pass (13 rows).** `O01` `O02` `O03` `O05` `O06` `O07` `O08`; `P1-06` `P1-48` `P1-49` `P2-20` `P2-21`; `W4.6`. Each has its own row and evidence in §4.1; none of these 13 is re-listed in the §4.2 table. `O04` is **partially** closed (documentation half) and stays in §4.2 with the broker decision named. `R05` and `W6.3` are **partially** closed and also stay in §4.2: `R05`'s replay test covers PostgreSQL but not ClickHouse or object storage, and `W6.3` records SLIs but not ratified SLOs.
 
 **Arithmetic.**
 
 - **P0: 22 = 11 in stages + 11 closed.** 11 = S1 0 + S2 4 + S3 2 + S4 5; closed = 8 since the audit + `P0-12` `P0-13` `P0-14`.
-- **P1: 51 issued = 33 in stages + 8 not in v1 + 10 closed.** 33 = S1 3 + S2 4 + S3 11 + S4 15; closed = 4 since the audit + `P1-01` `P1-02` `P1-03` `P1-43` `P1-44` `P1-45`. `P1-19` was never issued: the audit runs `P1-01`…`P1-18` then `P1-20`, so the numbering skips and the set of issued rows is 51, all placed.
-- **P2: 25 = 18 in stages + 2 not in v1 + 5 closed.** 18 = S1 0 + S2 3 + S3 8 + S4 7; closed = `P2-03` `P2-04` `P2-10` `P2-11` `P2-23`.
+- **P1: 51 issued = 30 in stages + 8 not in v1 + 13 closed.** 30 = S1 3 + S2 1 + S3 11 + S4 15; closed = 4 since the audit + `P1-01` `P1-02` `P1-03` `P1-43` `P1-44` `P1-45` + the stage-2 closures `P1-06` `P1-48` `P1-49`. `P1-19` was never issued: the audit runs `P1-01`…`P1-18` then `P1-20`, so the numbering skips and the set of issued rows is 51, all placed.
+- **P2: 25 = 16 in stages + 2 not in v1 + 7 closed.** 16 = S1 0 + S2 1 + S3 8 + S4 7; closed = `P2-03` `P2-04` `P2-10` `P2-11` `P2-23` + the stage-2 closures `P2-20` `P2-21`.
 - **GAP: 12 IDs = 11 rows + 1 alias.** 8 stage rows (S1 1 + S2 1 + S3 5 + S4 1) + 3 in §7 = 11; `GAP-003` aliases `P0-14` for routes, gRPC methods and MCP tools, with event contracts recorded out of scope on that row, and adds no row.
-- **NEW and ledger rows: 38 = 30 in stages + 2 in §7 + 6 closed.** 30 = S1 1 + S2 13 + S3 12 + S4 4; §7 holds `D1` and `G9`; closed = `G01` `G02` `G03` `R01` `R03` `R04`.
-- **Staged rows still open: 85 = S1 5 + S2 10 + S3 38 + S4 32.** 120 original staged rows minus the 20 closed in the stage-1 pass and the 15 closed in the stage-2 pass.
+- **NEW and ledger rows: 38 = 22 in stages + 2 in §7 + 14 closed.** 22 = S1 1 + S2 5 + S3 12 + S4 4; §7 holds `D1` and `G9`; closed = `G01` `G02` `G03` `R01` `R03` `R04` + the stage-2 closures `O01` `O02` `O03` `O05` `O06` `O07` `O08` `W4.6`. `R05` and `W6.3` stay in the 5 open stage-2 rows because they are only partially closed.
+- **Staged rows still open: 87 = S1 5 + S2 12 + S3 38 + S4 32.** 120 original staged rows minus the 20 closed in the stage-1 pass and the 13 closed in the stage-2 pass.
 - **W-waves: 38 items, each mapped once.** 38 = W0 3 + W4 6 + W5 5 + W6 4 + W7 5 + W8 6 + W9 4 + W10 5.
 
 **W-wave → stage map.** Every item in `31-v1-release-plan-2026-11-09.md` §4, accounted for once:

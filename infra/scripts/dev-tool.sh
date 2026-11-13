@@ -319,9 +319,20 @@ v1_edge_ca() {
 # argv: OpenCode (and any process monitor) logs argv. The bearer header is
 # written to a 0600 curl config file and passed with --config; only the file
 # path is visible.
+#
+# The call is bounded. Without --connect-timeout/--max-time a socket that
+# accepts the TCP connection and never answers keeps curl waiting forever, and
+# the smoke hangs instead of reporting a status. The `|| true` at the call site
+# is what preserves the retry behaviour: a timeout leaves the status empty, the
+# assertion below reports it as a failed probe, and v1_smoke's own loop decides
+# whether to try again — the smoke never dies inside curl.
 v1_smoke_http() {
   local url="$1" token="$2" agent="$3" body="$4"
-  local -a args=(--cacert "$(v1_edge_ca)" -sS -o "$body" -w '%{http_code}')
+  local -a args=(
+    --cacert "$(v1_edge_ca)" -sS
+    --connect-timeout 5 --max-time 20
+    -o "$body" -w '%{http_code}'
+  )
   local cfg="" status
   if [[ -n "$token" ]]; then
     cfg="$(mktemp "${TMPDIR:-/tmp}/ibex-v1-smoke-curl.XXXXXX")"
@@ -459,7 +470,7 @@ v1_smoke_selftest() {
     while (( $# )); do
       case "$1" in
         -o) out="$2"; shift 2 ;;
-        --cacert|-w) shift 2 ;;
+        --cacert|-w|--connect-timeout|--max-time) shift 2 ;;
         --config) cfg="$2"; shift 2 ;;
         -H)
           case "$2" in
@@ -500,7 +511,7 @@ v1_smoke_selftest() {
       while (( $# )); do
         case "$1" in
           -o) out="$2"; shift 2 ;;
-          --cacert|-w) shift 2 ;;
+          --cacert|-w|--connect-timeout|--max-time) shift 2 ;;
           --config) shift 2 ;;
           -H) shift 2 ;;
           -sS) shift ;;
@@ -519,16 +530,48 @@ v1_smoke_selftest() {
   return 0
 }
 
+# v1_canonical_path prints an absolute, directory-resolved spelling of a path
+# without requiring the file itself to exist. readlink -f is not portable (macOS
+# has no -f), so the directory is resolved with cd -P and the last component is
+# kept as given.
+v1_canonical_path() {
+  local path="$1" dir
+  if ! dir="$(cd "$(dirname "$path")" 2>/dev/null && pwd -P)"; then
+    printf '%s\n' "$path"
+    return 0
+  fi
+  printf '%s\n' "$dir/$(basename "$path")"
+}
+
 # v1_pgbackrest_conf resolves the repository config the platform scripts use and
-# refuses the .example. It is the same path resolution as pgbackrest-backup.sh,
-# so the wrapper fails before a destructive restore can start.
+# refuses the shipped .example. It is the same path resolution as
+# pgbackrest-backup.sh, so the wrapper fails before a destructive restore can
+# start.
+#
+# The .example rejection is by identity, not by file name: the path is resolved
+# through its directory, so an absolute path, a relative path, and a symlinked
+# parent all compare equal to the template. The template exists on disk, so the
+# missing-file check alone would pass it through to pgBackRest with placeholder
+# credentials.
 v1_pgbackrest_conf() {
   local conf="${PGBACKREST_CONF:-$ROOT_DIR/infra/backup/pgbackrest/pgbackrest.conf}"
+  local real="$ROOT_DIR/infra/backup/pgbackrest/pgbackrest.conf"
+  local example="$real.example"
+  if [[ "$(v1_canonical_path "$conf")" == "$(v1_canonical_path "$example")" ]]; then
+    cat >&2 <<EOF
+refusing the shipped pgBackRest template as the config: $conf
+$example carries placeholder repository settings and no credentials, so a backup
+or restore that started here would fail halfway through. Copy it to
+$real, fill the credentials, and point PGBACKREST_CONF at that file (or leave
+PGBACKREST_CONF unset to use that path by default).
+EOF
+    return 1
+  fi
   if [[ ! -f "$conf" ]]; then
     cat >&2 <<EOF
 missing pgBackRest config: $conf
 The repository ships only infra/backup/pgbackrest/pgbackrest.conf.example.
-Copy it to the path above and fill the repository credentials; do not point
+Copy it to $real and fill the repository credentials; do not point
 PGBACKREST_CONF at the example.
 EOF
     return 1
@@ -546,9 +589,14 @@ v1_backup() {
   bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-backup.sh" "$type"
 }
 
+# Both restore paths pin the profile's own Compose file. pgbackrest-restore.sh
+# defaults COMPOSE_FILE to infra/compose/dev/docker-compose.yml, so without this
+# a v1 restore would stop the dev stack's Postgres and resolve the dev volume.
+# The v1 file carries `name: ibex-v1-single-node`, and Compose loads .env from
+# the Compose file's directory, which is exactly infra/compose/v1-single-node.
 v1_restore() {
   v1_pgbackrest_conf >/dev/null || return 1
-  bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh"
+  COMPOSE_FILE="$V1_COMPOSE" bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh"
 }
 
 # v1_pitr forwards a timestamp target to the restore script. That script does
@@ -573,7 +621,7 @@ invention here.
 EOF
     return 1
   fi
-  PGBACKREST_RESTORE_TARGET="$target" bash "$restore_script"
+  COMPOSE_FILE="$V1_COMPOSE" PGBACKREST_RESTORE_TARGET="$target" bash "$restore_script"
 }
 
 v1_up() {

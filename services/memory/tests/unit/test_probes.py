@@ -62,9 +62,7 @@ def test_http_metrics_count_status_and_latency() -> None:
         assert client.get("/health").status_code == 200
     assert _counter_value("ibex_memory_http_requests_total", labels) >= before + 1.0
     assert (
-        _counter_value(
-            "ibex_memory_http_request_duration_seconds_count", duration_labels
-        )
+        _counter_value("ibex_memory_http_request_duration_seconds_count", duration_labels)
         >= before_duration + 1.0
     )
     body = generate_latest().decode()
@@ -213,19 +211,84 @@ def test_ready_ignores_an_unconfigured_redis() -> None:
 
 
 def test_ready_bootstrap_failure_fails_fast_without_probing() -> None:
+    """A process that never wired its dependencies must not probe them."""
     validator = StaticTokenValidator({}, available=True)
     state = MemoryAppState(
         ready=False,
         ready_error="IBEX_MEMORY_DATABASE_URL not set",
         validator=validator,
-        engine=_FakeEngine(),
+        engine=None,
     )
-    with _ready_client(state) as client:
+    probe = AsyncMock(return_value=True)
+    with patch("app.probes._check_auth", probe), _ready_client(state) as client:
         response = client.get("/ready")
     assert response.status_code == 503
     body = response.json()["error"]
     assert body["dependency"] == "bootstrap"
     assert body["message"] == "IBEX_MEMORY_DATABASE_URL not set"
+    probe.assert_not_awaited()
+
+
+def test_ready_recovers_after_a_transient_bootstrap_failure() -> None:
+    """A fully wired process re-checks live deps and can report ready again."""
+    state = MemoryAppState(
+        ready=False,
+        ready_error="database not reachable",
+        validator=StaticTokenValidator({}, available=True),
+        engine=_FakeEngine(OSError("connection refused")),
+    )
+    with _ready_client(state) as client:
+        first = client.get("/ready")
+        assert first.status_code == 503
+        assert first.json()["error"]["dependency"] == "postgres"
+        # The dependency recovers while the process stays up.
+        state.engine = _FakeEngine()
+        state.ready = True
+        state.ready_error = None
+        second = client.get("/ready")
+    assert second.status_code == 200
+    assert second.json() == {"status": "ready", "service": "memory"}
+
+
+def test_ready_after_bootstrap_auth_failure_recovers_without_a_restart() -> None:
+    """The startup refresh failed on auth; once auth answers, /ready is ready."""
+    state = MemoryAppState(
+        ready=False,
+        ready_error="auth gRPC not reachable",
+        validator=StaticTokenValidator({}, available=True),
+        engine=_FakeEngine(),
+    )
+    with _ready_client(state) as client:
+        response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready", "service": "memory"}
+
+
+@pytest.mark.asyncio
+async def test_check_auth_without_a_validator_is_not_ready() -> None:
+    from app import probes
+
+    assert await probes._check_auth(None) is False
+
+
+@pytest.mark.asyncio
+async def test_check_postgres_without_an_engine_is_not_ready() -> None:
+    from app import probes
+
+    assert await probes._check_postgres(None) is False
+
+
+@pytest.mark.asyncio
+async def test_check_postgres_swallows_an_unexpected_driver_error() -> None:
+    """A probe fails closed on any error; it must never turn /ready into a 500."""
+
+    class _ExplodingEngine:
+        def connect(self) -> object:
+            raise RuntimeError("driver exploded")
+
+    from app import probes
+
+    assert await probes._check_postgres(_ExplodingEngine()) is False
 
 
 def test_ready_without_state_reports_not_ready() -> None:
