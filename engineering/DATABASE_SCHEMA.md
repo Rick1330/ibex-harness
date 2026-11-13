@@ -6,6 +6,13 @@ PostgreSQL (OLTP + pgvector), Redis key patterns, and ClickHouse analytics schem
 
 **Roadmap note:** Phases **0–2.5** schema (orgs, users, agents, tokens, directives, sessions, `llm_traces`, temporal validity, multi-label readiness, relationship graph) is applied. Phase **3** memory schema v2 with **HNSW** (expand migration `000017`), write-path uniqueness (`000018`), conflict escalations (`000019`), and **write-path `memory_labels` population** (3.C.4 / ADR-0048) are shipped. Phase **5** uses graph edges at query time (recursive CTEs) and hybrid retrieval — it does not require a separate graph database by default. See [`engineering/roadmap-archive/legacy-roadmap/`](roadmap-archive/legacy-roadmap/).
 
+**Documentation gate (P2-11).** `python3 infra/scripts/check-schema-doc.py` (wired into `make repo-guards`) compares the table names in this file against `infra/migrations/postgres/*.up.sql` in both directions and fails when they disagree. Two conventions make that possible:
+
+- An **applied** table is recorded either as a `CREATE TABLE` inside a `sql` fence in the PostgreSQL region of this file, or as a per-table heading of the form ``#### `ibex_core.example` (migration `000000`)``.
+- A table that is **sketched here but not created by any migration** carries the marker `schema-doc: not-migrated` in the comment block directly above its `CREATE TABLE`, with the reason. Such a table is a planning sketch and the gate does not require a migration for it.
+
+Never delete a marker to make the gate pass; either add the table in a migration or leave the sketch marked.
+
 ## Schema Design Philosophy
 
 ### Core Principles
@@ -459,6 +466,8 @@ ALTER TABLE ibex_core.agents
 -- ================================================================
 -- DIRECTIVE SCENARIOS
 -- Behavioral test scenarios for regression testing
+-- schema-doc: not-migrated — planning sketch; no migration creates this table.
+-- The applied directive tables are directives and directive_versions (000009).
 -- ================================================================
 CREATE TABLE ibex_core.directive_scenarios (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -692,6 +701,19 @@ CREATE POLICY memory_labels_isolation ON ibex_core.memory_labels
 --     WHERE status = 'active' AND deleted_at IS NULL
 
 -- ================================================================
+-- MEMORY / SESSION LIFECYCLE FENCE (migration 000045, GAP-007 provisional)
+-- Additive columns; the trigger pair below owns them, callers cannot forge them.
+--   ibex_core.memories: lifecycle_revision BIGINT NOT NULL DEFAULT 1,
+--                       tombstoned BOOLEAN NOT NULL DEFAULT FALSE,
+--                       expires_at TIMESTAMPTZ
+--   ibex_core.sessions: lifecycle_revision BIGINT NOT NULL DEFAULT 1
+-- tombstoned is terminal (a tombstone cannot be cleared) and wins in every
+-- retrieval mode; bump_memory_lifecycle_revision() /
+-- bump_session_lifecycle_revision() advance the revision only when lifecycle
+-- state actually changes, so index, score, and feedback writes cannot forge it.
+-- Lifecycle events leave through ibex_core.memory_lifecycle_outbox below.
+
+-- ================================================================
 -- MEMORY RELATIONSHIPS (migration 000016 / ADR-0049)
 -- Typed edges; supersedes means source replaces target
 -- ================================================================
@@ -748,6 +770,8 @@ CREATE POLICY memory_relationships_isolation ON ibex_core.memory_relationships
 -- MEMORY VERSIONS
 -- Append-only history of memory changes
 -- (Never updated, only new rows inserted)
+-- schema-doc: not-migrated — planning sketch; no migration creates this table.
+-- Memory history is carried by evidence tables and memory_lifecycle_outbox today.
 -- ================================================================
 CREATE TABLE ibex_core.memory_versions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -774,6 +798,7 @@ CREATE TABLE ibex_core.memory_versions (
 PARTITION BY RANGE (changed_at);
 
 -- Monthly partitions
+-- schema-doc: not-migrated — planning sketch partition of the unapplied memory_versions.
 CREATE TABLE ibex_core.memory_versions_2024_01
     PARTITION OF ibex_core.memory_versions
     FOR VALUES FROM ('2024-01-01') TO ('2024-02-01');
@@ -943,6 +968,7 @@ CREATE INDEX idx_checkpoints_latest_valid
 -- ================================================================
 -- SESSION EVENTS
 -- Append-only event log for session replay
+-- The applied table is migration 000036; see "Evidence plane" below.
 -- ================================================================
 CREATE TABLE ibex_core.session_events (
     id              BIGSERIAL,
@@ -992,6 +1018,7 @@ CREATE TABLE ibex_core.session_events (
 PARTITION BY RANGE (created_at);
 
 -- Monthly partitions
+-- schema-doc: not-migrated — planning sketch; 000036 applies session_events unpartitioned.
 CREATE TABLE ibex_core.session_events_2024_01
     PARTITION OF ibex_core.session_events
     FOR VALUES FROM ('2024-01-01') TO ('2024-02-01');
@@ -1175,6 +1202,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.org_model_policies TO ibex_app
 -- ================================================================
 -- MFA CHALLENGES
 -- Temporary MFA verification challenges
+-- schema-doc: not-migrated — planning sketch; operator step-up uses
+-- user_totp_secrets (000033) plus the operator_action_ledger (000035).
 -- ================================================================
 CREATE TABLE ibex_core.mfa_challenges (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1209,6 +1238,7 @@ CREATE INDEX idx_mfa_challenges_user_id
 -- ================================================================
 -- BEHAVIORAL FINGERPRINTS
 -- Statistical snapshots of agent behavior
+-- schema-doc: not-migrated — planning sketch; no migration creates this table.
 -- ================================================================
 CREATE TABLE ibex_core.behavioral_fingerprints (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1290,6 +1320,7 @@ CREATE INDEX idx_behavioral_fingerprints_baseline
 -- ================================================================
 -- DRIFT ALERTS
 -- Generated when behavioral drift exceeds thresholds
+-- schema-doc: not-migrated — planning sketch; no migration creates this table.
 -- ================================================================
 CREATE TABLE ibex_core.drift_alerts (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1355,6 +1386,8 @@ CREATE POLICY drift_alerts_isolation ON ibex_core.drift_alerts
 -- ================================================================
 -- USAGE COUNTERS
 -- Real-time usage tracking (Redis is source, this is persistence)
+-- schema-doc: not-migrated — planning sketch; 000038 applies rate cards,
+-- budget periods, and enforcement decisions instead of monthly counters.
 -- ================================================================
 CREATE TABLE ibex_billing.usage_counters (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1403,6 +1436,7 @@ CREATE POLICY usage_counters_isolation ON ibex_billing.usage_counters
 -- ================================================================
 -- TIER LIMITS
 -- Configuration for what each tier allows
+-- schema-doc: not-migrated — planning sketch; no migration creates this table.
 -- ================================================================
 CREATE TABLE ibex_billing.tier_limits (
     tier                TEXT PRIMARY KEY
@@ -1483,6 +1517,8 @@ INSERT INTO ibex_billing.tier_limits VALUES
 -- ================================================================
 -- AUDIT LOG
 -- Append-only compliance log (never updated, only inserted)
+-- schema-doc: not-migrated — planning sketch; the applied append-only ledger is
+-- ibex_core.privacy_audit_ledger (000037), hash-chained per org.
 -- ================================================================
 CREATE TABLE ibex_audit.audit_log (
     id              BIGSERIAL,
@@ -1533,6 +1569,7 @@ CREATE TABLE ibex_audit.audit_log (
 PARTITION BY RANGE (created_at);
 
 -- Monthly partitions
+-- schema-doc: not-migrated — planning sketch partition of the unapplied audit_log.
 CREATE TABLE ibex_audit.audit_log_2024_01
     PARTITION OF ibex_audit.audit_log
     FOR VALUES FROM ('2024-01-01') TO ('2024-02-01');
@@ -1788,6 +1825,276 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- 20240115_001_add_memory_pii_fields.py → Feature addition
 -- 20240120_001_add_memory_injection_risk.py → Feature addition
 ```
+
+---
+
+#### Applied tables added after the Phase-2 sketch (migrations 000019–000046)
+
+This section records the tables that exist in [`infra/migrations/postgres/`](../infra/migrations/postgres/) but were missing from this document. Each entry names the migration that creates it, what it is for, the columns that carry the contract, and its tenancy boundary. The migration is authoritative for the complete column list, constraints, and grants; nothing below is invented. `python3 infra/scripts/check-schema-doc.py` fails if a migration table is missing from this section.
+
+##### `ibex_core.memory_conflict_escalations` (migration `000019`)
+
+**Purpose.** Durable `ESCALATE_PENDING` outcomes for the conflict-resolution worker: one row per (new memory, candidate memory) pair that needs an operator decision (ADR-0057). Not a queue — the row is the decision record.
+
+**Key columns.** `id`, `org_id`, `new_memory_id`, `candidate_memory_id`, `conflict_type`, `status` (`pending` / `resolved` / `dismissed`), `subject_key`, `reason`, `created_at`, `resolved_at`, `resolved_by`.
+
+**Tenancy.** RLS enabled and forced; policy `ibex_core.rls_org_visible(org_id)`. Composite FKs `(new_memory_id, org_id)` and `(candidate_memory_id, org_id)` to `memories`, so a row cannot pair two tenants. Worker poll index `(org_id, created_at DESC) WHERE status = 'pending'`; the read path resolves pending rows through `(org_id, new_memory_id)` and `(org_id, candidate_memory_id)` from `000057` / `000058`.
+
+##### `ibex_core.memory_feedback` (migration `000023`)
+
+**Purpose.** Usefulness-vote ledger that feeds memory scoring. One vote per (org, memory, agent); an upsert replaces the prior vote rather than appending.
+
+**Key columns.** `id`, `org_id`, `memory_id`, `agent_id`, `feedback` (`positive` / `negative` / `neutral`), `session_id`, `trace_id`, `notes` (≤ 2000 bytes), `created_at`, `updated_at`.
+
+**Tenancy.** RLS enabled and forced; policy `rls_org_visible(org_id)`. `UNIQUE (org_id, memory_id, agent_id)` is the idempotency key; composite FKs to `memories` and `agents`. `memory_feedback_updated_at` maintains `updated_at`.
+
+##### `ibex_core.organization_invites` (migration `000024`)
+
+**Purpose.** Organization invitation tokens. Only the hash is stored; the raw token is returned once at creation.
+
+**Key columns.** `id`, `org_id`, `email`, `role` (`admin` / `member` / `viewer`), `token_hash`, `expires_at`, `used_at`, `created_by`, `created_at`.
+
+**Tenancy.** RLS enabled and forced; org GUC or the service-account GUC. `UNIQUE (token_hash)` makes redemption lookup single-row; partial index `(org_id, email) WHERE used_at IS NULL` lists outstanding invites per org.
+
+##### `ibex_core.org_deletion_jobs` (migration `000025`; extended by `000037`, `000045`)
+
+**Purpose.** Thin async status row for org GDPR deletion. Deliberately not a generic job platform — one row per deletion request, plus the store receipts below.
+
+**Key columns.** `id`, `org_id`, `status` (`pending` / `running` / `succeeded` / `failed` / `hold_blocked`), `error`, `created_at`, `updated_at`, `started_at`, `finished_at`, `archived_uri_snapshot` (JSONB, added `000037`).
+
+**Tenancy.** RLS enabled and forced; org GUC or the service-account GUC. `hold_blocked` is a terminal state the saga never reclaims (`000045`); `archived_uri_snapshot` keeps object-store URIs reachable after the session rows are purged.
+
+##### `ibex_core.provider_credentials` (migration `000027`)
+
+**Purpose.** Org-scoped provider API keys, envelope-encrypted at rest. No plaintext key column exists.
+
+**Key columns.** `id`, `org_id`, `provider_name` (`openai` / `anthropic` / `azure_openai` / `bedrock` / `vllm_self_hosted`), `ciphertext` (nonce ‖ AES-GCM ciphertext including tag), `wrapped_dek`, `encryption_key_id`, `key_hint`, `base_url`, `status` (`active` / `disabled` / `invalid`), `last_validated_at`.
+
+**Tenancy.** RLS enabled and forced; org GUC or the service-account GUC. `UNIQUE (org_id, provider_name)` allows one credential per provider per org.
+
+##### `ibex_core.org_model_policy_meta` (migration `000032`)
+
+**Purpose.** Durable per-org model-policy epoch, the cache-invalidation fence for the proxy's org-aware registry (F4-016).
+
+**Key columns.** `org_id` (primary key), `epoch` (≥ 1), `updated_at`.
+
+**Tenancy.** RLS enabled and forced; org GUC or the service-account GUC. The primary key *is* `org_id`; the migration backfills one row per org that already has policies.
+
+##### `ibex_core.user_totp_secrets` (migration `000033`)
+
+**Purpose.** TOTP secrets for operator step-up, envelope-encrypted with the same scheme as provider credentials.
+
+**Key columns.** `org_id`, `user_id`, `ciphertext`, `wrapped_dek`, `encryption_key_id`, `confirmed_at`, `created_at`, `updated_at`; primary key `(org_id, user_id)`.
+
+**Tenancy.** RLS enabled and forced; org GUC or the service-account GUC. The composite primary key makes the user's secret tenant-scoped rather than user-global.
+
+##### `ibex_core.operator_action_ledger` (migration `000035`)
+
+**Purpose.** Ledger for operator actions with dual-approval hooks: a destructive action records its preview token, the step-up JWT id, and the second actor when one is required.
+
+**Key columns.** `id`, `org_id`, `actor_user_id`, `action`, `resource_type`, `resource_id`, `preview_token`, `step_up_jti`, `requires_second_actor`, `second_actor_user_id`, `second_actor_at`, `idempotency_key`, `created_at`.
+
+**Tenancy.** RLS enabled and forced; org GUC or the service-account GUC. `UNIQUE (org_id, idempotency_key)` makes a retried action a no-op; index `(org_id, created_at DESC)` serves the Console ledger view.
+
+##### Evidence plane (migration `000036`)
+
+`session_events` is documented above and is created here in its applied form. The eight tables below share one boundary: RLS enabled and forced, policy `ibex_core.rls_evidence_visible(org_id)`, which accepts **only** `app.current_org_id` — there is no forgeable `app.is_service_account` bypass. Cross-org relay work runs as `ibex_service` (`BYPASSRLS`, `NOLOGIN`), which is never granted to `ibex_app`; the outbox claim/recover functions execute only as `ibex_evidence_relay`.
+
+##### `ibex_core.evidence_runs` (migration `000036`)
+
+**Purpose.** One aggregate row per request / OTel trace. Every other evidence row hangs off a run.
+
+**Key columns.** `id`, `org_id`, `agent_id`, `session_id`, `request_id`, `trace_id`, `checkpoint_id`, `turn_id`, `schema_version`, `completeness`, `status`, `error_code`, `capture_mode`, `sample_decision`, `started_at`, `ended_at`.
+
+**Tenancy.** `UNIQUE (id, org_id)` is the composite-FK parent key; `UNIQUE (org_id, request_id)` and `UNIQUE (org_id, trace_id, request_id)` make ingestion idempotent per tenant.
+
+##### `ibex_core.evidence_spans` (migration `000036`)
+
+**Purpose.** Nested OTel-compatible span identity for the work inside a run.
+
+**Key columns.** `id`, `org_id`, `run_id`, `trace_id`, `span_id`, `parent_span_id`, `request_id`, `session_id`, `checkpoint_id`, `operation_kind`, `status`, `error_code`, `attributes` (JSONB), `started_at`, `ended_at`.
+
+**Tenancy.** `UNIQUE (org_id, trace_id, span_id)`; FK `(run_id, org_id)` to `evidence_runs`; index `(org_id, trace_id, parent_span_id)` for tree reconstruction.
+
+##### `ibex_core.evidence_events` (migration `000036`)
+
+**Purpose.** Immutable event identity within a span (a point in time, not a span duration).
+
+**Key columns.** `id`, `org_id`, `run_id`, `span_id`, `trace_id`, `request_id`, `event_name`, `schema_version`, `attributes` (JSONB), `occurred_at`.
+
+**Tenancy.** FK `(run_id, org_id)` to `evidence_runs`; index `(run_id, occurred_at)` orders events inside a run.
+
+##### `ibex_core.evidence_assembly_metrics` (migration `000036`)
+
+**Purpose.** Per-request context-assembly timings, so a slow request can be attributed to budget, directive load, retrieval, ranking, packing, or formatting.
+
+**Key columns.** `id`, `org_id`, `run_id`, `request_id`, `trace_id`, `span_id`, `budget_calculation_ms`, `directive_load_ms`, `hot_memory_retrieval_ms`, `cold_memory_retrieval_ms`, `ranking_ms`, `packing_ms`, `formatting_ms`, `total_ms`, `candidates_evaluated`.
+
+**Tenancy.** `UNIQUE (org_id, request_id)`; FK `(run_id, org_id)`; every duration column has a `>= 0` check.
+
+##### `ibex_core.evidence_score_candidates` (migration `000036`)
+
+**Purpose.** The scoring record for each candidate memory considered for a request — what was retrieved, how it ranked, and why it was excluded.
+
+**Key columns.** `id`, `org_id`, `run_id`, `request_id`, `trace_id`, `memory_id`, `retrieval_rank`, `final_rank`, `delta_rank`, `similarity`, `confidence`, `composite_score`, `score_schema`, `score_components` (JSONB), `exclusion`, `token_estimate`, `category`.
+
+**Tenancy.** FK `(run_id, org_id)`; index `(org_id, request_id)`. `memory_id` is deliberately not an FK: the score record must survive memory deletion.
+
+##### `ibex_core.evidence_directive_snapshots` (migration `000036`)
+
+**Purpose.** Which directive version and content hash were assembled into a request, without storing directive text.
+
+**Key columns.** `id`, `org_id`, `run_id`, `request_id`, `trace_id`, `directive_version_id`, `content_hash`, `schema_version`.
+
+**Tenancy.** `UNIQUE (org_id, request_id)`; FK `(run_id, org_id)`.
+
+##### `ibex_core.evidence_tool_audits` (migration `000036`)
+
+**Purpose.** Sanitised audit of tool calls made during a run: tool name, sanitised arguments, status. Raw arguments are never stored.
+
+**Key columns.** `id`, `org_id`, `run_id`, `request_id`, `trace_id`, `span_id`, `tool_name`, `idempotency_key`, `sanitized_args` (JSONB), `status`, `error_code`.
+
+**Tenancy.** FK `(run_id, org_id)`; index `(org_id, request_id)`.
+
+##### `ibex_core.evidence_outbox` (migration `000036`)
+
+**Purpose.** Transactional outbox for evidence publication to ClickHouse. Rows are written in the same transaction as the evidence row and claimed by the relay daemon.
+
+**Key columns.** `id`, `org_id`, `event_id`, `aggregate_id`, `aggregate_seq`, `schema_version`, `event_type`, `payload` (JSONB), `payload_digest`, `delivery_status` (`pending` / `in_flight` / `delivered` / `failed` / `poison`), `attempts`, `available_at`, `claimed_at`, `last_error`, `delivered_at`.
+
+**Tenancy.** `UNIQUE (org_id, event_id)` and `UNIQUE (org_id, aggregate_id, aggregate_seq)` make redelivery idempotent per tenant. The pending index is deliberately *not* org-prefixed (`available_at, created_at`), because the relay claims across orgs and the fence lives in the SECURITY DEFINER functions, not in the index.
+
+##### Privacy governance (migration `000037`)
+
+These four tables use `ibex_core.rls_privacy_visible(org_id)`, which accepts only `app.current_org_id` — no service-account bypass, because a forged GUC must not open a privacy ledger.
+
+##### `ibex_core.privacy_audit_ledger` (migration `000037`)
+
+**Purpose.** Append-only, hash-chained privacy audit log. `org_id` has **no** FK, so ledger rows survive org soft-delete and purge.
+
+**Key columns.** `id`, `org_id`, `seq`, `prev_hash`, `row_hash`, `actor_user_id`, `action`, `purpose`, `policy_result`, `object_type`, `object_id`, `fields` (`TEXT[]`), `approval_ref`, `before_hash`, `after_hash`, `correlation_id`, `request_id`, `payload` (JSONB), `created_at`.
+
+**Tenancy.** `UNIQUE (org_id, seq)` orders the chain per org; the trigger `privacy_audit_ledger_no_update_delete` refuses every UPDATE and DELETE. Inserts go through `ibex_core.privacy_audit_append` (SECURITY DEFINER, owned by `ibex_service`), which requires `app.current_org_id` to equal `p_org_id` and takes a per-org advisory lock. `ibex_app` holds `SELECT` only.
+
+##### `ibex_core.legal_holds` (migration `000037`)
+
+**Purpose.** Active legal hold that blocks org deletion.
+
+**Key columns.** `id`, `org_id`, `scope` (currently only `org`), `reason` (1–1024 chars), `set_by`, `cleared_by`, `created_at`, `cleared_at`.
+
+**Tenancy.** RLS enabled and forced; `rls_privacy_visible(org_id)`. `legal_holds_one_active_per_scope` is a partial unique index on `(org_id, scope) WHERE cleared_at IS NULL`, so at most one hold is active per org. `ibex_app` may insert and update but not delete.
+
+##### `ibex_core.org_capture_policies` (migration `000037`)
+
+**Purpose.** Per-org (and optional per-agent) capture mode for evidence: `none`, `metadata_only`, `redacted`, or `full`, resolved by ascending `priority`.
+
+**Key columns.** `id`, `org_id`, `agent_id`, `mode`, `priority`, `created_at`, `updated_at`.
+
+**Tenancy.** RLS enabled and forced; `rls_privacy_visible(org_id)`. `UNIQUE NULLS NOT DISTINCT (org_id, agent_id)` allows exactly one org-level row (NULL agent) alongside per-agent rows.
+
+##### `ibex_core.deletion_store_receipts` (migration `000037`)
+
+**Purpose.** Per-store proof that an org deletion actually reached a store: `postgres`, `clickhouse`, `redis`, or `objectstore`.
+
+**Key columns.** `id`, `job_id`, `store`, `scope`, `status` (`pending` / `verified` / `failed` / `not_applicable`), `verified_absent_at`, `idempotency_key`, `error`, `created_at`, `updated_at`.
+
+**Tenancy.** No `org_id` column: the row belongs to `org_deletion_jobs` (`job_id` FK, `ON DELETE CASCADE`), and the policy is an `EXISTS` against the parent job with `rls_privacy_visible(j.org_id)`. `UNIQUE (job_id, store, idempotency_key)` makes a retried store deletion a no-op.
+
+##### Billing (migration `000038`)
+
+`ibex_billing` exists for cost governance. Usage event facts are **not** here — they are ClickHouse `ibex.usage_facts` (no TTL). Org deletion must not cascade-erase these tables (SECURITY.md §11 billing carve-out), which is why every FK is `ON DELETE RESTRICT`. All four use `rls_org_visible(org_id)` with RLS enabled and forced.
+
+##### `ibex_billing.rate_cards` (migration `000038`)
+
+**Purpose.** Org-scoped price catalog. A card is a container; published prices live in its versions.
+
+**Key columns.** `id`, `org_id`, `name`, `currency` (3–8 chars), `status` (`draft` / `published` / `archived`), `created_at`, `updated_at`.
+
+**Tenancy.** `UNIQUE (org_id, name)` and `UNIQUE (id, org_id)` — the latter is the composite-FK parent key used by `rate_card_versions`.
+
+##### `ibex_billing.rate_card_versions` (migration `000038`)
+
+**Purpose.** Immutable published price list for a rate card.
+
+**Key columns.** `id`, `rate_card_id`, `org_id`, `version` (≥ 1), `published_at`, `prices` (JSONB array of `{provider, model_pattern, input_cents_per_1k, output_cents_per_1k}`).
+
+**Tenancy.** `UNIQUE (rate_card_id, version)`; composite FK `(rate_card_id, org_id)` to `rate_cards`. Immutability is enforced by grants: `ibex_app` and `ibex_service` hold `SELECT, INSERT` only — no UPDATE or DELETE.
+
+##### `ibex_billing.budget_periods` (migration `000038`)
+
+**Purpose.** A spending window with a cap and an enforcement mode.
+
+**Key columns.** `id`, `org_id`, `period_start`, `period_end`, `cap_cents`, `spent_cents_cached`, `enforcement_mode` (`alert_only` / `hard_cap`), `created_at`, `updated_at`.
+
+**Tenancy.** `UNIQUE (id, org_id)` is the composite-FK parent key for `enforcement_decisions` and `budget_reservations`. `budget_periods_window` requires `period_end > period_start`; index `(org_id, period_start, period_end)` serves window lookups.
+
+##### `ibex_billing.enforcement_decisions` (migration `000038`)
+
+**Purpose.** Audit trail for every admission decision (`allow` / `deny` / `unavailable`) taken against a budget period.
+
+**Key columns.** `id`, `org_id`, `budget_period_id`, `decision`, `reason`, `request_id`, `remaining_cents`, `created_at`.
+
+**Tenancy.** Composite FK `(budget_period_id, org_id)` with MATCH SIMPLE, so a NULL period skips the FK. Deleting a period clears `budget_period_id` through the SECURITY DEFINER trigger `ibex_billing.clear_enforcement_budget_period_id()` instead of cascading — `org_id` is `NOT NULL` and must survive. Append-only in practice: `SELECT, INSERT` for `ibex_app` and `ibex_service`.
+
+##### `ibex_core.idempotency_ledger` (migration `000043`)
+
+**Purpose.** Durable claim/finalize ledger for request idempotency (`request-idempotency-core.v1`), first used by session termination admission.
+
+**Key columns.** `id`, `organization_id`, `agent_id`, `dedupe_key` (1–256 chars), `request_hash` (64 lowercase hex), `state` (`claimed` / `finalized` / `reconciling` / `failed_terminal`), `status_code`, `response_payload` (BYTEA), `lease_expires_at`, `version`, `created_at`, `updated_at`.
+
+**Tenancy.** The column is named `organization_id`, not `org_id`; the policy is `organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid`, with RLS enabled and forced. `UNIQUE (organization_id, agent_id, dedupe_key)` is the idempotency key; `idx_idempotency_ledger_lease` is partial on `state = 'claimed'` for the reaper. A finalized row must carry both `status_code` and `response_payload`.
+
+##### `ibex_core.memory_lifecycle_outbox` (migration `000045`)
+
+**Purpose.** Redacted memory lifecycle events (`created`, `quarantined`, `content_updated`, `superseded`, `forgotten`, `expired`, `purged`) for a future dedicated lifecycle relay. Provisional substrate (GAP-007), not an accepted contract.
+
+**Key columns.** `id`, `org_id`, `memory_id`, `revision`, `schema_version` (must be 1), `event_type`, `occurred_at`, `available_at`, `attempts`, `locked_until`, `delivered_at`.
+
+**Tenancy.** RLS enabled and forced with both `USING` and `WITH CHECK` on `rls_org_visible(org_id)`, so a tenant cannot insert another tenant's event. `org_id` has **no** FK on purpose: purge events must outlive organization row cleanup. `UNIQUE (org_id, memory_id, revision)` gives one event per revision; the pending index is `(available_at, occurred_at, id) WHERE delivered_at IS NULL`. The payload is normalised columns only — no memory content.
+
+##### `ibex_core.budget_reservations` (migration `000046`)
+
+**Purpose.** Durable admission hold behind `hard_cap` enforcement (`budget-reservation.v1`, provisional). A reservation exists only while the org has an active `hard_cap` period; release and expire keep the row, because it is the accounting record.
+
+**Key columns.** `id`, `organization_id`, `agent_id`, `budget_period_id`, `reservation_key` (1–256 chars), `request_hash` (64 lowercase hex), `state` (`claimed` / `finalized` / `released` / `expired`), `amount_estimated_cents`, `price_input_cents_per_1k`, `price_output_cents_per_1k`, `amount_final_cents`, `finalized_completeness` (`complete` / `estimated`), `lease_expires_at`, `version`, `created_at`, `updated_at`.
+
+**Tenancy.** Column name is `organization_id`; policy `rls_org_visible(organization_id)`, RLS enabled and forced. `UNIQUE (organization_id, agent_id, reservation_key)`; `agent_id` cascades on org teardown, `budget_period_id` does not. Check constraints tie `state` to `amount_final_cents`, `finalized_completeness`, and `lease_expires_at`, so a claim cannot exist without a lease and a finalized row cannot exist without a final amount. No DELETE grant: the reaper only transitions state.
+
+---
+
+### Failed tasks (worker dead-letter)
+
+Migration `000021`. Durable store for Celery tasks that exhausted retries (m3.5.A.2). Queryable via SQL for operator dashboards; complements Prometheus `ibex_worker_task_dead_letter_total` and optional Flower for live debugging.
+
+```sql
+CREATE TABLE ibex_core.failed_tasks (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_name           TEXT NOT NULL,
+    task_id             TEXT NOT NULL,
+    args                JSONB NOT NULL DEFAULT '[]',
+    kwargs              JSONB NOT NULL DEFAULT '{}',
+    exception_type      TEXT NOT NULL,
+    exception_message   TEXT NOT NULL,
+    traceback           TEXT NOT NULL,
+    retry_count         INTEGER NOT NULL DEFAULT 0,
+    failed_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    org_id              UUID REFERENCES ibex_core.organizations(id) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_failed_tasks_failed_at
+    ON ibex_core.failed_tasks (failed_at DESC);
+
+CREATE INDEX idx_failed_tasks_org_failed_at
+    ON ibex_core.failed_tasks (org_id, failed_at DESC)
+    WHERE org_id IS NOT NULL;
+
+CREATE UNIQUE INDEX idx_failed_tasks_task_id
+    ON ibex_core.failed_tasks (task_id);
+```
+
+**RLS:** disabled (same rationale as the audit-log pattern — cross-org forensics during incidents). Application layer restricts reads to operators; inserts use `app.is_service_account = true`.
+
+**Idempotency:** `UNIQUE (task_id)` — duplicate `task_failure` signal delivery does not create duplicate rows.
 
 ---
 
@@ -2053,42 +2360,6 @@ PARTITION BY toYYYYMM(created_at)
 ORDER BY (org_id, created_at)
 TTL created_at + INTERVAL 30 DAY;
 ```
-
----
-
-### FAILED TASKS (worker dead-letter)
-
-Migration `000021`. Durable store for Celery tasks that exhausted retries (m3.5.A.2). Queryable via SQL for operator dashboards; complements Prometheus `ibex_worker_task_dead_letter_total` and optional Flower for live debugging.
-
-```sql
-CREATE TABLE ibex_core.failed_tasks (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    task_name           TEXT NOT NULL,
-    task_id             TEXT NOT NULL,
-    args                JSONB NOT NULL DEFAULT '[]',
-    kwargs              JSONB NOT NULL DEFAULT '{}',
-    exception_type      TEXT NOT NULL,
-    exception_message   TEXT NOT NULL,
-    traceback           TEXT NOT NULL,
-    retry_count         INTEGER NOT NULL DEFAULT 0,
-    failed_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    org_id              UUID REFERENCES ibex_core.organizations(id) ON DELETE SET NULL
-);
-
-CREATE INDEX idx_failed_tasks_failed_at
-    ON ibex_core.failed_tasks (failed_at DESC);
-
-CREATE INDEX idx_failed_tasks_org_failed_at
-    ON ibex_core.failed_tasks (org_id, failed_at DESC)
-    WHERE org_id IS NOT NULL;
-
-CREATE UNIQUE INDEX idx_failed_tasks_task_id
-    ON ibex_core.failed_tasks (task_id);
-```
-
-**RLS:** disabled (same rationale as `ibex_audit.audit_log` — cross-org forensics during incidents). Application layer restricts reads to operators; inserts use `app.is_service_account = true`.
-
-**Idempotency:** `UNIQUE (task_id)` — duplicate `task_failure` signal delivery does not create duplicate rows.
 
 ---
 

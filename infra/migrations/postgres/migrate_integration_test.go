@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -17,11 +16,14 @@ import (
 
 const defaultTestDSN = "postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable"
 
+// testDSN is the DSN every test must use. TestMain points it at the per-run
+// database when it could create one (see migrate_integration_main_test.go);
+// otherwise it is the operator-configured database.
 func testDSN() string {
-	if dsn := os.Getenv("POSTGRES_TEST_DSN"); dsn != "" {
-		return normalizePostgresDSN(dsn)
+	if testRun.dsn != "" {
+		return testRun.dsn
 	}
-	return defaultTestDSN
+	return baseTestDSN()
 }
 
 func openTestDB(t *testing.T) *sql.DB {
@@ -41,7 +43,21 @@ func openTestDB(t *testing.T) *sql.DB {
 
 func resetSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
-	ctx := context.Background()
+	if err := resetSchemaConn(context.Background(), db); err != nil {
+		t.Fatalf("%v", err)
+	}
+}
+
+// resetSchemaConn empties the migrated schemas and clears the migration
+// bookkeeping so the next Up starts from nothing.
+//
+// Capability roles are dropped on a best-effort basis. PostgreSQL roles are
+// cluster-global, so a role that another database in the same cluster still
+// uses cannot be dropped (SQLSTATE 2BP01); that is not a harness failure. The
+// migration files normalise a pre-existing role through their own idempotent
+// guards (000004, 000036, 000064, 000068), which is what a provisioned
+// second database relies on too.
+func resetSchemaConn(ctx context.Context, db *sql.DB) error {
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_billing CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_core CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS schema_migrations`)
@@ -58,9 +74,21 @@ func resetSchema(t *testing.T, db *sql.DB) {
 		{"ibex_app", "DROP ROLE IF EXISTS ibex_app"},
 	} {
 		if _, err := db.ExecContext(ctx, drop.statement); err != nil {
-			t.Fatalf("drop role %s: %v", drop.name, err)
+			if isRoleInUse(err) {
+				continue
+			}
+			return fmt.Errorf("drop role %s: %w", drop.name, err)
 		}
 	}
+	return nil
+}
+
+// isRoleInUse reports SQLSTATE 2BP01 (dependent_objects_still_exist), the error
+// PostgreSQL returns when a role still owns or is granted objects in another
+// database of the cluster.
+func isRoleInUse(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "2BP01"
 }
 
 func TestMigrateUpIdempotent(t *testing.T) {
