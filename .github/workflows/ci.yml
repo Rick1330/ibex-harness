@@ -713,7 +713,7 @@ jobs:
       # bundle to smoke-passed; wiring it into the release workflow is a separate change.
       - name: Upload bundle smoke evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bundle-smoke-result
           path: bundle-smoke-result.json
@@ -1235,7 +1235,7 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Upload benchmark gate evidence
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: go-benchmark-gate
           path: |
@@ -2551,7 +2551,7 @@ jobs:
 
       - name: Upload site browser evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: site-browser-evidence
           path: site/test-results/
@@ -2649,7 +2649,7 @@ jobs:
 
       - name: Upload Console browser evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: console-d0-d1-browser-evidence
           path: services/console/test-results/
@@ -3094,7 +3094,7 @@ jobs:
           printf "Bandit skipped: no Python services present\n" > bandit-skip.txt
       - name: Upload Bandit skip note
         if: steps.bandit.outputs.run != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bandit-skip
           path: bandit-skip.txt
