@@ -83,6 +83,9 @@ jobs:
       - name: CI aggregate gate regression tests
         run: bash .github/scripts/test-ci-gate.sh
 
+      - name: Memory benchmark gate regression tests
+        run: bash .github/scripts/test-evaluate-memory-benchmark-gate.sh
+
       - name: Dotenv parser unit tests
         run: python3 -m unittest discover -s infra/tests/dotenv -t infra/tests/dotenv -q
 
@@ -93,6 +96,32 @@ jobs:
         run: bash infra/scripts/test-ci-tiering.sh
       - name: Bundle smoke URL guard tests
         run: bash infra/scripts/test-bundle-smoke-url.sh
+
+      # G03: the rule tree and the Alertmanager routing tree are edited independently,
+      # so a severity nothing routes to is silent. Stdlib-only; runs from the repo root.
+      - name: Alert routing coverage guard
+        run: python3 infra/scripts/check-alert-routing.py
+
+      # G01: the checker fails closed without jsonschema, so it is installed from the
+      # hash-locked requirement file into the interpreter that runs it. Warnings are
+      # reported, not enforced: as of this change 146 published runs are still unrecorded
+      # (65 of them the proxy artifact, which predates the provenance block). Stage 4 flips
+      # that; only problems change the exit code.
+      - name: Set up Python for the reproducibility checker
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Provision hash-locked jsonschema for the reproducibility checker
+        run: |
+          set -euo pipefail
+          python -m venv .cache/ci-jsonschema
+          .cache/ci-jsonschema/bin/python -m pip install --disable-pip-version-check \
+            --no-cache-dir --only-binary :all: --require-hashes \
+            -r .github/requirements/jsonschema.txt
+
+      - name: Reproducibility check on published benchmark artifacts
+        run: .cache/ci-jsonschema/bin/python benchmarks/scripts/check_reproducibility.py
 
       - name: Required CI gate inventory guard
         run: bash .github/scripts/check-required-ci-gates.sh
@@ -293,6 +322,32 @@ jobs:
           sudo apt-get install -y shellcheck
           find .github/scripts infra/scripts -name '*.sh' -print0 | xargs -0 shellcheck -S error
 
+  # G03: the SLO rule tier had no CI gate at all. slo-rules-check.sh needs promtool >= 2.x
+  # (it falls back to the digest-pinned Prometheus image from the observability compose
+  # file through docker, which ubuntu-latest provides) and a Go toolchain for its bucket
+  # label check. It exits 2 when it cannot run, so this job fails rather than skipping.
+  # It is deliberately always-run: a path filter here would silently disable the gate on
+  # the PRs that need it, and the check is cheap next to the Go test matrix.
+  slo-rules-check:
+    name: slo-rules-check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Prometheus rule, routing, and synthetic burn gate
+        run: bash infra/scripts/slo-rules-check.sh
+
   buf-lint:
     name: buf-lint
     needs: [changes, repo-guards]
@@ -320,7 +375,6 @@ jobs:
     needs: [changes, buf-lint]
     if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -334,7 +388,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-buf
-      - name: buf breaking (informational)
+      # P0-12: this is a gate, not a report. A break fails the job, and the job is a
+      # child of ci-gate-go, so it cannot be merged past.
+      - name: buf breaking (blocking gate)
         working-directory: packages/proto
         run: |
           git fetch origin main --depth=1
@@ -343,6 +399,45 @@ jobs:
           else
             echo "Skipping buf breaking: no proto baseline on main yet (initial proto import)"
           fi
+
+  # P0-13: check-openapi-snapshot.sh only proves the committed snapshot is fresh, so
+  # regenerating it inside a PR could legalise a /v1 break. api-breaking.sh diffs the
+  # snapshot against the merge-base of the PR base branch instead.
+  #
+  # It runs only on pull_request: github.base_ref is empty on push, and an empty base
+  # would make the gate diff HEAD against itself (a vacuous pass).
+  api-breaking:
+    name: api-breaking
+    needs: [changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.run_go == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # api-breaking.sh needs a real merge-base; a shallow clone exits 2.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: OpenAPI breaking-change gate against the PR base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          base_ref="${BASE_REF:?github.base_ref is required for the OpenAPI breaking gate}"
+          git fetch --no-tags origin "+refs/heads/${base_ref}:refs/remotes/origin/${base_ref}"
+          # The baseline is named by its remote-tracking ref: api-breaking.sh validates it
+          # with `git rev-parse <ref>^{commit}`, and a PR checkout is detached at
+          # refs/pull/N/merge with no local branch named after the base.
+          bash infra/scripts/api-breaking.sh "origin/${base_ref}"
 
   proto-contract:
     name: proto-contract
@@ -508,6 +603,49 @@ jobs:
           org-slug: ${{ secrets.TRUNK_ORG_URL_SLUG }}
         env:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
+
+  # P1-11: the memory-context bundle smoke is the only check that proves the supported
+  # profile migrates, seeds, starts, and serves a tenant-isolated memory. It ran only
+  # locally (make bundle-smoke) before this job. The script refuses a dirty tracked tree
+  # and requires GITHUB_SHA == HEAD, so the evidence it writes names this commit.
+  #
+  # Trigger: only what can change the bundle definition. run_compose covers
+  # infra/compose/** plus any full run; the raw `docker` filter covers Dockerfiles.
+  # run_go/run_python are deliberately absent: both are set by any services/** or
+  # packages/** edit, which spent the full 40-minute build on PRs that cannot alter the
+  # bundle. The raw `docker` output is used instead of run_docker because detect-changes
+  # sets run_docker=true for every Go change, which would restore that cost. No explicit
+  # push condition is needed: force-full sets run_compose=true on push to main, on the
+  # nightly schedule, and on force_full dispatch.
+  bundle-smoke:
+    name: bundle-smoke
+    needs: [changes]
+    if: needs.changes.outputs.run_compose == 'true' || needs.changes.outputs.docker == 'true'
+    timeout-minutes: 40
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run memory-context bundle smoke
+        run: bash infra/scripts/bundle-smoke.sh
+      # The artifact is the input release-manifest.py --smoke-results needs to promote a
+      # bundle to smoke-passed; wiring it into the release workflow is a separate change.
+      - name: Upload bundle smoke evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bundle-smoke-result
+          path: bundle-smoke-result.json
+          if-no-files-found: warn
+          retention-days: 14
 
   auth-validate-smoke:
     name: auth-validate-smoke
@@ -943,7 +1081,19 @@ jobs:
       - name: Generate protobuf stubs (PR head)
         working-directory: packages/proto
         run: buf generate
+      # G02: test_check_reproducibility skips its schema assertions when jsonschema is
+      # absent, so this gate used to pass while validating nothing. The validator is
+      # installed from the hash-locked requirement file and IBEX_REQUIRE_JSONSCHEMA
+      # makes a skip a failure instead of a silent pass.
+      - name: Provision hash-locked jsonschema for the pipeline tests
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary :all: --require-hashes \
+            -r .github/requirements/jsonschema.txt
       - name: Run benchmark pipeline unit tests
+        env:
+          IBEX_REQUIRE_JSONSCHEMA: "1"
         run: |
           set -euo pipefail
           go test ./benchmarks/go/...
@@ -2938,6 +3088,10 @@ jobs:
       - go-mod-tidy
       - capability-catalog-freshness
       - license-check
+      # G03: the SLO rule tier had no gate; it runs unconditionally and is cheap.
+      - slo-rules-check
+      # P1-11: always evaluated here, so a skipped smoke can never be orphaned.
+      - bundle-smoke
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -2957,14 +3111,20 @@ jobs:
             "${{ needs.compose-validate.result }}" \
             "${{ needs.go-mod-tidy.result }}" \
             "${{ needs.capability-catalog-freshness.result }}" \
-            "${{ needs.license-check.result }}"
+            "${{ needs.license-check.result }}" \
+            "${{ needs.slo-rules-check.result }}" \
+            "${{ needs.bundle-smoke.result }}"
 
   ci-gate-go:
     name: ci-gate-go
     needs:
       - changes
       - buf-lint
+      # P0-12: blocking proto breaking gate.
+      - buf-breaking
       - proto-contract
+      # P0-13: OpenAPI /v1 breaking gate (pull_request only; skipped on push).
+      - api-breaking
       - db-migrate-smoke
       - auth-validate-smoke
       - proxy-auth-smoke
@@ -2995,6 +3155,10 @@ jobs:
       - golangci-lint
       - coverage
       - govulncheck
+      # P1-11: skipped unless the bundle definition or a Dockerfile changed.
+      # evaluate-ci-gate.sh treats a skipped child as neutral, so it stays required here
+      # without paying the build on unrelated PRs.
+      - bundle-smoke
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -3007,7 +3171,9 @@ jobs:
         run: |
           bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_go == 'true' || (github.event_name == 'pull_request' && needs.changes.outputs.benchmarks == 'true') }}" "${{ needs.changes.result }}" \
             "${{ needs.buf-lint.result }}" \
+            "${{ needs.buf-breaking.result }}" \
             "${{ needs.proto-contract.result }}" \
+            "${{ needs.api-breaking.result }}" \
             "${{ needs.db-migrate-smoke.result }}" \
             "${{ needs.auth-validate-smoke.result }}" \
             "${{ needs.proxy-auth-smoke.result }}" \
@@ -3037,7 +3203,8 @@ jobs:
             "${{ needs.e2e-smoke-p35.result }}" \
             "${{ needs.golangci-lint.result }}" \
             "${{ needs.coverage.result }}" \
-            "${{ needs.govulncheck.result }}"
+            "${{ needs.govulncheck.result }}" \
+            "${{ needs.bundle-smoke.result }}"
 
   ci-gate-site:
     name: ci-gate-site
@@ -3107,6 +3274,7 @@ jobs:
       - e2e-smoke-p3-memory
       - e2e-smoke-p35
       - verify-phase25
+      - bundle-smoke
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -3139,7 +3307,8 @@ jobs:
             "${{ needs.context-test.result }}" \
             "${{ needs.e2e-smoke-p3-memory.result }}" \
             "${{ needs.e2e-smoke-p35.result }}" \
-            "${{ needs.verify-phase25.result }}"
+            "${{ needs.verify-phase25.result }}" \
+            "${{ needs.bundle-smoke.result }}"
 
   ci-gate-nightly:
     name: ci-gate-nightly

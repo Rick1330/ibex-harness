@@ -102,7 +102,19 @@ jobs:
       - name: Run Go benchmark pipeline unit tests
         run: go test ./benchmarks/go/...
 
+      # G02: test_check_reproducibility skips its schema assertions when jsonschema is
+      # absent, so this job used to pass while validating nothing. IBEX_REQUIRE_JSONSCHEMA
+      # turns that skip into a failure instead of a silent pass.
+      - name: Provision hash-locked jsonschema for the pipeline tests
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary :all: --require-hashes \
+            -r .github/requirements/jsonschema.txt
+
       - name: Run Python benchmark pipeline unit tests
+        env:
+          IBEX_REQUIRE_JSONSCHEMA: "1"
         run: python benchmarks/scripts/test_pipeline.py
 
       - name: Validate published benchmark data on main
