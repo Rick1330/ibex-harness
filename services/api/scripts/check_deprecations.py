@@ -52,6 +52,11 @@ promise a window that the real announcement never gave the consumer.
 - a ``proxy`` entry whose ``path`` is missing, or whose ``path`` is not one exact
   route path (``^/[^/]+(/[^/]+)*$``, with no ``{}``, ``?``, ``#``, or
   whitespace), or a ``path`` on a non-``proxy`` entry;
+- two announcing ``proxy`` entries on one ``path`` (``duplicate-path``), which the
+  proxy refuses to start on. The scope is the loader's, not the surface's: only an
+  entry the loader announces (``status: announced`` with
+  ``headers_implemented: true``) enters its notice map, so a proposal and an
+  announcement may name the same path, and two proposals may;
 - an empty or blank ``successor``, or a ``successor`` that names the contract
   itself;
 - ``status: announced`` with an ``evidence`` path that is not a string, is
@@ -83,692 +88,52 @@ papered over.
 
 No network access, no third-party dependency, deterministic sorted output. This
 script never writes; it only reads the record and the two registries.
+
+The rules live beside this file, so this module stays the entry point and the
+record's envelope: ``deprecations_model`` holds the record's shape, vocabulary,
+and JSON readers; ``deprecations_fields`` the per-entry value rules;
+``deprecations_paths`` the proxy selector and the duplicate-path rule; and
+``deprecations_cross`` the REST registry and MCP descriptor cross-checks. The
+invocation is unchanged::
+
+    cd services/api && .venv/bin/python scripts/check_deprecations.py
 """
 
 from __future__ import annotations
 
 import argparse
-import json
-import re
 import sys
-from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Final
 
-REPO_ROOT: Final = Path(__file__).resolve().parents[3]
-
-SCHEMA: Final = "ibex.deprecations.v1"
-SURFACES: Final = frozenset({"rest", "grpc", "mcp", "proxy"})
-STABILITIES: Final = frozenset({"stable", "beta"})
-STATUSES: Final = frozenset({"proposed", "announced", "withdrawn"})
-MCP_SERVERS: Final = frozenset({"operator", "memory"})
-WINDOW_DAYS: Final = {"stable": 180, "beta": 31}
-
-_ANNOUNCED_FIELD: Final = "announced_on"
-_COMMON_FIELDS: Final = (
-    "id",
-    "surface",
-    "stability",
-    "notice_date",
-    "sunset_date",
-    "status",
-    "successor",
-    "headers_implemented",
-    "evidence",
+import deprecations_cross as cross
+import deprecations_fields as fields
+import deprecations_paths as path_rules
+from deprecations_model import (
+    DEFAULT_PATHS,
+    SCHEMA,
+    CheckContext,
+    DeprecationPaths,
+    display_path,
+    entry_label,
+    load_mcp_tools,
+    load_record,
+    load_rest_registry,
+    non_empty_str,
 )
-# ``announced_on`` is optional: a proposal has not been announced. It is checked
-# by the announcement rule, not by presence. ``path`` is optional in the schema
-# only so a dedicated rule can reject it on a non-proxy entry; a ``proxy`` entry
-# must carry it, and that requirement lives in ``_path_field_failures``.
-_OPTIONAL_FIELDS: Final = (_ANNOUNCED_FIELD, "path")
-_SELECTORS: Final = {
-    "rest": ("contract_id",),
-    "grpc": ("contract_id",),
-    "mcp": ("tool", "server"),
-    # A proxy entry is addressed by ``path``; the dedicated rule owns both its
-    # requirement and its grammar, so it is not a required selector here.
-    "proxy": (),
-}
-_ALL_SELECTORS: Final = ("contract_id", "tool", "server")
-_DATE_FIELDS: Final = ("notice_date", "sunset_date")
-# Fields validated by a dedicated rule: the enum fields and the boolean have
-# their own messages, the date fields have ``invalid-date``, ``announced_on`` has
-# the announcement rule (which owns its empty value too), and ``path`` has the
-# proxy selector rule (which owns its requirement, type, and grammar).
-_DEDICATED_FIELDS: Final = frozenset(
-    {
-        "surface",
-        "stability",
-        "status",
-        "headers_implemented",
-        "path",
-        *_DATE_FIELDS,
-        _ANNOUNCED_FIELD,
-    }
-)
-# ``rest`` and ``proxy`` can declare headers: both emitters write the standard
-# RFC 9745/8594 values. The other two surfaces have no standard deprecation
-# header, so their record is the notice of record.
-_HEADER_SURFACES: Final = frozenset({"rest", "proxy"})
-# The statuses an entry can carry before consumers are told, so a REST or proxy
-# entry in one of them cannot claim the announcement headers yet.
-_UNANNOUNCED_STATUSES: Final = frozenset({"proposed", "withdrawn"})
-# The proxy surface is addressed by an exact request path rather than a contract
-# id, so it owns a selector the other surfaces must not carry.
-_PROXY_SURFACE: Final = "proxy"
-# One exact route path: a leading slash and non-empty segments, with no empty
-# segment from a doubled or trailing slash.
-_PATH_PATTERN: Final = re.compile(r"^/[^/]+(/[^/]+)*$")
-# Characters no served route path contains. The pattern admits them inside a
-# segment, so they are checked separately, matching the proxy's validator.
-_PATH_FORBIDDEN: Final = frozenset("{}?#")
 
 
-@dataclass(frozen=True)
-class DeprecationPaths:
-    """Inputs of the check; all overridable so tests never touch the tree."""
-
-    record: Path = REPO_ROOT / "engineering/architecture-v2/contracts/deprecations.json"
-    rest_registry: Path = (
-        REPO_ROOT / "engineering/architecture-v2/contracts/rest-route-registry.json"
-    )
-    mcp_root: Path = REPO_ROOT / "services"
-    root: Path = REPO_ROOT
-
-
-DEFAULT_PATHS: Final = DeprecationPaths()
-
-
-@dataclass(frozen=True)
-class _CheckContext:
-    """Inputs every entry check shares, resolved once per ``check`` run."""
-
-    rest: dict[str, str]
-    rest_label: str
-    mcp: dict[str, dict[str, str]]
-    mcp_paths: dict[str, Path]
-    root: Path
-    today: date
-
-
-def _non_empty_str(value: object) -> bool:
-    return isinstance(value, str) and bool(value)
-
-
-def _is_unannounced(status: object) -> bool:
-    """True only for a known status that has not reached ``announced``.
-
-    The type check is load-bearing: an entry with a non-string ``status`` is reported
-    by the enum rule, and this rule must not turn it into a ``TypeError``.
-    """
-    return isinstance(status, str) and status in _UNANNOUNCED_STATUSES
-
-
-def _display_path(path: Path) -> str:
-    try:
-        return path.relative_to(REPO_ROOT).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
-def _root_label(root: Path) -> str:
-    """Name the resolution root for failure messages without printing a bare dot."""
-    relative = _display_path(root)
-    return "the repository root" if relative in {".", ""} else relative
-
-
-def _read_json(path: Path, kind: str) -> tuple[object | None, list[str]]:
-    if not path.exists():
-        return None, [f"missing-{kind}: {path} does not exist"]
-    try:
-        return json.loads(path.read_text(encoding="utf-8")), []
-    except json.JSONDecodeError as error:
-        return None, [f"invalid-{kind}: {path}: {error}"]
-    except RecursionError:
-        return None, [f"invalid-{kind}: {path}: JSON is nested too deeply to read"]
-
-
-def _load_mapping(path: Path, kind: str) -> tuple[dict[str, object], list[str]]:
-    payload, failures = _read_json(path, kind)
-    if failures:
-        return {}, failures
-    if not isinstance(payload, dict):
-        return {}, [f"invalid-{kind}: {path} must be a JSON object"]
-    return payload, []
-
-
-def load_record(path: Path) -> tuple[dict[str, object], list[str]]:
-    return _load_mapping(path, "record")
-
-
-def load_rest_registry(path: Path) -> tuple[dict[str, str], list[str]]:
-    """Return ``contract_id -> stability`` for every row in the REST registry.
-
-    A contract may appear once. A duplicate is a contradiction the loader must
-    not resolve: keeping the last row would let the record pick whichever
-    stability makes its window pass.
-    """
-    payload, failures = _load_mapping(path, "rest-registry")
-    if failures:
-        return {}, failures
-    routes = payload.get("routes")
-    if not isinstance(routes, list):
-        return {}, [f'missing-field: {path} needs a "routes" array']
-    contracts: dict[str, str] = {}
-    first_index: dict[str, int] = {}
-    for index, row in enumerate(routes):
-        if not isinstance(row, dict) or not _non_empty_str(row.get("contract_id")):
-            continue
-        contract_id = str(row["contract_id"])
-        if contract_id in first_index:
-            failures.append(
-                f"duplicate-registry-row: {path} lists {contract_id!r} at routes["
-                f"{first_index[contract_id]}] and routes[{index}]"
-            )
-            continue
-        first_index[contract_id] = index
-        contracts[contract_id] = str(row.get("stability"))
-    return contracts, failures
-
-
-def _mcp_tool_stabilities(path: Path, server: str) -> tuple[dict[str, str] | None, list[str]]:
-    """Return ``tool name -> stability`` for one server's committed descriptor."""
-    payload, failures = _load_mapping(path, f"mcp-{server}-tools")
-    if failures:
-        return None, failures
-    tools = payload.get("tools")
-    if not isinstance(tools, list):
-        return None, [f'missing-field: {path} needs a "tools" array']
-    stabilities = {
-        str(row["name"]): str(row.get("stability"))
-        for row in tools
-        if isinstance(row, dict) and _non_empty_str(row.get("name"))
-    }
-    return stabilities, []
-
-
-def mcp_server_path(paths: DeprecationPaths, server: str) -> Path:
-    return paths.mcp_root / f"mcp-{server}" / "mcp_tools.json"
-
-
-def load_mcp_tools(
-    paths: DeprecationPaths,
-) -> tuple[dict[str, dict[str, str]], dict[str, Path], list[str]]:
-    """Return the tools and their stabilities per server, their paths, and any load failures."""
-    tools: dict[str, dict[str, str]] = {}
-    locations: dict[str, Path] = {}
-    failures: list[str] = []
-    for server in sorted(MCP_SERVERS):
-        path = mcp_server_path(paths, server)
-        locations[server] = path
-        stabilities, server_failures = _mcp_tool_stabilities(path, server)
-        failures.extend(server_failures)
-        if stabilities is not None:
-            tools[server] = stabilities
-    return tools, locations, failures
-
-
-def _entry_label(entry: dict[str, object], index: int) -> str:
-    return str(entry["id"]) if _non_empty_str(entry.get("id")) else f"entries[{index}]"
-
-
-def _required_fields(surface: object) -> tuple[str, ...]:
-    return _COMMON_FIELDS + _SELECTORS.get(str(surface), _ALL_SELECTORS)
-
-
-def _entry_fields(surface: object) -> tuple[str, ...]:
-    """Every field the surface's schema declares, required and optional."""
-    return _required_fields(surface) + _OPTIONAL_FIELDS
-
-
-def _missing_fields(entry: dict[str, object], fields: tuple[str, ...]) -> list[str]:
-    """The declared fields the entry does not carry at all."""
-    return [field for field in fields if field not in entry]
-
-
-def _unknown_fields(entry: dict[str, object], fields: tuple[str, ...]) -> list[str]:
-    """The entry's fields that the surface's schema does not declare."""
-    return sorted(set(entry) - set(fields))
-
-
-def _mistyped_string_fields(entry: dict[str, object], fields: tuple[str, ...]) -> list[str]:
-    """The ``string`` fields present with a value of another type.
-
-    Presence is not validity: a field whose schema type is ``string`` must hold a
-    string. A ``null`` or an integer would otherwise slip past the emptiness
-    check, and the rule that reads the field would treat it as absent. The
-    dedicated rules (enum, boolean, date) report their own type failures.
-    """
-    return [
-        field
-        for field in fields
-        if field in entry and field not in _DEDICATED_FIELDS and not isinstance(entry[field], str)
-    ]
-
-
-def _empty_string_fields(entry: dict[str, object], fields: tuple[str, ...]) -> list[str]:
-    """The ``string`` fields present as the empty string.
-
-    ``announced_on`` is excluded: the announcement rule reports its empty value
-    as an invalid date, which is the actionable message for that field. ``path``
-    is excluded for the same reason: the proxy selector rule owns its empty
-    value, so an empty path on a non-proxy entry stays a single ``unknown-field``
-    and on a proxy entry stays a single ``empty-field``.
-    """
-    return [
-        field
-        for field in fields
-        if field not in {_ANNOUNCED_FIELD, "path"}
-        and isinstance(entry.get(field), str)
-        and not entry[field]
-    ]
-
-
-def _field_failures(entry: dict[str, object], label: str, surface: object) -> list[str]:
-    """Every required field present, no field outside the surface's schema, none empty."""
-    allowed = _entry_fields(surface)
-    failures: list[str] = []
-    missing = _missing_fields(entry, _required_fields(surface))
-    unknown = _unknown_fields(entry, allowed)
-    empty = _empty_string_fields(entry, allowed)
-    if missing:
-        failures.append(f"missing-field: {label} lacks {', '.join(missing)}")
-    if unknown:
-        failures.append(f"unknown-field: {label} has {', '.join(unknown)}")
-    if empty:
-        failures.append(f"empty-field: {label} has empty {', '.join(empty)}")
-    failures.extend(
-        f"invalid-field: {label}.{field} must be a string, not {entry[field]!r}"
-        for field in _mistyped_string_fields(entry, allowed)
-    )
-    return failures
-
-
-def _enum_failures(entry: dict[str, object], label: str) -> list[str]:
-    failures: list[str] = []
-    for field, allowed in (("surface", SURFACES), ("stability", STABILITIES), ("status", STATUSES)):
-        value = entry.get(field)
-        if isinstance(value, str) and value in allowed:
-            continue
-        failures.append(
-            f"unknown-enum: {label} has {field} {value!r}; expected one of {sorted(allowed)}"
-        )
-    headers = entry.get("headers_implemented")
-    if not isinstance(headers, bool):
-        failures.append(
-            f"invalid-field: {label}.headers_implemented must be a boolean, not {headers!r}"
-        )
-    return failures
-
-
-def _parse_date(value: object) -> date | None:
-    """Return the date only for an exact ``YYYY-MM-DD`` string."""
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = date.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed if parsed.isoformat() == value else None
-
-
-def _date_failure(entry: dict[str, object], field: str, label: str) -> str | None:
-    """Return the failure for a date field that is present but not ``YYYY-MM-DD``.
-
-    Any present value is judged, including a non-string one: ``null`` or an
-    integer cannot be parsed, so the window would never be evaluated.
-    """
-    if field not in entry:
-        return None
-    value = entry[field]
-    if value == "":
-        return None
-    if _parse_date(value) is not None:
-        return None
-    return f"invalid-date: {label}.{field} is {value!r}; expected YYYY-MM-DD"
-
-
-def _date_failures(entry: dict[str, object], label: str) -> list[str]:
-    failures: list[str] = []
-    for field in _DATE_FIELDS:
-        failure = _date_failure(entry, field, label)
-        if failure is not None:
-            failures.append(failure)
-    return failures
-
-
-def _missing_announcement_failure(label: str) -> str:
-    return (
-        f"missing-announcement: {label} is announced but has no announced_on; record the date "
-        "consumers were told, because the window is measured from it"
-    )
-
-
-def _announced_on_failures(
-    entry: dict[str, object], label: str, context: _CheckContext
-) -> list[str]:
-    """An ``announced`` entry is dated; a proposal or withdrawal carries no date."""
-    value = entry.get(_ANNOUNCED_FIELD)
-    status = entry.get("status")
-    if status == "announced":
-        return _announcement_date_failures(entry, label, value, context)
-    if value is None or not _is_unannounced(status):
-        return []
-    return [
-        (
-            f"unexpected-announcement: {label} is {status}, so {_ANNOUNCED_FIELD} must be absent "
-            f"or null, not {value!r}"
-        )
-    ]
-
-
-def _announcement_date_failures(
-    entry: dict[str, object], label: str, value: object, context: _CheckContext
-) -> list[str]:
-    """The date the entry was announced: required, real, and between its notice and today."""
-    if value is None:
-        return [_missing_announcement_failure(label)]
-    announced = _parse_date(value)
-    if announced is None:
-        return [f"invalid-date: {label}.{_ANNOUNCED_FIELD} is {value!r}; expected YYYY-MM-DD"]
-    notice = _parse_date(entry.get("notice_date"))
-    if notice is not None and announced < notice:
-        return [
-            (
-                f"announcement-before-notice: {label} was announced on {announced.isoformat()} "
-                f"before its notice_date {notice.isoformat()}; the window cannot start before "
-                "the notice"
-            )
-        ]
-    if announced > context.today:
-        return [
-            (
-                f"announcement-in-future: {label} records {_ANNOUNCED_FIELD} "
-                f"{announced.isoformat()}, which is after today {context.today.isoformat()}; an "
-                "announcement is a past event, so record it once consumers have been told"
-            )
-        ]
+def _schema_failures(record: dict[str, object]) -> list[str]:
+    if record.get("schema") != SCHEMA:
+        return [f"unknown-enum: record schema is {record.get('schema')!r}; expected {SCHEMA!r}"]
     return []
-
-
-def _window_anchor(entry: dict[str, object]) -> tuple[str, date] | None:
-    """The field and date the support window is measured from.
-
-    A recorded announcement wins over ``notice_date``: a plan dated months before
-    consumers were told would otherwise promise a window the announcement never
-    gave. Without an announcement, ``notice_date`` is the planned start.
-    """
-    for field in (_ANNOUNCED_FIELD, "notice_date"):
-        parsed = _parse_date(entry.get(field))
-        if parsed is not None:
-            return field, parsed
-    return None
-
-
-def _window_days(entry: dict[str, object]) -> tuple[str, str, date, date, int] | None:
-    """Return the class, anchor field, anchor date, sunset, and window length."""
-    stability = entry.get("stability")
-    if not isinstance(stability, str):
-        return None
-    if stability not in WINDOW_DAYS:
-        return None
-    anchor = _window_anchor(entry)
-    if anchor is None:
-        return None
-    sunset = _parse_date(entry.get("sunset_date"))
-    if sunset is None:
-        return None
-    field, start = anchor
-    return str(stability), field, start, sunset, (sunset - start).days
-
-
-def _window_failures(entry: dict[str, object], label: str) -> list[str]:
-    window = _window_days(entry)
-    if window is None:
-        return []
-    stability, anchor_field, anchor, sunset, actual = window
-    minimum = WINDOW_DAYS[stability]
-    if actual >= minimum:
-        return []
-    return [
-        (
-            f"window-too-short: {label} is {stability}, so sunset_date {sunset.isoformat()} must be "
-            f"at least {minimum} days after {anchor_field} {anchor.isoformat()}; this window is "
-            f"{actual} day(s)"
-        )
-    ]
-
-
-def _contract_target(entry: dict[str, object]) -> str:
-    for field in ("contract_id", "tool"):
-        value = entry.get(field)
-        if _non_empty_str(value):
-            return str(value)
-    return ""
-
-
-def _successor_failures(entry: dict[str, object], label: str) -> list[str]:
-    successor = entry.get("successor")
-    if not _non_empty_str(successor):
-        return []
-    if not str(successor).strip():
-        return [f"empty-field: {label} has empty successor"]
-    if successor == _contract_target(entry):
-        return [f"successor-is-self: {label} names {successor!r} as its own successor"]
-    return []
-
-
-def _evidence_reason(evidence: str, root: Path) -> str | None:
-    """Return the rule ``evidence`` breaks, or ``None`` when it cites a real repository file."""
-    if Path(evidence).is_absolute():
-        return "is an absolute path; cite a file inside the repository"
-    try:
-        resolved = (root / evidence).resolve()
-    except OSError:
-        return "cannot be resolved"
-    if not resolved.is_relative_to(root.resolve()):
-        return (
-            f"resolves outside {_root_label(root)}; evidence must cite a file inside the repository"
-        )
-    if not resolved.exists():
-        return f"does not exist under {_root_label(root)}"
-    if not resolved.is_file():
-        return "is not a regular file"
-    return None
-
-
-def _evidence_failures(entry: dict[str, object], label: str, context: _CheckContext) -> list[str]:
-    evidence = entry.get("evidence")
-    if not _non_empty_str(evidence):
-        return []
-    reason = _evidence_reason(str(evidence), context.root)
-    if reason is None:
-        return []
-    return [f"missing-evidence: {label} cites {evidence!r}, which {reason}"]
-
-
-def _not_applicable_header_failure(label: str, surface: str) -> str:
-    return (
-        f"headers-not-applicable: {label} is {surface}, which has no standard deprecation "
-        "header, so headers_implemented must be false; the record is the notice of record"
-    )
-
-
-def _missing_header_failure(label: str) -> str:
-    return (
-        f"headers-not-implemented: {label} is announced, so headers_implemented must be true; "
-        "implement Deprecation and Sunset before announcing"
-    )
-
-
-def _premature_header_failure(label: str, status: str) -> str:
-    return (
-        f"headers-before-announcement: {label} is {status}, so headers_implemented must be false "
-        "until it is announced; a header claims an emitter for a deprecation consumers were "
-        "never told about"
-    )
-
-
-def _header_failures(entry: dict[str, object], label: str) -> list[str]:
-    """``headers_implemented`` is a per-surface claim: only REST has such headers.
-
-    gRPC methods and MCP tools define no standard deprecation header, so an entry
-    for them declaring one is a false claim. A REST entry is the mirror image: the
-    flag is true exactly while the entry is announced, because a header for a
-    proposed or withdrawn deprecation announces something that is not on offer, and
-    an announced entry cannot exist before its emitter ships.
-    """
-    surface = entry.get("surface")
-    if not isinstance(surface, str):
-        return []
-    headers = entry.get("headers_implemented")
-    if surface not in _HEADER_SURFACES:
-        return [_not_applicable_header_failure(label, surface)] if headers is True else []
-    status = entry.get("status")
-    if status == "announced":
-        return [] if headers is True else [_missing_header_failure(label)]
-    if headers is True and _is_unannounced(status):
-        return [_premature_header_failure(label, str(status))]
-    return []
-
-
-def _status_failures(entry: dict[str, object], label: str, context: _CheckContext) -> list[str]:
-    """An announced deprecation must cite live evidence and still be in window."""
-    if entry.get("status") != "announced":
-        return []
-    failures = _evidence_failures(entry, label, context)
-    sunset = _parse_date(entry.get("sunset_date"))
-    if sunset is not None and sunset < context.today:
-        failures.append(
-            f"sunset-passed: {label} is announced but sunset_date {sunset.isoformat()} is in the "
-            "past; withdraw it or record the completed removal"
-        )
-    return failures
-
-
-def _rest_failures(entry: dict[str, object], label: str, context: _CheckContext) -> list[str]:
-    contract_id = entry.get("contract_id")
-    if not _non_empty_str(contract_id):
-        return []
-    stability = context.rest.get(str(contract_id))
-    if stability is None:
-        return [
-            (
-                f"unknown-contract: {label} deprecates {contract_id}, which has no row in "
-                f"{context.rest_label}"
-            )
-        ]
-    if stability != entry.get("stability"):
-        return [
-            (
-                f"stability-mismatch: {label} records {entry.get('stability')!r} but "
-                f"{context.rest_label} records {stability!r} for {contract_id}"
-            )
-        ]
-    return []
-
-
-def _unknown_server_failures(label: str, server: object) -> list[str]:
-    return [
-        (f"unknown-server: {label} names server {server!r}; expected one of {sorted(MCP_SERVERS)}")
-    ]
-
-
-def _mcp_failures(entry: dict[str, object], label: str, context: _CheckContext) -> list[str]:
-    server = entry.get("server")
-    if not _non_empty_str(server) or str(server) not in MCP_SERVERS:
-        return _unknown_server_failures(label, server)
-    tool = entry.get("tool")
-    if not _non_empty_str(tool):
-        return []
-    tools = context.mcp[str(server)]
-    stability = tools.get(str(tool))
-    if stability is None:
-        return [
-            (
-                f"unknown-tool: {label} deprecates tool {tool!r}, which is absent from "
-                f"{_display_path(context.mcp_paths[str(server)])}"
-            )
-        ]
-    if stability != entry.get("stability"):
-        return [
-            (
-                f"stability-mismatch: {label} records {entry.get('stability')!r} but "
-                f"{_display_path(context.mcp_paths[str(server)])} records {stability!r} for tool "
-                f"{tool!r}"
-            )
-        ]
-    return []
-
-
-def _registry_failures(entry: dict[str, object], label: str, context: _CheckContext) -> list[str]:
-    surface = entry.get("surface")
-    if surface == "rest":
-        return _rest_failures(entry, label, context)
-    if surface == "mcp":
-        return _mcp_failures(entry, label, context)
-    return []
-
-
-def _path_has_forbidden_character(path: str) -> bool:
-    """True when a path carries a template, query, fragment, or whitespace."""
-    return bool(_PATH_FORBIDDEN.intersection(path)) or any(
-        character.isspace() for character in path
-    )
-
-
-def _path_field_failures(entry: dict[str, object], label: str) -> list[str]:
-    """``path`` is the proxy selector: required there, forbidden elsewhere.
-
-    The proxy rejects a path it could never match as a startup error, so a record
-    that passes this check must not stop it. The grammar is the proxy's: one
-    exact route path with no template, query, fragment, or trailing slash. The
-    field is dedicated so a non-``proxy`` entry with ``path`` keeps the exact
-    ``unknown-field`` message it had when ``path`` was not in the schema.
-    """
-    surface = entry.get("surface")
-    if surface != _PROXY_SURFACE:
-        return [f"unknown-field: {label} has path"] if "path" in entry else []
-    if "path" not in entry:
-        return [f"missing-field: {label} lacks path"]
-    path = entry.get("path")
-    if not isinstance(path, str):
-        return [f"invalid-field: {label}.path must be a string, not {path!r}"]
-    if not path:
-        return [f"empty-field: {label} has empty path"]
-    if _PATH_PATTERN.fullmatch(path) and not _path_has_forbidden_character(path):
-        return []
-    return [
-        (
-            f"invalid-path: {label}.path {path!r} must be one exact route path "
-            "(no trailing slash, no template, no query)"
-        )
-    ]
-
-
-def _entry_failures(entry: object, index: int, context: _CheckContext) -> list[str]:
-    if not isinstance(entry, dict):
-        return [f"invalid-row: entries[{index}] is not a JSON object"]
-    label = _entry_label(entry, index)
-    failures = _field_failures(entry, label, entry.get("surface"))
-    failures.extend(_path_field_failures(entry, label))
-    failures.extend(_enum_failures(entry, label))
-    failures.extend(_date_failures(entry, label))
-    failures.extend(_announced_on_failures(entry, label, context))
-    failures.extend(_header_failures(entry, label))
-    failures.extend(_window_failures(entry, label))
-    failures.extend(_successor_failures(entry, label))
-    failures.extend(_status_failures(entry, label, context))
-    failures.extend(_registry_failures(entry, label, context))
-    return failures
 
 
 def _duplicate_id_failures(entries: list[object]) -> list[str]:
     first_index: dict[str, int] = {}
     failures: list[str] = []
     for index, entry in enumerate(entries):
-        if not isinstance(entry, dict) or not _non_empty_str(entry.get("id")):
+        if not isinstance(entry, dict) or not non_empty_str(entry.get("id")):
             continue
         entry_id = str(entry["id"])
         if entry_id in first_index:
@@ -786,7 +151,7 @@ def _unsorted_failures(entries: list[object]) -> list[str]:
     ids = [
         str(entry["id"])
         for entry in entries
-        if isinstance(entry, dict) and _non_empty_str(entry.get("id"))
+        if isinstance(entry, dict) and non_empty_str(entry.get("id"))
     ]
     for index, expected in enumerate(sorted(ids)):
         if ids[index] != expected:
@@ -799,19 +164,23 @@ def _unsorted_failures(entries: list[object]) -> list[str]:
     return []
 
 
-def _entries_failures(entries: list[object], context: _CheckContext) -> list[str]:
+def _entry_failures(entry: object, index: int, context: CheckContext) -> list[str]:
+    if not isinstance(entry, dict):
+        return [f"invalid-row: entries[{index}] is not a JSON object"]
+    label = entry_label(entry, index)
+    failures = fields.entry_failures(entry, label, context)
+    failures.extend(cross.registry_failures(entry, label, context))
+    return failures
+
+
+def _entries_failures(entries: list[object], context: CheckContext) -> list[str]:
     failures: list[str] = []
     for index, entry in enumerate(entries):
         failures.extend(_entry_failures(entry, index, context))
     failures.extend(_duplicate_id_failures(entries))
+    failures.extend(path_rules.duplicate_path_failures(entries))
     failures.extend(_unsorted_failures(entries))
     return failures
-
-
-def _schema_failures(record: dict[str, object]) -> list[str]:
-    if record.get("schema") != SCHEMA:
-        return [f"unknown-enum: record schema is {record.get('schema')!r}; expected {SCHEMA!r}"]
-    return []
 
 
 def _record_has_no_entries(path: Path) -> bool:
@@ -835,9 +204,9 @@ def check(paths: DeprecationPaths = DEFAULT_PATHS, today: date | None = None) ->
     if not isinstance(entries, list):
         return sorted(failures + ['missing-field: record needs an "entries" array'])
 
-    context = _CheckContext(
+    context = CheckContext(
         rest=rest,
-        rest_label=_display_path(paths.rest_registry),
+        rest_label=display_path(paths.rest_registry),
         mcp=mcp,
         mcp_paths=mcp_paths,
         root=paths.root,

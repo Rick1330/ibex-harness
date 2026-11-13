@@ -18,9 +18,12 @@ a contract is resolved by its ``contract_id`` and the route is the registry row'
 
 Three rules decide whether a route is in that map:
 
-* the entry is ``surface: "rest"``, its ``status`` is ``proposed`` or ``announced``, and it declares
+* the entry is ``surface: "rest"``, its ``status`` is ``announced``, and it declares
   ``headers_implemented: true``. A header is a claim, and the record only carries one for an entry
-  that declares the emitter;
+  that declares the emitter. A ``proposed`` entry emits nothing: the policy says both emitters act
+  only on ``announced``, and a header for a deprecation consumers were never told about announces
+  something that is not on offer. The checker rejects ``headers_implemented: true`` on a
+  ``proposed`` entry too, so that branch is defence in depth rather than the only guard;
 * its ``contract_id`` is the ``contract_id`` of a registry row, which names the route;
 * its ``sunset_date`` is not in the past, and not before its announcement date, so the ``Sunset``
   value never precedes the ``Deprecation`` value. A deprecation whose removal date has passed is no
@@ -43,9 +46,11 @@ that deprecate the same contract.
 
 Structural validity mirrors the checker for the fields this module reads: schema id, ``entries``
 array, the id, surface, stability, status, boolean, selector and date fields, duplicate ids, entry
-order, and a duplicate emitting contract. The policy rules — the 180/31-day window, evidence
-existence, the registry and MCP cross-checks, and the announcement timing — stay in that gate and
-are not copied here, because a second copy of a business rule drifts from the first.
+order, and a duplicate emitting contract. The surface enum is the record's, not this module's: a
+``proxy`` entry is valid here and emits nothing, because the proxy is its emitter. The policy rules
+— the 180/31-day window, evidence existence, the registry and MCP cross-checks, and the
+announcement timing — stay in that gate and are not copied here, because a second copy of a
+business rule drifts from the first.
 """
 
 from __future__ import annotations
@@ -71,8 +76,16 @@ DEFAULT_REGISTRY: Final = (
 
 SCHEMA: Final = "ibex.deprecations.v1"
 _HEADER_SURFACE: Final = "rest"
-_EMITTING_STATUSES: Final = frozenset({"proposed", "announced"})
-_SURFACES: Final = frozenset({"rest", "grpc", "mcp"})
+# The policy in 16-compatibility-and-versioning.md is explicit: both emitters act only on
+# ``announced``. A ``proposed`` entry is a plan and a ``withdrawn`` one was cancelled, so neither
+# is announced on the wire. The checker also forbids ``headers_implemented: true`` on a
+# ``proposed`` entry, so this is defence in depth: the emitter must not depend on that gate to
+# keep a plan off the wire.
+_EMITTING_STATUSES: Final = frozenset({"announced"})
+# The record's surface enum, not the set of surfaces this module emits for. A proxy entry is a
+# valid record entry (the proxy announces it), so rejecting it here would fail the whole record
+# closed and silence the REST headers the moment the record gains its first proxy deprecation.
+_SURFACES: Final = frozenset({"rest", "grpc", "mcp", "proxy"})
 _STABILITIES: Final = frozenset({"stable", "beta"})
 _STATUSES: Final = frozenset({"proposed", "announced", "withdrawn"})
 _ENUMS: Final = (("surface", _SURFACES), ("stability", _STABILITIES), ("status", _STATUSES))

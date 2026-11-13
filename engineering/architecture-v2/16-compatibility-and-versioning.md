@@ -33,12 +33,15 @@ of what a consumer is owed. An `announced` entry must therefore record `announce
 | Surface | How the contract is identified | `stable` window | `beta` window |
 |---|---|---|---|
 | REST | `contract_id` row in [`contracts/rest-route-registry.json`](contracts/rest-route-registry.json) | 180 days | 31 days |
+| Proxy route | exact request `path` recorded on the entry, matched by the proxy | 180 days | 31 days |
 | gRPC method | `<package>.<Service>/<Method>` in `packages/proto/proto` | 180 days | 31 days |
 | MCP tool schema | tool `name` in `services/mcp-operator/mcp_tools.json` or `services/mcp-memory/mcp_tools.json` | 180 days | 31 days |
 
-The same window applies to all three surfaces. The surface changes how the contract is identified and which registry
+The same window applies to all four surfaces. The surface changes how the contract is identified and which registry
 proves it exists, not how long a consumer has to migrate. The middle column names the identity an entry records; only
-the REST and MCP rows resolve against a committed registry that the check reads, which
+the REST and MCP rows resolve against a committed registry that the check reads. A `proxy` entry names an exact route
+path and the check validates its grammar and uniqueness, not its presence in a served route set; the gRPC and proxy
+rows therefore prove no registry membership, which
 [What the check proves, and what it does not](#what-the-check-proves-and-what-it-does-not) states explicitly.
 
 `internal` rows in the REST registry are operational routes, not public contracts, and are not recorded as
@@ -48,7 +51,7 @@ itself runs from the announcement.
 
 ### Announcement headers
 
-A REST deprecation is announced on the wire with standard headers, not vendor headers:
+A REST or proxy deprecation is announced on the wire with standard headers, not vendor headers:
 
 | Header | Standard | Value |
 |---|---|---|
@@ -65,19 +68,25 @@ than `Mon, 01 Feb 2027 00:00:00 GMT`, 31 days later.
 `Sunset` timestamp must not be earlier than its `Deprecation` timestamp. The former `X-IBEX-Deprecation`,
 `X-IBEX-Deprecation-Date`, `X-IBEX-Sunset-Date`, and `X-IBEX-Successor` headers are retired and must not be emitted.
 
-This table is the policy, and two emitters now implement it for REST: `services/api/app/middleware/deprecations.py` (the management API) and `services/proxy/internal/http/deprecations.go` (the proxy). Both emit only for an entry that is **announced**, has `headers_implemented: true`, and whose `sunset_date` is today or later; an entry that is `proposed`, `withdrawn`, or past its sunset emits nothing. `Link` is the remaining gap: neither emitter writes it.
+This table is the policy, and two emitters implement it, one per surface: `services/api/app/middleware/deprecations.py`
+for `rest` (the management API) and `services/proxy/internal/http/deprecations.go` for `proxy`. `grpc` and `mcp` have no
+runtime emitter: no service writes a deprecation header for a method or a tool, and their protocols define none to
+write. Each emitter acts only on an entry that is **announced**, has `headers_implemented: true`, and whose
+`sunset_date` is today or later; an entry that is `proposed`, `withdrawn`, or past its sunset emits nothing. `Link` is
+the remaining gap: neither emitter writes it.
 
-Header enforcement is therefore per surface, because only REST has a standard header to set:
+Header enforcement is therefore per surface, because only `rest` and `proxy` have a standard header to set:
 
 | Surface | `headers_implemented` | What the notice is |
 |---|---|---|
-| `rest` | `true` once the emitter ships (it has: the two emitters above), and a `rest` entry cannot reach `announced` on `false` | the three response headers above; `Deprecation` and `Sunset` are emitted, `Link` is not yet |
+| `rest` | `true` once the emitter ships (it has: `services/api/app/middleware/deprecations.py`), and a `rest` entry cannot reach `announced` on `false` | the three response headers above; `Deprecation` and `Sunset` are emitted, `Link` is not yet |
+| `proxy` | `true` once the emitter ships (it has: `services/proxy/internal/http/deprecations.go`), and a `proxy` entry cannot reach `announced` on `false` | the three response headers above; `Deprecation` and `Sunset` are emitted, `Link` is not yet |
 | `grpc` | `false` always: the protocol defines no deprecation response header | the committed record, with the method comment naming the successor |
 | `mcp` | `false` always: MCP defines no deprecation header for a tool | the committed record, with the tool description naming the successor |
 
 The flag is a declaration, not an observation: the check reads `headers_implemented` and an `evidence` path that exists,
-and neither proves an emitter. A green run never says a `rest` response actually carries the headers. For `grpc` and
-`mcp` the record itself is the notice of record, and no HTTP header claim is made for them.
+and neither proves an emitter. A green run never says a `rest` or `proxy` response actually carries the headers. For
+`grpc` and `mcp` the record itself is the notice of record, and no HTTP header claim is made for them.
 
 ### The record
 
@@ -87,15 +96,16 @@ and neither proves an emitter. A green run never says a `rest` response actually
 | Field | Rule |
 |---|---|
 | `id` | Unique, stable record key. Entries are sorted by it. |
-| `surface` | `rest`, `grpc`, or `mcp`. |
+| `surface` | `rest`, `proxy`, `grpc`, or `mcp`. |
 | `contract_id` | REST and gRPC only. The REST registry's `contract_id`, or `<package>.<Service>/<Method>` for gRPC. |
+| `path` | `proxy` only, and required there: one exact route path, `/`-leading with no trailing slash, template, query, or fragment. Present on any other surface is an `unknown-field` failure. |
 | `tool`, `server` | MCP only. The tool `name` and the server, `operator` or `memory`. |
 | `successor` | The replacement contract or tool. Required, and must differ from the deprecated contract. |
 | `stability` | `stable` or `beta`. For REST and MCP it must equal the registry row's value. |
 | `notice_date`, `sunset_date` | `YYYY-MM-DD`. `notice_date` is when the promise was planned; `sunset_date` is the removal date. |
 | `announced_on` | `YYYY-MM-DD`. The date consumers were told. Absent or `null` on a `proposed` or `withdrawn` entry, required once `status` is `announced`, never earlier than `notice_date`, and never later than the day of the check. The support window is measured from this field when it is recorded. |
 | `status` | `proposed`, `announced`, or `withdrawn`. |
-| `headers_implemented` | Boolean, and per surface: `true` only for `rest`, and only after an emitter ships; `false` for `grpc` and `mcp`, whose protocols define no deprecation header. No `rest` entry reaches `announced` on `false`; `grpc` and `mcp` reach it on `false` because the record is their notice. |
+| `headers_implemented` | Boolean, and per surface: `true` only for `rest` and `proxy`, and only after an emitter ships; `false` for `grpc` and `mcp`, whose protocols define no deprecation header. No `rest` or `proxy` entry reaches `announced` on `false`; `grpc` and `mcp` reach it on `false` because the record is their notice. |
 | `evidence` | Repository-relative file. It must exist when the entry is `announced`. |
 
 **An empty `entries` array is the correct 1.0 state.** Nothing is deprecated today, and an empty list proves nothing
@@ -103,11 +113,11 @@ is: the record cannot claim a deprecation that does not exist. An entry is added
 anticipation of one.
 
 `status` moves in one direction: `proposed` while the replacement and migration note are being built, `announced`
-once the notice is published — for `rest`, once the headers are implemented as well — and the evidence exists,
-`withdrawn` if the plan is cancelled before sunset. `announced_on` is set by the move to `announced`, and that date is
-what starts the clock, so it cannot precede `notice_date`, cannot be in the future, and cannot be present while the
-entry is `proposed`. A `proposed` or `withdrawn` entry carries `headers_implemented: false`; an `announced` `rest`
-entry may not; an `announced` entry whose `sunset_date` has passed fails the check until it is withdrawn.
+once the notice is published — for `rest` or `proxy`, once the headers are implemented as well — and the evidence
+exists, `withdrawn` if the plan is cancelled before sunset. `announced_on` is set by the move to `announced`, and that
+date is what starts the clock, so it cannot precede `notice_date`, cannot be in the future, and cannot be present while
+the entry is `proposed`. A `proposed` or `withdrawn` entry carries `headers_implemented: false`; an `announced` `rest`
+or `proxy` entry may not; an `announced` entry whose `sunset_date` has passed fails the check until it is withdrawn.
 
 ### The check
 
@@ -123,11 +133,17 @@ The check reads the record and both registries, uses no network, and prints sort
 - a `rest` entry whose `contract_id` is absent from the REST registry, or whose `stability` disagrees with that row;
 - an `mcp` entry whose `server` is not `operator` or `memory`, whose `tool` is absent from that server's
   `mcp_tools.json`, or whose `stability` disagrees with the tool's descriptor row;
+- a `proxy` entry whose `path` is missing, or is not one exact route path (no trailing slash, template, query, or
+  fragment), or a `path` present on any other surface;
+- two `proxy` entries that both announce one `path`, reported as
+  `duplicate-path: <first id> and <second id> both announce <path>`. The scope matches the proxy loader's: only an
+  entry the loader announces (`status: announced` with `headers_implemented: true`) enters the check, so two
+  proposals, or a proposal beside an announcement, may name the same path;
 - an empty `successor`, or a `successor` that names the contract itself;
-- `headers_implemented: true` on a `grpc` or `mcp` entry, which has no standard header to implement, or on a `rest`
-  entry that is still `proposed` or `withdrawn`;
-- `status: announced` on a `rest` entry with `headers_implemented: false`, with an `evidence` path that is not an
-  existing file inside the repository, or with a `sunset_date` already in the past;
+- `headers_implemented: true` on a `grpc` or `mcp` entry, which has no standard header to implement, or on a `rest` or
+  `proxy` entry that is still `proposed` or `withdrawn`;
+- `status: announced` on a `rest` or `proxy` entry with `headers_implemented: false`, with an `evidence` path that is
+  not an existing file inside the repository, or with a `sunset_date` already in the past;
 - an unknown `surface`/`stability`/`status` value, an unknown or missing field, a schema id other than
   `ibex.deprecations.v1`, a duplicate `id`, or entries not sorted by `id`.
 
@@ -141,9 +157,10 @@ phantom contract fails without a workflow change.
 |---|---|---|
 | Is the record a valid `ibex.deprecations.v1` document? | **yes** | schema id, exact field set per surface, no unknown fields, enum values, `headers_implemented` boolean, unique `id`, entries sorted by `id` |
 | Does every entry keep its class window? | **yes** | `sunset_date` minus the announcement date (`announced_on` when recorded, otherwise `notice_date`) in whole days against 180 (`stable`) / 31 (`beta`); every date field must be an exact `YYYY-MM-DD`, an `announced` entry must carry an `announced_on` no earlier than its `notice_date` and no later than the day of the check, and a `proposed` or `withdrawn` entry must carry none |
-| Is the header flag right for the surface? | **yes** | `headers_implemented: true` fails on a `grpc` or `mcp` entry, which has no standard deprecation header, and on a `proposed` or `withdrawn` `rest` entry; an `announced` `rest` entry fails on `false` |
-| Can a `grpc` or `mcp` entry be announced without headers? | **yes** | those entries record `headers_implemented: false` and reach `announced` on the record plus an existing `evidence` path; only `rest` must reach `true` first |
-| Does a declared `headers_implemented: true` prove an emitter exists? | **no** | the flag is a declaration plus an existing `evidence` path; the check does not read a header from a running response. The two emitters named above are exercised by their own tests, but a green check does not prove a given `rest` route sends the header |
+| Is the header flag right for the surface? | **yes** | `headers_implemented: true` fails on a `grpc` or `mcp` entry, which has no standard deprecation header, and on a `proposed` or `withdrawn` `rest` or `proxy` entry; an `announced` `rest` or `proxy` entry fails on `false` |
+| Can a `grpc` or `mcp` entry be announced without headers? | **yes** | those entries record `headers_implemented: false` and reach `announced` on the record plus an existing `evidence` path; only `rest` and `proxy` must reach `true` first |
+| Can two `proxy` entries announce one path? | **no** | the second fails as `duplicate-path`; the check mirrors the proxy loader's startup check, so its scope is the entries the loader would announce, not every entry that names the path |
+| Does a declared `headers_implemented: true` prove an emitter exists? | **no** | the flag is a declaration plus an existing `evidence` path; the check does not read a header from a running response. The two emitters named above are exercised by their own tests, but a green check does not prove a given `rest` route or `proxy` path sends the header |
 | Does a `rest` entry name a real contract, with the recorded stability? | **yes** | cross-check against [`contracts/rest-route-registry.json`](contracts/rest-route-registry.json) |
 | Does an `mcp` entry name a real tool on a known server, with the recorded stability? | **yes** | cross-check against that server's `mcp_tools.json` (`operator` or `memory`), including the tool's recorded `stability` |
 | Does a `grpc` entry name a real method? | **no** (this check) | field set, types, enums, dates, window, successor, evidence and status are checked; `check_deprecations.py` does not resolve the `contract_id` against a method list. The registry now carries `grpc_methods` (20 rows) and [`check_contract_registry.py`](../../services/api/scripts/check_contract_registry.py) derives those IDs from the proto tree, but the *deprecation* check has not been wired to that array |
@@ -159,7 +176,13 @@ drift and fails the check; a title-only change still passes, because the hash is
 
 ### Deliberately out of scope
 
-The policy, the record, and the gate are in place, and two REST emitters implement it: `services/api/app/middleware/deprecations.py` and `services/proxy/internal/http/deprecations.go`. Each reads the committed record and emits `Deprecation` and `Sunset` for an `announced` entry with `headers_implemented: true` whose sunset has not passed; `Link` is still not emitted by either. That condition is why `headers_implemented` exists: for a `rest` entry it stops a `proposed` entry becoming `announced` before an emitter ships, with existing evidence, while a `grpc` or `mcp` entry keeps it `false` because the record is its notice. Three further gaps are deliberate:
+The policy, the record, and the gate are in place, and two emitters implement it, one per surface:
+`services/api/app/middleware/deprecations.py` for `rest` and `services/proxy/internal/http/deprecations.go` for
+`proxy`. Each reads the committed record and emits `Deprecation` and `Sunset` for an `announced` entry with
+`headers_implemented: true` whose sunset has not passed; `Link` is still not emitted by either, and `grpc`/`mcp` have no
+emitter at all. That condition is why `headers_implemented` exists: for a `rest` or `proxy` entry it stops a `proposed`
+entry becoming `announced` before an emitter ships, with existing evidence, while a `grpc` or `mcp` entry keeps it
+`false` because the record is its notice. Three further gaps are deliberate:
 
 - a `grpc` entry is validated structurally only: field set, field types, enums, dates, window, successor, evidence and status. `check_deprecations.py` resolves its `contract_id` against no method list, although the contract registry's `grpc_methods` array now exists and is derived from the proto tree by `check_contract_registry.py`. gRPC shapes are also gated by `buf-breaking`, which runs as a blocking job under `ci-gate-go`.
 - a `rest` entry's `successor` is not required to be a registered contract, because the successor may be a contract

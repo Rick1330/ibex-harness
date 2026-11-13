@@ -195,6 +195,115 @@ func TestUnit_loadProxyDeprecationNotices_malformedRecordFailsStartup(t *testing
 	})
 }
 
+// duplicateTestPath is the one path every duplicate-scope case names, so the
+// assertions can look it up without repeating the literal.
+const duplicateTestPath = "/v1/chat/completions"
+
+// nonAnnouncingProxyEntry is a valid proxy entry that does not announce, so the
+// loader drops it and it never enters the notice map. headers_implemented is
+// false because the record checker rejects true on a proposed or withdrawn
+// entry, and the scope below mirrors the checker's.
+func nonAnnouncingProxyEntry(id, status string) string {
+	return `{"id":"` + id + `","surface":"proxy","path":"` + duplicateTestPath + `",` +
+		`"stability":"stable","notice_date":"` + testDeprecationNotice + `",` +
+		`"sunset_date":"` + testDeprecationSunset + `","status":"` + status + `",` +
+		`"successor":"/v2/chat/completions","headers_implemented":false,` +
+		`"evidence":"engineering/architecture-v2/16-compatibility-and-versioning.md"}`
+}
+
+// duplicatePathCase is one record whose entries share a path, with the outcome
+// the loader must produce for it.
+type duplicatePathCase struct {
+	name    string
+	entries []string
+	// wantErr is the exact startup error; empty means the record must load.
+	wantErr string
+	// wantNotice is whether the shared path is still announced after a load.
+	wantNotice bool
+}
+
+// duplicatePathCases are the records with a repeated path. The scope is the
+// loader's notice map, not the surface: only an entry it announces is a
+// duplicate, so a proposal may name the same path as an announcement, and two
+// proposals may name the same path as each other.
+// services/api/scripts/check_deprecations.py mirrors exactly this scope for
+// proxy entries.
+func duplicatePathCases() []duplicatePathCase {
+	return []duplicatePathCase{
+		{
+			name: "two announcing entries fail startup",
+			entries: []string{
+				announcedProxyEntry("d1", duplicateTestPath),
+				announcedProxyEntry("d2", duplicateTestPath),
+			},
+			wantErr: `entry "d2": path "/v1/chat/completions" is already announced by another proxy entry`,
+		},
+		{
+			name: "announcement then proposal is allowed",
+			entries: []string{
+				announcedProxyEntry("d1", duplicateTestPath),
+				nonAnnouncingProxyEntry("d2", "proposed"),
+			},
+			wantNotice: true,
+		},
+		{
+			name: "proposal then announcement is allowed",
+			entries: []string{
+				nonAnnouncingProxyEntry("d1", "proposed"),
+				announcedProxyEntry("d2", duplicateTestPath),
+			},
+			wantNotice: true,
+		},
+		{
+			name: "two proposals are allowed",
+			entries: []string{
+				nonAnnouncingProxyEntry("d1", "proposed"),
+				nonAnnouncingProxyEntry("d2", "proposed"),
+			},
+		},
+		{
+			name: "two withdrawn entries are allowed",
+			entries: []string{
+				nonAnnouncingProxyEntry("d1", "withdrawn"),
+				nonAnnouncingProxyEntry("d2", "withdrawn"),
+			},
+		},
+	}
+}
+
+// TestUnit_loadProxyDeprecationNotices_duplicatePathScope pins which repeated
+// paths are refused and which are not. The refusal itself is already covered as
+// a rejection case; this pins the message that names the colliding entry and
+// path, and the boundary: only a second announcing entry on a path is an error.
+func TestUnit_loadProxyDeprecationNotices_duplicatePathScope(t *testing.T) {
+	t.Parallel()
+	for _, tc := range duplicatePathCases() {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			notices, err := loadProxyDeprecationNotices(writeDeprecationRecord(t, strings.Join(tc.entries, ",")))
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected startup error %q, got notices=%v", tc.wantErr, notices)
+				}
+				if got := err.Error(); got != tc.wantErr {
+					t.Fatalf("startup error: got %q want %q", got, tc.wantErr)
+				}
+				if notices != nil {
+					t.Fatalf("notices on failure: %v", notices)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("record must not fail startup: %v", err)
+			}
+			if _, announced := notices[duplicateTestPath]; announced != tc.wantNotice {
+				t.Fatalf("shared path announced = %v, want %v (notices=%v)", announced, tc.wantNotice, notices)
+			}
+		})
+	}
+}
+
 func TestUnit_loadProxyDeprecationNotices_announcedProxyEntry(t *testing.T) {
 	t.Parallel()
 	path := writeDeprecationRecord(t, announcedProxyEntry("d1", "/v1/chat/completions"))
