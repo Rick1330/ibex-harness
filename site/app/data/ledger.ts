@@ -75,7 +75,7 @@ export const capabilities: Capability[] = [
   {
     name: 'Embedding model identity',
     status: 'PROVISIONAL',
-    detail: 'The embedding identity is recorded and configurable: model id and dimensions per deployment profile, in engineering/MODEL_INVENTORY.md and infra/model-inventory.v1.json. No re-embed path exists — the only embedding task is a no-op, and there is no generation column or backfill task. Licence and weights-revision fields are not recorded for any model; BAAI/bge-m3 carries a revision only in the v1-single-node Compose file. The dev bundle runs deterministic stub geometry at an overridden dimension, so this is a configuration record, not a semantic-quality claim.',
+    detail: 'The embedding identity is recorded on every embedded row and configurable: the model id, plus the revision appended as @revision (for example bge-m3@r1) when IBEX_MEMORY_EMBEDDING_MODEL_REVISION is set, so two revisions of one model id cannot share an identity. The search fence must be given that full string and is off by default. No re-embed path exists — the only embedding task is a no-op, and there is no generation column or backfill task. Licence and model-revision fields are still unrecorded in the inventory for every model; BAAI/bge-m3 carries a weights revision only in the v1-single-node Compose file. The dev bundle runs deterministic stub geometry at an overridden dimension, so this is a configuration record, not a semantic-quality claim.',
     href: '/docs/architecture/status-and-evidence',
   },
   {
