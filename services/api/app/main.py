@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -35,6 +36,11 @@ from app.errors import (
 from app.http_metrics import HTTPMetricsMiddleware
 from app.logutil import install_request_id_log_filter, request_id_for_log
 from app.middleware.csrf import CSRFMiddleware
+from app.middleware.deprecations import (
+    DeprecationHeaders,
+    DeprecationHeadersMiddleware,
+    load_deprecation_headers,
+)
 from app.middleware.request_id import RequestIdMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.model_policy_publish import (
@@ -96,6 +102,11 @@ class ApiRuntimeOverrides:
     model_policy_publisher: ModelPolicyPublisher | None = None
     budget_publisher: BudgetPublisher | None = None
     enqueue_org_deletion: Callable[[str, str], None] | None = None
+    # Test/runtime wiring for the deprecation emitter: both default to the committed
+    # ``engineering/architecture-v2/contracts/`` files. A test points them at a temporary
+    # record so the committed one is never mutated.
+    deprecation_record: Path | None = None
+    deprecation_registry: Path | None = None
 
 
 @dataclass
@@ -163,7 +174,13 @@ def create_app(
     application.add_exception_handler(StarletteHTTPException, http_exception_handler)
     application.add_exception_handler(Exception, unhandled_error_handler)
     _mount_routers(application)
-    _mount_middleware(application, cfg)
+    _mount_middleware(
+        application,
+        cfg,
+        # Read once, here: uvicorn constructs the app once per process, and the middleware
+        # never touches the record per request. An untrusted record yields an empty map.
+        load_deprecation_headers(hooks.deprecation_record, hooks.deprecation_registry),
+    )
     return application
 
 
@@ -197,9 +214,18 @@ def _mount_routers(application: FastAPI) -> None:
         application.include_router(router)
 
 
-def _mount_middleware(application: FastAPI, cfg: Settings) -> None:
+def _mount_middleware(
+    application: FastAPI,
+    cfg: Settings,
+    deprecations: DeprecationHeaders,
+) -> None:
     # Middleware: last added = outermost. CORS must be outermost (Sonar/FastAPI).
     # CSRF is pure ASGI so RequestId contextvars remain visible to handlers.
+    # The deprecation emitter sits closest to the router, where the matched route is
+    # already in the scope, and is mounted only when the record produces a route: with
+    # today's empty record the stack is byte-for-byte what it was before this middleware.
+    if deprecations.routes:
+        application.add_middleware(DeprecationHeadersMiddleware, routes=deprecations.routes)
     application.add_middleware(SecurityHeadersMiddleware)
     application.add_middleware(HTTPMetricsMiddleware)
     application.add_middleware(CSRFMiddleware, settings=cfg)
