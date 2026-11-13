@@ -9,39 +9,65 @@ import (
 // P2-03: ClickHouse schema evolution has no gate.
 //
 // golang-migrate applies the embedded *.up.sql files verbatim, and ClickHouse
-// has no transactional rollback for most DDL. A `DROP TABLE` or `TRUNCATE` in
-// an up migration destroys production analytics data with no recovery path.
-// This gate refuses the five destructive forms named in P2-03 before the
+// has no transactional rollback for most DDL. A `DROP TABLE`, a `TRUNCATE`, or a
+// `DELETE FROM` in an up migration destroys production analytics data with no
+// recovery path. This gate refuses the destructive forms listed below before the
 // migration set can be applied.
 //
-// Scope: the detector table below is exactly those five patterns. DROP DATABASE
-// and DROP VIEW are not covered today; extending the gate is one entry in
-// destructiveDDLDetectors plus one fixture case, and is deliberately left to a
-// decision that names the failure it prevents.
+// Detected, case-insensitively, in executable SQL only (comments, string
+// literals, and quoted identifiers are blanked before matching):
+//
+//	DROP TABLE   DROP COLUMN   CLEAR COLUMN
+//	DELETE FROM  RENAME        TRUNCATE
+//	ALTER … DROP    ALTER … DELETE
+//
+// The last two are scoped to statements that start with ALTER, because
+// `ALTER TABLE … DROP PARTITION` (or DROP INDEX / DROP PROJECTION) and
+// `ALTER TABLE … DELETE WHERE` destroy data without naming a table or a column.
+//
+// Not detected, and therefore still a manual review item: DROP DATABASE,
+// DROP VIEW, DROP DICTIONARY, DROP FUNCTION, DROP USER/ROLE, OPTIMIZE … FINAL,
+// and every statement that rewrites rather than removes data (MODIFY COLUMN,
+// MODIFY TTL, ATTACH/DETACH PARTITION). Extending the gate is one entry in
+// destructiveDDLDetectors or alterScopedDetectors plus one fixture case, and is
+// deliberately left to a decision that names the failure it prevents.
 //
 // The gate is a unit test, not a runtime check: it scans the embedded migration
 // files, so it runs offline with no ClickHouse container.
 
-// destructiveDDLDetectors maps a reported pattern name to its matcher. Matching
-// runs against an uppercased statement with comments and string literals
-// removed, so prose and column defaults cannot trip the gate.
-var destructiveDDLDetectors = []struct {
+// ddlDetector is one refused pattern: the name a failure reports and the
+// matcher that recognises it in an uppercased statement.
+type ddlDetector struct {
 	pattern string
 	re      *regexp.Regexp
-}{
+}
+
+// destructiveDDLDetectors match anywhere in a statement. Matching runs against
+// an uppercased statement with comments and quoted text removed, so prose and
+// column defaults cannot trip the gate.
+var destructiveDDLDetectors = []ddlDetector{
 	{"DROP TABLE", regexp.MustCompile(`\bDROP\s+TABLE\b`)},
 	{"DROP COLUMN", regexp.MustCompile(`\bDROP\s+COLUMN\b`)},
+	{"CLEAR COLUMN", regexp.MustCompile(`\bCLEAR\s+COLUMN\b`)},
+	{"DELETE FROM", regexp.MustCompile(`\bDELETE\s+FROM\b`)},
 	{"RENAME", regexp.MustCompile(`\bRENAME\b`)},
 	{"TRUNCATE", regexp.MustCompile(`\bTRUNCATE\b`)},
 }
 
-// alterDropRe matches any DROP inside an ALTER statement. It is separate from
-// the table above because `ALTER TABLE ... DROP PARTITION` (or DROP INDEX /
-// DROP PROJECTION) destroys data without naming a table or a column.
-var alterDropRe = regexp.MustCompile(`\bDROP\b`)
+// alterScopedDetectors match only when the statement starts with ALTER. They are
+// separate from the table above because `ALTER TABLE … DROP PARTITION` (or
+// DROP INDEX / DROP PROJECTION) and `ALTER TABLE … DELETE WHERE` destroy data
+// without naming a table or a column.
+var alterScopedDetectors = []ddlDetector{
+	{alterDropPattern, regexp.MustCompile(`\bDROP\b`)},
+	{alterDeletePattern, regexp.MustCompile(`\bDELETE\b`)},
+}
 
-// alterDropPattern is the finding name for that separate ALTER … DROP rule.
-const alterDropPattern = "ALTER ... DROP"
+// Finding names for the two ALTER-scoped rules.
+const (
+	alterDropPattern   = "ALTER ... DROP"
+	alterDeletePattern = "ALTER ... DELETE"
+)
 
 // reviewedExceptions is the companion record P2-03 allows: a migration file
 // name mapped to the written reason it may contain destructive DDL. It is
@@ -137,9 +163,28 @@ func TestUnit_DestructiveDDL_CatchesPatterns(t *testing.T) {
 		{"alter drop partition", "ALTER TABLE ibex.llm_traces DROP PARTITION 202601", "ALTER ... DROP"},
 		{"alter drop index", "ALTER TABLE ibex.x DROP INDEX idx_y", "ALTER ... DROP"},
 		{"alter drop projection", "ALTER TABLE ibex.x DROP PROJECTION p", "ALTER ... DROP"},
+		{"alter delete where", "ALTER TABLE ibex.llm_traces DELETE WHERE event_date < '2026-01-01'", "ALTER ... DELETE"},
+		{"alter delete on cluster", "ALTER TABLE ibex.llm_traces ON CLUSTER ibex DELETE WHERE org_id = 'x'", "ALTER ... DELETE"},
+		{"clear column", "ALTER TABLE ibex.llm_traces CLEAR COLUMN provider IN PARTITION 202601", "CLEAR COLUMN"},
+		{"clear column if exists", "ALTER TABLE ibex.x CLEAR COLUMN IF EXISTS y", "CLEAR COLUMN"},
+		{"delete from", "DELETE FROM ibex.llm_traces WHERE org_id = '00000000-0000-0000-0000-000000000000'", "DELETE FROM"},
+		{"delete from on cluster", "DELETE FROM ibex.llm_traces ON CLUSTER ibex WHERE event_date < today()", "DELETE FROM"},
 		{"truncate table", "TRUNCATE TABLE ibex.llm_traces", "TRUNCATE"},
 		{"truncate bare", "TRUNCATE ibex.llm_traces", "TRUNCATE"},
 		{"lowercase", "drop table ibex.llm_traces", "DROP TABLE"},
+		{
+			// Backslash escaping: the scanner must stay inside the literal at
+			// `\'`, or the statement after it is blanked and the drop is missed.
+			"backslash escaped quote hides a drop",
+			`SELECT 'it\'s fine'); DROP TABLE ibex.llm_traces`,
+			"DROP TABLE",
+		},
+		{
+			// The backtick scanner must close before the drop, not run past it.
+			"backtick identifier closes before a drop",
+			"CREATE TABLE ibex.y (`a\\`b` String) ENGINE = MergeTree ORDER BY tuple();\nDROP TABLE ibex.z",
+			"DROP TABLE",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -208,6 +253,10 @@ GROUP BY org_id, hour`,
 // TestUnit_DestructiveDDL_IgnoresCommentsAndLiterals proves that prose and
 // column defaults cannot trip the gate. Migration 000004 carries the sentence
 // "drops are logged/metric'd only"; a naive substring scan fails on it.
+//
+// The escaped-quote and backtick cases pin the false-positive half of the
+// escaping bug: a keyword inside `'it\'s a DROP TABLE …'` or inside a
+// backtick-quoted identifier is data, not a statement.
 func TestUnit_DestructiveDDL_IgnoresCommentsAndLiterals(t *testing.T) {
 	t.Parallel()
 
@@ -226,6 +275,14 @@ func TestUnit_DestructiveDDL_IgnoresCommentsAndLiterals(t *testing.T) {
 		{
 			"string literal default",
 			"CREATE TABLE ibex.y (note String DEFAULT 'drop column') ENGINE = MergeTree ORDER BY note",
+		},
+		{
+			"backslash escaped quote around a keyword",
+			`CREATE TABLE ibex.y (note String DEFAULT 'it\'s a DROP TABLE, not a command') ENGINE = MergeTree ORDER BY note`,
+		},
+		{
+			"backtick identifier escapes a keyword",
+			"CREATE TABLE ibex.y (`odd\\`DROP TABLE` String) ENGINE = MergeTree ORDER BY tuple()",
 		},
 	}
 	for _, tc := range cases {
@@ -278,35 +335,28 @@ type sqlStatement struct {
 }
 
 // findings returns the refused patterns in the statement: one per detector that
-// matches, plus the ALTER … DROP rule when the statement drops data without
-// naming a table or a column.
+// matches, plus the ALTER-scoped rules when the statement is an ALTER that drops
+// or deletes data without naming a table or a column.
 func (s sqlStatement) findings() []destructiveFinding {
 	if s.upper == "" {
 		return nil
 	}
-	findings := s.detectorFindings()
-	if s.isAlterDrop() {
-		findings = append(findings, destructiveFinding{pattern: alterDropPattern, snippet: s.snippet()})
+	findings := matchDetectors(destructiveDDLDetectors, s)
+	if strings.HasPrefix(s.upper, "ALTER") {
+		findings = append(findings, matchDetectors(alterScopedDetectors, s)...)
 	}
 	return findings
 }
 
-// detectorFindings returns one finding per destructiveDDLDetectors entry that
-// matches the statement.
-func (s sqlStatement) detectorFindings() []destructiveFinding {
+// matchDetectors returns one finding per detector that matches the statement.
+func matchDetectors(detectors []ddlDetector, s sqlStatement) []destructiveFinding {
 	var findings []destructiveFinding
-	for _, d := range destructiveDDLDetectors {
+	for _, d := range detectors {
 		if d.re.MatchString(s.upper) {
 			findings = append(findings, destructiveFinding{pattern: d.pattern, snippet: s.snippet()})
 		}
 	}
 	return findings
-}
-
-// isAlterDrop reports whether the statement is an ALTER that drops data without
-// naming a table or a column.
-func (s sqlStatement) isAlterDrop() bool {
-	return strings.HasPrefix(s.upper, "ALTER") && alterDropRe.MatchString(s.upper)
 }
 
 const maxSnippetLen = 120
@@ -337,8 +387,9 @@ func splitSQLStatements(stripped string) []sqlStatement {
 }
 
 // stripSQLCommentsAndLiterals replaces `--` line comments, `/* */` block
-// comments, and single-quoted string literals with spaces, preserving newlines
-// and byte offsets so the statement text stays readable in a failure message.
+// comments, single-quoted string literals, and backtick-quoted identifiers with
+// spaces, preserving newlines and byte offsets so the statement text stays
+// readable in a failure message.
 func stripSQLCommentsAndLiterals(sqlText string) string {
 	scanner := sqlScanner{src: sqlText}
 	scanner.out.Grow(len(sqlText))
@@ -357,19 +408,27 @@ type sqlScanner struct {
 	pos int
 }
 
-// step consumes one token: a comment, a string literal, or one byte of SQL.
+// step consumes one token: a comment, a quoted literal or identifier, or one
+// byte of SQL.
 func (s *sqlScanner) step() {
 	switch {
 	case s.atLineComment():
 		s.skipLineComment()
 	case s.atBlockComment():
 		s.skipBlockComment()
-	case s.peek() == '\'':
-		s.skipLiteral()
+	case s.atQuote():
+		s.skipQuoted()
 	default:
 		s.out.WriteByte(s.peek())
 		s.pos++
 	}
+}
+
+// atQuote reports whether the scanner is on a byte that opens quoted text:
+// a single-quoted string literal or a backtick-quoted identifier.
+func (s *sqlScanner) atQuote() bool {
+	quote := s.peek()
+	return quote == '\'' || quote == '`'
 }
 
 // peek returns the byte at pos, or 0 at end of input.
@@ -394,7 +453,11 @@ func (s *sqlScanner) atBlockComment() bool { return s.peek() == '/' && s.next() 
 
 func (s *sqlScanner) atBlockEnd() bool { return s.peek() == '*' && s.next() == '/' }
 
-func (s *sqlScanner) atEscapedQuote() bool { return s.peek() == '\'' && s.next() == '\'' }
+// atDoubledQuote reports whether the scanner is on the two-byte escape that
+// writes one quote inside quoted text: two single quotes, or two backticks.
+func (s *sqlScanner) atDoubledQuote(quote byte) bool {
+	return s.peek() == quote && s.next() == quote
+}
 
 // skipLineComment blanks `-- ...` through the end of the line, keeping the
 // newline that ends it.
@@ -427,22 +490,46 @@ func (s *sqlScanner) skipBlockComment() {
 	}
 }
 
-// skipLiteral blanks the inside of a single-quoted literal, keeping its quotes
-// and its doubled-quote escape.
-func (s *sqlScanner) skipLiteral() {
-	s.out.WriteByte('\'')
+// skipQuoted blanks the inside of a quoted literal or identifier, keeping its
+// quotes and its escapes.
+//
+// ClickHouse accepts two escapes, and both must be consumed as one unit or the
+// closing quote is found in the wrong place. A doubled quote (two single quotes
+// or two backticks) writes one quote; a backslash escapes the byte after it
+// (`\'`, a backslash before a backtick, `\\`). Ignoring the backslash form
+// produces both halves of the bug: it hides a statement that follows the
+// literal (`'it\'s fine'); DROP TABLE ibex.llm_traces`) and it invents one
+// inside it (`'it\'s a DROP TABLE, not a command'`).
+func (s *sqlScanner) skipQuoted() {
+	quote := s.peek()
+	s.out.WriteByte(quote)
 	s.pos++
 	for s.pos < len(s.src) {
-		if s.atEscapedQuote() {
-			s.out.WriteString("''")
+		switch {
+		case s.atDoubledQuote(quote):
+			s.out.WriteByte(quote)
+			s.out.WriteByte(quote)
 			s.pos += 2
-			continue
-		}
-		if s.peek() == '\'' {
-			s.out.WriteByte('\'')
+		case s.peek() == quote:
+			s.out.WriteByte(quote)
 			s.pos++
 			return
+		case s.peek() == '\\':
+			s.skipBackslashEscape()
+		default:
+			s.writeBlank()
+			s.pos++
 		}
+	}
+}
+
+// skipBackslashEscape blanks a backslash and the byte it escapes, keeping a
+// newline if the escaped byte is one. A backslash at the end of the input
+// escapes nothing and is blanked alone.
+func (s *sqlScanner) skipBackslashEscape() {
+	s.writeBlank()
+	s.pos++
+	if s.pos < len(s.src) {
 		s.writeBlank()
 		s.pos++
 	}

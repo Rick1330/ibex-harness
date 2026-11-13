@@ -56,7 +56,7 @@ claim set hard to trust, which is why the stage is not exited.
 
 ### 3.1 Closed in this change (21 rows)
 
-Each row is closed by a merged change in this tree; none is a claim that a hosted run exists.
+Each row is closed by a change that exists in this tree; per §3.2 the row closes when that change merges. None is a claim that a hosted run exists.
 
 | ID | What the tree now shows |
 |---|---|
@@ -67,7 +67,7 @@ Each row is closed by a merged change in this tree; none is a claim that a hoste
 | P1-02 | `infra/scripts/mcp-memory-test-ci.sh`:20-39 (`--check-base` against the PR base ref) and the same in `mcp-operator-test-ci.sh`; both CI jobs fetch the base branch first (`.github/workflows/ci.yml`:1385, :1451) |
 | P1-03 | ADR-0084 is `Accepted` for its five shapes with runtime provisional; ADR-0092, 0093 and 0094 are `Accepted` on named importers; ADR-0095 is `Accepted, partially wired` |
 | P1-25 | `ci-gate-memory-benchmark` is always-run and a protected context (`.github/workflows/memory-benchmark.yml`:917-949; `.github/branch-protection-main.json`) |
-| P1-43 | The quickstart uses `make v1-secrets` and the tracked `infra/compose/v1-single-node/.env.example`; the copy-a-root-`.env.example` step is gone (`site/content/docs/12.deployment/05.v1-single-node.md`:22-30, :124) |
+| P1-43 | The quickstart's copy-a-root-`.env.example` first step is gone: it now states that no `.env` is required for the Compose path and that the Make targets read the tracked `infra/compose/dev/.env.example` through `--env-file` (`site/content/docs/01.getting-started/03.quickstart.md`:56-60). The separate v1-single-node profile uses `make v1-secrets` and the tracked `infra/compose/v1-single-node/.env.example` (`site/content/docs/12.deployment/05.v1-single-node.md`:22-30, :124) |
 | P1-44 | The Console pages say 8 of 10: `site/content/docs/02.architecture/01.overview.md`:91, `05.status-and-evidence.md`:59, `site/content/docs/11.operations/08.console.md`:14 |
 | P1-45 | `site/content/docs/12.deployment/02.environment-variables.md`:82-101 lists `IBEX_OPERATOR_*` and the two Console origins |
 | P2-03 | `infra/migrations/clickhouse/destructive_ddl_unit_test.go` refuses destructive DDL and has a reviewed-exception record; it runs with the ClickHouse migration tests (`.github/workflows/ci.yml`:579) |
@@ -78,7 +78,7 @@ Each row is closed by a merged change in this tree; none is a claim that a hoste
 | G01 | `check_reproducibility.py` runs in CI (`.github/workflows/ci.yml`:117-131) |
 | G02 | `IBEX_REQUIRE_JSONSCHEMA=1` turns a missing validator into a failure and `jsonschema` is installed first, in both `benchmark-gate` (`.github/workflows/ci.yml`:1091-1103) and `verify-benchmark-pipeline` (`.github/workflows/benchmark.yml`:105-117) |
 | G03 | `check-alert-routing.py` runs in `ci-gate-repo` (`.github/workflows/ci.yml`:103) and `slo-rules-check` is its own job feeding `ci-gate-repo` (:338-356, :3127) |
-| R01 | All 20 contract IDs declared in `surfaces.ts` resolve in the registry; `services/console/tests/surfaces.test.ts` fails on one that does not |
+| R01 | All 10 distinct contract IDs declared by the 8 contract-holding surfaces in `surfaces.ts` resolve in the registry; the other 10 surfaces are `contractStatus: "design"` and name no contract. `services/console/tests/surfaces.test.ts` fails on a declared ID that does not resolve |
 | R03 | ADR-0089 §2's table now matches `surfaces.ts`: 8 core `live` with registry contracts, 2 core `preview` design, 8 platform `preview` design, and the module is named as the source of truth |
 | R04 | `check_reproducibility.py` validates the proxy latency artifact (`benchmark-data.json`) through `PROXY_ARTIFACT_NAME` instead of exempting it |
 
@@ -379,7 +379,7 @@ Ledger: `D1` `G9` (2).
 7. **R02's four roots are declared in two places**, not one range: `proseRoots` at `site/scripts/check-claims.mjs`:14 and `numericRoot` at `:24`. The claim (four roots, never `app/components/**` or `public/benchmarks/*.json`) holds; the citation is corrected.
 8. **O03's "two-row fixture"** is in `transcript.txt`:7 (`INSERT 0 2`), not in the report JSON; the report carries the RTO number at `:10` and the pass flag at `:14`.
 9. **R04 verified exactly:** `benchmark-data.json` holds 65 runs and does not match the `*-benchmark-data.json` suffix the checker globs (`check_reproducibility.py`:99), so it was outside the four validated artifacts at `55a62bc4`. Superseded in this pass: the checker now names the proxy artifact through `PROXY_ARTIFACT_NAME` and validates it (§3.1 R04).
-10. **R01 verified exactly:** 20 distinct contract IDs were declared across `surfaces.ts`:42-246; 18 were absent from `engineering/architecture-v2/contracts/rest-route-registry.json` at `55a62bc4` (only `operator.evidence.summary.v1` and `operator.platform.health.v1` appeared). Superseded in this pass: the registry now carries all 20 (§3.1 R01).
+10. **R01 verified exactly:** 20 distinct contract IDs were declared across `surfaces.ts`:42-246; 18 were absent from `engineering/architecture-v2/contracts/rest-route-registry.json` at `55a62bc4` (only `operator.evidence.summary.v1` and `operator.platform.health.v1` appeared). Superseded in this pass: 18 of those 20 IDs were rewritten to real registry IDs or removed from design-only surfaces, so 2 of the historical 20 remain in the registry and `surfaces.ts` now declares 10 distinct IDs across 8 surfaces (10 after the `+` splits), all 10 resolving; the other 10 surfaces carry `contractStatus: "design"` and name no contract (§3.1 R01).
 11. **`P1-15` has no closure receipt, and none is claimed.** It appears in no engineering document other than the audit. Its substance is closed in the tree — `services/auth/cmd/auth/main.go`:396,424-437 builds server TLS credentials outside `development` and fails closed otherwise — but no negative test asserts it, so it remains a stage-3 row rather than a closed item.
 12. **`P1-02` is restated exactly as the plan records it (`31`:133).** The descriptors are committed records (`services/mcp-memory/mcp_tools.json`, `services/mcp-operator/mcp_tools.json`) checked in CI at `infra/scripts/mcp-memory-test-ci.sh`:19 and `infra/scripts/mcp-operator-test-ci.sh`:25. The residual is record-to-live-surface only: no previous-commit diff and no deprecation record per schema change.
 13. **`GAP-003` is not a second gap.** It is the same defect as `P0-14` (no complete route/proto/event/MCP contract registry), so it is recorded as an alias on that row and adds no row to any count.
