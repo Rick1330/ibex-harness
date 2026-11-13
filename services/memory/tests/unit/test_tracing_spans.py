@@ -70,6 +70,8 @@ async def test_one_trace_covers_the_four_dependency_spans(
     assert dict(spans["vector_search"].attributes) == {
         "db.system": "postgresql",
         "search.mode": "user_retrieval",
+        # Empty: this request searched across embedding generations (the default).
+        "search.embedding_model_fence": "",
     }
     assert dict(spans["full_text_search"].attributes) == {
         "db.system": "postgresql",

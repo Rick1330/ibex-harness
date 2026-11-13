@@ -187,14 +187,36 @@ class MemoryReadRepository:
         self._settings = settings
         self._rerank_client = rerank_client
 
-    async def find_similar(self, query: FindSimilarQuery) -> list[MemorySearchResult]:
+    async def find_similar(
+        self,
+        query: FindSimilarQuery,
+        *,
+        embedding_model: str | None = None,
+    ) -> list[MemorySearchResult]:
+        """Vector + full-text retrieval for one tenant and agent.
+
+        ``embedding_model`` is the optional model-generation fence forwarded to the
+        vector store: only rows recorded under that model id are candidates. It is
+        off by default on purpose -- existing rows were recorded under the id this
+        deployment used before the setting existed (``bge-m3``), so fencing every
+        search by the configured id would silently drop the corpus the moment an
+        operator points it at the embedder's real ``model_id``. Turning the fence on
+        belongs with a re-embed, not with a default.
+
+        Scope: the fence bounds the *vector* channel, which is where cross-generation
+        similarity is meaningless. The full-text channels match tokens and score by
+        ``ts_rank_cd``, never by cosine, so they can still surface a row recorded under
+        another generation. A caller that needs a generation-pure page must fence
+        ``app/read/full_text.py`` as well, and should prefer disabling the fallback and
+        hybrid channels until it does.
+        """
         _validate_find_similar_query(query)
         if _hybrid_enabled(self._settings, query_text=query.query_text):
-            return await self._find_similar_hybrid(query)
-        return await self._find_similar_fallback(query)
+            return await self._find_similar_hybrid(query, embedding_model=embedding_model)
+        return await self._find_similar_fallback(query, embedding_model=embedding_model)
 
     async def _find_similar_hybrid(
-        self, query: FindSimilarQuery
+        self, query: FindSimilarQuery, *, embedding_model: str | None = None
     ) -> list[MemorySearchResult]:
         """Both channels run; RRF picks the window composite scoring then orders.
 
@@ -207,7 +229,7 @@ class MemoryReadRepository:
         """
         # Independent sessions, so the two channels overlap instead of adding up.
         vector_candidates, fts_hits = await asyncio.gather(
-            self._vector_candidates(query),
+            self._vector_candidates(query, embedding_model=embedding_model),
             full_text_search(
                 self._session_factory,
                 FullTextSearchQuery(
@@ -238,9 +260,7 @@ class MemoryReadRepository:
         guard = PiiReadGuard()
         if self._rerank_available():
             return await self._rank_reranked(query, fused, rank_opts, guard)
-        return await self._rank_fused_window(
-            query, fused, rank_opts, _Refill(guard=guard)
-        )
+        return await self._rank_fused_window(query, fused, rank_opts, _Refill(guard=guard))
 
     def _rerank_available(self) -> bool:
         return self._settings.rerank_enabled and self._rerank_client is not None
@@ -271,9 +291,7 @@ class MemoryReadRepository:
         """
         client = self._rerank_client
         if client is None:  # pragma: no cover - _rerank_available() guards the call
-            return await self._rank_fused_window(
-                query, fused, rank_opts, _Refill(guard=guard)
-            )
+            return await self._rank_fused_window(query, fused, rank_opts, _Refill(guard=guard))
         window = fused[: self._settings.rerank_max_candidates]
         hydrated = await self._hydrate_hits(
             org_id=query.org_id,
@@ -284,9 +302,7 @@ class MemoryReadRepository:
             client, _RerankWindow(query, window, hydrated, guard)
         )
         if overrides is None:
-            return await self._rank_fused_window(
-                query, fused, rank_opts, _Refill(hydrated, guard)
-            )
+            return await self._rank_fused_window(query, fused, rank_opts, _Refill(hydrated, guard))
         # Blocked rows are excluded from ranking as well as from the rerank stage: a
         # blocked row holding its retrieval relevance could keep `ranked` non-empty
         # while the caller's final PII filter removes the only entry, turning a
@@ -306,9 +322,7 @@ class MemoryReadRepository:
         # the only way to return something, but mixing reranked and unreranked
         # relevance inside one page is not: the whole page comes from the fused order.
         RERANK.labels(result="emptied").inc()
-        return await self._rank_fused_window(
-            query, fused, rank_opts, _Refill(hydrated, guard)
-        )
+        return await self._rank_fused_window(query, fused, rank_opts, _Refill(hydrated, guard))
 
     async def _rerank_scores(
         self,
@@ -394,9 +408,7 @@ class MemoryReadRepository:
         pii = carried.guard or PiiReadGuard()
         rows: dict[UUID, HydratedHit] = dict(carried.hydrated or {})
         admitted = fused[: query.limit]
-        rows.update(
-            await self._hydrate_missing(query, admitted, rows)
-        )
+        rows.update(await self._hydrate_missing(query, admitted, rows))
         ranked = rank_hydrated_hits(admitted, rows, rank_opts)
         allowed = pii.allow(ranked)
         kept = self._collapse(allowed)
@@ -434,20 +446,22 @@ class MemoryReadRepository:
         async with self._session_factory() as session, session.begin():
             await set_service_org(session, org_id)
             rows = (
-                await session.execute(
-                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text  # nosec B608
-                        _CONFLICT_GROUPS_SNAPSHOT_SQL
-                    ),
-                    {
-                        "org_id": str(org_id),
-                        "memory_ids": [str(memory_id) for memory_id in hydrated],
-                    },
+                (
+                    await session.execute(
+                        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text  # nosec B608
+                            _CONFLICT_GROUPS_SNAPSHOT_SQL
+                        ),
+                        {
+                            "org_id": str(org_id),
+                            "memory_ids": [str(memory_id) for memory_id in hydrated],
+                        },
+                    )
                 )
-            ).mappings().all()
-        groups = {
-            UUID(str(row["memory_id"])): tuple(
-                UUID(str(value)) for value in row["conflict_groups"]
+                .mappings()
+                .all()
             )
+        groups = {
+            UUID(str(row["memory_id"])): tuple(UUID(str(value)) for value in row["conflict_groups"])
             for row in rows
         }
         return {
@@ -477,9 +491,9 @@ class MemoryReadRepository:
         )
 
     async def _find_similar_fallback(
-        self, query: FindSimilarQuery
+        self, query: FindSimilarQuery, *, embedding_model: str | None = None
     ) -> list[MemorySearchResult]:
-        vector_candidates = await self._vector_candidates(query)
+        vector_candidates = await self._vector_candidates(query, embedding_model=embedding_model)
         vector_hydrated = await self._hydrate_hits(
             org_id=query.org_id,
             candidates=vector_candidates,
@@ -534,12 +548,16 @@ class MemoryReadRepository:
         record_suppressed(len(allowed), len(kept))
         return kept[: query.limit]
 
-    async def _vector_candidates(self, query: FindSimilarQuery) -> list[RankedCandidate]:
+    async def _vector_candidates(
+        self, query: FindSimilarQuery, *, embedding_model: str | None = None
+    ) -> list[RankedCandidate]:
         with start_span(
             "vector_search",
             attributes={
                 "db.system": "postgresql",
                 "search.mode": "user_retrieval",
+                # Empty means the request is unfenced across embedding generations.
+                "search.embedding_model_fence": embedding_model or "",
             },
         ):
             vector_hits = await self._vector_store.search(
@@ -550,6 +568,7 @@ class MemoryReadRepository:
                     limit=query.limit,
                     min_similarity=query.min_similarity,
                     mode=SearchMode.USER_RETRIEVAL,
+                    embedding_model=embedding_model,
                 )
             )
             return _vector_candidates(vector_hits)

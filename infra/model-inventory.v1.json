@@ -1,0 +1,376 @@
+{
+  "schema_version": "model-inventory.v1",
+  "status": "provisional",
+  "status_note": "Identity and configuration are recorded and enforced at startup. Licences and most revisions are not recorded, and no re-embedding path exists. See engineering/MODEL_INVENTORY.md and the status ledger.",
+  "companion_document": "engineering/MODEL_INVENTORY.md",
+  "field_semantics": {
+    "null": "Not recorded by the repository. Never a guess, and never 'unknown but probably X'.",
+    "absent": "Not applicable to the role (for example, dimensions on a chat model).",
+    "revision": "The weight or serving revision the deployment is tied to. A client-library version is not a revision.",
+    "fallback": "What the code does when the model cannot be used. Not a preference order.",
+    "pin_status": "Whether a tag, digest, or revision would move under you on a redeploy.",
+    "state": "profile_default | catalogued | fail_closed | deployed_unnamed | cited_not_deployed | benchmark_stub"
+  },
+  "recorded_at": "2026-11-13",
+  "roles": {
+    "extraction_llm": [
+      {
+        "model_id": "gpt-4o-mini",
+        "profile": "openai",
+        "provider": "openai",
+        "state": "profile_default",
+        "revision": null,
+        "dimensions": null,
+        "licence": null,
+        "fallback": "None. An unknown extraction profile raises, and profile openai raises without OPENAI_API_KEY.",
+        "configuration_env": [
+          "IBEX_WORKER_EXTRACTION_OPENAI_MODEL",
+          "EXTRACTION_OPENAI_MODEL"
+        ],
+        "pin_status": "Floating alias: the id resolves to whatever the provider currently serves, and no dated snapshot is recorded.",
+        "sources": [
+          "services/worker/app/config.py:181-188",
+          "services/worker/app/extraction/factory.py:18-45",
+          "services/worker/app/extraction/openai_provider.py:11"
+        ]
+      },
+      {
+        "model_id": "Qwen2.5-14B-Instruct",
+        "profile": "vllm",
+        "provider": "vllm",
+        "state": "profile_default",
+        "revision": null,
+        "dimensions": null,
+        "licence": null,
+        "fallback": "None. Profile vllm raises without a base URL; there is no provider chain in the worker.",
+        "configuration_env": [
+          "IBEX_WORKER_EXTRACTION_VLLM_MODEL",
+          "EXTRACTION_VLLM_MODEL"
+        ],
+        "pin_status": "Floating label: the id must match the vLLM server's served-model name, and no weights revision is recorded.",
+        "sources": [
+          "services/worker/app/config.py:205-212",
+          "services/worker/app/extraction/factory.py:47-60",
+          "services/worker/app/extraction/vllm_provider.py:10"
+        ]
+      }
+    ],
+    "embedding": [
+      {
+        "model_id": "all-MiniLM-L6-v2",
+        "profile": "cpu",
+        "provider": "stub",
+        "state": "profile_default",
+        "revision": null,
+        "dimensions": 384,
+        "licence": null,
+        "fallback": "None. Profile cpu returns the deterministic stub, so no model is served and this id is a geometry label.",
+        "configuration_env": [
+          "IBEX_EMBEDDING_PROFILE",
+          "IBEX_EMBEDDING_MODEL",
+          "IBEX_EMBEDDING_DIM"
+        ],
+        "pin_status": "Label only; nothing is loaded, so nothing is pinned. The shipped dev bundle overrides the dimension to 1024.",
+        "sources": [
+          "services/embedder/app/profiles.py:28",
+          "services/embedder/app/factory.py:54-61",
+          "services/embedder/app/config.py:155-166",
+          "infra/compose/bundles/memory-context.yml:70-71"
+        ]
+      },
+      {
+        "model_id": "BAAI/bge-m3",
+        "profile": "gpu",
+        "provider": "tei",
+        "state": "profile_default",
+        "revision": "5617a9f61b028005a4858fdac845db406aefb181",
+        "revision_scope": "Recorded in the v1-single-node deployment only; the embedder itself sends a model id and no revision.",
+        "dimensions": 1024,
+        "licence": null,
+        "fallback": "None. gpu without IBEX_EMBEDDING_TEI_BASE_URL raises, and a gpu-to-stub fallback is explicitly prohibited as a geometry lie.",
+        "configuration_env": [
+          "IBEX_EMBEDDING_PROFILE",
+          "IBEX_EMBEDDING_TEI_BASE_URL",
+          "IBEX_EMBEDDING_MODEL",
+          "IBEX_EMBEDDING_DIM"
+        ],
+        "pin_status": "Pinned in v1-single-node by image digest and the weights revision above. Unpinned in infra/reference/tei-embeddings.compose.yaml (floating cpu-1.6, no --revision).",
+        "sources": [
+          "services/embedder/app/profiles.py:30",
+          "services/embedder/app/factory.py:13-14,92-97",
+          "infra/compose/v1-single-node/compose.yml:335-338",
+          "infra/compose/v1-single-node/compose.yml:358,361-362",
+          "infra/reference/tei-embeddings.compose.yaml:47"
+        ]
+      },
+      {
+        "model_id": "text-embedding-3-large",
+        "profile": "hosted",
+        "provider": "openai",
+        "state": "profile_default",
+        "revision": null,
+        "dimensions": 3072,
+        "dimensions_note": "3072 default; Matryoshka 1..3072 via the API dimensions parameter.",
+        "licence": null,
+        "fallback": "Provider default when IBEX_EMBEDDING_MODEL is unset. No cross-provider fallback exists: voyage fails closed.",
+        "configuration_env": [
+          "IBEX_EMBEDDING_PROFILE",
+          "IBEX_EMBEDDING_HOSTED_PROVIDER",
+          "IBEX_EMBEDDING_MODEL",
+          "IBEX_EMBEDDING_DIM",
+          "IBEX_EMBEDDING_HOSTED_API_KEY"
+        ],
+        "pin_status": "Unpinned by construction: the API takes a model id and offers no snapshot or revision parameter.",
+        "sources": [
+          "services/embedder/app/profiles.py:31-35",
+          "services/embedder/app/hosted/providers.py:34-37,67-72,79-82",
+          "services/embedder/app/hosted/env.py:35-50"
+        ]
+      },
+      {
+        "model_id": "text-embedding-3-small",
+        "profile": "hosted",
+        "provider": "openai",
+        "state": "catalogued",
+        "revision": null,
+        "dimensions": 1536,
+        "dimensions_note": "1536 maximum; Matryoshka via the API dimensions parameter.",
+        "licence": null,
+        "fallback": "Catalogued only; not a profile default.",
+        "configuration_env": [
+          "IBEX_EMBEDDING_MODEL",
+          "IBEX_EMBEDDING_DIM"
+        ],
+        "pin_status": "Unpinned by construction, as for every hosted model.",
+        "sources": [
+          "services/embedder/app/hosted/providers.py:5-8,34-37"
+        ]
+      },
+      {
+        "model_id": "text-embedding-ada-002",
+        "profile": "hosted",
+        "provider": "openai",
+        "state": "catalogued",
+        "revision": null,
+        "dimensions": 1536,
+        "dimensions_note": "Fixed 1536; no dimensions parameter.",
+        "licence": null,
+        "fallback": "Catalogued only; a dimension other than 1536 raises GeometryMismatchError.",
+        "configuration_env": [
+          "IBEX_EMBEDDING_MODEL",
+          "IBEX_EMBEDDING_DIM"
+        ],
+        "pin_status": "Unpinned by construction, as for every hosted model.",
+        "sources": [
+          "services/embedder/app/hosted/providers.py:8,99-112,125-134"
+        ]
+      },
+      {
+        "model_id": "embed-english-v3.0",
+        "profile": "hosted",
+        "provider": "cohere",
+        "state": "profile_default",
+        "revision": null,
+        "dimensions": 1024,
+        "dimensions_note": "Fixed 1024; the v3.0 family takes no output dimension.",
+        "licence": null,
+        "fallback": "Cohere provider default. A mismatched dimension raises GeometryMismatchError.",
+        "configuration_env": [
+          "IBEX_EMBEDDING_PROFILE",
+          "IBEX_EMBEDDING_HOSTED_PROVIDER",
+          "IBEX_EMBEDDING_MODEL",
+          "IBEX_EMBEDDING_DIM",
+          "IBEX_EMBEDDING_HOSTED_API_KEY"
+        ],
+        "pin_status": "Unpinned by construction: no output dimension and no revision parameter.",
+        "sources": [
+          "services/embedder/app/hosted/providers.py:41,73-78,137-142"
+        ]
+      },
+      {
+        "model_id": "embed-multilingual-v3.0",
+        "profile": "hosted",
+        "provider": "cohere",
+        "state": "catalogued",
+        "revision": null,
+        "dimensions": 1024,
+        "dimensions_note": "Fixed 1024.",
+        "licence": null,
+        "fallback": "Catalogued only; a mismatched dimension raises GeometryMismatchError.",
+        "configuration_env": [
+          "IBEX_EMBEDDING_MODEL",
+          "IBEX_EMBEDDING_DIM"
+        ],
+        "pin_status": "Unpinned by construction, as for every hosted model.",
+        "sources": [
+          "services/embedder/app/hosted/providers.py:42,137-142"
+        ]
+      },
+      {
+        "model_id": "embed-english-light-v3.0",
+        "profile": "hosted",
+        "provider": "cohere",
+        "state": "catalogued",
+        "revision": null,
+        "dimensions": 384,
+        "dimensions_note": "Fixed 384. Not storable: the memories column requires 1024 dimensions.",
+        "licence": null,
+        "fallback": "Catalogued only; a mismatched dimension raises GeometryMismatchError.",
+        "configuration_env": [
+          "IBEX_EMBEDDING_MODEL",
+          "IBEX_EMBEDDING_DIM"
+        ],
+        "pin_status": "Unpinned by construction, as for every hosted model.",
+        "sources": [
+          "services/embedder/app/hosted/providers.py:43,137-142",
+          "infra/migrations/postgres/000017_memory_schema_v2_expand.up.sql:13-16,36-45"
+        ]
+      },
+      {
+        "model_id": "embed-multilingual-light-v3.0",
+        "profile": "hosted",
+        "provider": "cohere",
+        "state": "catalogued",
+        "revision": null,
+        "dimensions": 384,
+        "dimensions_note": "Fixed 384. Not storable, as above.",
+        "licence": null,
+        "fallback": "Catalogued only; a mismatched dimension raises GeometryMismatchError.",
+        "configuration_env": [
+          "IBEX_EMBEDDING_MODEL",
+          "IBEX_EMBEDDING_DIM"
+        ],
+        "pin_status": "Unpinned by construction, as for every hosted model.",
+        "sources": [
+          "services/embedder/app/hosted/providers.py:44,137-142"
+        ]
+      },
+      {
+        "model_id": null,
+        "profile": "hosted",
+        "provider": "voyage",
+        "state": "fail_closed",
+        "revision": null,
+        "dimensions": null,
+        "licence": null,
+        "fallback": "Fails closed: provider_defaults raises BackendUnavailableError for voyage.",
+        "configuration_env": [
+          "IBEX_EMBEDDING_HOSTED_PROVIDER"
+        ],
+        "pin_status": "Not applicable: no client exists, so nothing is pinned.",
+        "sources": [
+          "services/embedder/app/hosted/providers.py:55-63,79-82"
+        ]
+      }
+    ],
+    "reranker": [
+      {
+        "model_id": null,
+        "state": "deployed_unnamed",
+        "revision": null,
+        "dimensions": null,
+        "licence": null,
+        "fallback": "Degrade to the fused order: reranking is default-off and every failure returns the fusion order rather than an error.",
+        "configuration_env": [
+          "IBEX_MEMORY_RERANK_ENABLED",
+          "IBEX_MEMORY_RERANK_BASE_URL",
+          "IBEX_MEMORY_RERANK_API_TOKEN",
+          "IBEX_RERANK_API_TOKEN"
+        ],
+        "pin_status": "Unpinned and unnamed: the client posts to TEI POST /rerank, so the model is whatever the server was started with. No Compose service, Helm value, or --model-id for a reranker exists in this repository.",
+        "sources": [
+          "services/memory/app/config.py:247-263",
+          "services/memory/app/clients/rerank.py:1-14"
+        ]
+      },
+      {
+        "model_id": "BAAI/bge-reranker-v2-m3",
+        "state": "cited_not_deployed",
+        "revision": null,
+        "dimensions": null,
+        "licence": null,
+        "fallback": "Not deployed; nothing resolves this id.",
+        "configuration_env": [],
+        "pin_status": "Cited only, in the references of ADR-0093, a record that is still Proposed and deploys no model.",
+        "sources": [
+          "engineering/adr/0093-cross-encoder-rerank-as-relevance.md:102"
+        ]
+      },
+      {
+        "model_id": "stub/lexical-overlap@1",
+        "state": "benchmark_stub",
+        "revision": null,
+        "dimensions": null,
+        "licence": null,
+        "fallback": "Not a model; there is nothing to fall back from.",
+        "configuration_env": [],
+        "pin_status": "A deliberately self-naming deterministic stand-in; every artifact it contributes to carries this label in place of a model name.",
+        "sources": [
+          "benchmarks/memory/ranking_quality/rerank_stub.py:1-22"
+        ]
+      }
+    ]
+  },
+  "role_counts": {
+    "extraction_llm": 2,
+    "embedding": 10,
+    "reranker": 3,
+    "total": 15
+  },
+  "not_recorded": {
+    "licence": "all entries",
+    "revision": "all entries except BAAI/bge-m3, whose revision is recorded in the v1-single-node deployment only",
+    "reranker_identity": "the deployed reranker row",
+    "note": "These fields need an owner to fill them. The readiness audit records the same gap as P1-31 and P1-33."
+  },
+  "known_misconfigurations": [
+    {
+      "id": "dev-bundle-dimension-override",
+      "summary": "The dev bundle sets profile cpu with IBEX_EMBEDDING_DIM=1024, so the deterministic stub emits 1024-dimension vectors under the 384-dimension model id all-MiniLM-L6-v2. Writes pass the embedding_dim = 1024 check while the recorded model name describes a model that never runs.",
+      "sources": [
+        "infra/compose/bundles/memory-context.yml:70-71",
+        "services/embedder/app/factory.py:54-61",
+        "services/embedder/app/config.py:155-166",
+        "infra/migrations/postgres/000017_memory_schema_v2_expand.up.sql:13-16,36-45",
+        "infra/bundles/memory-context.json:16"
+      ]
+    },
+    {
+      "id": "no-reembed-path",
+      "summary": "ibex.worker.embedding.noop is still the only embedding task: there is no backfill task and no generation column, so switching an embedding model requires the manual, resumable-by-rerun procedure in engineering/runbooks/re-embed.md. The model fence shipped, but a fence is not a re-embed.",
+      "sources": [
+        "services/worker/app/task_names.py:5,18",
+        "engineering/runbooks/re-embed.md"
+      ]
+    },
+    {
+      "id": "embedding-model-is-declared-not-observed",
+      "summary": "The write path now stamps the configured Settings.embedding_model (default bge-m3) instead of a literal, but that value is the operator's declaration, not the model the embedder reports: write/factory.py still discards result.model_id, so a deployment whose embedder serves a different model than IBEX_MEMORY_EMBEDDING_MODEL records a name that never ran.",
+      "sources": [
+        "services/memory/app/config.py:163-180,426-436",
+        "services/memory/app/write/orchestrator.py:262-273",
+        "services/memory/app/write/after_commit.py:26,50",
+        "services/memory/app/write/factory.py:85-92",
+        "services/memory/app/clients/embedding.py:79,276-281"
+      ]
+    },
+    {
+      "id": "search-fence-is-post-filter",
+      "summary": "SEARCH_SQL and SearchRequest.embedding_model now carry a model fence, but it is off by default and evaluated as a post-filter over the HNSW candidate set, so a fenced search can lose recall while two generations share one column; the full-text channel is not fenced at all. The durable fix is one index per live generation during a re-embed, not a predicate.",
+      "sources": [
+        "services/memory/app/vectorstore/pgvector_store.py:42-43,96-119",
+        "services/memory/app/schemas/search.py:19-48",
+        "services/memory/app/read/repository.py:194-216"
+      ]
+    },
+    {
+      "id": "cache-revision-unset-by-default",
+      "summary": "The embedding cache digest now covers model_id, dimensions and the weights revision, but the revision is hashed only when IBEX_EMBEDDING_MODEL_REVISION is set; leaving it unset keeps the pre-revision byte layout for compatibility, so two deployments that differ only in weights still share digests. Pinning --revision obliges the operator to set the variable, and nothing enforces that pairing.",
+      "sources": [
+        "services/embedder/app/cache/keys.py:28-55",
+        "services/embedder/app/cache/backend.py:97-105",
+        "services/embedder/app/config.py"
+      ]
+    }
+  ]
+}

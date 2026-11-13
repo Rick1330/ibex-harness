@@ -76,7 +76,9 @@ async def explain_hnsw_search_plan(
         )
     )
     result = await session.execute(
-        text(explain_sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+        text(
+            explain_sql
+        ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         {
             "query": vector_literal,
             "org_id": str(params.org_id),
@@ -84,6 +86,8 @@ async def explain_hnsw_search_plan(
             "min_similarity": 0.0,
             "limit": 10,
             "include_historical_candidates": False,
+            # Unfenced probe: the plan gate measures the shape a default search runs.
+            "embedding_model": None,
         },
     )
     return result.scalar_one()
@@ -93,7 +97,9 @@ async def _hide_gin_competing_indexes(session: AsyncSession) -> None:
     """Drop btree indexes that compete with the partial GIN index for the probe shape."""
     for stmt in _DROP_GIN_COMPETING_INDEXES_SQL:
         await session.execute(
-            text(stmt),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            text(
+                stmt
+            ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         )
 
 
@@ -127,7 +133,9 @@ async def explain_gin_probe_plan(
         await prepare_gin_probe_session(session)
         explain_sql = _EXPLAIN_PREFIX + GIN_PROBE_SQL
         result = await session.execute(
-            text(explain_sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            text(
+                explain_sql
+            ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             {"query_text": params.query_text.strip()},
         )
         return result.scalar_one()
@@ -141,7 +149,9 @@ async def _apply_gin_probe_planner_hints(session: AsyncSession) -> None:
         "SET LOCAL max_parallel_workers_per_gather = 0",
     ):
         await session.execute(
-            text(stmt),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            text(
+                stmt
+            ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         )
 
 
@@ -151,7 +161,9 @@ async def run_gin_probe(session: AsyncSession, params: GinExplainParams) -> None
     try:
         await prepare_gin_probe_session(session)
         await session.execute(
-            text(GIN_PROBE_SQL),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            text(
+                GIN_PROBE_SQL
+            ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             {"query_text": params.query_text.strip()},
         )
     finally:

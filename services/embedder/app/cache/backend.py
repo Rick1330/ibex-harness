@@ -11,7 +11,7 @@ from redis.exceptions import RedisError
 
 from app.backends.base import EmbeddingBackend
 from app.cache.context import embed_org_id
-from app.cache.keys import cache_key_for_text
+from app.cache.keys import EmbeddingIdentity, cache_key_for_text
 from app.cache.metrics import record_error, record_hit, record_miss
 from app.cache.redis_store import RedisEmbeddingStore
 from app.cache.wire import decode_vector, encode_vector, is_contract_vector
@@ -22,6 +22,21 @@ from app.validate import validate_embed_input
 logger = logging.getLogger(__name__)
 
 _REDIS_FAIL_OPEN = (RedisError, OSError, TimeoutError)
+
+
+def _resolve_revision(inner: EmbeddingBackend, explicit: str | None) -> str | None:
+    """Return the revision the digest must cover, if the deployment states one.
+
+    The caller's value (``Settings.model_revision``) wins. Otherwise the inner
+    backend's own ``model_revision`` is used when it reports a non-empty string —
+    ``EmbeddingBackend`` does not declare the attribute, so anything else (an
+    autospecced mock, a stray object, ``""`` for "not distinguished") is absent
+    rather than hashed into the key.
+    """
+    if explicit is not None:
+        return explicit
+    reported = getattr(inner, "model_revision", None)
+    return reported if isinstance(reported, str) and reported else None
 
 
 def _dedupe_preserve_order(texts: list[str]) -> tuple[list[str], list[int]]:
@@ -45,6 +60,11 @@ class CachingEmbeddingBackend(EmbeddingBackend):
     Geometry and identity (``name`` / ``model_id`` / ``dimensions`` / ``profile``)
     forward to the inner backend so JSON responses stay unchanged — never
     ``cached:openai``. Org scope comes from the ``embed_org_id`` ContextVar.
+
+    ``model_revision`` is the deployment's weights revision. It is part of every
+    digest so a redeploy that moves the weights under an unchanged model id cannot
+    serve the previous revision's vectors; leave it ``None`` and the digest is
+    byte-identical to the pre-revision layout (no cached vector is invalidated).
     """
 
     def __init__(
@@ -53,12 +73,18 @@ class CachingEmbeddingBackend(EmbeddingBackend):
         store: RedisEmbeddingStore,
         *,
         ttl_seconds: int,
+        model_revision: str | None = None,
     ) -> None:
         if ttl_seconds < 1:
             raise ValueError("ttl_seconds must be >= 1")
         self._inner = inner
         self._store = store
         self._ttl_seconds = ttl_seconds
+        self._identity = EmbeddingIdentity(
+            model_id=inner.model_id,
+            dimensions=inner.dimensions,
+            model_revision=_resolve_revision(inner, model_revision),
+        )
 
     @property
     def inner(self) -> EmbeddingBackend:
@@ -80,13 +106,16 @@ class CachingEmbeddingBackend(EmbeddingBackend):
     def profile(self) -> Profile:
         return self._inner.profile
 
+    @property
+    def model_revision(self) -> str | None:
+        """Weights revision covered by the digest (``None`` = not distinguished)."""
+        return self._identity.model_revision
+
     async def embed(self, texts: list[str]) -> NDArray[np.float32]:
         validate_embed_input(texts)
         org_id = embed_org_id.get()
         if org_id is None:
-            raise MissingOrgContextError(
-                "org_id is required when embedding cache is enabled"
-            )
+            raise MissingOrgContextError("org_id is required when embedding cache is enabled")
         return await self._embed_cached(texts, org_id)
 
     async def _embed_cached(
@@ -97,8 +126,7 @@ class CachingEmbeddingBackend(EmbeddingBackend):
         keys = [
             cache_key_for_text(
                 org_id=org_id,
-                model_id=self._inner.model_id,
-                dimensions=self._inner.dimensions,
+                identity=self._identity,
                 text=text,
             )
             for text in texts

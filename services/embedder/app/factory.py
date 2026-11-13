@@ -81,6 +81,7 @@ def _wrap_with_cache(inner: EmbeddingBackend, settings: Settings) -> CachingEmbe
         inner,
         store,
         ttl_seconds=settings.cache_ttl_seconds,
+        model_revision=settings.model_revision,
     )
 
 
@@ -157,6 +158,7 @@ def _build_hosted_backend(settings: Settings) -> HostedAPIBackend:
 # Registry + legacy load helper (used by tests and old entry points)  #
 # ------------------------------------------------------------------ #
 
+
 def build_registry() -> BackendRegistry:
     """Construct stub backends for all profiles (used in tests and legacy paths).
 
@@ -186,4 +188,5 @@ def load_active_backend(settings: Settings | None = None) -> EmbeddingBackend:
 def get_settings_lazy() -> Settings:
     """Lazy import to avoid circular deps at module load time."""
     from app.config import get_settings
+
     return get_settings()

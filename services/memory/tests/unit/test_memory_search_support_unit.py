@@ -72,8 +72,9 @@ def test_http_error_for_search_database() -> None:
 
 
 def test_http_error_for_search_reraises_unknown() -> None:
+    unknown = RuntimeError("boom")
     with pytest.raises(RuntimeError):
-        http_error_for_search(RuntimeError("boom"))
+        http_error_for_search(unknown)
 
 
 def test_log_search_database_failure_logs_exc_type() -> None:
@@ -199,5 +200,29 @@ async def test_run_memory_search_delegates() -> None:
     )
     await run_memory_search(repo, execution)
     repo.find_similar.assert_awaited_once_with(
-        find_similar_query_from_execution(execution)
+        find_similar_query_from_execution(execution),
+        embedding_model=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_run_memory_search_forwards_the_model_fence() -> None:
+    """An unforwarded request field would be an inert filter: the store would never see it."""
+    repo = MagicMock()
+    repo.find_similar = AsyncMock(return_value=[])
+    org_id = uuid4()
+    agent_id = uuid4()
+    request = SearchMemoriesRequest(
+        agent_id=agent_id,
+        query="q",
+        limit=3,
+        embedding_model="bge-m3",
+    )
+    execution = SearchMemoriesExecution.from_request(
+        org_id=org_id,
+        agent_id=agent_id,
+        request=request,
+        query_embedding=[0.0] * 1024,
+    )
+    await run_memory_search(repo, execution)
+    assert repo.find_similar.await_args.kwargs["embedding_model"] == "bge-m3"

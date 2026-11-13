@@ -14,6 +14,7 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 from app.backends.stub import StubBackend
 from app.cache.backend import CachingEmbeddingBackend
 from app.cache.context import org_context
+from app.cache.keys import EmbeddingIdentity, cache_key_for_text
 from app.cache.metrics import CACHE_ERRORS, CACHE_REQUESTS
 from app.cache.wire import encode_vector
 from app.errors import MissingOrgContextError
@@ -56,8 +57,8 @@ class _MockCache:
     cached: CachingEmbeddingBackend
 
 
-def _mock_cache(*, dim: int = 8, prefill: dict[str, bytes] | None = None) -> _MockCache:
-    data: dict[str, bytes] = dict(prefill or {})
+def _mock_store(data: dict[str, bytes]) -> MagicMock:
+    """In-memory stand-in for RedisEmbeddingStore over ``data``."""
     store = MagicMock()
     store.mget = AsyncMock(side_effect=lambda keys: [data.get(k) for k in keys])
 
@@ -67,12 +68,28 @@ def _mock_cache(*, dim: int = 8, prefill: dict[str, bytes] | None = None) -> _Mo
 
     store.set_many_ex = AsyncMock(side_effect=_set_many)
     store.aclose = AsyncMock()
+    return store
+
+
+def _mock_cache(
+    *,
+    dim: int = 8,
+    prefill: dict[str, bytes] | None = None,
+    revision: str | None = None,
+) -> _MockCache:
+    data: dict[str, bytes] = dict(prefill or {})
+    store = _mock_store(data)
     inner = _counting_inner(dim)
     return _MockCache(
         data=data,
         store=store,
         inner=inner,
-        cached=CachingEmbeddingBackend(inner, store, ttl_seconds=60),
+        cached=CachingEmbeddingBackend(
+            inner,
+            store,
+            ttl_seconds=60,
+            model_revision=revision,
+        ),
     )
 
 
@@ -180,9 +197,7 @@ class TestCachingBackendUnit:
         assert CACHE_REQUESTS.labels(backend="stub", result="miss")._value.get() == (
             misses_before + 2
         )
-        assert CACHE_REQUESTS.labels(backend="stub", result="hit")._value.get() == (
-            hits_before + 1
-        )
+        assert CACHE_REQUESTS.labels(backend="stub", result="hit")._value.get() == (hits_before + 1)
 
     async def test_cross_tenant_no_shared_hit(self) -> None:
         env = _mock_cache()
@@ -219,3 +234,72 @@ class TestCachingBackendUnit:
         with pytest.raises(RuntimeError, match="boom"):
             await env.cached.embed(["hello"])
         assert env.store.set_many_ex.await_count == 0
+
+
+class TestModelRevisionKeying:
+    """The digest must cover the weights revision, not just the model id.
+
+    Two deployments that serve the same ``model_id`` from different weights produce
+    different vectors. Without the revision in the key, the second deployment hits
+    the first one's entries and serves vectors it did not compute.
+    """
+
+    def _key(self, org_id: UUID, text: str, revision: str | None) -> str:
+        return cache_key_for_text(
+            org_id=org_id,
+            identity=EmbeddingIdentity(
+                model_id="all-MiniLM-L6-v2",
+                dimensions=8,
+                model_revision=revision,
+            ),
+            text=text,
+        )
+
+    async def test_configured_revision_is_in_the_written_key(self, org_ctx: UUID) -> None:
+        env = _mock_cache(revision="rev-a")
+        await env.cached.embed(["hello"])
+        assert list(env.data) == [self._key(org_ctx, "hello", "rev-a")]
+
+    async def test_no_revision_writes_the_pre_revision_key(self, org_ctx: UUID) -> None:
+        env = _mock_cache()
+        await env.cached.embed(["hello"])
+        assert list(env.data) == [self._key(org_ctx, "hello", None)]
+
+    async def test_new_revision_misses_entries_written_before_the_change(
+        self, org_ctx: UUID
+    ) -> None:
+        data: dict[str, bytes] = {}
+        store = _mock_store(data)
+        old_inner = _counting_inner()
+        new_inner = _counting_inner()
+        old = CachingEmbeddingBackend(old_inner, store, ttl_seconds=60, model_revision="rev-a")
+        redeployed = CachingEmbeddingBackend(new_inner, store, ttl_seconds=60)
+
+        await old.embed(["hello"])
+        result = await redeployed.embed(["hello"])
+
+        # Recomputed under the unset layout instead of serving rev-a's vector.
+        assert new_inner.embed_calls == [["hello"]]
+        assert len(data) == 2
+        np.testing.assert_array_equal(result[0], _l2_for_text("hello"))
+
+    async def test_reported_revision_of_the_inner_backend_is_used(self) -> None:
+        inner = _counting_inner()
+        inner.model_revision = "rev-inner"
+        cached = CachingEmbeddingBackend(inner, _mock_store({}), ttl_seconds=60)
+        assert cached.model_revision == "rev-inner"
+
+    async def test_explicit_revision_wins_over_the_inner_backend(self) -> None:
+        inner = _counting_inner()
+        inner.model_revision = "rev-inner"
+        cached = CachingEmbeddingBackend(
+            inner, _mock_store({}), ttl_seconds=60, model_revision="rev-config"
+        )
+        assert cached.model_revision == "rev-config"
+
+    async def test_empty_reported_revision_counts_as_absent(self) -> None:
+        """``""`` is the memory-service convention for "not distinguished"."""
+        inner = _counting_inner()
+        inner.model_revision = ""
+        cached = CachingEmbeddingBackend(inner, _mock_store({}), ttl_seconds=60)
+        assert cached.model_revision is None

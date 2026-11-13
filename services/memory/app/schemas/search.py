@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.limits import MAX_SEARCH_LIMIT
 
@@ -16,6 +16,36 @@ class SearchMemoriesRequest(BaseModel):
     limit: int = Field(default=10, ge=1, le=MAX_SEARCH_LIMIT)
     min_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
     min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Model-generation fence: only rows recorded under this embedding model are
+    # eligible. Omitted keeps every generation eligible (historical behaviour).
+    # Without it a query embedded by one model is scored against vectors another
+    # model produced, so cosine similarity stops meaning "related".
+    embedding_model: str | None = Field(
+        default=None,
+        max_length=256,
+        description=(
+            "Only return memories whose vector was recorded under this embedding "
+            "model id (ibex_core.memories.embedding_model). Omit to search across "
+            "generations."
+        ),
+    )
+
+    @field_validator("embedding_model", mode="after")
+    @classmethod
+    def _normalize_embedding_model(cls, value: str | None) -> str | None:
+        """Refuse a blank fence here, not in the store.
+
+        A whitespace-only value would reach the vector store and raise from the query
+        layer, turning a malformed request into a 500. Stripping here also guarantees
+        the compared value is byte-identical to what the write path recorded.
+        """
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            msg = "embedding_model must be non-empty when set"
+            raise ValueError(msg)
+        return trimmed
 
 
 class SearchMemoryHit(BaseModel):
