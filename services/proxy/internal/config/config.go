@@ -114,7 +114,13 @@ type Config struct {
 	// the GAP-002 policy snapshot stage.
 	PolicyPublicKeysJSON string
 	// PolicyMinEpoch is the minimum accepted signing-key epoch (0 accepts any).
-	PolicyMinEpoch         int64
+	PolicyMinEpoch int64
+	// DeprecationsFile is the committed deprecation record read at startup
+	// (IBEX_PROXY_DEPRECATIONS_FILE). Empty selects the repository default,
+	// engineering/architecture-v2/contracts/deprecations.json, resolved against
+	// the working directory and its ancestors; an absent record announces
+	// nothing, while an unreadable or malformed one fails startup.
+	DeprecationsFile       string
 	ContextGRPCTarget      string
 	ContextAssembleTimeout time.Duration
 	// ContextGRPCServiceToken is the shared secret sent as the
