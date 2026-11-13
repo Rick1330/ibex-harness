@@ -8,6 +8,8 @@ RUN go mod download -x
 COPY packages ./packages
 COPY services/proxy ./services/proxy
 COPY infra/provider-capabilities ./infra/provider-capabilities
+COPY engineering/architecture-v2/contracts/deprecations.json \
+     ./engineering/architecture-v2/contracts/deprecations.json
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
     go build -trimpath -o /out/proxy ./services/proxy/cmd/proxy
 
@@ -21,5 +23,13 @@ USER 10001:10001
 COPY --from=build /out/proxy /usr/local/bin/proxy
 COPY --from=build /src/infra/provider-capabilities/manifest.v1.json /etc/ibex/provider-capabilities/manifest.v1.json
 ENV IBEX_PROVIDER_CAPABILITY_MANIFEST=/etc/ibex/provider-capabilities/manifest.v1.json
+# The deprecation loader resolves DefaultDeprecationsFile
+# (engineering/architecture-v2/contracts/deprecations.json) against the working
+# directory and its ancestors, so WORKDIR + the repository-relative path is the
+# record's location. WORKDIR /app makes that resolution deterministic instead of
+# relying on the image's implicit cwd.
+WORKDIR /app
+COPY --from=build /src/engineering/architecture-v2/contracts/deprecations.json \
+     /app/engineering/architecture-v2/contracts/deprecations.json
 EXPOSE 8082
 ENTRYPOINT ["/usr/local/bin/proxy"]

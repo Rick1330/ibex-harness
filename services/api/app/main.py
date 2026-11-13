@@ -243,7 +243,7 @@ def _mount_middleware(
             "Last-Event-ID",
             "Accept",
         ],
-        expose_headers=["X-Request-ID", "X-IBEX-Drain"],
+        expose_headers=["X-Request-ID", "X-IBEX-Drain", "Deprecation", "Sunset"],
         max_age=600,
     )
 

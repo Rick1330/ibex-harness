@@ -60,6 +60,16 @@ COPY --from=deps /app/services/api/.venv ./.venv
 
 COPY services/api/app ./app
 
+# The deprecation emitter resolves its inputs from the repository root, four
+# parents above app/middleware/deprecations.py: /app/services/api/app/middleware
+# -> /app. Copy exactly the two files it reads (the record and the route
+# registry) to that relative location. The rest of contracts/ (evidence,
+# canonicalization vectors, test matrix) is never read at runtime.
+COPY engineering/architecture-v2/contracts/deprecations.json \
+     /app/engineering/architecture-v2/contracts/deprecations.json
+COPY engineering/architecture-v2/contracts/rest-route-registry.json \
+     /app/engineering/architecture-v2/contracts/rest-route-registry.json
+
 USER 10001:10001
 
 EXPOSE 8010

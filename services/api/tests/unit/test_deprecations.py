@@ -111,6 +111,17 @@ def _mcp_entry(**overrides: Any) -> dict[str, Any]:
     return _entry(**base)
 
 
+def _proxy_entry(**overrides: Any) -> dict[str, Any]:
+    """A valid announced proxy deprecation keyed by one exact route path."""
+    base: dict[str, Any] = {
+        "surface": "proxy",
+        "contract_id": None,
+        "path": "/v1/chat/completions",
+    }
+    base.update(overrides)
+    return _entry(**base)
+
+
 def _entry_stability(entries: list[dict[str, Any]]) -> str:
     """Default the registry row to the recorded class, so a window test needs no spec."""
     if not entries:
@@ -345,6 +356,87 @@ def test_unknown_mcp_server_fails(tmp_path: Path, deprecations: ModuleType) -> N
     assert len(failures) == 1, failures
     assert failures[0].startswith("unknown-server: dep.agents.read names server 'worker'")
     assert "['memory', 'operator']" in failures[0]
+
+
+def test_announced_proxy_deprecation_with_an_exact_path_passes(
+    tmp_path: Path, deprecations: ModuleType
+) -> None:
+    """The proxy addresses a route by exact path; a valid entry is the committed shape."""
+    assert _check(tmp_path, deprecations, [_proxy_entry()]) == []
+
+
+def test_proxy_entry_without_a_path_fails(tmp_path: Path, deprecations: ModuleType) -> None:
+    """The proxy rejects a path-less proxy entry at startup, so CI must reject it first."""
+    entry = _proxy_entry()
+    del entry["path"]
+    assert _check(tmp_path, deprecations, [entry]) == ["missing-field: dep.agents.read lacks path"]
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (None, "invalid-field: dep.agents.read.path must be a string, not None"),
+        ("", "empty-field: dep.agents.read has empty path"),
+    ],
+    ids=["null", "empty"],
+)
+def test_proxy_path_must_be_a_non_empty_string(
+    tmp_path: Path, deprecations: ModuleType, path: object, expected: str
+) -> None:
+    """A null or empty selector is not a path, and the dedicated rule owns its message."""
+    entry = _proxy_entry()
+    entry["path"] = path
+    assert _check(tmp_path, deprecations, [entry]) == [expected]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "v1/chat",
+        "/v1/chat/",
+        "/v1/chat/{id}",
+        "/v1/chat?stream=1",
+        "/v1/chat#frag",
+        "/v1/chat completions",
+        "/v1//chat",
+    ],
+    ids=["relative", "trailing-slash", "template", "query", "fragment", "space", "empty-segment"],
+)
+def test_proxy_entry_with_an_invalid_path_fails(
+    tmp_path: Path, deprecations: ModuleType, path: str
+) -> None:
+    """The grammar is the proxy's: one exact route path, never a template or a query."""
+    failures = _check(tmp_path, deprecations, [_proxy_entry(path=path)])
+    assert failures == [
+        (
+            f"invalid-path: dep.agents.read.path {path!r} must be one exact route path "
+            "(no trailing slash, no template, no query)"
+        )
+    ]
+
+
+@pytest.mark.parametrize("value", ["/v1/agents", "", None], ids=["path", "empty", "null"])
+def test_path_on_a_non_proxy_entry_fails(
+    tmp_path: Path, deprecations: ModuleType, value: object
+) -> None:
+    """`path` is the proxy selector: on a REST entry it is a claim nothing reads.
+
+    The message stays the same one `unknown-field` a stray field always produced,
+    including for a null or empty value.
+    """
+    entry = _entry()
+    entry["path"] = value
+    failures = _check(tmp_path, deprecations, [entry])
+    assert failures == ["unknown-field: dep.agents.read has path"]
+
+
+def test_announced_proxy_entry_without_headers_fails(
+    tmp_path: Path, deprecations: ModuleType
+) -> None:
+    """The proxy emits only when the entry declares the headers, so an announced one must."""
+    failures = _check(tmp_path, deprecations, [_proxy_entry(headers_implemented=False)])
+    assert len(failures) == 1, failures
+    assert failures[0].startswith("headers-not-implemented: dep.agents.read is announced")
 
 
 def test_successor_must_be_named_and_must_differ_from_the_contract(

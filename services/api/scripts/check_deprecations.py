@@ -1,11 +1,11 @@
 """Check the committed deprecation record (W5.4).
 
 ``engineering/architecture-v2/contracts/deprecations.json`` records every
-deprecation of a REST contract, a gRPC method, or an MCP tool schema. The policy
-it enforces is stated in
+deprecation of a REST contract, a proxy route, a gRPC method, or an MCP tool
+schema. The policy it enforces is stated in
 ``engineering/architecture-v2/16-compatibility-and-versioning.md``: a ``stable``
 contract gets **180 days** between its notice and its sunset, a ``beta`` contract
-gets **31 days**, and the same window applies to all three surfaces.
+gets **31 days**, and the same window applies to all four surfaces.
 
 The record is the notice of record. An empty ``entries`` array is the correct 1.0
 state: nothing is deprecated, and an empty list proves nothing is. An entry is
@@ -15,7 +15,9 @@ committed and a too-short window cannot be announced.
 An entry carries ``id``, ``surface``, ``stability``, ``notice_date``,
 ``sunset_date``, ``status``, ``successor``, ``headers_implemented``,
 ``evidence``, the surface's selector (``contract_id`` for ``rest``/``grpc``,
-``tool`` + ``server`` for ``mcp``), and the optional ``announced_on``.
+``tool`` + ``server`` for ``mcp``, ``path`` for ``proxy``), and the optional
+``announced_on``. ``path`` is optional in the schema only so a dedicated rule can
+reject it on a non-``proxy`` entry; a ``proxy`` entry must carry it.
 
 ``notice_date`` is when the deprecation was planned; ``announced_on`` is when
 consumers were actually told. The support window is measured from
@@ -47,27 +49,31 @@ promise a window that the real announcement never gave the consumer.
 - an ``mcp`` entry whose ``server`` is not ``operator`` or ``memory``, whose
   ``tool`` is absent from that server's committed ``mcp_tools.json``, or whose
   recorded ``stability`` disagrees with the tool's descriptor entry;
+- a ``proxy`` entry whose ``path`` is missing, or whose ``path`` is not one exact
+  route path (``^/[^/]+(/[^/]+)*$``, with no ``{}``, ``?``, ``#``, or
+  whitespace), or a ``path`` on a non-``proxy`` entry;
 - an empty or blank ``successor``, or a ``successor`` that names the contract
   itself;
 - ``status: announced`` with an ``evidence`` path that is not a string, is
   blank, does not exist as a file inside the repository, or with a
   ``sunset_date`` already in the past;
 - ``headers_implemented: true`` on a ``grpc`` or ``mcp`` entry,
-  ``status: announced`` on a ``rest`` entry with ``headers_implemented: false``,
-  and ``headers_implemented: true`` on a ``rest`` entry that is still
-  ``proposed`` or ``withdrawn``;
+  ``status: announced`` on a ``rest`` or ``proxy`` entry with
+  ``headers_implemented: false``, and ``headers_implemented: true`` on a
+  ``rest`` or ``proxy`` entry that is still ``proposed`` or ``withdrawn``;
 - an unknown ``surface``/``stability``/``status`` value, an unknown or missing
   field, a missing or malformed record schema, a duplicate ``id``, or entries
   that are not sorted by ``id``.
 
 The header rule is per surface because the wire affordance is per surface. A REST
-response can carry RFC 9745 ``Deprecation``, RFC 8594 ``Sunset``, and a
-``Link`` relation; gRPC methods and MCP tools define no standard deprecation
-header, so for them the committed record is the notice of record and
+response and a proxy response can carry RFC 9745 ``Deprecation``, RFC 8594
+``Sunset``, and a ``Link`` relation; gRPC methods and MCP tools define no standard
+deprecation header, so for them the committed record is the notice of record and
 ``headers_implemented`` must be ``false``. The flag is a declaration, not a
 measurement: this check trusts it plus the ``evidence`` path and cannot prove
-that an emitter exists. No middleware or interceptor in ``services/`` writes
-those headers today.
+that an emitter exists. Two emitters write these headers today:
+``services/api/app/middleware/deprecations.py`` for ``rest`` and
+``services/proxy/internal/http/deprecations.go`` for ``proxy``.
 
 A ``grpc`` entry is validated structurally and against the window only. There is
 no committed gRPC method registry to cross-check yet: the REST registry declares
@@ -83,6 +89,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -92,7 +99,7 @@ from typing import Final
 REPO_ROOT: Final = Path(__file__).resolve().parents[3]
 
 SCHEMA: Final = "ibex.deprecations.v1"
-SURFACES: Final = frozenset({"rest", "grpc", "mcp"})
+SURFACES: Final = frozenset({"rest", "grpc", "mcp", "proxy"})
 STABILITIES: Final = frozenset({"stable", "beta"})
 STATUSES: Final = frozenset({"proposed", "announced", "withdrawn"})
 MCP_SERVERS: Final = frozenset({"operator", "memory"})
@@ -111,27 +118,51 @@ _COMMON_FIELDS: Final = (
     "evidence",
 )
 # ``announced_on`` is optional: a proposal has not been announced. It is checked
-# by the announcement rule, not by presence.
-_OPTIONAL_FIELDS: Final = (_ANNOUNCED_FIELD,)
+# by the announcement rule, not by presence. ``path`` is optional in the schema
+# only so a dedicated rule can reject it on a non-proxy entry; a ``proxy`` entry
+# must carry it, and that requirement lives in ``_path_field_failures``.
+_OPTIONAL_FIELDS: Final = (_ANNOUNCED_FIELD, "path")
 _SELECTORS: Final = {
     "rest": ("contract_id",),
     "grpc": ("contract_id",),
     "mcp": ("tool", "server"),
+    # A proxy entry is addressed by ``path``; the dedicated rule owns both its
+    # requirement and its grammar, so it is not a required selector here.
+    "proxy": (),
 }
 _ALL_SELECTORS: Final = ("contract_id", "tool", "server")
 _DATE_FIELDS: Final = ("notice_date", "sunset_date")
 # Fields validated by a dedicated rule: the enum fields and the boolean have
-# their own messages, the date fields have ``invalid-date``, and
-# ``announced_on`` has the announcement rule (which owns its empty value too).
+# their own messages, the date fields have ``invalid-date``, ``announced_on`` has
+# the announcement rule (which owns its empty value too), and ``path`` has the
+# proxy selector rule (which owns its requirement, type, and grammar).
 _DEDICATED_FIELDS: Final = frozenset(
-    {"surface", "stability", "status", "headers_implemented", *_DATE_FIELDS, _ANNOUNCED_FIELD}
+    {
+        "surface",
+        "stability",
+        "status",
+        "headers_implemented",
+        "path",
+        *_DATE_FIELDS,
+        _ANNOUNCED_FIELD,
+    }
 )
-# Only ``rest`` can declare headers: the other two surfaces have no standard
-# deprecation header, so their record is the notice of record.
-_HEADER_SURFACES: Final = frozenset({"rest"})
-# The statuses an entry can carry before consumers are told, so a REST entry in one
-# of them cannot claim the announcement headers yet.
+# ``rest`` and ``proxy`` can declare headers: both emitters write the standard
+# RFC 9745/8594 values. The other two surfaces have no standard deprecation
+# header, so their record is the notice of record.
+_HEADER_SURFACES: Final = frozenset({"rest", "proxy"})
+# The statuses an entry can carry before consumers are told, so a REST or proxy
+# entry in one of them cannot claim the announcement headers yet.
 _UNANNOUNCED_STATUSES: Final = frozenset({"proposed", "withdrawn"})
+# The proxy surface is addressed by an exact request path rather than a contract
+# id, so it owns a selector the other surfaces must not carry.
+_PROXY_SURFACE: Final = "proxy"
+# One exact route path: a leading slash and non-empty segments, with no empty
+# segment from a doubled or trailing slash.
+_PATH_PATTERN: Final = re.compile(r"^/[^/]+(/[^/]+)*$")
+# Characters no served route path contains. The pattern admits them inside a
+# segment, so they are checked separately, matching the proxy's validator.
+_PATH_FORBIDDEN: Final = frozenset("{}?#")
 
 
 @dataclass(frozen=True)
@@ -320,12 +351,17 @@ def _empty_string_fields(entry: dict[str, object], fields: tuple[str, ...]) -> l
     """The ``string`` fields present as the empty string.
 
     ``announced_on`` is excluded: the announcement rule reports its empty value
-    as an invalid date, which is the actionable message for that field.
+    as an invalid date, which is the actionable message for that field. ``path``
+    is excluded for the same reason: the proxy selector rule owns its empty
+    value, so an empty path on a non-proxy entry stays a single ``unknown-field``
+    and on a proxy entry stays a single ``empty-field``.
     """
     return [
         field
         for field in fields
-        if field != _ANNOUNCED_FIELD and isinstance(entry.get(field), str) and not entry[field]
+        if field not in {_ANNOUNCED_FIELD, "path"}
+        and isinstance(entry.get(field), str)
+        and not entry[field]
     ]
 
 
@@ -675,11 +711,48 @@ def _registry_failures(entry: dict[str, object], label: str, context: _CheckCont
     return []
 
 
+def _path_has_forbidden_character(path: str) -> bool:
+    """True when a path carries a template, query, fragment, or whitespace."""
+    return bool(_PATH_FORBIDDEN.intersection(path)) or any(
+        character.isspace() for character in path
+    )
+
+
+def _path_field_failures(entry: dict[str, object], label: str) -> list[str]:
+    """``path`` is the proxy selector: required there, forbidden elsewhere.
+
+    The proxy rejects a path it could never match as a startup error, so a record
+    that passes this check must not stop it. The grammar is the proxy's: one
+    exact route path with no template, query, fragment, or trailing slash. The
+    field is dedicated so a non-``proxy`` entry with ``path`` keeps the exact
+    ``unknown-field`` message it had when ``path`` was not in the schema.
+    """
+    surface = entry.get("surface")
+    if surface != _PROXY_SURFACE:
+        return [f"unknown-field: {label} has path"] if "path" in entry else []
+    if "path" not in entry:
+        return [f"missing-field: {label} lacks path"]
+    path = entry.get("path")
+    if not isinstance(path, str):
+        return [f"invalid-field: {label}.path must be a string, not {path!r}"]
+    if not path:
+        return [f"empty-field: {label} has empty path"]
+    if _PATH_PATTERN.fullmatch(path) and not _path_has_forbidden_character(path):
+        return []
+    return [
+        (
+            f"invalid-path: {label}.path {path!r} must be one exact route path "
+            "(no trailing slash, no template, no query)"
+        )
+    ]
+
+
 def _entry_failures(entry: object, index: int, context: _CheckContext) -> list[str]:
     if not isinstance(entry, dict):
         return [f"invalid-row: entries[{index}] is not a JSON object"]
     label = _entry_label(entry, index)
     failures = _field_failures(entry, label, entry.get("surface"))
+    failures.extend(_path_field_failures(entry, label))
     failures.extend(_enum_failures(entry, label))
     failures.extend(_date_failures(entry, label))
     failures.extend(_announced_on_failures(entry, label, context))
