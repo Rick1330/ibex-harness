@@ -107,12 +107,9 @@ func NewRouter(deps RouterDeps) (http.Handler, error) {
 	if protectedRoutesRequirePolicySnapshot(deps) {
 		return nil, fmt.Errorf("proxy %s profile requires policy snapshot fetcher and verifier when protected routes are mounted", deps.Config.Environment)
 	}
-	notices, err := loadProxyDeprecationNotices(deps.Config.DeprecationsFile)
+	notices, err := loadRouterDeprecationNotices(deps)
 	if err != nil {
-		return nil, fmt.Errorf("deprecations: %w", err)
-	}
-	if len(notices) > 0 && deps.Logger != nil {
-		deps.Logger.InfoCtx(context.Background(), "deprecation headers active", "routes", len(notices))
+		return nil, err
 	}
 	mux := http.NewServeMux()
 	providerReg, err := resolveProviderRegistry(deps.ProviderRegistry)
@@ -130,6 +127,21 @@ func NewRouter(deps RouterDeps) (http.Handler, error) {
 		registerProtectedRoutes(prd)
 	}
 	return wrapRouterHandler(deps, mux, notices), nil
+}
+
+// loadRouterDeprecationNotices loads the startup snapshot the emitter serves.
+// The record is read exactly once here: a request never touches the filesystem,
+// and a record that cannot be honoured faithfully fails startup instead of
+// silently announcing nothing.
+func loadRouterDeprecationNotices(deps RouterDeps) (deprecationNotices, error) {
+	notices, err := loadProxyDeprecationNotices(deps.Config.DeprecationsFile)
+	if err != nil {
+		return nil, fmt.Errorf("deprecations: %w", err)
+	}
+	if len(notices) > 0 && deps.Logger != nil {
+		deps.Logger.InfoCtx(context.Background(), "deprecation headers active", "routes", len(notices))
+	}
+	return notices, nil
 }
 
 func protectedRoutesRequireLimiter(deps RouterDeps) bool {

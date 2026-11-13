@@ -34,39 +34,74 @@ func announcedProxyEntry(id, path string) string {
 		`"evidence":"engineering/architecture-v2/16-compatibility-and-versioning.md"}`
 }
 
-func TestUnit_loadProxyDeprecationNotices_missingFileIsNoNotices(t *testing.T) {
-	t.Parallel()
-	notices, err := loadProxyDeprecationNotices(filepath.Join(t.TempDir(), "absent.json"))
+// badRecord is one record body the loader must refuse, with the behaviour it
+// pins.
+type badRecord struct {
+	name string
+	body string
+}
+
+// assertNoNotices loads the record at path and requires it to announce nothing.
+func assertNoNotices(t *testing.T, path string) {
+	t.Helper()
+	notices, err := loadProxyDeprecationNotices(path)
 	if err != nil {
-		t.Fatalf("missing record must not fail startup: %v", err)
+		t.Fatalf("record %s must not fail startup: %v", path, err)
 	}
 	if notices != nil {
-		t.Fatalf("notices: %v", notices)
+		t.Fatalf("expected no notices from %s, got %v", path, notices)
 	}
 }
 
-func TestUnit_loadProxyDeprecationNotices_emptyRecordIsNoNotices(t *testing.T) {
-	t.Parallel()
-	notices, err := loadProxyDeprecationNotices(writeDeprecationRecord(t, ""))
-	if err != nil {
-		t.Fatalf("empty record must not fail startup: %v", err)
-	}
-	if notices != nil {
-		t.Fatalf("notices: %v", notices)
-	}
-}
-
-func TestUnit_loadProxyDeprecationNotices_malformedRecordFailsStartup(t *testing.T) {
+// TestUnit_loadProxyDeprecationNotices_absentOrEmptyRecordIsNoNotices pins that
+// a deployment shipping no record, and a record with no entries, both announce
+// nothing and both start up.
+func TestUnit_loadProxyDeprecationNotices_absentOrEmptyRecordIsNoNotices(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
-		body string
+		path func(t *testing.T) string
 	}{
+		{
+			name: "missing file",
+			path: func(t *testing.T) string {
+				t.Helper()
+				return filepath.Join(t.TempDir(), "absent.json")
+			},
+		},
+		{
+			name: "empty record",
+			path: func(t *testing.T) string {
+				t.Helper()
+				return writeDeprecationRecord(t, "")
+			},
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertNoNotices(t, tc.path(t))
+		})
+	}
+}
+
+// recordShapeCases are records the decoder itself must refuse: none of them can
+// be honoured faithfully, so startup fails before any notice is built.
+func recordShapeCases() []badRecord {
+	return []badRecord{
 		{name: "empty file", body: ""},
 		{name: "truncated json", body: `{"schema":`},
 		{name: "wrong schema", body: `{"schema":"ibex.deprecations.v0","entries":[]}`},
 		{name: "missing schema", body: `{"entries":[]}`},
 		{name: "trailing data", body: `{"schema":"ibex.deprecations.v1","entries":[]}{}`},
+	}
+}
+
+// entryValidationCases are records whose entries the loader must refuse: an
+// entry it cannot honour faithfully is a startup error, never a silent drop.
+func entryValidationCases() []badRecord {
+	return []badRecord{
 		{
 			name: "unknown surface",
 			body: `{"schema":"ibex.deprecations.v1","entries":[{"id":"d1","surface":"prox",` +
@@ -121,7 +156,13 @@ func TestUnit_loadProxyDeprecationNotices_malformedRecordFailsStartup(t *testing
 				announcedProxyEntry("d2", "/v1/chat/completions") + `]}`,
 		},
 	}
-	for _, tc := range tests {
+}
+
+// assertRecordsRejected requires every case to fail startup without returning
+// notices.
+func assertRecordsRejected(t *testing.T, cases []badRecord) {
+	t.Helper()
+	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -138,6 +179,20 @@ func TestUnit_loadProxyDeprecationNotices_malformedRecordFailsStartup(t *testing
 			}
 		})
 	}
+}
+
+// TestUnit_loadProxyDeprecationNotices_malformedRecordFailsStartup splits the
+// refusal cases by the layer that must refuse them.
+func TestUnit_loadProxyDeprecationNotices_malformedRecordFailsStartup(t *testing.T) {
+	t.Parallel()
+	t.Run("record shape", func(t *testing.T) {
+		t.Parallel()
+		assertRecordsRejected(t, recordShapeCases())
+	})
+	t.Run("entry validation", func(t *testing.T) {
+		t.Parallel()
+		assertRecordsRejected(t, entryValidationCases())
+	})
 }
 
 func TestUnit_loadProxyDeprecationNotices_announcedProxyEntry(t *testing.T) {
@@ -222,13 +277,7 @@ func TestUnit_loadProxyDeprecationNotices_dropsEntriesThatDoNotAnnounce(t *testi
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			notices, err := loadProxyDeprecationNotices(writeDeprecationRecord(t, tc.entry))
-			if err != nil {
-				t.Fatalf("load: %v", err)
-			}
-			if notices != nil {
-				t.Fatalf("expected no notices, got %v", notices)
-			}
+			assertNoNotices(t, writeDeprecationRecord(t, tc.entry))
 		})
 	}
 }

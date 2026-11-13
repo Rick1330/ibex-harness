@@ -194,14 +194,31 @@ def _emit_values(entry: Mapping[str, object], today: date) -> HeaderPairs | None
     """The header pair for one entry, or ``None`` when it does not carry a live notice."""
     if not _is_emitting(entry):
         return None
+    announced = _announced_date(entry)
     sunset = _parse_date(entry.get("sunset_date"))
-    announced = _parse_date(entry.get("announced_on")) or _parse_date(entry.get("notice_date"))
-    if sunset is None or announced is None or sunset < announced or sunset < today:
+    if announced is None or sunset is None:
+        return None
+    if not _is_live_notice(announced, sunset, today):
         return None
     return (
         (b"deprecation", f"@{_epoch(announced)}".encode("ascii")),
         (b"sunset", _http_date(sunset).encode("ascii")),
     )
+
+
+def _announced_date(entry: Mapping[str, object]) -> date | None:
+    """The anchor the policy measures the window from: ``announced_on``, else ``notice_date``."""
+    return _parse_date(entry.get("announced_on")) or _parse_date(entry.get("notice_date"))
+
+
+def _is_live_notice(announced: date, sunset: date, today: date) -> bool:
+    """True when the sunset is not before the announcement and has not already passed."""
+    return _not_before(sunset, announced) and _not_before(sunset, today)
+
+
+def _not_before(day: date, anchor: date) -> bool:
+    """``Sunset`` never precedes ``Deprecation``, and never names a date already gone."""
+    return day >= anchor
 
 
 def _is_emitting(entry: Mapping[str, object]) -> bool:

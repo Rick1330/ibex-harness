@@ -17,6 +17,7 @@ import pytest
 from support import OTHER_TOOL, TOOL, VERSION, FakeSurface, record, save, tool
 
 from mcp_tool_descriptors import Surface, check_base, main
+from mcp_tool_descriptors.base import ReadScope
 
 SERVICE = "ibex-mcp-test"
 DEPRECATIONS = Path("engineering/architecture-v2/contracts/deprecations.json")
@@ -87,7 +88,7 @@ def _repo(tmp_path: Path, fake: FakeSurface, entries: list[dict[str, str]] | Non
 
 def _failures(repo: Path, fake: FakeSurface, ref: str = BASE_REF) -> list[str]:
     path = repo / "mcp_tools.json"
-    return check_base(_surface(fake), path, ref, allow_root=repo)
+    return check_base(_surface(fake), path, ref, ReadScope(allow_root=repo))
 
 
 def _remove_tool(fake: FakeSurface, name: str) -> None:
@@ -221,7 +222,15 @@ def test_an_explicit_deprecation_path_is_used(tmp_path: Path) -> None:
     _remove_tool(fake, OTHER_TOOL)
     save(repo, record(fake))
     path = repo / "mcp_tools.json"
-    assert check_base(_surface(fake), path, BASE_REF, allow_root=repo, deprecations=explicit) == []
+    assert (
+        check_base(
+            _surface(fake),
+            path,
+            BASE_REF,
+            ReadScope(allow_root=repo, deprecations=explicit),
+        )
+        == []
+    )
 
 
 def test_cli_check_base_fails_on_a_removed_tool(
@@ -308,7 +317,9 @@ def _repo_with_base_text(
 def test_a_missing_working_tree_record_fails(tmp_path: Path) -> None:
     fake = FakeSurface()
     repo = _repo(tmp_path, fake, [])
-    failures = check_base(_surface(fake), repo / "absent.json", BASE_REF, allow_root=repo)
+    failures = check_base(
+        _surface(fake), repo / "absent.json", BASE_REF, ReadScope(allow_root=repo)
+    )
     assert len(failures) == 1, failures
     assert failures[0].startswith("missing-descriptor: ")
 
@@ -319,7 +330,9 @@ def test_a_path_outside_a_git_tree_fails(tmp_path: Path) -> None:
     plain = tmp_path / "plain"
     plain.mkdir()
     save(plain, record(fake))
-    failures = check_base(_surface(fake), plain / "mcp_tools.json", BASE_REF, allow_root=plain)
+    failures = check_base(
+        _surface(fake), plain / "mcp_tools.json", BASE_REF, ReadScope(allow_root=plain)
+    )
     assert len(failures) == 1, failures
     assert failures[0].startswith("unreadable-base-ref: ")
 
@@ -332,7 +345,9 @@ def test_a_missing_git_binary_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         raise FileNotFoundError("git")
 
     monkeypatch.setattr("mcp_tool_descriptors.base.subprocess.run", _missing)
-    failures = check_base(_surface(fake), repo / "mcp_tools.json", BASE_REF, allow_root=repo)
+    failures = check_base(
+        _surface(fake), repo / "mcp_tools.json", BASE_REF, ReadScope(allow_root=repo)
+    )
     assert len(failures) == 1, failures
     assert failures[0].startswith("unreadable-base-ref: cannot run ")
 
@@ -349,7 +364,9 @@ def test_a_malformed_base_record_fails(tmp_path: Path, base_text: str, prefix: s
     fake = FakeSurface()
     repo = _repo_with_base_text(tmp_path, base_text, [])
     save(repo, record(fake))
-    failures = check_base(_surface(fake), repo / "mcp_tools.json", BASE_REF, allow_root=repo)
+    failures = check_base(
+        _surface(fake), repo / "mcp_tools.json", BASE_REF, ReadScope(allow_root=repo)
+    )
     assert len(failures) == 1, failures
     assert failures[0].startswith(prefix)
     assert BASE_REF in failures[0]
@@ -376,6 +393,24 @@ def test_a_deprecation_entry_without_a_tool_is_ignored(tmp_path: Path) -> None:
     fake = FakeSurface()
     repo = _repo(tmp_path, fake, entries=[])
     entry = {"surface": "mcp", "server": "test", "tool": 3, "status": "proposed"}
+    _write_deprecations(repo, [entry])
+    _remove_tool(fake, OTHER_TOOL)
+    save(repo, record(fake))
+    failures = _failures(repo, fake)
+    assert any(
+        failure.startswith(f"removed-tool-without-deprecation: {OTHER_TOOL} ")
+        for failure in failures
+    ), failures
+
+
+@pytest.mark.parametrize(("server_name", "tool_name"), [("", OTHER_TOOL), ("test", "")])
+def test_a_deprecation_entry_with_an_empty_name_is_ignored(
+    tmp_path: Path, server_name: str, tool_name: str
+) -> None:
+    """An empty name covers no tool, so it cannot authorise a removal either."""
+    fake = FakeSurface()
+    repo = _repo(tmp_path, fake, entries=[])
+    entry = {**_deprecation_entry(OTHER_TOOL), "server": server_name, "tool": tool_name}
     _write_deprecations(repo, [entry])
     _remove_tool(fake, OTHER_TOOL)
     save(repo, record(fake))

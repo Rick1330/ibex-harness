@@ -16,6 +16,8 @@ TEST_MODULES = (
     "test_validate_published_data",
     "test_go_bench_gate",
     "test_check_reproducibility",
+    "test_proxy_artifact",
+    "test_gold_set_identity",
 )
 
 
