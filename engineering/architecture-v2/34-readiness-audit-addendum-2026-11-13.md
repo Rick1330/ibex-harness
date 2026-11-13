@@ -130,7 +130,7 @@ One line each. Blocker classes: **owner decision**, **credential**, **workflow/b
 
 ## 3. Gates documented as running that do not run in CI
 
-Each of these is described somewhere as a gate, and each passes locally. None is as strong in CI as its description: two do not run on a pull request at all, and one runs with its schema assertions skipped. Fixing any of them changes `.github/workflows/**`, so each needs an owner.
+Each of these is described somewhere as a gate, and each passes locally. This section records where each stood at the audit base: two did not run on a pull request at all, and one ran with its schema assertions skipped. All three are wired in the tree now; §3.1–§3.3 state the fix and the current call site.
 
 ### 3.1 `benchmarks/scripts/check_reproducibility.py`
 
@@ -138,21 +138,15 @@ Documented as the consumer of the provenance contract (`check_reproducibility.py
 
 > `reproducibility_check() { … "$python" benchmarks/scripts/check_reproducibility.py }` — `infra/scripts/dev-tool.sh`:387-392
 
-`grep -c check_reproducibility .github/workflows/ci.yml` → **0**; no other workflow references it either. So the published artifacts are checked only when a human runs `./infra/scripts/dev-tool.sh reproducibility_check`.
+`grep -c check_reproducibility .github/workflows/ci.yml` → **0** at the audit base; no other workflow referenced it either. So the published artifacts were checked only when a human ran `./infra/scripts/dev-tool.sh reproducibility_check`. **Wired now:** `.github/workflows/ci.yml`:117-131 installs the validator and runs the checker in `ci-gate-repo`.
 
-**Exact fix:** in the same job that runs it, install `jsonschema` from `.github/requirements/jsonschema.txt` with `--require-hashes` **before** invoking `python3 benchmarks/scripts/check_reproducibility.py`. The checker is fail-closed without the import — it reports "jsonschema is not installed" and exits 1 (`check_reproducibility.py`:46-50, :216-217) — and the only existing install of that file is in a different job (`benchmark-gate`, `.github/workflows/ci.yml`:952-958) and into a different interpreter (`services/context/.venv/bin/python`). Then decide whether the four current warnings become failures; turning the unrecorded-run warning into an error today would fail on all 81 published runs.
+**The fix that landed:** in the same job that runs it, `jsonschema` is installed from `.github/requirements/jsonschema.txt` with `--require-hashes` **before** invoking `python3 benchmarks/scripts/check_reproducibility.py`. The checker is fail-closed without the import — it reports "jsonschema is not installed" and exits 1 (`check_reproducibility.py`:46-50, :216-217) — and the only existing install of that file is in a different job (`benchmark-gate`, `.github/workflows/ci.yml`:952-958) and into a different interpreter (`services/context/.venv/bin/python`). Then decide whether the four current warnings become failures; turning the unrecorded-run warning into an error today would fail on all 81 published runs.
 
-### 3.2 `benchmarks/scripts/test_pipeline.py` — the test runs, its schema assertions skip
+### 3.2 `benchmarks/scripts/test_pipeline.py` — the schema assertions used to skip
 
 The test file is not missing from CI: `test_pipeline.py` loads `test_check_reproducibility` (`test_pipeline.py`:12-19) and runs on qualifying pull requests in **both** workflows — `benchmark-gate` at `.github/workflows/ci.yml`:946-950 and `verify-benchmark-pipeline` at `.github/workflows/benchmark.yml`:106. The ledger records it as the benchmark gate's own evidence (`00-status-and-evidence.md`:78: `Ran 40 tests … OK (skipped=1)`).
 
-What fails is narrower. `test_check_reproducibility.py` skips its schema cases when the import is absent:
-
-> `NEEDS_JSONSCHEMA = unittest.skipUnless(check.jsonschema is not None, "needs jsonschema: …")` — `benchmarks/scripts/test_check_reproducibility.py`:33-35
-
-and `benchmark-gate` installs `jsonschema` in a step **after** the one that runs the tests: `- name: Install uv` at `.github/workflows/ci.yml`:951, then `uv pip install … -r .github/requirements/jsonschema.txt` at `:952-958`. `verify-benchmark-pipeline` never installs it. So the schema assertions skip, the step stays green, and the run reports a skip that looks benign.
-
-**Exact fix:** install `jsonschema` from `.github/requirements/jsonschema.txt` with `--require-hashes` **before** the pipeline-tests step, in **both** `ci.yml` (`benchmark-gate`) and `benchmark.yml` (`verify-benchmark-pipeline`), into the interpreter that runs `test_pipeline.py` (`benchmark-gate`'s install targets `services/context/.venv`, not that interpreter). Then fail rather than skip when it is missing under CI — e.g. an env var that turns the `skipUnless` into an error. The edits are inside both workflows and the test module.
+What failed is narrower. `test_check_reproducibility.py` used to skip its schema cases when the import was absent. That skip is gone: the module now decides at test time through the `IBEX_REQUIRE_JSONSCHEMA` switch (`benchmarks/scripts/test_check_reproducibility.py`:38, `:45-50`), so a missing validator fails the run with the install command instead of deleting the schema coverage. Both workflows set it and install `jsonschema` first — `benchmark-gate` at `.github/workflows/ci.yml`:1091-1103 and `verify-benchmark-pipeline` at `.github/workflows/benchmark.yml`:105-117 — so the schema assertions run in CI rather than skipping green. The original install was in a step **after** the one that ran the tests; that ordering is reversed.
 
 ### 3.3 `infra/scripts/check-alert-routing.py`
 
@@ -164,11 +158,11 @@ and it self-tests:
 
 > `check-alert-routing: self-test ok (8 fixtures + path refusal)` — `infra/scripts/check-alert-routing.py`:585
 
-The CI `repo-guards` job (`.github/workflows/ci.yml`:25-140) runs the layout, landing-asset, action-pin, credential, DCO, PR-tracking, Helm-chart and inventory guards, and does **not** run `check-alert-routing.py`; `grep -c alert-routing .github/workflows/ci.yml` → **0**. The only CI-adjacent reference is `make repo-guards`, which no workflow calls.
+The CI `repo-guards` job (`.github/workflows/ci.yml`:25-140) runs the layout, landing-asset, action-pin, credential, DCO, PR-tracking, Helm-chart and inventory guards, and at the audit base did **not** run `check-alert-routing.py`; `grep -c alert-routing .github/workflows/ci.yml` → **0** then. **Wired now:** `check-alert-routing.py` runs in `ci-gate-repo` (`.github/workflows/ci.yml`:103) and `slo-rules-check` is its own job feeding the same gate (:338-356, :3127).
 
-**Exact fix:** add `python3 infra/scripts/check-alert-routing.py` (and, for the same reason, `bash infra/scripts/slo-rules-check.sh`) to the `repo-guards` job step list. Both are pure-Python/shell checks over committed files.
+**The fix that landed:** `python3 infra/scripts/check-alert-routing.py` and `bash infra/scripts/slo-rules-check.sh` are CI steps. Both are pure-Python/shell checks over committed files.
 
-**Consequence to state plainly:** P0-19's routing half is proven only by a local run. Nothing in CI can regress it, and no alert has reached a human.
+**Consequence to state plainly:** P0-19's routing half is now gated, but no alert has reached a human: the receivers still point at the in-network placeholder (`infra/monitoring/alertmanager/alertmanager.yml`:48, :53), which is P0-19's remaining part.
 
 ## 4. Decisions requested
 
@@ -177,8 +171,6 @@ The CI `repo-guards` job (`.github/workflows/ci.yml`:25-140) runs the layout, la
 | D-A | `VERSION_RELEASE_TOKEN` + tag-signing key | W7.1-7.3 and P0-15: a green Version Release run, a release PR, and a signed annotated tag |
 | D-C | Console 1.0 is login+mutations, or login + declared read-only | W9.2 and P0-05's acceptance criterion; roughly a week of W9 either way |
 | D-D | Off-host backup target (S3/MinIO or external POSIX) and the signed RPO/RTO numbers | W4.1, W4.4, P0-11, and the `rpo_pass=true` half of P0-10 |
-| — | Approval to wire §3 into CI (edits under `.github/workflows/**`) | P0-19's routing half, plus the reproducibility and pipeline-test gates above |
-| — | Approval for a separate `.github/workflows/**` change that runs `infra/scripts/api-breaking.sh` (oasdiff) on pull requests and makes it a required check | P0-13 |
 | — | P0-06: move each service DSN to its capability login | The per-service DSN swap; RLS is enforced only on paths that already pin, and the Compose profile still connects as the owner |
 
 ## 5. Method

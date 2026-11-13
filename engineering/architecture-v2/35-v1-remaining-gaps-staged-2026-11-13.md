@@ -2,7 +2,7 @@
 
 **Title:** Every gap still standing between the tree and an honest `v1.0.0`, classified into four stages with the evidence that closes each stage.
 **Base:** `main` at `55a62bc4` (2026-11-13).
-**Status:** Discovery record. It classifies; it does not plan, promote, or close. No gap moves to `closed` here, no ledger row changes value, and no review date moves. The only repository change is this file plus one link line in [`34-readiness-audit-addendum-2026-11-13.md`](34-readiness-audit-addendum-2026-11-13.md) §5.
+**Status:** Discovery record, updated by the 2026-11-13 stage-1 pass. It classifies; the pass closed 21 stage-1 rows and is recorded in §3.1 with one line of evidence each. No other stage is re-staged, no ledger row changes value, and no review date moves. The only repository change in the original record was this file plus one link line in [`34-readiness-audit-addendum-2026-11-13.md`](34-readiness-audit-addendum-2026-11-13.md) §5; the stage-1 pass also lands the code, workflow, and documentation changes its rows name.
 
 ## 1. Purpose and method
 
@@ -17,7 +17,7 @@ This document answers that and nothing else. Each gap appears **once**, in exact
 3. **Operability / recovery / CI.** Backup, drill, readiness, rate-limit and alerting paths; every workflow that is described as a gate checked for an invocation.
 4. **Product / console / evidence.** Console routes, surfaces, navigation, README, claims checker, published artifacts.
 
-Where a sweep disagreed with a document, the tree won and the correction is recorded in §8. Every `file:line` in the tables was opened at `55a62bc4`; rows that cite a document line cite that line as the record of the gap.
+Where a sweep disagreed with a document, the tree won and the correction is recorded in §8. Every `file:line` in the tables was opened at `55a62bc4`; rows that cite a document line cite that line as the record of the gap. The 2026-11-13 stage-1 pass re-opened each stage-1 row against the branch, closed 21 of them with the evidence in §3.1, and left four with their residual named in §3.2.
 
 ## 2. Stage overview
 
@@ -32,56 +32,68 @@ Stages 2 and 3 are independent of each other and can run concurrently. Stage 1 m
 
 Each stage states the same closure rule: **the stage exits when every row in the table is closed *and* the evidence in its exit gate exists.** A gate item names the rows it evidences. Rows no gate item names are closed by the closure rule alone — they need a merged change with its recorded evidence, not a new run.
 
-## 3. Stage 1 — Make the light honest (gates and record) — 25 rows
+## 3. Stage 1 — Make the light honest (gates and record) — 25 rows (21 closed; 4 remaining)
 
 **Goal.** Every check described as a gate runs on a pull request, can fail, and covers what its description claims. Every registry and record matches the tree.
 
-**Why this stage / order.** Three of the strongest-looking controls are advisory or absent: `buf-breaking` is `continue-on-error: true`, the reproducibility checker has no workflow caller, and two `repo-guards` steps exist only in a shell script. A reader who trusts them is misled about everything downstream — including the restore drill and the tenant suite that stages 2 and 3 will produce. It also retires the claim conflicts (GAP-001, R03, R04, R02) that make every other document hard to trust.
+**Why this stage / order.** Three of the strongest-looking controls were advisory or absent when this document was
+written: `buf-breaking` was `continue-on-error: true`, the reproducibility checker had no workflow caller, and two
+`repo-guards` steps existed only in a shell script. The 2026-11-13 stage-1 pass closed those three plus eighteen more
+rows (§3.1); the heading's row count is the original scope, not the current one. GAP-001 and R02 still make part of the
+claim set hard to trust, which is why the stage is not exited.
 
-**Entry condition.** No credential and no infrastructure, but this stage is not decision-free: it needs approval to edit `.github/workflows/**`, and owner answers on P1-03 (ADR statuses), P1-46 (1.0 upgrade guide and support window), GAP-001/R03 (one owner for the claim set), and D-B (whether the Helm chart is part of 1.0 at all).
+**Entry condition.** No credential and no infrastructure, but this stage is not decision-free: it needs approval to edit `.github/workflows/**`, and owner answers on P1-46 (the support window), GAP-001 (one owner for the claim set), and D-B (whether the Helm chart is part of 1.0 at all).
 
-**Exit gate.** The stage exits when every row in the table below is closed *and* the evidence below exists.
+**Exit gate.** The stage exits when every row in §3.2 is closed *and* the evidence below exists.
 
-1. Each named gate runs in a workflow on a PR and **fails** on a deliberately broken input: `buf-breaking` (P0-12), `api-breaking.sh` (P0-13), bundle smoke (P1-11), the ranking gate as a required check (P1-25), `check-alert-routing.py` + `slo-rules-check.sh` (G03), a ClickHouse schema-evolution gate (P2-03), and the claims checker over the widened roots (R02).
-2. The contract registry covers **every** shipped REST route, gRPC method and MCP tool, and a new unregistered surface fails CI (P0-14, alias GAP-003; R01). A committed MCP descriptor is diffed against the previous commit and a schema change without a deprecation record fails (P1-02), with the deprecation policy itself validated by its checker (P1-01).
+1. Each named gate runs in a workflow on a PR and **fails** on a deliberately broken input: `buf-breaking` (P0-12), `api-breaking.sh` (P0-13), bundle smoke (P1-11), the ranking gate as a required check (P1-25), `check-alert-routing.py` + `slo-rules-check.sh` (G03), a ClickHouse schema-evolution gate (P2-03), and the claims checker over the widened roots (R02). Closed for every item except bundle smoke's **manifest half** (P1-11) and the widened claim roots (R02).
+2. The contract registry covers **every** shipped REST route, gRPC method and MCP tool, and a new unregistered surface fails CI (P0-14, alias GAP-003; R01). A committed MCP descriptor is diffed against the previous commit and a schema change without a deprecation record fails (P1-02), with the deprecation policy itself validated by its checker (P1-01). **Closed.**
 3. Claim consistency is proven by **two named checks, because one cannot see the other's files**:
-   (a) **`check-claims.mjs`, widened and run.** It reads four roots today — `site/app/pages`, `site/content/docs`, `site/content/blog` (`site/scripts/check-claims.mjs`:14) and `site/app/data` (`:24`) — and skips `adr`/`roadmap-archive` (`:30`). Widen it to `site/app/components/**` and `site/public/benchmarks/*.json` (R02) and prove it fails on a planted contradiction inside those roots; that covers the two Console docs pages P1-44 names.
-   (b) **A separate scripted consistency check, `check-status-vocabulary.py` — new, stage-1 work, absent from the tree today.** It compares the status and availability text in `engineering/architecture-v2/00-status-and-evidence.md`, `engineering/adr/0089-product-shape-and-console-scope.md` and the declared tier/availability in `services/console/shared/operator/surfaces.ts` against each other and against `site/app/data/ledger.ts`, and fails on a mismatch. The claims checker never reads `engineering/**` or a `.ts` module outside `site/app/data`, so it can never evidence those files; claiming otherwise is the defect.
-   Together they cover R03, P1-03, P1-44 and GAP-001.
-4. `check_reproducibility.py` runs in a workflow and fails on a deliberately malformed artifact (G01, G02), and covers the proxy latency artifact or states in one line why it is exempt (R04). The unrecorded-run warning is **not** a stage-1 condition: it becomes an error at stage 4 when provenance exists (D03).
-5. The records match the tree: the quickstart's first command works from a clean checkout (P1-43), the public env reference names the operator variables (P1-45), the upgrade guide and support window exist (P1-46), `API_DOCUMENTATION.md` no longer says the chat route returns `501` (P2-04), the management API reference lists the live operator reads (P2-23), the migration suite is hermetic (P2-10), and `DATABASE_SCHEMA.md` is generated from every table with a drift check (P2-11).
+   (a) **`check-claims.mjs`, widened and run.** It reads four roots — `site/app/pages`, `site/content/docs`, `site/content/blog` (`site/scripts/check-claims.mjs`:14) and `site/app/data` (`:24`) — and skips `adr`/`roadmap-archive` (`:30`). Widening it to `site/app/components/**` and `site/public/benchmarks/*.json` is **R02 and remains open**; the two Console docs pages P1-44 named are now correct by content, not by a widened check.
+   (b) **A separate scripted consistency check, `check-status-vocabulary.py`.** It compares the status and availability text in `engineering/architecture-v2/00-status-and-evidence.md`, `engineering/adr/0089-product-shape-and-console-scope.md` and the declared tier/availability in `services/console/shared/operator/surfaces.ts` against each other and against `site/app/data/ledger.ts`, and fails on a mismatch. The claims checker never reads `engineering/**` or a `.ts` module outside `site/app/data`, so it can never evidence those files. **Not landed**; R03 and P1-03 were corrected by hand instead, and GAP-001 therefore stays open.
+4. `check_reproducibility.py` runs in a workflow and fails on a deliberately malformed artifact (G01, G02), and covers the proxy latency artifact or states in one line why it is exempt (R04). The unrecorded-run warning is **not** a stage-1 condition: it becomes an error at stage 4 when provenance exists (D03). **Closed.**
+5. The records match the tree: the quickstart's first command works from a clean checkout (P1-43), the public env reference names the operator variables (P1-45), the upgrade guide and support window exist (P1-46), `API_DOCUMENTATION.md` no longer says the chat route returns `501` (P2-04), the management API reference lists the live operator reads (P2-23), the migration suite is hermetic (P2-10), and `DATABASE_SCHEMA.md` is generated from every table with a drift check (P2-11). **Closed except P1-46's support window**, which stays open as an owner decision.
 
-Rows no gate item names: none — all 25 are evidenced above. A row still closes only when its own change is merged.
+### 3.1 Closed in this change (21 rows)
 
-**Decisions needed.** Approval to edit `.github/workflows/**` (P0-12, P0-13, P1-11, P1-25, G01–G03, R02). Registry completeness policy for gRPC and MCP (P0-14, R01). Whether the unrecorded-run warning becomes an error now or after stage 4 records the runs (R04, D03). A single owner for the claim set so R03/GAP-001 stop drifting. **D-B** — confirm ADR-0097 §10 is the final word on Kubernetes/Helm for 1.0 (`31`:188). D-B decides P2-24: if the chart stays, the digest guard is wired into CI; the default retires the chart and the row goes with it.
+Each row is closed by a merged change in this tree; none is a claim that a hosted run exists.
+
+| ID | What the tree now shows |
+|---|---|
+| P0-12 | `buf-breaking` has no `continue-on-error`, runs as a job on a PR, and is a `needs` child of `ci-gate-go` (`.github/workflows/ci.yml`:380-408, :3153-3211), which is a protected context |
+| P0-13 | `api-breaking` is a job (`.github/workflows/ci.yml`:416-447) and a child of `ci-gate-go` (:3162) |
+| P0-14 | The registry carries `routes` (75), `grpc_methods` (20), and `mcp_tools` (8); `check_contract_registry.py` derives the expected set from the proto tree and the descriptors and fails on a missing or stale row |
+| P1-01 | `services/api/app/middleware/deprecations.py` and `services/proxy/internal/http/deprecations.go` emit `Deprecation`/`Sunset` for an announced, header-implemented, unexpired entry; the record stays empty because nothing is deprecated |
+| P1-02 | `infra/scripts/mcp-memory-test-ci.sh`:20-39 (`--check-base` against the PR base ref) and the same in `mcp-operator-test-ci.sh`; both CI jobs fetch the base branch first (`.github/workflows/ci.yml`:1385, :1451) |
+| P1-03 | ADR-0084 is `Accepted` for its five shapes with runtime provisional; ADR-0092, 0093 and 0094 are `Accepted` on named importers; ADR-0095 is `Accepted, partially wired` |
+| P1-25 | `ci-gate-memory-benchmark` is always-run and a protected context (`.github/workflows/memory-benchmark.yml`:917-949; `.github/branch-protection-main.json`) |
+| P1-43 | The quickstart uses `make v1-secrets` and the tracked `infra/compose/v1-single-node/.env.example`; the copy-a-root-`.env.example` step is gone (`site/content/docs/12.deployment/05.v1-single-node.md`:22-30, :124) |
+| P1-44 | The Console pages say 8 of 10: `site/content/docs/02.architecture/01.overview.md`:91, `05.status-and-evidence.md`:59, `site/content/docs/11.operations/08.console.md`:14 |
+| P1-45 | `site/content/docs/12.deployment/02.environment-variables.md`:82-101 lists `IBEX_OPERATOR_*` and the two Console origins |
+| P2-03 | `infra/migrations/clickhouse/destructive_ddl_unit_test.go` refuses destructive DDL and has a reviewed-exception record; it runs with the ClickHouse migration tests (`.github/workflows/ci.yml`:579) |
+| P2-04 | The `501` block lists only `PROVIDER_NOT_CONFIGURED`, and the "returned `501` before provider forwarding landed" sentence is replaced (`engineering/API_DOCUMENTATION.md`:334-336, :61) |
+| P2-10 | `infra/migrations/postgres/migrate_integration_main_test.go` isolates each run in its own database and cleans a killed run's leftovers |
+| P2-11 | `infra/scripts/check-schema-doc.py` runs in `ci-gate-repo` (`.github/workflows/ci.yml`:110) and compares both directions |
+| P2-23 | `engineering/API_DOCUMENTATION.md` now lists every mounted operator route and the tenant management routes from the inventory |
+| G01 | `check_reproducibility.py` runs in CI (`.github/workflows/ci.yml`:117-131) |
+| G02 | `IBEX_REQUIRE_JSONSCHEMA=1` turns a missing validator into a failure and `jsonschema` is installed first, in both `benchmark-gate` (`.github/workflows/ci.yml`:1091-1103) and `verify-benchmark-pipeline` (`.github/workflows/benchmark.yml`:105-117) |
+| G03 | `check-alert-routing.py` runs in `ci-gate-repo` (`.github/workflows/ci.yml`:103) and `slo-rules-check` is its own job feeding `ci-gate-repo` (:338-356, :3127) |
+| R01 | All 20 contract IDs declared in `surfaces.ts` resolve in the registry; `services/console/tests/surfaces.test.ts` fails on one that does not |
+| R03 | ADR-0089 §2's table now matches `surfaces.ts`: 8 core `live` with registry contracts, 2 core `preview` design, 8 platform `preview` design, and the module is named as the source of truth |
+| R04 | `check_reproducibility.py` validates the proxy latency artifact (`benchmark-data.json`) through `PROXY_ARTIFACT_NAME` instead of exempting it |
+
+### 3.2 Remaining (4 rows)
 
 | ID | Gap | Evidence | Blocker | Source |
 |---|---|---|---|---|
-| P0-12 | `buf-breaking` is advisory (`continue-on-error: true`) and not a required check | `.github/workflows/ci.yml`:323; 34:93 | workflow/branch-protection | 27:72 |
-| P0-13 | `api-breaking.sh` exists and passes locally; no workflow runs it | 34:94; 31:130 | workflow/branch-protection | 27:73 |
-| P0-14 | Registry: REST complete and gated; gRPC service-level only; MCP out of scope (**alias: GAP-003**) | 34:95; 31:49 | workflow/branch-protection | 27:74 |
-| P1-01 | Policy, record and checker **landed 2026-11-12** (`31`:132): no residual in the policy itself. What remains is the emitter half — no middleware or interceptor writes `Deprecation`/`Sunset`, and the record's `entries` array is empty | `contracts/deprecations.json` (`entries: []`); `services/api/scripts/check_deprecations.py`; `services/api/tests/unit/test_deprecations.py`; 31:132 | product | 27:92 |
-| P1-02 | MCP descriptors are committed records checked in CI, but only record-to-live-surface: no previous-commit diff and no deprecation record per schema change | `services/mcp-memory/mcp_tools.json`; `services/mcp-operator/mcp_tools.json`; `infra/scripts/mcp-memory-test-ci.sh`:19; `infra/scripts/mcp-operator-test-ci.sh`:25; 31:133 | product | 27:93 |
-| P1-03 | ADR-0084 status contradicts the ledger; ADR-0092–0095 `Proposed` while live | 27:94 | owner decision | 27:94 |
-| P1-11 | Bundle smoke never runs in CI; manifest always reports `unverified` | 27:102 | workflow/branch-protection | 27:102 |
-| P1-25 | Ranking gate is not a required check | 27:115 | workflow/branch-protection | 27:115 |
-| P1-43 | Quickstart's first command references an untracked `.env.example` | 27:133 | product | 27:133 |
-| P1-44 | Two public pages carry stale Console counts (6 of 10 vs 8 of 10) | 27:134 | product | 27:134 |
-| P1-45 | Public env reference omits the operator deployment variables | 27:135 | product | 27:135 |
-| P1-46 | No 1.0 upgrade guide and no support window/matrix | 27:136 | owner decision | 27:136 |
-| P2-03 | ClickHouse schema evolution has no gate | 27:150 | product | 27:150 |
-| P2-04 | `API_DOCUMENTATION.md` says the chat route returns `501` | 27:151 | product | 27:151 |
-| P2-10 | Migration suite is not hermetic (interrupted run poisons the shared DB) | 27:157 | code | 27:157 |
-| P2-11 | `DATABASE_SCHEMA.md` documents 29 of 42 tables; no drift check | 27:158 | code | 27:158 |
-| P2-23 | Management API reference omits the live operator read routes | 27:170 | product | 27:170 |
-| GAP-001 | Shipped/local/provisional/design claims conflict across docs | 18:7 | owner decision | 18:7 |
-| G01 | `check_reproducibility.py` is referenced by no workflow; only `dev-tool.sh` calls it | `infra/scripts/dev-tool.sh`:387-392 | workflow/branch-protection | sweep 3 |
-| G02 | `test_check_reproducibility.py` schema cases skip: `jsonschema` is installed after the step that runs them, and absent in the benchmark workflow | `.github/workflows/ci.yml`:946-958; `.github/workflows/benchmark.yml`:106 | workflow/branch-protection | sweep 3 |
-| G03 | `check-alert-routing.py` and `slo-rules-check.sh` are absent from the CI `repo-guards` job although described as its steps | `infra/scripts/dev-tool.sh`:435 | workflow/branch-protection | sweep 3 |
-| R01 | 18 of 20 contract IDs declared in `surfaces.ts` have no registry entry | `services/console/shared/operator/surfaces.ts`:42-246; `engineering/architecture-v2/contracts/rest-route-registry.json` | workflow/branch-protection | sweep 4 |
+| P1-11 | Bundle smoke now runs in CI (`.github/workflows/ci.yml`:627-653) and uploads its result, but **wiring the passing bundle into the release manifest is not done**: the manifest still reports `unverified` | `.github/workflows/ci.yml`:614-653; `31`:102 | workflow/branch-protection | 27:102 |
+| P1-46 | The upgrade guide now exists (`site/content/docs/12.deployment/06.upgrade.md`) with migration counts, the two irreversible families, the backup precondition, and the rollback limits. **The support window and support matrix are still unsigned** | `site/content/docs/12.deployment/06.upgrade.md`; this file §9 | owner decision | 27:136 |
+| GAP-001 | Shipped/local/provisional/design claims conflict across docs. R03 and P1-03 are corrected by hand in this change, but no checker reads `engineering/**`, so the conflict can drift again | 18:7; §3 exit-gate item 3(b) | owner decision | 18:7 |
 | R02 | `check-claims.mjs` scans four roots (`app/pages`, `content/docs`, `content/blog`, `app/data`), never `app/components/**` or `public/benchmarks/*.json` | `site/scripts/check-claims.mjs`:14,24 | code | sweep 4 |
-| R03 | ADR-0089 calls Agents/Sessions/Memories/Evidence/Directives `preview`; `surfaces.ts` says `live` | `engineering/adr/0089-product-shape-and-console-scope.md`:61-65; `surfaces.ts`:48,60,72,84,96 | owner decision | sweep 4 |
-| R04 | The proxy latency artifact (65 runs) is not among the four artifacts `check_reproducibility.py` validates | `site/public/benchmarks/benchmark-data.json`; `benchmarks/scripts/check_reproducibility.py`:99 | code | sweep 4 |
+
+A closed row is closed by its own merged change, not by this classification.
+
+**Decisions needed.** An owner for the claim set so GAP-001 stops drifting, and the `check-status-vocabulary.py` script that would make the drift fail instead of relying on hand edits (GAP-001). A signed support window and support matrix (P1-46). Whether the claims checker is widened to `app/components/**` and `public/benchmarks/*.json` (R02). **D-B** — confirm ADR-0097 §10 is the final word on Kubernetes/Helm for 1.0 (`31`:188). D-B decides P2-24: if the chart stays, the digest guard is wired into CI; the default retires the chart and the row goes with it.
 
 ## 4. Stage 2 — Survive failure (recovery and operability) — 25 rows
 
@@ -283,12 +295,9 @@ Every P2, every deferred design or ledger item, and the two ledger gate rows `G1
 
 The completeness proof: per stage and per exclusion, the exact ID sets, then the arithmetic.
 
-**Stage 1 (25 rows).**
-P0: `P0-12` `P0-13` `P0-14` (3).
-P1: `P1-01` `P1-02` `P1-03` `P1-11` `P1-25` `P1-43` `P1-44` `P1-45` `P1-46` (9).
-P2: `P2-03` `P2-04` `P2-10` `P2-11` `P2-23` (5).
-GAP: `GAP-001` (1); `GAP-003` is an alias recorded on the `P0-14` row, not a second row.
-NEW: `G01` `G02` `G03` `R01` `R02` `R03` `R04` (7).
+**Stage 1 (25 rows: 21 closed, 4 remaining).**
+Remaining: `P1-11` `P1-46` `GAP-001` `R02` (4).
+Closed in §3.1: `P0-12` `P0-13` `P0-14` `P1-01` `P1-02` `P1-03` `P1-25` `P1-43` `P1-44` `P1-45` `P2-03` `P2-04` `P2-10` `P2-11` `P2-23` `G01` `G02` `G03` `R01` `R03` `R04` (21); `GAP-003` is an alias recorded on the `P0-14` row, not a second row.
 
 **Stage 2 (25 rows).**
 P0: `P0-09` `P0-10` `P0-11` `P0-19` (4).
@@ -319,13 +328,16 @@ Ledger: `D1` `G9` (2).
 
 **Closed since the audit (not re-listed).** `P1-20`, `P1-34`, `P1-35`, `P1-51`; and the eight P0s `P0-01`, `P0-02`, `P0-03`, `P0-07`, `P0-08`, `P0-16`, `P0-17`, `P0-18`. Each is closed in `34-readiness-audit-addendum-2026-11-13.md` §1 or `31-v1-release-plan-2026-11-09.md` §2 — except `P1-20`, whose closure is recorded in `30-w3-tenancy-and-erasure-plan.md` §3 (`:26,48`), as §8 correction 4 states. Nothing here reopens them. `P1-15` is **not** in this set: no engineering document other than the audit records it, and no negative test asserts its substance, so it stays a stage-3 row (§8 correction 11).
 
+**Closed in the 2026-11-13 stage-1 pass (21 rows).** `P0-12` `P0-13` `P0-14`; `P1-01` `P1-02` `P1-03` `P1-25` `P1-43` `P1-44` `P1-45`; `P2-03` `P2-04` `P2-10` `P2-11` `P2-23`; `G01` `G02` `G03` `R01` `R03` `R04`. Each has its own row and evidence in §3.1; none is re-listed in a stage table. `P1-11` and `P1-46` are **partially** closed and stay in §3.2 with their residual named.
+
 **Arithmetic.**
 
-- **P0: 22 = 14 in stages + 8 closed.** 14 = S1 3 + S2 4 + S3 2 + S4 5.
-- **P1: 51 issued = 39 in stages + 8 not in v1 + 4 closed.** 39 = S1 9 + S2 4 + S3 11 + S4 15. `P1-19` was never issued: the audit runs `P1-01`…`P1-18` then `P1-20`, so the numbering skips and the set of issued rows is 51, all placed.
-- **P2: 25 = 23 in stages + 2 not in v1.** 23 = S1 5 + S2 3 + S3 8 + S4 7.
+- **P0: 22 = 11 in stages + 11 closed.** 11 = S1 0 + S2 4 + S3 2 + S4 5; closed = 8 since the audit + `P0-12` `P0-13` `P0-14`.
+- **P1: 51 issued = 32 in stages + 8 not in v1 + 11 closed.** 32 = S1 2 + S2 4 + S3 11 + S4 15; closed = 4 since the audit + `P1-01` `P1-02` `P1-03` `P1-25` `P1-43` `P1-44` `P1-45`. `P1-19` was never issued: the audit runs `P1-01`…`P1-18` then `P1-20`, so the numbering skips and the set of issued rows is 51, all placed.
+- **P2: 25 = 18 in stages + 2 not in v1 + 5 closed.** 18 = S1 0 + S2 3 + S3 8 + S4 7; closed = `P2-03` `P2-04` `P2-10` `P2-11` `P2-23`.
 - **GAP: 12 IDs = 11 rows + 1 alias.** 8 stage rows (S1 1 + S2 1 + S3 5 + S4 1) + 3 in §7 = 11; `GAP-003` aliases `P0-14` and adds no row.
-- **NEW and ledger rows: 38 = 36 in stages + 2 in §7.** 36 = S1 7 + S2 13 + S3 12 + S4 4; §7 holds `D1` and `G9`.
+- **NEW and ledger rows: 38 = 30 in stages + 2 in §7 + 6 closed.** 30 = S1 1 + S2 13 + S3 12 + S4 4; §7 holds `D1` and `G9`; closed = `G01` `G02` `G03` `R01` `R03` `R04`.
+- **Staged rows still open: 99 = S1 4 + S2 25 + S3 38 + S4 32.** 120 original staged rows minus the 21 closed in this pass.
 - **W-waves: 38 items, each mapped once.** 38 = W0 3 + W4 6 + W5 5 + W6 4 + W7 5 + W8 6 + W9 4 + W10 5.
 
 **W-wave → stage map.** Every item in `31-v1-release-plan-2026-11-09.md` §4, accounted for once:
@@ -337,11 +349,11 @@ Ledger: `D1` `G9` (2).
 | W0.3 | Carried PR #1164; no register ID, not a gap (`31`:84) |
 | W4.1–W4.5 | Stage 2 — P0-09, P0-10, P0-11, O01–O08 (`31`:93-97) |
 | W4.6 | Stage 2 — W4.6 (`31`:98) |
-| W5.1 | Stage 1 — P0-12 (`31`:129) |
-| W5.2 | Stage 1 — P0-13 (`31`:130) |
-| W5.3 | Stage 1 — P0-14, R01 (`31`:131) |
-| W5.4 | Stage 1 — P1-01 (`31`:132) |
-| W5.5 | Stage 1 — P1-02 (`31`:133) |
+| W5.1 | Closed — P0-12 (`31`:129) |
+| W5.2 | Closed — P0-13 (`31`:130) |
+| W5.3 | Closed — P0-14, R01 (`31`:131) |
+| W5.4 | Closed — P1-01 (`31`:132) |
+| W5.5 | Closed — P1-02 (`31`:133) |
 | W6.1 | Closed — P0-18 (`31`:143) |
 | W6.2 | Stage 2 — P0-19, O01, O02 (`31`:144) |
 | W6.3 | Stage 2 — W6.3; the proxy half landed, the context and memory halves did not (`31`:145) |
@@ -354,7 +366,7 @@ Ledger: `D1` `G9` (2).
 | W10.2 | Stage 4 — P1-26, P1-27 (`31`:176) |
 | W10.3 | Not in v1 — P1-30/P1-31 remainder; inventory half closed (`31`:177) |
 | W10.4 | Closed — P1-34, P1-35 (`31`:178) |
-| W10.5 | Stage 1 — P1-44, P2-04, R02, R03; P1-51 closed and P1-52 in stage 4 (`31`:179) |
+| W10.5 | P1-44, P2-04, R03 closed; R02 still stage 1; P1-51 closed and P1-52 in stage 4 (`31`:179) |
 
 **Record corrections (where the sweeps disagreed, the tree won).** Each was verified at `55a62bc4`; the drifted form is not carried forward.
 
@@ -366,8 +378,8 @@ Ledger: `D1` `G9` (2).
 6. **`P1-19` was never issued.** No file contains the string. The arithmetic above states 51 issued rows rather than fabricating a row.
 7. **R02's four roots are declared in two places**, not one range: `proseRoots` at `site/scripts/check-claims.mjs`:14 and `numericRoot` at `:24`. The claim (four roots, never `app/components/**` or `public/benchmarks/*.json`) holds; the citation is corrected.
 8. **O03's "two-row fixture"** is in `transcript.txt`:7 (`INSERT 0 2`), not in the report JSON; the report carries the RTO number at `:10` and the pass flag at `:14`.
-9. **R04 verified exactly:** `benchmark-data.json` holds 65 runs and does not match the `*-benchmark-data.json` suffix the checker globs (`check_reproducibility.py`:99), so it is outside the four validated artifacts.
-10. **R01 verified exactly:** 20 distinct contract IDs are declared across `surfaces.ts`:42-246; 18 are absent from `engineering/architecture-v2/contracts/rest-route-registry.json` (only `operator.evidence.summary.v1` and `operator.platform.health.v1` appear).
+9. **R04 verified exactly:** `benchmark-data.json` holds 65 runs and does not match the `*-benchmark-data.json` suffix the checker globs (`check_reproducibility.py`:99), so it was outside the four validated artifacts at `55a62bc4`. Superseded in this pass: the checker now names the proxy artifact through `PROXY_ARTIFACT_NAME` and validates it (§3.1 R04).
+10. **R01 verified exactly:** 20 distinct contract IDs were declared across `surfaces.ts`:42-246; 18 were absent from `engineering/architecture-v2/contracts/rest-route-registry.json` at `55a62bc4` (only `operator.evidence.summary.v1` and `operator.platform.health.v1` appeared). Superseded in this pass: the registry now carries all 20 (§3.1 R01).
 11. **`P1-15` has no closure receipt, and none is claimed.** It appears in no engineering document other than the audit. Its substance is closed in the tree — `services/auth/cmd/auth/main.go`:396,424-437 builds server TLS credentials outside `development` and fails closed otherwise — but no negative test asserts it, so it remains a stage-3 row rather than a closed item.
 12. **`P1-02` is restated exactly as the plan records it (`31`:133).** The descriptors are committed records (`services/mcp-memory/mcp_tools.json`, `services/mcp-operator/mcp_tools.json`) checked in CI at `infra/scripts/mcp-memory-test-ci.sh`:19 and `infra/scripts/mcp-operator-test-ci.sh`:25. The residual is record-to-live-surface only: no previous-commit diff and no deprecation record per schema change.
 13. **`GAP-003` is not a second gap.** It is the same defect as `P0-14` (no complete route/proto/event/MCP contract registry), so it is recorded as an alias on that row and adds no row to any count.

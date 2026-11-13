@@ -2,17 +2,17 @@
 title: "ADR-0092: Hybrid retrieval fuses by RRF for admission and keeps composite scoring for presentation"
 description: "Architecture decision record 0092: the memory read path runs dense and sparse channels in parallel, admits candidates by reciprocal rank fusion with k=60, and leaves ADR-0068 composite scoring as the only presentation order."
 adrId: "0092"
-status: "Proposed"
+status: "Accepted"
 date: "2026-11-02"
 authors: "Elshaday Mengesha (@Rick1330)"
 ---
 
-::decision-banner{status="Proposed" date="2026-11-02" id="0092"}
+::decision-banner{status="Accepted" date="2026-11-02" id="0092"}
 ::
 
 # ADR-0092: Hybrid retrieval fuses by RRF for admission and keeps composite scoring for presentation
 
-- **Status:** Proposed
+- **Status:** Accepted. The fusion mechanism is implemented in the read path: `services/memory/app/read/ranking.py`:23 imports `reciprocal_rank_fusion` and `:121` calls it from `fuse_candidates`, and `services/memory/app/read/fusion.py` implements it. What remains open is the default: `search_hybrid_enabled` defaults to `False` (`services/memory/app/config.py`:268-271), so the decision is accepted while default-on stays a measurement decision.
 - **Date:** 2026-11-02
 - **Author:** Elshaday Mengesha (@Rick1330)
 - **Related:** [ADR-0068](0068-composite-relevance-gate.md), [ADR-0053](0053-vector-store-abstraction.md), [ADR-0060](0060-memory-service-tenant-isolation.md).
@@ -79,8 +79,9 @@ the scales do not meet.
   rank 1 can be presented last. That is intentional — admission is a retrieval question, presentation is a ranking
   question — and it is why the flag is off until a measured comparison exists.
 - The composite relevance floor can shorten a page that fusion filled, exactly as it could before this change.
-- Default-on is gated on the phase 5.C.1 gold-set comparison. Until then this record stays **Proposed** and the status
-  ledger makes no retrieval-quality claim.
+- Default-on is gated on the phase 5.C.1 gold-set comparison. That gate is a measurement decision, not a status of
+  this record: the mechanism is accepted, `search_hybrid_enabled` stays `false` until the comparison exists, and the
+  status ledger makes no retrieval-quality claim in the meantime.
 
 ## References
 

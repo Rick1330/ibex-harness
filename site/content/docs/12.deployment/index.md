@@ -18,6 +18,7 @@ supplied before promotion.
 ## Pages
 
 - [v1-single-node profile](/docs/deployment/v1-single-node) — the supported single-node deployment profile.
+- [Upgrade and support window](/docs/deployment/upgrade) — migration counts, irreversible families, rollback limits, and the unsigned support window.
 - [Docker Compose](/docs/deployment/docker-compose) — the development dependency stack.
 - [Environment variables](/docs/deployment/environment-variables) — configuration registry and fail-closed rules.
 - [Kubernetes](/docs/deployment/kubernetes) — render/lint scaffolding, sentinel digests, and missing data-plane templates.

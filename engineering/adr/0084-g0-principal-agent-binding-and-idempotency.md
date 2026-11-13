@@ -1,14 +1,14 @@
 ---
 title: "G0 principal, agent binding, and idempotency contract"
-description: "Proposed G0 contract packet for verified principal propagation, token-bound agent authorization, and tenant-scoped replay semantics."
+description: "G0 contract packet for verified principal propagation, token-bound agent authorization, and tenant-scoped replay semantics. The five contract shapes were accepted on 2026-10-10; runtime seams remain provisional."
 ---
 
-::decision-banner{status="Proposed" date="2026-10-05" id="0084"}
+::decision-banner{status="Accepted" date="2026-10-05" id="0084"}
 ::
 
 # ADR-0084: G0 principal, agent binding, and idempotency contract
 
-- **Status:** proposed for owner review; original issue [#935](https://github.com/Rick1330/ibex-harness/issues/935) is closed and historical; [issue #944](https://github.com/Rick1330/ibex-harness/issues/944) was closed by [PR #943](https://github.com/Rick1330/ibex-harness/pull/943), squash-merged 2026-10-09 at commit `1934456`, then reopened on 2026-10-09 solely for this docs-only cleanup. Owner review remains pending in this ADR and the status ledger through 2026-10-22; G0 exit is pending.
+- **Status:** Accepted for the five contract shapes on 2026-10-10 (contract text and safety semantics only; review/expiry moved to 2027-02-06 by the 2026-11-06 review, and `idempotency-operation.v1` was renewed to the same date on 2026-11-11). Runtime seams remain `provisional`: no runtime G1-G4 exit, hosted/HA certification, or production-readiness claim follows from this acceptance. Original issue [#935](https://github.com/Rick1330/ibex-harness/issues/935) is closed and historical; [issue #944](https://github.com/Rick1330/ibex-harness/issues/944) was closed by [PR #943](https://github.com/Rick1330/ibex-harness/pull/943), squash-merged 2026-10-09 at commit `1934456`, then reopened on 2026-10-09 solely for a docs-only cleanup.
 - **Date:** 2026-10-05
 - **Owners:** Auth/Proxy, Context, Architecture/Proxy, Platform/Data, Evidence/Platform, Security/Privacy, and Evidence/Operations roles; Rick1330 (acting) was provisionally confirmed by the owner on 2026-10-09; actual individual role assignments remain pending by/within 2026-10-22.
 - **Scope:** G0/G1/G2 foundation and the evidence contract required before the first bounded runtime seams
@@ -16,15 +16,15 @@ description: "Proposed G0 contract packet for verified principal propagation, to
 
 ## Context
 
-IBEX already validates bearer tokens, derives an organization and permission bitmap, verifies requested agent ownership/status, and carries request/session identifiers through several local paths. These local slices do not yet constitute an accepted cross-boundary principal/run contract. In particular, the token validation response marks `agent_id` as an agent-scoped token field, but the selected agent must be checked against that binding before any agent-specific work is authorized.
+IBEX already validates bearer tokens, derives an organization and permission bitmap, verifies requested agent ownership/status, and carries request/session identifiers through several local paths. These local slices do not by themselves implement the cross-boundary principal/run contract accepted here; the accepted text is the contract, and the runtime seams below are what remains to be built and evidenced. In particular, the token validation response marks `agent_id` as an agent-scoped token field, but the selected agent must be checked against that binding before any agent-specific work is authorized.
 
-The architecture-v2 roadmap makes G0 a hard documentation and contract freeze. New database lifecycles, service/package boundaries, budget enforcement changes, provider adapters, and write-capable effects remain blocked until the freeze is accepted. This ADR is therefore a proposal and implementation anchor, not a claim that G0 has exited.
+The architecture-v2 roadmap made G0 a hard documentation and contract freeze. New database lifecycles, service/package boundaries, budget enforcement changes, provider adapters, and write-capable effects were blocked until the freeze was accepted; the shape acceptance on 2026-10-10 released the freeze for contract text only. This ADR is therefore a contract and implementation anchor, not a claim that any runtime seam or G1-G4 exit has passed.
 
 ## Decision
 
 ### 0. Review state and decision boundary
 
-This document is the **proposed G0 contract packet** originally tracked by issue #935 (now closed; historical context). The implementation follow-up issue #944 was closed by PR #943, squash-merged on 2026-10-09, and reopened on 2026-10-09 solely for this docs-only cleanup. Owner review—not implementation tracking—remains pending in this ADR and the status ledger through 2026-10-22. Owner choices were recorded on 2026-10-08, and proposal-level confirmations were recorded on 2026-10-09 in the status ledger; neither is an acceptance record. A merge, green local test, or author statement does not approve G0. Rick1330 is provisionally confirmed as acting across the listed owner roles pending assignment of actual individual owners by/within the 2026-10-22 review window. Named owners must approve the authority matrix, contract registry, deployment profile, evidence artifact, limitations, and review date; the status ledger must record that decision before any conditional runtime work below is implementation-ready.
+This document is the **G0 contract packet** originally tracked by issue #935 (now closed; historical context). The implementation follow-up issue #944 was closed by PR #943, squash-merged on 2026-10-09, and reopened on 2026-10-09 solely for a docs-only cleanup. The packet's five contract shapes were **accepted on 2026-10-10** by Rick1330 acting across the owner roles, and the acceptance is recorded in the status ledger and in the contract registry ([`03-contract-registry.md`](../architecture-v2/03-contract-registry.md)). Acceptance freezes contract text and safety semantics only: it does not approve a runtime seam, and a merge, green local test, or author statement does not imply G0 exit. Rick1330 remains the acting owner across the listed roles; no independent reviewer is named. Each runtime seam below still needs its own owner/status-ledger decision and its G1/G2/G4 evidence gate before it is implementation-ready.
 
 The first post-G0 candidate implementation boundary is deliberately narrow, but each seam remains subject to a separate owner/status-ledger decision and its applicable G1/G2/G4 evidence gate:
 
@@ -126,7 +126,7 @@ Rollout order:
 
 ## Evidence and acceptance
 
-This proposal can move to `accepted` only after named owners approve the G0 packet and the status ledger records the profile, commit, test artifacts, dependency assumptions, limitations, and review date. The acceptance record must identify the auth/policy, contract, evidence/security, and deployment owners. Local unit tests alone do not establish hosted or HA acceptance.
+The five contract shapes in this packet were accepted on 2026-10-10 on the decision recorded in `21-g0-owner-decision-record.md`, and the status ledger records the accepted scope and its limitations. The acceptance covers contract text and safety semantics; the runtime evidence each row names is still required before a runtime claim, and no runtime seam is promoted by it. Local unit tests alone do not establish hosted or HA acceptance.
 
 Required evidence for this slice:
 
@@ -142,4 +142,4 @@ Required evidence for this slice:
 - The proxy and AuthService contain deliberate defense-in-depth checks.
 - Agent-scoped tokens cannot be used to select a different agent in the same organization.
 - A future cross-agent delegation mechanism must be explicit rather than inferred from organization membership.
-- G0 remains proposed until human review and status-ledger evidence are recorded.
+- G0's contract shapes are accepted; its runtime seams remain provisional until the evidence each ledger row names is recorded.

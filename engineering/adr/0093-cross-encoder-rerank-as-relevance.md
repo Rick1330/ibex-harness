@@ -2,17 +2,17 @@
 title: "ADR-0093: Cross-encoder reranking replaces the relevance component, not the order"
 description: "Architecture decision record 0093: an optional TEI cross-encoder reranks the fused hybrid window, its score becomes the composite relevance component, and any failure degrades to the fused order inside a hard latency stop."
 adrId: "0093"
-status: "Proposed"
+status: "Accepted"
 date: "2026-11-03"
 authors: "Elshaday Mengesha (@Rick1330)"
 ---
 
-::decision-banner{status="Proposed" date="2026-11-03" id="0093"}
+::decision-banner{status="Accepted" date="2026-11-03" id="0093"}
 ::
 
 # ADR-0093: Cross-encoder reranking replaces the relevance component, not the order
 
-- **Status:** Proposed
+- **Status:** Accepted. The rerank stage is implemented: `services/memory/app/read/repository.py`:15 imports `RerankClient`, `:261-262` dispatches to the reranked path when the stage is available, and `:268` is that path's implementation. `rerank_enabled` defaults to `False` (`services/memory/app/config.py`:280-283), so the decision is accepted while default-on remains a measurement decision.
 - **Date:** 2026-11-03
 - **Author:** Elshaday Mengesha (@Rick1330)
 - **Related:** [ADR-0092](0092-hybrid-retrieval-rrf-admission.md), [ADR-0068](0068-composite-relevance-gate.md), [ADR-0061](0061-retrieval-quality-benchmark-methodology.md).
@@ -92,8 +92,8 @@ The question this record settles is what a reranker is allowed to override.
 - The reranker is a new external dependency on the read path. It is default-off, and its absence is a degrade, not a
   failure, so the service stays available without it.
 - Default-on and any tuned window or timeout are measurement decisions. Phase 5.C.3 shadow evaluation and the
-  retrieval-quality benchmark decide them; until then this record stays **Proposed** and no ranking-quality claim is
-  made.
+  retrieval-quality benchmark decide them; the mechanism decided here is accepted, `rerank_enabled` stays `false` until
+  those measurements exist, and no ranking-quality claim is made.
 
 ## References
 

@@ -55,24 +55,36 @@ The Console has exactly two static tiers. Every surface declares one.
 
 **Core tier (10 surfaces, the default Console):**
 
-| Surface | Route | Availability | Role in the lifecycle |
-| --- | --- | --- | --- |
-| Overview | `/` | live | Organization snapshot and current health |
-| Agents | `/agents` | preview | Who writes and reads memory |
-| Sessions | `/sessions` | preview | The conversation scope |
-| Memories | `/memories` | preview | What is stored, retrieved, and forgotten |
-| Evidence | `/evidence` | preview | What is certified, redacted, or tombstoned |
-| Directives | `/directives` | preview, deferred | The standing half of injected context |
-| Policies | `/policies` | preview | The rules in force for context and memory |
-| Explore | `/explore` | live | Read-only request traces |
-| Platform | `/platform` | live | Dependency, ingestion, and recovery health |
-| Settings | `/settings` | preview | Organization configuration and boundaries |
+The inventory below is a snapshot. [`services/console/shared/operator/surfaces.ts`](../../services/console/shared/operator/surfaces.ts) is the
+source of truth for surface status (AGENTS.md §7.3); this ADR records the decision, and a surface change lands in that
+module first. Each surface declares `availability` (`live` or `preview`) and `contractStatus` (`registry` when it names
+one or more contract IDs that exist in
+[`contracts/rest-route-registry.json`](../architecture-v2/contracts/rest-route-registry.json), `design` when no served
+route exists and `contract` is therefore absent).
 
-Directives is core because context injection is directive plus memory. A Console for a context product that cannot show directives cannot explain the product. It has no owning API router yet, so it is core-tier but `deferred`; it does not count toward the live ratio until a contract exists.
+| Surface | Route | Availability | Contract status | Role in the lifecycle |
+| --- | --- | --- | --- | --- |
+| Overview | `/` | live | registry (`operator.overview.read.v1`, `operator.platform.health.v1`) | Organization snapshot and current health |
+| Agents | `/agents` | live | registry (`operator.agents.read.v1`) | Who writes and reads memory |
+| Sessions | `/sessions` | live | registry (`operator.sessions.read.v1`) | The conversation scope |
+| Memories | `/memories` | live | registry (`operator.memories.read.v1`) | What is stored, retrieved, and forgotten |
+| Evidence | `/evidence` | live | registry (`operator.evidence.summary.v1`) | What is certified, redacted, or tombstoned |
+| Directives | `/directives` | live | registry (`operator.directives.read.v1`, `operator.directives.get.v1`) | The standing half of injected context |
+| Policies | `/policies` | preview | design | The rules in force for context and memory |
+| Explore | `/explore` | live | registry (`operator.traces.read.v1`, `operator.traces.get.v1`) | Read-only request traces |
+| Platform | `/platform` | live | registry (`operator.platform.health.v1`) | Dependency, ingestion, and recovery health |
+| Settings | `/settings` | preview | design | Organization configuration and boundaries |
+
+Directives is core because context injection is directive plus memory. A Console for a context product that cannot show
+directives cannot explain the product. It was `preview, deferred` while it had no owning API router; it now names two
+registry contracts and is `live`. Policies and Settings remain `preview` with no owning contract, so they do not count
+toward the live ratio.
 
 **Platform tier (8 surfaces, hidden from the default navigation):**
 
 Incidents, Drift, Audit, Budgets, Analytics, Providers, MCP tools, Access.
+
+All eight are `preview` with `contractStatus: "design"`: none names a contract, because no operator route serves it.
 
 These remain in the repository as designed previews. They are not deleted, not promoted, and not part of the default Console navigation. They are reachable only through an explicit "Platform tier" disclosure and carry a persistent tier banner. Promoting one requires a named design partner, an owning contract, and a superseding ADR — not merely a read model.
 
@@ -84,7 +96,7 @@ These remain in the repository as designed previews. They are not deleted, not p
 - **Operate:** Platform, Settings
 - **Platform tier** (collapsed): the eight surfaces above
 
-**Sequencing rule:** core-tier surfaces are wired before platform-tier surfaces, even when a platform-tier surface has a cheaper read model. The next live slices are Agents, Policies, and Settings; then Sessions, Memories, and Evidence. Access, Providers, and Budgets wait behind the core lifecycle.
+**Sequencing rule:** core-tier surfaces are wired before platform-tier surfaces, even when a platform-tier surface has a cheaper read model. Policies and Settings are the remaining core `preview` surfaces; the platform tier stays behind them.
 
 ### 3. Surface lifecycle and freeze
 
