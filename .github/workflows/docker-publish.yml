@@ -432,7 +432,7 @@ jobs:
             --exit-code 1
       - name: Upload Trivy auth SARIF
         if: always() && hashFiles('trivy-image-auth.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-image-auth.sarif
           category: trivy-image-auth
@@ -471,7 +471,7 @@ jobs:
             --exit-code 1
       - name: Upload Trivy proxy SARIF
         if: always() && hashFiles('trivy-image-proxy.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-image-proxy.sarif
           category: trivy-image-proxy
@@ -523,7 +523,7 @@ jobs:
           fi
       - name: Upload Trivy embedder SARIF
         if: always() && hashFiles('trivy-image-embedder.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-image-embedder.sarif
           category: trivy-image-embedder
@@ -574,7 +574,7 @@ jobs:
           fi
       - name: Upload Trivy mcp-memory SARIF
         if: always() && hashFiles('trivy-image-mcp-memory.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-image-mcp-memory.sarif
           category: trivy-image-mcp-memory
@@ -626,7 +626,7 @@ jobs:
           fi
       - name: Upload Trivy memory SARIF
         if: always() && hashFiles('trivy-image-memory.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-image-memory.sarif
           category: trivy-image-memory
@@ -677,7 +677,7 @@ jobs:
           fi
       - name: Upload Trivy api SARIF
         if: always() && hashFiles('trivy-image-api.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-image-api.sarif
           category: trivy-image-api
@@ -728,7 +728,7 @@ jobs:
           fi
       - name: Upload Trivy worker SARIF
         if: always() && hashFiles('trivy-image-worker.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-image-worker.sarif
           category: trivy-image-worker
@@ -1218,7 +1218,7 @@ jobs:
           fi
       - name: Upload Trivy pushed-worker SARIF
         if: always() && hashFiles('trivy-image-worker-pushed.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-image-worker-pushed.sarif
           category: trivy-image-worker-pushed
