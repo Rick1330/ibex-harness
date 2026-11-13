@@ -10,12 +10,15 @@ claim that matters most.
 from __future__ import annotations
 
 import contextlib
+import functools
 import io
 import json
+import os
 import re
 import shutil
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
 
@@ -29,11 +32,38 @@ HNSW_CORPUS_HASH, HNSW_CORPUS_MANIFEST = provenance.corpus_identity("hnsw")
 OTHER_HASH = "0" * 64
 # The checker refuses an artifact it cannot schema-validate, so anything asserting a clean run
 # needs the validator. `benchmark-gate` (which runs this module) has no jsonschema installed;
-# those tests skip there rather than pass silently, and the rest still run.
-NEEDS_JSONSCHEMA = unittest.skipUnless(
-    check.jsonschema is not None,
-    "needs jsonschema: pip install -r .github/requirements/jsonschema.txt",
+# locally those tests skip rather than pass silently. CI sets IBEX_REQUIRE_JSONSCHEMA=1, where
+# the same skip would delete the schema coverage without a word, so there it fails with the
+# install command instead.
+REQUIRE_JSONSCHEMA_ENV = "IBEX_REQUIRE_JSONSCHEMA"
+MISSING_JSONSCHEMA = (
+    "needs jsonschema: pip install -r .github/requirements/jsonschema.txt"
 )
+
+
+def require_jsonschema() -> bool:
+    """Whether a missing validator must fail the run instead of skipping the test."""
+    return os.environ.get(REQUIRE_JSONSCHEMA_ENV) == "1"
+
+
+def needs_jsonschema(test: Callable[..., object]) -> Callable[..., object]:
+    """Skip a schema test where ``jsonschema`` is absent, unless the run requires it.
+
+    The decision is made when the test runs, not when this module is imported: that is what lets
+    a test exercise the switch, and it means a validator installed mid-run is seen.
+    """
+
+    @functools.wraps(test)
+    def wrapper(*args: object, **kwargs: object) -> object:
+        if check.jsonschema is not None:
+            return test(*args, **kwargs)
+        if require_jsonschema():
+            raise AssertionError(
+                f"{MISSING_JSONSCHEMA} ({REQUIRE_JSONSCHEMA_ENV}=1 forbids skipping this test)"
+            )
+        raise unittest.SkipTest(MISSING_JSONSCHEMA)
+
+    return wrapper
 
 
 def _gold_identity(gold_set: str) -> tuple[str, str, str]:
@@ -139,6 +169,72 @@ def _ranking(*runs: dict[str, object]) -> dict[str, object]:
     return _payload("ranking_quality", *runs)
 
 
+PROXY_NAME = "benchmark-data.json"
+
+
+def _proxy_run(**overrides: object) -> dict[str, object]:
+    """One run of the proxy latency artifact, in the shape the artifact actually publishes."""
+    run: dict[str, object] = {
+        "sha": "e" * 40,
+        "short_sha": "e" * 7,
+        "timestamp": "2026-11-12T00:00:00+00:00",
+        "branch": "main",
+        "pr_number": None,
+        "run_number": 7,
+        "run_url": "https://example.invalid/actions/runs/7",
+        "status": "pass",
+        "k6": {"p50_ms": 0.5, "p95_ms": 1.0, "p99_ms": 1.5, "p999_ms": 2.5},
+        "stages": {
+            "auth_lru_p50_ms": 0.1,
+            "auth_lru_p95_ms": 0.2,
+            "auth_lru_p99_ms": 0.3,
+        },
+        "metric_deltas": {"k6": {"p99_ms": -0.1}},
+    }
+    run.update(overrides)
+    return run
+
+
+def _proxy(*runs: dict[str, object]) -> dict[str, object]:
+    return {"schema_version": 1, "baseline_sha": "f" * 40, "runs": list(runs)}
+
+
+# Run overrides and the problem each must produce. The proxy artifact spells its percentiles
+# ``p50_ms`` (and ``auth_lru_p50_ms`` inside ``stages``), so every ordering case is stated in
+# that spelling; ``p999_ms`` is optional and must not hide the triple when it is absent.
+PROXY_CASES: dict[str, tuple[dict[str, object], str]] = {
+    "sha is not 40 lowercase hex": (
+        {"sha": "E" * 40, "short_sha": "E" * 7},
+        "runs[0].sha:",
+    ),
+    # The provenance contract knows the hnsw and gold corpora, not the proxy source, so a
+    # recorded proxy run is refused like a recorded extraction-quality run.
+    "a recorded run has no corpus": ({"provenance": _recorded()}, "no corpus identity"),
+    "k6 p50 above its p95": (
+        {"k6": {"p50_ms": 5.0, "p95_ms": 4.0, "p99_ms": 6.0, "p999_ms": 7.0}},
+        "runs[0].k6: p50 5.0 > p95 4.0",
+    ),
+    "a stage group keeps its name": (
+        {
+            "stages": {
+                "auth_lru_p50_ms": 3.0,
+                "auth_lru_p95_ms": 2.0,
+                "auth_lru_p99_ms": 4.0,
+            }
+        },
+        "runs[0].stages.auth_lru: p50 3.0 > p95 2.0",
+    ),
+    "p99 above its p999": (
+        {"k6": {"p50_ms": 0.5, "p95_ms": 1.0, "p99_ms": 3.0, "p999_ms": 2.0}},
+        "runs[0].k6: p99 3.0 > p999 2.0",
+    ),
+    "a run without a p999": (
+        {"k6": {"p50_ms": 5.0, "p95_ms": 4.0, "p99_ms": 6.0}},
+        "runs[0].k6: p50 5.0 > p95 4.0",
+    ),
+}
+
+
 class CheckerCase(unittest.TestCase):
     """Writes artifacts under test into a temporary directory and reads the report."""
 
@@ -152,7 +248,9 @@ class CheckerCase(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path
 
-    def report_for(self, payload: object, name: str = "hnsw-benchmark-data.json") -> check.Report:
+    def report_for(
+        self, payload: object, name: str = "hnsw-benchmark-data.json"
+    ) -> check.Report:
         report = check.Report()
         check.check_path(self.write(payload, name), report)
         return report
@@ -163,7 +261,7 @@ class CheckerCase(unittest.TestCase):
         """The provenance rules only, without the JSON Schema pass.
 
         Positive cases use this so they keep running where jsonschema is not installed; the
-        schema pass has its own tests behind ``NEEDS_JSONSCHEMA``.
+        schema pass has its own tests behind ``needs_jsonschema``.
         """
         return check._check_payload(payload, check._kind(Path(name)))
 
@@ -174,7 +272,9 @@ class CheckerCase(unittest.TestCase):
             f"expected a problem containing {needle!r}, got {problems}",
         )
 
-    def assert_clean(self, payload: object, name: str = "hnsw-benchmark-data.json") -> None:
+    def assert_clean(
+        self, payload: object, name: str = "hnsw-benchmark-data.json"
+    ) -> None:
         problems = self.content_problems(payload, name)
         self.assertEqual(problems, [], f"expected no problems, got {problems}")
 
@@ -185,13 +285,18 @@ def _runs_in(path: Path) -> list[object]:
 
 
 class TestCommittedArtifacts(CheckerCase):
-    @NEEDS_JSONSCHEMA
+    @needs_jsonschema
     def test_every_published_artifact_passes(self) -> None:
         paths = check.default_paths()
-        self.assertEqual(len(paths), 4)
+        # Discovery is a glob plus one exact name; a registered artifact the glob cannot see
+        # would be checked by nothing, which is the one outcome a reproducibility gate must not
+        # produce.
+        self.assertEqual({path.name for path in paths}, set(check.ARTIFACT_KINDS))
         report = check.check_paths(paths)
 
-        self.assertEqual(report.problems, [], f"expected no problems, got {report.problems}")
+        self.assertEqual(
+            report.problems, [], f"expected no problems, got {report.problems}"
+        )
         self.assertGreater(report.run_count, 0)
 
     def test_the_committed_history_is_reported_as_unrecorded(self) -> None:
@@ -203,16 +308,19 @@ class TestCommittedArtifacts(CheckerCase):
         paths = check.default_paths()
         groups = [_runs_in(path) for path in paths]
         unrecorded = [
-            sum(1 for run in group if check._prov_status(run) != "recorded") for group in groups
+            sum(1 for run in group if check._prov_status(run) != "recorded")
+            for group in groups
         ]
         report = check.check_paths(paths)
 
-        self.assertGreater(sum(unrecorded), 0, "expected committed runs that predate provenance")
+        self.assertGreater(
+            sum(unrecorded), 0, "expected committed runs that predate provenance"
+        )
         self.assertEqual(report.unrecorded, sum(unrecorded))
         self.assertEqual(report.run_count, sum(len(group) for group in groups))
         self.assertEqual(len(report.warnings), sum(1 for count in unrecorded if count))
 
-    @NEEDS_JSONSCHEMA
+    @needs_jsonschema
     def test_main_exits_zero_and_prints_the_unrecorded_count(self) -> None:
         paths = check.default_paths()
         unrecorded = check.check_paths(paths).unrecorded
@@ -225,6 +333,48 @@ class TestCommittedArtifacts(CheckerCase):
         self.assertIn(f"{unrecorded} unrecorded run(s)", out.getvalue())
         if unrecorded:
             self.assertIn("Warning:", err.getvalue())
+
+
+class TestJsonSchemaRequirement(unittest.TestCase):
+    """A missing validator must not remove the schema coverage without saying so."""
+
+    @staticmethod
+    def _probe(env: str | None, validator: object) -> list[str]:
+        """Run a decorated probe with ``jsonschema`` patched to ``validator``; return its calls."""
+        calls: list[str] = []
+
+        @needs_jsonschema
+        def probe() -> str:
+            calls.append("ran")
+            return "ran"
+
+        with (
+            mock.patch.object(check, "jsonschema", validator),
+            mock.patch.dict(os.environ, {}, clear=False),
+        ):
+            os.environ.pop(REQUIRE_JSONSCHEMA_ENV, None)
+            if env is not None:
+                os.environ[REQUIRE_JSONSCHEMA_ENV] = env
+            probe()
+        return calls
+
+    def test_a_missing_validator_skips_unless_the_run_requires_it(self) -> None:
+        with self.assertRaises(unittest.SkipTest) as caught:
+            self._probe(None, None)
+
+        self.assertIn(MISSING_JSONSCHEMA, str(caught.exception))
+        with self.assertRaises(unittest.SkipTest):
+            self._probe("0", None)
+
+    def test_a_missing_validator_fails_when_the_run_requires_it(self) -> None:
+        with self.assertRaises(AssertionError) as caught:
+            self._probe("1", None)
+
+        message = str(caught.exception)
+        self.assertIn("IBEX_REQUIRE_JSONSCHEMA=1", message)
+        self.assertIn("pip install -r .github/requirements/jsonschema.txt", message)
+        # With the validator present the same switch runs the test instead of failing.
+        self.assertEqual(self._probe("1", mock.sentinel.installed), ["ran"])
 
 
 class TestIdentity(CheckerCase):
@@ -240,7 +390,9 @@ class TestIdentity(CheckerCase):
         self.assert_problem(report, "runs[0].short_sha: 'deadbee' != sha[:7] 'aaaaaaa'")
 
     def test_a_duplicate_sha_fails(self) -> None:
-        report = self.report_for(_hnsw(_unrecorded_run(sha="a" * 40), _hnsw_run(run_number=2)))
+        report = self.report_for(
+            _hnsw(_unrecorded_run(sha="a" * 40), _hnsw_run(run_number=2))
+        )
 
         self.assert_problem(report, "runs[1].sha: duplicate aaa")
 
@@ -280,17 +432,26 @@ class TestCorpusIdentity(CheckerCase):
         self.assert_clean(_hnsw(_hnsw_run(provenance=_recorded(corpus_status="stale"))))
 
     def test_a_different_hash_declared_current_fails(self) -> None:
-        report = self.report_for(_hnsw(_hnsw_run(provenance=_recorded(corpus_hash=OTHER_HASH))))
-
-        self.assert_problem(report, "runs[0].provenance.corpus_status: 'current' but corpus_hash")
-        self.assert_problem(
-            report, f"does not describe the checked-out hnsw corpus ({HNSW_CORPUS_HASH})"
+        report = self.report_for(
+            _hnsw(_hnsw_run(provenance=_recorded(corpus_hash=OTHER_HASH)))
         )
 
-    def test_a_matching_hash_under_a_different_manifest_declared_current_fails(self) -> None:
+        self.assert_problem(
+            report, "runs[0].provenance.corpus_status: 'current' but corpus_hash"
+        )
+        self.assert_problem(
+            report,
+            f"does not describe the checked-out hnsw corpus ({HNSW_CORPUS_HASH})",
+        )
+
+    def test_a_matching_hash_under_a_different_manifest_declared_current_fails(
+        self,
+    ) -> None:
         # The manifest states what the hash covers: the same digest under a manifest that names
         # other inputs is a claim about a different corpus, not the one this checkout has.
-        record = _recorded(corpus_manifest="pgvector|synth.py=x|corpus.py=y|dim=1024,active=64")
+        record = _recorded(
+            corpus_manifest="pgvector|synth.py=x|corpus.py=y|dim=1024,active=64"
+        )
         report = self.report_for(_hnsw(_hnsw_run(provenance=record)))
 
         self.assert_problem(
@@ -299,10 +460,16 @@ class TestCorpusIdentity(CheckerCase):
 
     def test_a_different_hash_declared_stale_passes(self) -> None:
         self.assert_clean(
-            _hnsw(_hnsw_run(provenance=_recorded(corpus_hash=OTHER_HASH, corpus_status="stale")))
+            _hnsw(
+                _hnsw_run(
+                    provenance=_recorded(corpus_hash=OTHER_HASH, corpus_status="stale")
+                )
+            )
         )
 
-    def test_a_matching_hash_under_a_different_manifest_declared_stale_passes(self) -> None:
+    def test_a_matching_hash_under_a_different_manifest_declared_stale_passes(
+        self,
+    ) -> None:
         record = _recorded(
             corpus_manifest="pgvector|synth.py=x|corpus.py=y|dim=1024,active=64",
             corpus_status="stale",
@@ -331,10 +498,13 @@ class TestCorpusIdentity(CheckerCase):
     def test_a_recorded_run_on_a_corpus_less_kind_fails(self) -> None:
         run = _hnsw_run()
         report = self.report_for(
-            _payload("extraction_quality", run), "extraction-quality-benchmark-data.json"
+            _payload("extraction_quality", run),
+            "extraction-quality-benchmark-data.json",
         )
 
-        self.assert_problem(report, "recorded on an artifact kind with no corpus identity")
+        self.assert_problem(
+            report, "recorded on an artifact kind with no corpus identity"
+        )
 
 
 class TestGoldSetIdentity(CheckerCase):
@@ -342,7 +512,9 @@ class TestGoldSetIdentity(CheckerCase):
 
     def _problems(self, gold_set: str, block: dict[str, object]) -> list[str]:
         run = _ranking_run(gold_set=gold_set, provenance=block)
-        return self.content_problems(_ranking(run), "ranking-quality-benchmark-data.json")
+        return self.content_problems(
+            _ranking(run), "ranking-quality-benchmark-data.json"
+        )
 
     def test_a_v1_run_on_the_v1_corpus_passes(self) -> None:
         self.assert_clean(
@@ -370,10 +542,16 @@ class TestGoldSetIdentity(CheckerCase):
         )
         problems = self._problems("v1", record)
 
-        self.assertTrue(any("gold_set_name" in problem for problem in problems), problems)
-        self.assertTrue(any("gold_set_hash" in problem for problem in problems), problems)
+        self.assertTrue(
+            any("gold_set_name" in problem for problem in problems), problems
+        )
+        self.assertTrue(
+            any("gold_set_hash" in problem for problem in problems), problems
+        )
 
-    def test_a_contradictory_gold_set_hash_is_named_with_the_file_it_implies(self) -> None:
+    def test_a_contradictory_gold_set_hash_is_named_with_the_file_it_implies(
+        self,
+    ) -> None:
         problems = self._problems("v1", _gold_recorded(gold_set_hash=OTHER_HASH))
 
         self.assertTrue(
@@ -407,18 +585,22 @@ class TestGoldSetIdentity(CheckerCase):
         )
 
         self.assert_clean(
-            _ranking(_ranking_run(provenance=record)), "ranking-quality-benchmark-data.json"
+            _ranking(_ranking_run(provenance=record)),
+            "ranking-quality-benchmark-data.json",
         )
 
     def test_a_stale_run_that_states_two_corpus_hashes_fails(self) -> None:
         # Skipping the checkout comparison is not skipping consistency: the gold set is the corpus
         # on this benchmark, so gold_set_hash and corpus_hash cannot name different bytes.
-        record = _gold_recorded(corpus_hash="1" * 64, gold_set_hash="2" * 64, corpus_status="stale")
+        record = _gold_recorded(
+            corpus_hash="1" * 64, gold_set_hash="2" * 64, corpus_status="stale"
+        )
         problems = self._problems("v1", record)
 
         self.assertTrue(
             any(
-                "provenance.gold_set_hash: '222" in problem and "!= corpus_hash" in problem
+                "provenance.gold_set_hash: '222" in problem
+                and "!= corpus_hash" in problem
                 for problem in problems
             ),
             problems,
@@ -442,14 +624,22 @@ class TestGoldSetIdentity(CheckerCase):
 class TestPercentiles(CheckerCase):
     def test_a_p50_above_its_p95_fails(self) -> None:
         report = self.report_for(
-            _hnsw(_hnsw_run(results=[_hnsw_result(latency_ms_p50=5.0, latency_ms_p95=4.0)]))
+            _hnsw(
+                _hnsw_run(
+                    results=[_hnsw_result(latency_ms_p50=5.0, latency_ms_p95=4.0)]
+                )
+            )
         )
 
         self.assert_problem(report, "runs[0].results[0].latency_ms: p50 5.0 > p95 4.0")
 
     def test_a_p95_above_its_p99_fails(self) -> None:
         report = self.report_for(
-            _hnsw(_hnsw_run(results=[_hnsw_result(latency_ms_p95=9.0, latency_ms_p99=8.0)]))
+            _hnsw(
+                _hnsw_run(
+                    results=[_hnsw_result(latency_ms_p95=9.0, latency_ms_p99=8.0)]
+                )
+            )
         )
 
         self.assert_problem(report, "runs[0].results[0].latency_ms: p95 9.0 > p99 8.0")
@@ -471,14 +661,18 @@ class TestPercentiles(CheckerCase):
         self.assert_clean(_hnsw(_hnsw_run(results=[result])))
 
     def test_a_percentile_that_is_not_a_number_fails(self) -> None:
-        report = self.report_for(_hnsw(_hnsw_run(results=[_hnsw_result(latency_ms_p95="2.0")])))
+        report = self.report_for(
+            _hnsw(_hnsw_run(results=[_hnsw_result(latency_ms_p95="2.0")]))
+        )
 
         self.assert_problem(report, "latency_ms_p95: not a number ('2.0')")
 
 
 class TestRanking(CheckerCase):
     def test_a_known_gold_set_passes(self) -> None:
-        self.assert_clean(_ranking(_ranking_run()), "ranking-quality-benchmark-data.json")
+        self.assert_clean(
+            _ranking(_ranking_run()), "ranking-quality-benchmark-data.json"
+        )
 
     def test_an_unknown_gold_set_fails(self) -> None:
         report = self.report_for(
@@ -503,7 +697,9 @@ class TestRanking(CheckerCase):
         run = _ranking_run(gate_summary={"modes": {"hybrid_rerank": {}}})
         report = self.report_for(_ranking(run), "ranking-quality-benchmark-data.json")
 
-        self.assert_problem(report, "runs[0].modes: missing required mode(s) ['full_graph']")
+        self.assert_problem(
+            report, "runs[0].modes: missing required mode(s) ['full_graph']"
+        )
 
     def test_every_defined_mode_passes(self) -> None:
         modes = {name: {} for name in sorted(check.MODE_NAMES)}
@@ -515,16 +711,20 @@ class TestRanking(CheckerCase):
         run = _ranking_run(gate_summary={"modes": ["hybrid_rerank", "full_graph"]})
         report = self.report_for(_ranking(run), "ranking-quality-benchmark-data.json")
 
-        self.assert_problem(report, "runs[0].modes: must be an object keyed by mode name")
+        self.assert_problem(
+            report, "runs[0].modes: must be an object keyed by mode name"
+        )
 
     def test_the_mode_names_match_the_runner(self) -> None:
-        declared = set(re.findall(r'name="([a-z_]+)"', MODES_PY.read_text(encoding="utf-8")))
+        declared = set(
+            re.findall(r'name="([a-z_]+)"', MODES_PY.read_text(encoding="utf-8"))
+        )
 
         self.assertEqual(declared, set(check.MODE_NAMES))
 
 
 class TestUnrecordedWarnings(CheckerCase):
-    @NEEDS_JSONSCHEMA
+    @needs_jsonschema
     def test_an_unrecorded_run_is_a_warning_not_a_failure(self) -> None:
         payload = _hnsw(_unrecorded_run())
         report = self.report_for(payload)
@@ -534,7 +734,7 @@ class TestUnrecordedWarnings(CheckerCase):
         self.assert_clean(payload)
         self.assertEqual(len(report.warnings), 1)
 
-    @NEEDS_JSONSCHEMA
+    @needs_jsonschema
     def test_the_warning_states_that_the_run_is_not_evidence(self) -> None:
         run = _hnsw_run(provenance={"status": "unrecorded"})
         report = self.report_for(_hnsw(run))
@@ -543,9 +743,11 @@ class TestUnrecordedWarnings(CheckerCase):
         self.assertIn("1 of 1 run(s) are unrecorded", report.warnings[0])
         self.assertIn("not reproducible evidence", report.warnings[0])
 
-    @NEEDS_JSONSCHEMA
+    @needs_jsonschema
     def test_mixed_artifacts_count_only_unrecorded_runs(self) -> None:
-        report = self.report_for(_hnsw(_hnsw_run(run_number=2), _unrecorded_run(run_number=3)))
+        report = self.report_for(
+            _hnsw(_hnsw_run(run_number=2), _unrecorded_run(run_number=3))
+        )
 
         self.assertTrue(report.ok)
         self.assertEqual(report.unrecorded, 1)
@@ -581,7 +783,7 @@ class TestFailClosed(CheckerCase):
 
         self.assert_problem(report, "missing schema hnsw-benchmark-data.schema.json")
 
-    @NEEDS_JSONSCHEMA
+    @needs_jsonschema
     def test_a_schema_violation_fails(self) -> None:
         report = self.report_for(_hnsw(_hnsw_run(run_number="one")))
 
@@ -612,6 +814,43 @@ class TestRealArtifactViolation(CheckerCase):
         self.assertEqual(code, 1)
         self.assertIn("runs[5].results[0].latency_ms: p95", err.getvalue())
         self.assertIn("> p99", err.getvalue())
+
+
+class TestProxyArtifact(CheckerCase):
+    """The proxy latency artifact: exact name, ``p50_ms`` spelling, no corpus identity."""
+
+    def test_the_published_artifact_is_checked_in_its_own_spelling(self) -> None:
+        """The kind, its schema, and every per-run rule, stated in the ``p50_ms`` spelling.
+
+        One test method keeps the contract in one place; each subTest names the case that fails.
+        """
+        kind = check._kind(Path(PROXY_NAME))
+        suffixed = check._kind(Path("hnsw-benchmark-data.json"))
+        self.assertEqual(kind.name, "benchmark-data")
+        self.assertIsNone(kind.corpus)
+        self.assertEqual(kind.percentiles, check.PROXY_PERCENTILES)
+        self.assertEqual(check._schema(Path(PROXY_NAME).stem)["title"], "BenchmarkData")
+        # The four suffixed kinds keep the corpus and the spelling they had.
+        self.assertEqual(suffixed.corpus, "hnsw")
+        self.assertEqual(suffixed.percentiles, check.SUFFIXED_PERCENTILES)
+
+        self.assert_clean(_proxy(_proxy_run()), PROXY_NAME)
+        for name, (overrides, expected) in PROXY_CASES.items():
+            with self.subTest(name):
+                problems = self.content_problems(
+                    _proxy(_proxy_run(**overrides)), PROXY_NAME
+                )
+                self.assertTrue(
+                    any(expected in problem for problem in problems), problems
+                )
+
+        # A renamed field would stop the ordering check silently: the layout would find no group
+        # and report nothing. This pins the spelling the published artifact actually uses.
+        for index, run in enumerate(_runs_in(PUBLISHED / PROXY_NAME)):
+            k6 = check._percentile_prefixes(run["k6"], check.PROXY_PERCENTILES)
+            stages = check._percentile_prefixes(run["stages"], check.PROXY_PERCENTILES)
+            self.assertEqual(k6, [""], f"runs[{index}].k6")
+            self.assertTrue(stages, f"runs[{index}].stages")
 
 
 if __name__ == "__main__":
