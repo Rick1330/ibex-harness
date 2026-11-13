@@ -1,11 +1,22 @@
-"""Check the mounted REST route registry (P0-14 / W5.3).
+"""Check the contract registry (P0-14 / W5.3 / W5.5).
 
-Every route mounted by ``services/api`` must have exactly one row in
-``engineering/architecture-v2/contracts/rest-route-registry.json``. The registry
-records ownership, compatibility class, and status only; authentication and
-permission data stays in ``services/api/app/route_policy_data.py``.
+Every contract surface shipped in this tree must have exactly one row in
+``engineering/architecture-v2/contracts/rest-route-registry.json``:
 
-Contract ID derivation (one rule, applied mechanically)::
+- ``routes`` — every route mounted by ``services/api`` (REST);
+- ``grpc_methods`` — every ``rpc`` declared under ``packages/proto/proto``;
+- ``mcp_tools`` — every tool published by the two MCP services and recorded in
+  their committed ``mcp_tools.json``.
+
+The registry records ownership, compatibility class, and status only;
+authentication and permission data stays in
+``services/api/app/route_policy_data.py``.
+
+The registry schema is ``ibex.contract-registry.v2``. Adding the two required
+arrays changed the file shape, so the version moved with it; a v1 file is
+rejected rather than read with a missing-array failure.
+
+REST contract ID derivation (one rule, applied mechanically)::
 
     <surface>.<resource>.<action>.v1
 
@@ -37,6 +48,40 @@ Examples: ``GET /v1/agents`` -> ``management.agents.read.v1``;
 ``management.capture-policies.read.v1``;
 ``GET /v1/operator/platform/health`` -> ``operator.platform.health.v1``.
 
+gRPC method contract ID derivation (``grpc_methods``)::
+
+    grpc.<package-leaf>.<rpc-kebab>.v1
+
+- ``package-leaf``: the last segment of the protobuf package once a trailing
+  ``v1`` is dropped — ``ibex.auth.v1`` -> ``auth``, ``ibex.context.v1`` ->
+  ``context``.
+- ``rpc-kebab``: the rpc name in kebab case — ``ValidateToken`` ->
+  ``validate-token``, ``BeginTotpEnrollment`` -> ``begin-totp-enrollment``,
+  ``IssuePolicySnapshot`` -> ``issue-policy-snapshot``.
+
+The row ``key`` is the fully-qualified method name
+(``ibex.auth.v1.AuthService.ValidateToken``), so a row can only name a method
+the proto tree declares. Examples: ``grpc.auth.validate-token.v1``,
+``grpc.context.assemble-context.v1``.
+
+MCP tool contract ID derivation (``mcp_tools``)::
+
+    mcp.<server-leaf>.<tool-kebab>.v1
+
+- ``server-leaf``: the FastMCP server name without its ``ibex-mcp-`` prefix —
+  ``ibex-mcp-memory`` -> ``memory``, ``ibex-mcp-operator`` -> ``operator``.
+- ``tool-kebab``: the advertised tool name with ``.`` and ``_`` folded to ``-``
+  — ``budget.get`` -> ``budget-get``, ``search_memory`` -> ``search-memory``.
+
+The row ``key`` is ``<server>/<tool>``, and the ``server`` field repeats the
+server, so a row cannot attach a tool to the wrong surface. Examples:
+``mcp.operator.budget-get.v1``, ``mcp.memory.search-memory.v1``.
+
+A REST row must also appear in the contract document (``--doc``). gRPC and MCP
+rows are not required to: their authoritative source is the proto tree and the
+committed descriptor record, which this check reads directly, and documenting
+them in ``03-contract-registry.md`` is a separate change.
+
 ``--check`` (the default; it can also be spelled explicitly, and it is mutually
 exclusive with ``--write``) fails on: a mounted route with no row, a row whose key
 is no longer mounted, duplicate keys or contract IDs, a row still marked
@@ -46,9 +91,24 @@ root (a missing path, a directory, an absolute path outside the tree, a ``../``
 escape, or an escaping symlink all fail), an unknown
 ``stability``/``status`` value, a ``contract_id`` that does not match the
 derivation above, a ``contract_id`` that does not appear in the contract document
-given by ``--doc``, and a protobuf service under ``packages/proto/proto`` that is
+given by ``--doc``, a protobuf service under ``packages/proto/proto`` that is
 neither registered in ``out_of_scope.grpc.registered_services`` nor listed in
-``out_of_scope.grpc.declared_out``.
+``out_of_scope.grpc.declared_out``, an rpc declared in the proto tree with no
+``grpc_methods`` row, a ``grpc_methods`` row whose method no longer exists, an
+rpc row whose derived ID is not a valid contract ID, a service with method rows
+that is not in ``registered_services``, a registered service with no method row,
+a service that is both declared out and registered or method-bearing, a tool
+recorded in an ``mcp_tools.json`` with no ``mcp_tools`` row, and a ``mcp_tools``
+row whose tool is no longer recorded (or whose ``server`` field disagrees with
+its key).
+
+The service-level ``out_of_scope.grpc.registered_services`` rows are kept rather
+than migrated: ``engineering/architecture-v2/03-contract-registry.md`` names them
+as the service accounting point, and the accepted ``principal-context.v1`` shape
+is attached there. They are cross-checked against ``grpc_methods`` instead, so
+the service index and the method rows cannot disagree. ``declared_out`` remains
+the explicit service-level opt-out: a declared-out service carries no method rows
+and is exempt from rpc registration.
 
 ``--write`` scaffolds missing keys only, and a scaffold cannot be laundered into
 a claim. Every new row is written with ``"owner": "UNASSIGNED"``, the
@@ -58,11 +118,13 @@ compatibility class, or shipped status is inferred, so ``--check`` keeps failing
 until a human sets a real ``owner``, reviews ``stability``, records ``status``,
 and points ``evidence`` at a file that exists. ``--write`` never edits the
 contract document, and it writes atomically (temp file plus ``os.replace``), so an
-interrupted run cannot truncate the registry.
+interrupted run cannot truncate the registry. It scaffolds REST routes only: a
+``grpc_methods`` or ``mcp_tools`` row carries the same human decisions and is
+added by hand.
 
-``status: "shipped"`` means only "mounted in this tree". It is not an acceptance
-or support claim; accepted and supported status stays with
-``engineering/architecture-v2/00-status-and-evidence.md``.
+``status: "shipped"`` means only "declared, mounted, or recorded in this tree".
+It is not an acceptance or support claim; accepted and supported status stays
+with ``engineering/architecture-v2/00-status-and-evidence.md``.
 
 No network access, no third-party dependency, deterministic output. The
 contract-ID grammar (candidate validation and document extraction) lives in
@@ -85,8 +147,10 @@ from contract_ids import documented_contract_ids
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[3]
 
-SCHEMA: Final = "ibex.contract-registry.v1"
+SCHEMA: Final = "ibex.contract-registry.v2"
 REQUIRED_FIELDS: Final = ("key", "contract_id", "owner", "stability", "status", "evidence")
+GRPC_METHOD_FIELDS: Final = ("key", "contract_id", "owner", "stability", "status", "evidence")
+MCP_TOOL_FIELDS: Final = ("key", "contract_id", "server", "owner", "status", "evidence")
 STABILITIES: Final = frozenset({"stable", "beta", "internal"})
 STATUSES: Final = frozenset({"shipped", "deprecated", "unregistered"})
 METHODS: Final = frozenset({"GET", "POST", "PATCH", "PUT", "DELETE"})
@@ -121,6 +185,12 @@ SCAFFOLD_STABILITY: Final = "internal"
 DEFAULT_EVIDENCE: Final = "services/api/app/main.py"
 PROTO_PACKAGE_PATTERN: Final = re.compile(r"^package\s+([\w.]+)\s*;", re.MULTILINE)
 PROTO_SERVICE_PATTERN: Final = re.compile(r"^service\s+(\w+)\s*\{", re.MULTILINE)
+PROTO_RPC_PATTERN: Final = re.compile(r"\brpc\s+(\w+)\s*\(")
+PROTO_BLOCK_COMMENT: Final = re.compile(r"/\*.*?\*/", re.DOTALL)
+PROTO_LINE_COMMENT: Final = re.compile(r"//[^\n]*")
+PROTO_VERSION_SEGMENT: Final = "v1"
+MCP_SERVER_PREFIX: Final = "ibex-mcp-"
+MCP_KEY_SEPARATOR: Final = "/"
 
 
 @dataclass(frozen=True)
@@ -131,6 +201,10 @@ class RegistryPaths:
     registry: Path = REPO_ROOT / "engineering/architecture-v2/contracts/rest-route-registry.json"
     doc: Path = REPO_ROOT / "engineering/architecture-v2/03-contract-registry.md"
     proto_root: Path = REPO_ROOT / "packages/proto/proto"
+    mcp_records: tuple[tuple[str, Path], ...] = (
+        ("ibex-mcp-memory", REPO_ROOT / "services/mcp-memory/mcp_tools.json"),
+        ("ibex-mcp-operator", REPO_ROOT / "services/mcp-operator/mcp_tools.json"),
+    )
     root: Path = REPO_ROOT
 
 
@@ -163,6 +237,8 @@ class _CheckContext:
     doc_label: str
     root: Path
     services: dict[str, Path]
+    rpcs: dict[str, Path]
+    mcp_surfaces: dict[str, tuple[Path, frozenset[str]]]
 
 
 _SURFACE_PREFIXES: Final = {"operator": "/v1/operator/", "management": "/v1/"}
@@ -240,6 +316,62 @@ def derive_contract_id(method: str, path: str) -> str:
     if not action:
         action = _action_for(method, path)
     return f"{surface}.{resource}.{action}.v1"
+
+
+def _kebab(name: str) -> str:
+    """``BeginTotpEnrollment`` -> ``begin-totp-enrollment`` (acronym-safe)."""
+    spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1-\2", name)
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", spaced)
+    return spaced.lower()
+
+
+def _package_leaf(package: str) -> str:
+    """The package segment that names the surface: ``ibex.auth.v1`` -> ``auth``."""
+    segments = [segment for segment in package.split(".") if segment]
+    if len(segments) > 1 and segments[-1] == PROTO_VERSION_SEGMENT:
+        segments.pop()
+    return segments[-1] if segments else ""
+
+
+def grpc_contract_id(method_key: str) -> str:
+    """Derive the contract ID for a fully-qualified rpc name, or ``""`` when malformed."""
+    segments = method_key.split(".")
+    if len(segments) < 3:
+        return ""
+    leaf = _package_leaf(".".join(segments[:-2]))
+    if not leaf:
+        return ""
+    return f"grpc.{leaf}.{_kebab(segments[-1])}.v1"
+
+
+def mcp_contract_id(server: str, tool: str) -> str:
+    """Derive the contract ID for a published MCP tool, or ``""`` when malformed."""
+    leaf = server.removeprefix(MCP_SERVER_PREFIX) or server
+    tool_leaf = tool.replace(".", "-").replace("_", "-").lower()
+    if not leaf or not tool_leaf:
+        return ""
+    return f"mcp.{leaf}.{tool_leaf}.v1"
+
+
+def _is_valid_contract_id(candidate: str) -> bool:
+    """True when the ID matches the documented grammar (the document extractor's rule)."""
+    return bool(candidate) and documented_contract_ids(candidate) == {candidate}
+
+
+def grpc_method_parts(key: str) -> tuple[str, str] | None:
+    """Split a ``grpc_methods`` key into ``(service, rpc)``, or ``None`` when malformed."""
+    segments = key.split(".")
+    if len(segments) < 3:
+        return None
+    return ".".join(segments[:-1]), segments[-1]
+
+
+def mcp_tool_parts(key: str) -> tuple[str, str] | None:
+    """Split a ``mcp_tools`` key into ``(server, tool)``, or ``None`` when malformed."""
+    server, separator, tool = key.partition(MCP_KEY_SEPARATOR)
+    if not separator or not server or not tool or MCP_KEY_SEPARATOR in tool:
+        return None
+    return server, tool
 
 
 def mounted_keys(inventory: object) -> list[str]:
@@ -339,42 +471,84 @@ def _evidence_file_failure(resolved: Path, root: Path) -> str | None:
     return f"is not a file (it is {kind})"
 
 
+def _proto_text(source: Path) -> str:
+    """Read a proto file with comments removed, so a commented-out block is not a contract."""
+    text = source.read_text(encoding="utf-8")
+    without_blocks = PROTO_BLOCK_COMMENT.sub("", text)
+    return PROTO_LINE_COMMENT.sub("", without_blocks)
+
+
+def _service_bodies(text: str) -> list[tuple[str, str]]:
+    """Every ``service`` name with the text inside its braces (brace-matched)."""
+    bodies: list[tuple[str, str]] = []
+    for match in PROTO_SERVICE_PATTERN.finditer(text):
+        start = match.end()
+        depth = 1
+        index = start
+        while index < len(text) and depth:
+            if text[index] == "{":
+                depth += 1
+            elif text[index] == "}":
+                depth -= 1
+            index += 1
+        bodies.append((match.group(1), text[start : index - 1]))
+    return bodies
+
+
 def proto_services(proto_root: Path) -> dict[str, Path]:
     """Map fully-qualified protobuf service name to its source file."""
     services: dict[str, Path] = {}
     if not proto_root.is_dir():
         return services
     for source in sorted(proto_root.rglob("*.proto")):
-        text = source.read_text(encoding="utf-8")
+        text = _proto_text(source)
         package_match = PROTO_PACKAGE_PATTERN.search(text)
         package = package_match.group(1) if package_match else ""
-        for name in PROTO_SERVICE_PATTERN.findall(text):
+        for name, _body in _service_bodies(text):
             services[f"{package}.{name}" if package else name] = source
     return services
 
 
-def _row_shape_failures(row: dict[str, object], label: str) -> list[str]:
+def proto_rpc_methods(proto_root: Path) -> dict[str, Path]:
+    """Map a fully-qualified rpc name to the proto file that declares it."""
+    methods: dict[str, Path] = {}
+    if not proto_root.is_dir():
+        return methods
+    for source in sorted(proto_root.rglob("*.proto")):
+        text = _proto_text(source)
+        package_match = PROTO_PACKAGE_PATTERN.search(text)
+        package = package_match.group(1) if package_match else ""
+        for name, body in _service_bodies(text):
+            service = f"{package}.{name}" if package else name
+            for rpc in PROTO_RPC_PATTERN.findall(body):
+                methods[f"{service}.{rpc}"] = source
+    return methods
+
+
+def _row_shape_failures(
+    row: dict[str, object], label: str, fields: tuple[str, ...] = REQUIRED_FIELDS
+) -> list[str]:
     """Field rules: every required field present, no unknown field, none empty."""
     failures: list[str] = []
-    missing = [field for field in REQUIRED_FIELDS if field not in row]
-    unknown = sorted(set(row) - set(REQUIRED_FIELDS))
+    missing = [field for field in fields if field not in row]
+    unknown = sorted(set(row) - set(fields))
     if missing:
         failures.append(f"missing-field: {label} lacks {', '.join(missing)}")
     if unknown:
         failures.append(f"unknown-field: {label} has {', '.join(unknown)}")
-    empty = [
-        field for field in REQUIRED_FIELDS if isinstance(row.get(field), str) and not row[field]
-    ]
+    empty = [field for field in fields if isinstance(row.get(field), str) and not row[field]]
     if empty:
         failures.append(f"empty-field: {label} has empty {', '.join(empty)}")
     return failures
 
 
-def _row_enum_failures(row: dict[str, object], key: str) -> list[str]:
-    """The two closed vocabularies a row must draw from."""
+def _row_enum_failures(
+    row: dict[str, object], key: str, *, check_stability: bool = True
+) -> list[str]:
+    """The closed vocabularies a row must draw from."""
     failures: list[str] = []
     stability = row.get("stability")
-    if stability not in STABILITIES:
+    if check_stability and stability not in STABILITIES:
         failures.append(
             f"unknown-enum: {key} has stability {stability!r}; expected one of {sorted(STABILITIES)}"
         )
@@ -597,6 +771,273 @@ def _out_of_scope_failures(registry: dict[str, object], context: _CheckContext) 
     return failures
 
 
+def _grpc_block(registry: dict[str, object]) -> dict[str, object] | None:
+    out_of_scope = registry.get("out_of_scope")
+    if not isinstance(out_of_scope, dict):
+        return None
+    grpc = out_of_scope.get("grpc")
+    return grpc if isinstance(grpc, dict) else None
+
+
+def _declared_out_services(registry: dict[str, object]) -> frozenset[str]:
+    grpc = _grpc_block(registry)
+    declared = grpc.get("declared_out") if grpc is not None else None
+    if not isinstance(declared, list):
+        return frozenset()
+    return frozenset(str(name) for name in declared if _non_empty_str(name))
+
+
+def _registered_service_names(registry: dict[str, object]) -> set[str]:
+    grpc = _grpc_block(registry)
+    registered = grpc.get("registered_services") if grpc is not None else None
+    if not isinstance(registered, list):
+        return set()
+    names: set[str] = set()
+    for item in registered:
+        name = item.get("service") if isinstance(item, dict) else None
+        if _non_empty_str(name):
+            names.add(str(name))
+    return names
+
+
+def _grpc_method_row_failures(row: object, index: int, context: _CheckContext) -> list[str]:
+    """One ``grpc_methods`` row: shape, enums, scaffold, evidence, derived contract ID."""
+    label = f"grpc_methods[{index}]"
+    if not isinstance(row, dict):
+        return [f"invalid-row: {label} is not a JSON object"]
+    key = _row_key(row)
+    if key:
+        label = key
+    failures = _row_shape_failures(row, label, GRPC_METHOD_FIELDS)
+    if not key:
+        return failures + [f'invalid-key: {label} needs a non-empty "key"']
+    if grpc_method_parts(key) is None:
+        return failures + [f'invalid-key: {key} must be "<package>.<Service>.<Rpc>"']
+    failures.extend(_row_enum_failures(row, key))
+    failures.extend(_row_scaffold_failures(row, key))
+    failures.extend(_row_evidence_failures(row, key, context))
+    failures.extend(_grpc_method_contract_failures(row, key))
+    return failures
+
+
+def _grpc_method_contract_failures(row: dict[str, object], key: str) -> list[str]:
+    expected = grpc_contract_id(key)
+    if not _is_valid_contract_id(expected):
+        return [f"invalid-contract-id: {key} derives {expected!r}, which is not a contract ID"]
+    contract_id = row.get("contract_id")
+    if contract_id == expected:
+        return []
+    return [
+        (
+            f"contract-id-mismatch: {key} declares {contract_id!r}; "
+            f"the documented derivation gives {expected!r}"
+        )
+    ]
+
+
+def _rpc_coverage_failures(
+    registered_keys: set[str], declared_out: frozenset[str], context: _CheckContext
+) -> list[str]:
+    """Every declared rpc has a row, and every row still names a declared rpc."""
+    failures: list[str] = []
+    for key, source in context.rpcs.items():
+        parts = grpc_method_parts(key)
+        if parts is not None and parts[0] in declared_out:
+            continue
+        if key in registered_keys:
+            continue
+        failures.append(
+            f"missing-registration: rpc {key} is declared in {_display_path(source)} but has no "
+            f"grpc_methods row (contract_id {grpc_contract_id(key)!r})"
+        )
+    for key in sorted(registered_keys):
+        if key in context.rpcs:
+            continue
+        failures.append(
+            f"stale-registration: rpc {key} is registered but no such rpc exists under "
+            "packages/proto/proto; remove the row"
+        )
+    return failures
+
+
+def _service_cross_failures(
+    registered_keys: set[str], registry: dict[str, object], context: _CheckContext
+) -> list[str]:
+    """The service index and the method rows must describe the same set of services."""
+    grpc = _grpc_block(registry)
+    if grpc is None:
+        return []
+    if not isinstance(grpc.get("registered_services"), list) or not isinstance(
+        grpc.get("declared_out"), list
+    ):
+        # The malformed array has its own failure; a cross-check against a missing
+        # index would only add noise.
+        return []
+    declared_out = _declared_out_services(registry)
+    registered = _registered_service_names(registry)
+    method_services = {
+        parts[0] for key in registered_keys if (parts := grpc_method_parts(key)) is not None
+    }
+    failures: list[str] = []
+    for service in sorted(method_services - registered - declared_out):
+        failures.append(
+            f"unregistered-service: {service} has grpc_methods rows but no "
+            "out_of_scope.grpc.registered_services row"
+        )
+    for service in sorted(registered - method_services):
+        if service in declared_out or service not in context.services:
+            continue
+        failures.append(
+            f"method-less-service: {service} is registered but has no grpc_methods row; register "
+            "its rpcs or move it to out_of_scope.grpc.declared_out"
+        )
+    for service in sorted((registered | method_services) & declared_out):
+        failures.append(
+            f"declared-out-conflict: {service} is listed in out_of_scope.grpc.declared_out but is "
+            "also registered or carries grpc_methods rows"
+        )
+    return failures
+
+
+def _grpc_method_failures(registry: dict[str, object], context: _CheckContext) -> list[str]:
+    rows = registry.get("grpc_methods")
+    if not isinstance(rows, list):
+        return []
+    failures: list[str] = []
+    for index, row in enumerate(rows):
+        failures.extend(_grpc_method_row_failures(row, index, context))
+    failures.extend(_unsorted_failures(rows, "grpc_methods"))
+    failures.extend(_duplicate_key_failures(rows, "grpc_methods"))
+    registered_keys = {key for row in rows if (key := _row_key(row))}
+    failures.extend(
+        _rpc_coverage_failures(registered_keys, _declared_out_services(registry), context)
+    )
+    failures.extend(_service_cross_failures(registered_keys, registry, context))
+    return failures
+
+
+def load_mcp_surfaces(
+    records: tuple[tuple[str, Path], ...],
+) -> tuple[dict[str, tuple[Path, frozenset[str]]], list[str]]:
+    """Read each committed descriptor record into ``server -> (path, tool names)``."""
+    surfaces: dict[str, tuple[Path, frozenset[str]]] = {}
+    failures: list[str] = []
+    for server, path in records:
+        payload, read_failures = _read_json(path, "mcp-record")
+        if read_failures:
+            failures.extend(read_failures)
+            continue
+        if not isinstance(payload, dict):
+            failures.append(f"invalid-mcp-record: {path} must be a JSON object")
+            continue
+        tools = payload.get("tools")
+        if not isinstance(tools, list):
+            failures.append(f'missing-field: {path} needs a "tools" array')
+            continue
+        names: set[str] = set()
+        for index, item in enumerate(tools):
+            name = item.get("name") if isinstance(item, dict) else None
+            if not _non_empty_str(name):
+                failures.append(
+                    f'invalid-mcp-record: {path} tools[{index}] needs a non-empty "name"'
+                )
+                continue
+            names.add(str(name))
+        surfaces[server] = (path, frozenset(names))
+    return surfaces, failures
+
+
+def _mcp_tool_row_failures(row: object, index: int, context: _CheckContext) -> list[str]:
+    """One ``mcp_tools`` row: shape, status, scaffold, evidence, server, derived contract ID."""
+    label = f"mcp_tools[{index}]"
+    if not isinstance(row, dict):
+        return [f"invalid-row: {label} is not a JSON object"]
+    key = _row_key(row)
+    if key:
+        label = key
+    failures = _row_shape_failures(row, label, MCP_TOOL_FIELDS)
+    if not key:
+        return failures + [f'invalid-key: {label} needs a non-empty "key"']
+    parts = mcp_tool_parts(key)
+    if parts is None:
+        return failures + [f'invalid-key: {key} must be "<server>/<tool>"']
+    failures.extend(_row_enum_failures(row, key, check_stability=False))
+    failures.extend(_row_scaffold_failures(row, key))
+    failures.extend(_row_evidence_failures(row, key, context))
+    failures.extend(_mcp_tool_contract_failures(row, key, parts))
+    return failures
+
+
+def _mcp_tool_contract_failures(
+    row: dict[str, object], key: str, parts: tuple[str, str]
+) -> list[str]:
+    server, tool = parts
+    failures: list[str] = []
+    if row.get("server") != server:
+        failures.append(
+            f"server-mismatch: {key} declares server {row.get('server')!r}; its key names {server!r}"
+        )
+    expected = mcp_contract_id(server, tool)
+    if not _is_valid_contract_id(expected):
+        failures.append(
+            f"invalid-contract-id: {key} derives {expected!r}, which is not a contract ID"
+        )
+        return failures
+    contract_id = row.get("contract_id")
+    if contract_id != expected:
+        failures.append(
+            f"contract-id-mismatch: {key} declares {contract_id!r}; "
+            f"the documented derivation gives {expected!r}"
+        )
+    return failures
+
+
+def _mcp_registered_pairs(rows: list[object]) -> set[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+    for row in rows:
+        key = _row_key(row)
+        parts = mcp_tool_parts(key) if key else None
+        if parts is not None:
+            pairs.add(parts)
+    return pairs
+
+
+def _mcp_coverage_failures(registered: set[tuple[str, str]], context: _CheckContext) -> list[str]:
+    """Every recorded tool has a row, and every row still names a recorded tool."""
+    failures: list[str] = []
+    recorded = {
+        (server, tool) for server, (_path, tools) in context.mcp_surfaces.items() for tool in tools
+    }
+    for server, tool in sorted(recorded - registered):
+        path = context.mcp_surfaces[server][0]
+        failures.append(
+            f"missing-registration: mcp tool {server}/{tool} is recorded in "
+            f"{_display_path(path)} but has no mcp_tools row "
+            f"(contract_id {mcp_contract_id(server, tool)!r})"
+        )
+    for server, tool in sorted(registered - recorded):
+        path = context.mcp_surfaces.get(server, (None, frozenset()))[0]
+        where = _display_path(path) if path is not None else "any committed mcp_tools.json"
+        failures.append(
+            f"stale-registration: mcp tool {server}/{tool} is registered but is not recorded in "
+            f"{where}"
+        )
+    return failures
+
+
+def _mcp_tool_failures(registry: dict[str, object], context: _CheckContext) -> list[str]:
+    rows = registry.get("mcp_tools")
+    if not isinstance(rows, list):
+        return []
+    failures: list[str] = []
+    for index, row in enumerate(rows):
+        failures.extend(_mcp_tool_row_failures(row, index, context))
+    failures.extend(_unsorted_failures(rows, "mcp_tools"))
+    failures.extend(_duplicate_key_failures(rows, "mcp_tools"))
+    failures.extend(_mcp_coverage_failures(_mcp_registered_pairs(rows), context))
+    return failures
+
+
 def _schema_failures(registry: dict[str, object]) -> list[str]:
     if registry.get("schema") != SCHEMA:
         return [f"unknown-enum: registry schema is {registry.get('schema')!r}; expected {SCHEMA!r}"]
@@ -632,18 +1073,35 @@ def _route_row_failures(
     return rows_by_key, failures
 
 
-def _unsorted_failures(routes: list[object]) -> list[str]:
+def _unsorted_failures(rows: list[object], label: str = "routes") -> list[str]:
     """Report the first row that is out of order, naming what it is and what belongs there."""
-    keys = [str(row.get("key", "")) for row in routes if isinstance(row, dict)]
+    keys = [str(row.get("key", "")) for row in rows if isinstance(row, dict)]
     for index, expected in enumerate(sorted(keys)):
         if keys[index] != expected:
             return [
                 (
-                    f"unsorted-registry: routes[{index}] is {keys[index]!r}; "
+                    f"unsorted-registry: {label}[{index}] is {keys[index]!r}; "
                     f"expected {expected!r} (rows are sorted by key)"
                 )
             ]
     return []
+
+
+def _duplicate_key_failures(rows: list[object], label: str) -> list[str]:
+    """One row per key, so a malformed earlier row cannot hide behind a later one."""
+    seen: dict[str, int] = {}
+    failures: list[str] = []
+    for index, row in enumerate(rows):
+        key = _row_key(row)
+        if key is None:
+            continue
+        if key in seen:
+            failures.append(
+                f"duplicate-key: {key} appears at {label}[{seen[key]}] and {label}[{index}]"
+            )
+        else:
+            seen[key] = index
+    return failures
 
 
 def _contract_claim(row: object) -> tuple[str, str] | None:
@@ -718,20 +1176,33 @@ def check(paths: RegistryPaths = DEFAULT_PATHS) -> list[str]:
     routes = registry.get("routes")
     if not isinstance(routes, list):
         return sorted(failures + ['missing-field: registry needs a "routes" array'])
+    grpc_methods = registry.get("grpc_methods")
+    if not isinstance(grpc_methods, list):
+        return sorted(failures + ['missing-field: registry needs a "grpc_methods" array'])
+    mcp_tools = registry.get("mcp_tools")
+    if not isinstance(mcp_tools, list):
+        return sorted(failures + ['missing-field: registry needs an "mcp_tools" array'])
+
+    mcp_surfaces, mcp_failures = load_mcp_surfaces(paths.mcp_records)
+    failures.extend(mcp_failures)
 
     context = _CheckContext(
         doc_ids=doc_ids,
         doc_label=doc_label,
         root=paths.root,
         services=proto_services(paths.proto_root),
+        rpcs=proto_rpc_methods(paths.proto_root),
+        mcp_surfaces=mcp_surfaces,
     )
     mounted = mounted_keys(inventory)
     rows_by_key, row_failures = _route_row_failures(routes, context)
     failures.extend(row_failures)
     failures.extend(_unsorted_failures(routes))
-    failures.extend(_duplicate_contract_failures(routes))
+    failures.extend(_duplicate_contract_failures([*routes, *grpc_methods, *mcp_tools]))
     failures.extend(_coverage_failures(mounted, rows_by_key))
     failures.extend(_out_of_scope_failures(registry, context))
+    failures.extend(_grpc_method_failures(registry, context))
+    failures.extend(_mcp_tool_failures(registry, context))
     return sorted(failures)
 
 
@@ -785,13 +1256,13 @@ def _missing_scaffold_rows(
 def _default_out_of_scope() -> dict[str, object]:
     return {
         "grpc": {
-            "reason": "gRPC request/response shapes are governed by buf-breaking (W5.1) and P0-12; this registry only accounts for each proto service.",
+            "reason": "gRPC request/response shapes are governed by buf-breaking (W5.1) and P0-12; this registry accounts for each proto service and each rpc method, not its message shapes.",
             "tracked_by": "P0-12",
             "registered_services": [],
             "declared_out": [],
         },
         "mcp_tools": {
-            "reason": "MCP tool schemas are versioned descriptors checked by the descriptor diff (W5.5).",
+            "reason": "MCP tool names are registered in the top-level mcp_tools array; their schemas are versioned descriptors checked by the descriptor diff (W5.5).",
             "tracked_by": "W5.5",
         },
     }
@@ -814,6 +1285,8 @@ def scaffold(paths: RegistryPaths = DEFAULT_PATHS) -> tuple[int, list[str]]:
     existing_rows = [row for row in routes if isinstance(row, dict)]
     registry["routes"] = sorted([*existing_rows, *added], key=lambda row: str(row.get("key")))
     registry.setdefault("schema", SCHEMA)
+    registry.setdefault("grpc_methods", [])
+    registry.setdefault("mcp_tools", [])
     registry.setdefault("out_of_scope", _default_out_of_scope())
     paths.registry.parent.mkdir(parents=True, exist_ok=True)
     _write_registry(paths.registry, registry)
@@ -823,14 +1296,16 @@ def scaffold(paths: RegistryPaths = DEFAULT_PATHS) -> tuple[int, list[str]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Check that every mounted REST route is registered, with a derived contract ID "
-            "that appears in the contract document."
+            "Check that every mounted REST route, every declared gRPC rpc, and every recorded MCP "
+            "tool is registered, with a derived contract ID (REST IDs must also appear in the "
+            "contract document)."
         ),
         epilog=(
             '--write scaffolds missing keys only, always with owner "UNASSIGNED", stability '
             '"internal", and status "unregistered", so --check still fails until a human sets the '
             "real owner, reviews stability, records status, and cites existing evidence. --write "
-            "never edits the contract document."
+            "never edits the contract document. It scaffolds REST routes only: a grpc_methods or "
+            "mcp_tools row carries the same human decisions and is added by hand."
         ),
     )
     mode = parser.add_mutually_exclusive_group()
@@ -875,7 +1350,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"contract registry check failed: {len(failures)} problem(s) in {paths.registry}")
         return 1
     print(f"contract registry is complete: {paths.registry}")
-    print('note: status "shipped" means mounted in this tree, not accepted or supported')
+    print(
+        'note: status "shipped" means declared, mounted, or recorded in this tree, not accepted '
+        "or supported"
+    )
     return 0
 
 

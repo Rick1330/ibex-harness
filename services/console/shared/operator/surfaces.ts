@@ -3,6 +3,14 @@ export type RuntimeAvailability = "live" | "partial" | "unavailable"
 export type SurfacePhase = "A" | "B1" | "B2"
 
 /**
+ * "registry" means `contract` names one or more contract IDs that exist in
+ * `engineering/architecture-v2/contracts/rest-route-registry.json`. "design"
+ * means the surface has no served route yet, so `contract` is absent rather
+ * than invented. See ADR-0089.
+ */
+export type SurfaceContractStatus = "registry" | "design"
+
+/**
  * Core surfaces are the memory/context lifecycle and form the default Console.
  * Platform surfaces are designed previews that stay out of the default
  * navigation until a named design partner and an owning contract exist.
@@ -20,7 +28,15 @@ export type SurfaceDefinition = {
   group: string
   question: string
   description: string
-  contract: string
+  /**
+   * The registry contract(s) this surface reads, joined with " + ". Every ID here
+   * must appear in `engineering/architecture-v2/contracts/rest-route-registry.json`
+   * (REST `routes`, `grpc_methods`, or `mcp_tools`); `tests/surfaces.test.ts` fails
+   * when one does not. Absent on a design-only surface: naming a contract the
+   * registry does not carry would be a claim nothing backs.
+   */
+  contract?: string
+  contractStatus: SurfaceContractStatus
 }
 
 /**
@@ -39,7 +55,8 @@ export const SURFACES = {
     group: "Lifecycle",
     question: "What is the organization's memory and context doing right now?",
     description: "Tenant-scoped organization snapshot and platform health.",
-    contract: "operator.overview.v1 + operator.platform.health.v1",
+    contract: "operator.overview.read.v1 + operator.platform.health.v1",
+    contractStatus: "registry",
   },
   agents: {
     path: "/agents",
@@ -50,8 +67,10 @@ export const SURFACES = {
     phase: "B2",
     group: "Lifecycle",
     question: "Which agents write and read memory, and how are they behaving?",
-    description: "Tenant-scoped agent inventory with status, provider, usage counters, and last activity.",
-    contract: "operator.agents.v1",
+    description:
+      "Tenant-scoped agent inventory with status, provider, usage counters, and last activity.",
+    contract: "operator.agents.read.v1",
+    contractStatus: "registry",
   },
   sessions: {
     path: "/sessions",
@@ -62,8 +81,10 @@ export const SURFACES = {
     phase: "B1",
     group: "Lifecycle",
     question: "What happened across this agent session, turn by turn?",
-    description: "Tenant-scoped session index with turn counts, status, token totals, latency, and the turn-to-trace ledger.",
-    contract: "operator.sessions.v1",
+    description:
+      "Tenant-scoped session index with turn counts, status, token totals, latency, and the turn-to-trace ledger.",
+    contract: "operator.sessions.read.v1",
+    contractStatus: "registry",
   },
   memories: {
     path: "/memories",
@@ -74,8 +95,10 @@ export const SURFACES = {
     phase: "B1",
     group: "Lifecycle",
     question: "What did the agent store and retrieve?",
-    description: "Tenant-scoped memory index with classification, lifecycle, provenance, usage counters, and validity.",
-    contract: "operator.memories.v1",
+    description:
+      "Tenant-scoped memory index with classification, lifecycle, provenance, usage counters, and validity.",
+    contract: "operator.memories.read.v1",
+    contractStatus: "registry",
   },
   evidence: {
     path: "/evidence",
@@ -85,9 +108,12 @@ export const SURFACES = {
     domain: "D2",
     phase: "B2",
     group: "Lifecycle",
-    question: "Which runs hold a complete capture, which do not, and did the delivery chain settle?",
-    description: "Capture completeness and relay delivery from operator.evidence.summary.v1, deletion evidence and audit continuity from operator.evidence.deletions.v1; field-level redaction needs its own contract.",
+    question:
+      "Which runs hold a complete capture, which do not, and did the delivery chain settle?",
+    description:
+      "Capture completeness and relay delivery from operator.evidence.summary.v1, deletion evidence and audit continuity from operator.evidence.deletions.v1; field-level redaction needs its own contract.",
     contract: "operator.evidence.summary.v1",
+    contractStatus: "registry",
   },
   directives: {
     path: "/directives",
@@ -97,9 +123,12 @@ export const SURFACES = {
     domain: "D5",
     phase: "B2",
     group: "Context",
-    question: "Which instruction version a new session resolves to, and which versions exist?",
-    description: "Version timeline and per-version usage from operator.directives.versions.v1; instruction text and diffs need their own contract.",
-    contract: "operator.directives.versions.v1",
+    question:
+      "Which instruction version a new session resolves to, and which versions exist?",
+    description:
+      "Version timeline and per-version usage from operator.directives.read.v1 and operator.directives.get.v1; instruction text and diffs need their own contract.",
+    contract: "operator.directives.read.v1 + operator.directives.get.v1",
+    contractStatus: "registry",
   },
   policies: {
     path: "/policies",
@@ -111,7 +140,9 @@ export const SURFACES = {
     group: "Context",
     question: "Which rules were in force when this ran?",
     description: "Policy snapshots, readable rules, and diffs are planned.",
-    contract: "operator.policies.snapshots.v1",
+    // Design-only: no operator policy route is served, so there is no registry
+    // contract to name. The preview renders labelled illustrative fixtures.
+    contractStatus: "design",
   },
   explore: {
     path: "/explore",
@@ -123,7 +154,8 @@ export const SURFACES = {
     group: "Investigate",
     question: "Why did this run behave the way it did?",
     description: "Read-only trace metadata across the current organization.",
-    contract: "operator.trace-list.v1 / operator.trace-detail.v1",
+    contract: "operator.traces.read.v1 + operator.traces.get.v1",
+    contractStatus: "registry",
   },
   platform: {
     path: "/platform",
@@ -134,8 +166,10 @@ export const SURFACES = {
     phase: "A",
     group: "Operate",
     question: "Are dependencies, ingestion and recovery healthy?",
-    description: "Dependency health, ingestion lag, retention, recovery, and deploy evidence.",
+    description:
+      "Dependency health, ingestion lag, retention, recovery, and deploy evidence.",
     contract: "operator.platform.health.v1",
+    contractStatus: "registry",
   },
   settings: {
     path: "/settings",
@@ -146,8 +180,10 @@ export const SURFACES = {
     phase: "B2",
     group: "Operate",
     question: "How is this organization configured?",
-    description: "Organization, environments, retention, display, and notifications are planned.",
-    contract: "operator.settings.v1 [NEEDS-BACKEND]",
+    description:
+      "Organization, environments, retention, display, and notifications are planned.",
+    // Design-only: organization settings have no served route yet.
+    contractStatus: "design",
   },
   incidents: {
     path: "/incidents",
@@ -159,7 +195,8 @@ export const SURFACES = {
     group: "Platform",
     question: "What is broken now, and who owns it?",
     description: "Incident response and acknowledgement are planned.",
-    contract: "operator.incidents.list.v1 [NEEDS-BACKEND]",
+    // Design-only: incident response has no served route yet.
+    contractStatus: "design",
   },
   drift: {
     path: "/drift",
@@ -171,9 +208,10 @@ export const SURFACES = {
     group: "Platform",
     question: "Has behaviour moved away from its baseline?",
     description: "Drift alerts and fingerprint history are planned.",
-    contract: "operator.drift.alerts.v1 [NEEDS-BACKEND]",
+    // Design-only: drift alerts have no served route yet.
+    contractStatus: "design",
   },
-  "audit": {
+  audit: {
     path: "/audit",
     label: "Audit log",
     tier: "platform",
@@ -183,7 +221,8 @@ export const SURFACES = {
     group: "Platform",
     question: "Who changed what, and was it applied once?",
     description: "Audit events, idempotency keys, and diffs are planned.",
-    contract: "operator.audit.list.v1 [NEEDS-BACKEND]",
+    // Design-only: the audit log has no served route yet.
+    contractStatus: "design",
   },
   budgets: {
     path: "/budgets",
@@ -195,7 +234,8 @@ export const SURFACES = {
     group: "Platform",
     question: "Which reservations are close to their limit?",
     description: "Budget reservations and headroom are planned.",
-    contract: "operator.budgets.reservations.v1",
+    // Design-only: budget reservations have no served operator route yet.
+    contractStatus: "design",
   },
   analytics: {
     path: "/analytics",
@@ -207,7 +247,8 @@ export const SURFACES = {
     group: "Platform",
     question: "Where do spend, tokens and latency go over time?",
     description: "Cost and usage analytics are planned.",
-    contract: "operator.analytics.usage.v1 [NEEDS-BACKEND]",
+    // Design-only: usage analytics have no served route yet.
+    contractStatus: "design",
   },
   providers: {
     path: "/providers",
@@ -217,9 +258,11 @@ export const SURFACES = {
     domain: "D6",
     phase: "B1",
     group: "Platform",
-    question: "Which providers and models are configured, and with what limits?",
+    question:
+      "Which providers and models are configured, and with what limits?",
     description: "Provider manifests and model capabilities are planned.",
-    contract: "operator.providers.manifest.v1",
+    // Design-only: provider manifests have no served operator route yet.
+    contractStatus: "design",
   },
   "mcp-tools": {
     path: "/mcp-tools",
@@ -231,7 +274,8 @@ export const SURFACES = {
     group: "Platform",
     question: "Which operator tools exist, and who may call them?",
     description: "Operator tool inventory and schemas are planned.",
-    contract: "operator.mcp.tools.v1",
+    // Design-only: the operator tool inventory has no served route yet.
+    contractStatus: "design",
   },
   access: {
     path: "/access",
@@ -243,7 +287,8 @@ export const SURFACES = {
     group: "Platform",
     question: "Which keys and members can do what?",
     description: "Keys, scopes, and the members and roles matrix are planned.",
-    contract: "operator.access.keys.v1 + members.v1 [NEEDS-BACKEND]",
+    // Design-only: keys, scopes, and the members matrix have no served route yet.
+    contractStatus: "design",
   },
 } as const satisfies Record<string, SurfaceDefinition>
 
@@ -251,11 +296,20 @@ export type SurfaceKey = keyof typeof SURFACES
 
 export const SURFACE_LIST: SurfaceDefinition[] = Object.values(SURFACES)
 
-export const CORE_SURFACES: SurfaceDefinition[] = SURFACE_LIST.filter((surface) => surface.tier === "core")
+export const CORE_SURFACES: SurfaceDefinition[] = SURFACE_LIST.filter(
+  (surface) => surface.tier === "core",
+)
 
-export const PLATFORM_SURFACES: SurfaceDefinition[] = SURFACE_LIST.filter((surface) => surface.tier === "platform")
+export const PLATFORM_SURFACES: SurfaceDefinition[] = SURFACE_LIST.filter(
+  (surface) => surface.tier === "platform",
+)
 
-export const CORE_GROUPS = ["Lifecycle", "Context", "Investigate", "Operate"] as const
+export const CORE_GROUPS = [
+  "Lifecycle",
+  "Context",
+  "Investigate",
+  "Operate",
+] as const
 
 export function availabilityLabel(availability: SurfaceAvailability): string {
   return availability === "live" ? "Live surface" : "Preview"

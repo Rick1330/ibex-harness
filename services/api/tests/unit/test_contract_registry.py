@@ -49,6 +49,14 @@ _PINNED_CONTRACT_IDS = {
     "GET /v1/operator/platform/health": "operator.platform.health.v1",
 }
 
+# The synthetic workspace ships one rpc and one recorded MCP tool, so the gRPC and
+# MCP halves of the gate are exercised without the real proto tree or services.
+_GRPC_METHOD_KEY = "ibex.test.v1.TestService.Ping"
+_MCP_SERVER = "ibex-mcp-test"
+_MCP_TOOL = "budget.get"
+_MCP_TOOL_KEY = f"{_MCP_SERVER}/{_MCP_TOOL}"
+_MCP_RECORD_SCHEMA = "ibex.mcp-tool-descriptor.v1"
+
 
 @pytest.fixture(scope="module")
 def registry_check() -> ModuleType:
@@ -79,6 +87,42 @@ class _WorkspaceSpec:
 
     rows: list[dict[str, str]] | None = None
     doc_ids: list[str] | None = None
+    grpc_methods: list[dict[str, str]] | None = None
+    mcp_tools: list[dict[str, str]] | None = None
+    recorded_tools: list[str] | None = None
+
+
+def _grpc_method_row(
+    module: ModuleType, key: str = _GRPC_METHOD_KEY, **overrides: str
+) -> dict[str, str]:
+    """A gRPC row whose contract ID is the derivation, so only the overrides can move it."""
+    row = {
+        "key": key,
+        "contract_id": module.grpc_contract_id(key),
+        "owner": "api",
+        "stability": "beta",
+        "status": "shipped",
+        "evidence": "proto/test.proto",
+    }
+    row.update(overrides)
+    return row
+
+
+def _mcp_tool_row(module: ModuleType, key: str = _MCP_TOOL_KEY, **overrides: str) -> dict[str, str]:
+    """An MCP row whose server and contract ID come from the key."""
+    parts = module.mcp_tool_parts(key)
+    assert parts is not None
+    server, tool = parts
+    row = {
+        "key": key,
+        "contract_id": module.mcp_contract_id(server, tool),
+        "server": server,
+        "owner": "api",
+        "status": "shipped",
+        "evidence": "mcp_tools.json",
+    }
+    row.update(overrides)
+    return row
 
 
 def _row(module: ModuleType, spec: _RowSpec) -> dict[str, str]:
@@ -128,6 +172,22 @@ def _workspace(
     proto_root.mkdir()
     (proto_root / "test.proto").write_text(_PROTO_SOURCE, encoding="utf-8")
 
+    mcp_record_path = tmp_path / "mcp_tools.json"
+    recorded = options.recorded_tools if options.recorded_tools is not None else [_MCP_TOOL]
+    mcp_record_path.write_text(
+        json.dumps(
+            {
+                "generator": {"schema": _MCP_RECORD_SCHEMA},
+                "tools": [{"name": name} for name in recorded],
+            }
+        ),
+        encoding="utf-8",
+    )
+    grpc_rows = (
+        options.grpc_methods if options.grpc_methods is not None else [_grpc_method_row(module)]
+    )
+    mcp_rows = options.mcp_tools if options.mcp_tools is not None else [_mcp_tool_row(module)]
+
     # Evidence paths are resolved against the workspace root, so every row that
     # cites the router source needs a real file there.
     evidence_file = tmp_path / _ROUTER_SOURCE
@@ -137,6 +197,8 @@ def _workspace(
     registry = {
         "schema": module.SCHEMA,
         "routes": registry_rows,
+        "grpc_methods": sorted(grpc_rows, key=lambda row: row["key"]),
+        "mcp_tools": sorted(mcp_rows, key=lambda row: row["key"]),
         "out_of_scope": {
             "grpc": {
                 "reason": "gRPC shapes are gated by buf-breaking (W5.1) and P0-12.",
@@ -163,6 +225,7 @@ def _workspace(
         registry=registry_path,
         doc=doc,
         proto_root=proto_root,
+        mcp_records=((_MCP_SERVER, mcp_record_path),),
         root=tmp_path,
     )
 
@@ -518,11 +581,11 @@ def test_duplicate_key_fails(tmp_path: Path, registry_check: ModuleType) -> None
 def test_unknown_schema_fails(tmp_path: Path, registry_check: ModuleType) -> None:
     """The registry declares its own schema version; a different one is not read as this format."""
     paths, registry = _registry_paths(tmp_path, registry_check)
-    registry["schema"] = "ibex.contract-registry.v2"
+    registry["schema"] = "ibex.contract-registry.v3"
     _save_registry(paths, registry)
     assert registry_check.check(paths) == [
         (
-            "unknown-enum: registry schema is 'ibex.contract-registry.v2'; "
+            "unknown-enum: registry schema is 'ibex.contract-registry.v3'; "
             f"expected {registry_check.SCHEMA!r}"
         )
     ]
@@ -641,16 +704,36 @@ def test_declared_out_accepts_a_proto_service_that_is_not_registered(
     paths, registry = _registry_paths(tmp_path, registry_check)
     grpc = _grpc_block(registry)
     grpc["registered_services"] = []
+    registry["grpc_methods"] = []
     _save_registry(paths, registry)
 
     failures = registry_check.check(paths)
-    assert len(failures) == 1, failures
-    assert failures[0].startswith("unaccounted-proto-service: ibex.test.v1.TestService ")
-    assert failures[0].endswith("out_of_scope.grpc.declared_out")
+    unaccounted = [
+        failure
+        for failure in failures
+        if failure.startswith("unaccounted-proto-service: ibex.test.v1.TestService ")
+    ]
+    assert len(unaccounted) == 1, failures
+    assert unaccounted[0].endswith("out_of_scope.grpc.declared_out")
 
     grpc["declared_out"] = ["ibex.test.v1.TestService"]
     _save_registry(paths, registry)
     assert registry_check.check(paths) == []
+
+
+def test_declared_out_conflicts_with_a_registered_service(
+    tmp_path: Path, registry_check: ModuleType
+) -> None:
+    """A service cannot be both accounted for and declared out."""
+    paths, registry = _registry_paths(tmp_path, registry_check)
+    _grpc_block(registry)["declared_out"] = ["ibex.test.v1.TestService"]
+    _save_registry(paths, registry)
+    assert registry_check.check(paths) == [
+        (
+            "declared-out-conflict: ibex.test.v1.TestService is listed in "
+            "out_of_scope.grpc.declared_out but is also registered or carries grpc_methods rows"
+        )
+    ]
 
 
 @pytest.mark.parametrize("field", ["registered_services", "declared_out"])
@@ -662,6 +745,203 @@ def test_non_list_grpc_field_fails(tmp_path: Path, registry_check: ModuleType, f
     assert registry_check.check(paths) == [
         f"missing-field: out_of_scope.grpc.{field} must be an array"
     ]
+
+
+def test_committed_registry_covers_every_rpc_and_mcp_tool(registry_check: ModuleType) -> None:
+    """The committed registry names every declared rpc and every recorded tool."""
+    registry = json.loads(registry_check.RegistryPaths.registry.read_text(encoding="utf-8"))
+
+    rpcs = registry_check.proto_rpc_methods(registry_check.RegistryPaths.proto_root)
+    registered_rpcs = {row["key"]: row for row in registry["grpc_methods"]}
+    assert sorted(registered_rpcs) == sorted(rpcs)
+    for key, row in registered_rpcs.items():
+        assert row["contract_id"] == registry_check.grpc_contract_id(key)
+        assert row["status"] == "shipped"
+        assert row["owner"] != registry_check.SCAFFOLD_OWNER
+        assert (registry_check.REPO_ROOT / row["evidence"]).is_file()
+
+    surfaces, failures = registry_check.load_mcp_surfaces(registry_check.RegistryPaths.mcp_records)
+    assert failures == []
+    recorded = {f"{server}/{tool}" for server, (_path, tools) in surfaces.items() for tool in tools}
+    registered_tools = {row["key"]: row for row in registry["mcp_tools"]}
+    assert sorted(registered_tools) == sorted(recorded)
+    for key, row in registered_tools.items():
+        server, tool = registry_check.mcp_tool_parts(key)
+        assert row["server"] == server
+        assert row["contract_id"] == registry_check.mcp_contract_id(server, tool)
+        assert (registry_check.REPO_ROOT / row["evidence"]).is_file()
+
+
+def test_rpc_derivation_is_mechanical(registry_check: ModuleType) -> None:
+    assert (
+        registry_check.grpc_contract_id("ibex.auth.v1.AuthService.ValidateToken")
+        == "grpc.auth.validate-token.v1"
+    )
+    assert (
+        registry_check.grpc_contract_id("ibex.auth.v1.AuthService.BeginTotpEnrollment")
+        == "grpc.auth.begin-totp-enrollment.v1"
+    )
+    assert (
+        registry_check.grpc_contract_id("ibex.context.v1.ContextAssemblyService.AssembleContext")
+        == "grpc.context.assemble-context.v1"
+    )
+    assert registry_check.grpc_contract_id("nonsense") == ""
+
+
+def test_mcp_derivation_is_mechanical(registry_check: ModuleType) -> None:
+    assert (
+        registry_check.mcp_contract_id("ibex-mcp-operator", "budget.get")
+        == "mcp.operator.budget-get.v1"
+    )
+    assert (
+        registry_check.mcp_contract_id("ibex-mcp-memory", "search_memory")
+        == "mcp.memory.search-memory.v1"
+    )
+
+
+def test_rpc_declared_but_not_registered_fails(tmp_path: Path, registry_check: ModuleType) -> None:
+    """A new rpc cannot land without a row: the method is named in the failure."""
+    paths = _workspace(
+        tmp_path, registry_check, [("GET", "/v1/agents")], _WorkspaceSpec(grpc_methods=[])
+    )
+    failures = registry_check.check(paths)
+    assert any(
+        failure.startswith(f"missing-registration: rpc {_GRPC_METHOD_KEY} ")
+        and "grpc.test.ping.v1" in failure
+        for failure in failures
+    ), failures
+
+
+def test_registered_rpc_that_no_longer_exists_fails(
+    tmp_path: Path, registry_check: ModuleType
+) -> None:
+    ghost = "ibex.test.v1.TestService.Ghost"
+    paths = _workspace(
+        tmp_path,
+        registry_check,
+        [("GET", "/v1/agents")],
+        _WorkspaceSpec(grpc_methods=[_grpc_method_row(registry_check, ghost)]),
+    )
+    failures = registry_check.check(paths)
+    assert any(failure.startswith(f"stale-registration: rpc {ghost} ") for failure in failures)
+
+
+def test_rpc_contract_id_must_match_the_derivation(
+    tmp_path: Path, registry_check: ModuleType
+) -> None:
+    row = _grpc_method_row(registry_check, contract_id="grpc.test.invented.v1")
+    paths = _workspace(
+        tmp_path, registry_check, [("GET", "/v1/agents")], _WorkspaceSpec(grpc_methods=[row])
+    )
+    failures = registry_check.check(paths)
+    assert any(
+        failure.startswith(f"contract-id-mismatch: {_GRPC_METHOD_KEY} ") for failure in failures
+    )
+
+
+def test_registered_service_without_method_rows_fails(
+    tmp_path: Path, registry_check: ModuleType
+) -> None:
+    paths = _workspace(
+        tmp_path, registry_check, [("GET", "/v1/agents")], _WorkspaceSpec(grpc_methods=[])
+    )
+    failures = registry_check.check(paths)
+    assert any(
+        failure.startswith("method-less-service: ibex.test.v1.TestService ") for failure in failures
+    )
+
+
+def test_service_with_method_rows_must_be_registered(
+    tmp_path: Path, registry_check: ModuleType
+) -> None:
+    paths, registry = _registry_paths(tmp_path, registry_check)
+    _grpc_block(registry)["registered_services"] = []
+    _save_registry(paths, registry)
+    failures = registry_check.check(paths)
+    assert any(
+        failure.startswith("unregistered-service: ibex.test.v1.TestService ")
+        for failure in failures
+    )
+
+
+def test_recorded_tool_without_a_row_fails(tmp_path: Path, registry_check: ModuleType) -> None:
+    paths = _workspace(
+        tmp_path, registry_check, [("GET", "/v1/agents")], _WorkspaceSpec(mcp_tools=[])
+    )
+    failures = registry_check.check(paths)
+    assert any(
+        failure.startswith(f"missing-registration: mcp tool {_MCP_TOOL_KEY} ")
+        and "mcp.test.budget-get.v1" in failure
+        for failure in failures
+    ), failures
+
+
+def test_registered_tool_no_longer_recorded_fails(
+    tmp_path: Path, registry_check: ModuleType
+) -> None:
+    ghost = _mcp_tool_row(registry_check, f"{_MCP_SERVER}/ghost.tool")
+    paths = _workspace(
+        tmp_path, registry_check, [("GET", "/v1/agents")], _WorkspaceSpec(mcp_tools=[ghost])
+    )
+    failures = registry_check.check(paths)
+    assert any(
+        failure.startswith(f"stale-registration: mcp tool {_MCP_SERVER}/ghost.tool ")
+        for failure in failures
+    )
+
+
+def test_mcp_contract_id_must_match_the_derivation(
+    tmp_path: Path, registry_check: ModuleType
+) -> None:
+    row = _mcp_tool_row(registry_check, contract_id="mcp.test.invented.v1")
+    paths = _workspace(
+        tmp_path, registry_check, [("GET", "/v1/agents")], _WorkspaceSpec(mcp_tools=[row])
+    )
+    failures = registry_check.check(paths)
+    assert any(
+        failure.startswith(f"contract-id-mismatch: {_MCP_TOOL_KEY} ") for failure in failures
+    )
+
+
+def test_mcp_server_field_must_match_the_key(tmp_path: Path, registry_check: ModuleType) -> None:
+    row = _mcp_tool_row(registry_check, server="ibex-mcp-other")
+    paths = _workspace(
+        tmp_path, registry_check, [("GET", "/v1/agents")], _WorkspaceSpec(mcp_tools=[row])
+    )
+    failures = registry_check.check(paths)
+    assert any(failure.startswith(f"server-mismatch: {_MCP_TOOL_KEY} ") for failure in failures)
+
+
+def test_missing_mcp_record_fails(tmp_path: Path, registry_check: ModuleType) -> None:
+    paths = _workspace(tmp_path, registry_check, [("GET", "/v1/agents")])
+    missing = tmp_path / "absent-mcp_tools.json"
+    broken = registry_check.RegistryPaths(
+        inventory=paths.inventory,
+        registry=paths.registry,
+        doc=paths.doc,
+        proto_root=paths.proto_root,
+        mcp_records=((_MCP_SERVER, missing),),
+        root=paths.root,
+    )
+    failures = registry_check.check(broken)
+    assert any(failure.startswith("missing-mcp-record: ") for failure in failures)
+
+
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        ("grpc_methods", 'missing-field: registry needs a "grpc_methods" array'),
+        ("mcp_tools", 'missing-field: registry needs an "mcp_tools" array'),
+    ],
+)
+def test_required_registry_arrays(
+    tmp_path: Path, registry_check: ModuleType, field: str, expected: str
+) -> None:
+    """Both new arrays are required: a v2 file without one is not read as complete."""
+    paths, registry = _registry_paths(tmp_path, registry_check)
+    registry.pop(field)
+    _save_registry(paths, registry)
+    assert registry_check.check(paths) == [expected]
 
 
 def test_scaffold_row_invents_nothing(registry_check: ModuleType) -> None:

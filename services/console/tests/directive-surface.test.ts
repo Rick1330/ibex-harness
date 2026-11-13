@@ -40,8 +40,16 @@ const detail = {
     },
   ],
   usage: [
-    { version_num: 3, sessions: 40, last_session_at: "2026-11-01T13:00:00.000Z" },
-    { version_num: 2, sessions: 120, last_session_at: "2026-11-02T11:00:00.000Z" },
+    {
+      version_num: 3,
+      sessions: 40,
+      last_session_at: "2026-11-01T13:00:00.000Z",
+    },
+    {
+      version_num: 2,
+      sessions: 120,
+      last_session_at: "2026-11-02T11:00:00.000Z",
+    },
   ],
   versions_truncated: false,
   usage_truncated: false,
@@ -55,7 +63,10 @@ const detail = {
 describe("directives live contract", () => {
   it("is live with the versions contract", () => {
     expect(SURFACES.directives.availability).toBe("live")
-    expect(SURFACES.directives.contract).toBe("operator.directives.versions.v1")
+    expect(SURFACES.directives.contract).toBe(
+      "operator.directives.read.v1 + operator.directives.get.v1",
+    )
+    expect(SURFACES.directives.contractStatus).toBe("registry")
   })
 
   it("does not claim content, diffs, or promotion history", () => {
@@ -66,18 +77,28 @@ describe("directives live contract", () => {
       expect(text).not.toContain("NEEDS-BACKEND")
       expect(text.toLowerCase()).not.toContain("planned")
     }
-    expect(SURFACES.directives.description.toLowerCase()).not.toContain("diff shown")
+    expect(SURFACES.directives.description.toLowerCase()).not.toContain(
+      "diff shown",
+    )
   })
 
   it("reads the pointer as live, not the newest version", () => {
     // A rollback leaves v3 newest and v2 live; the UI must not say "v3 live".
-    expect(versionByNumber(detail, detail.active_version_num)?.version_num).toBe(2)
+    expect(
+      versionByNumber(detail, detail.active_version_num)?.version_num,
+    ).toBe(2)
     expect(mostUsedVersion(detail)?.version_num).toBe(2)
     expect(sessionsOffPointer(detail)).toBe(40)
     expect(
-      directiveStateLabel({ ...detail, active_version_num: 2, is_active: true }),
+      directiveStateLabel({
+        ...detail,
+        active_version_num: 2,
+        is_active: true,
+      }),
     ).toBe("Live v2")
-    expect(directiveStateLabel({ ...detail, is_active: false })).toBe("Inactive")
+    expect(directiveStateLabel({ ...detail, is_active: false })).toBe(
+      "Inactive",
+    )
     expect(formatBytes(2048)).toBe("2.0 KiB")
   })
 })
