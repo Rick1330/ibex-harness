@@ -11,7 +11,6 @@ Standard library only; reads nothing.
 
 from __future__ import annotations
 
-import re
 from typing import Final
 
 from deprecations_model import entry_label
@@ -19,11 +18,9 @@ from deprecations_model import entry_label
 # The proxy surface is addressed by an exact request path rather than a contract
 # id, so it owns a selector the other surfaces must not carry.
 PROXY_SURFACE: Final = "proxy"
-# One exact route path: a leading slash and non-empty segments, with no empty
-# segment from a doubled or trailing slash.
-PATH_PATTERN: Final = re.compile(r"^/[^/]+(/[^/]+)*$")
-# Characters no served route path contains. The pattern admits them inside a
-# segment, so they are checked separately, matching the proxy's validator.
+# Characters no served route path contains. A template, a query, a fragment, or
+# whitespace is checked separately from the segment structure, matching the
+# proxy's validator.
 PATH_FORBIDDEN: Final = frozenset("{}?#")
 
 
@@ -32,9 +29,25 @@ def _path_has_forbidden_character(path: str) -> bool:
     return bool(PATH_FORBIDDEN.intersection(path)) or any(character.isspace() for character in path)
 
 
+def _path_has_empty_segment(path: str) -> bool:
+    """True when a doubled or trailing slash leaves a segment with nothing in it."""
+    return any(not segment for segment in path[1:].split("/"))
+
+
 def is_exact_path(path: str) -> bool:
-    """True for one exact route path, which the proxy can match and a request can equal."""
-    return bool(PATH_PATTERN.fullmatch(path)) and not _path_has_forbidden_character(path)
+    """True for one exact route path, which the proxy can match and a request can equal.
+
+    One exact route path is a leading slash and then non-empty segments, with no
+    empty segment from a doubled or trailing slash. It is decided in code, in one
+    pass over the segments, rather than by a regular expression: the grammar has no
+    backtracking to drive, so the cost stays linear in the length of the path for
+    every input, including an adversarial one.
+    """
+    if not path.startswith("/"):
+        return False
+    if _path_has_forbidden_character(path):
+        return False
+    return not _path_has_empty_segment(path)
 
 
 def path_field_failures(entry: dict[str, object], label: str) -> list[str]:

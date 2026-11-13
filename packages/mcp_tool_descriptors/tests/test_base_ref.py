@@ -17,7 +17,7 @@ import pytest
 from support import OTHER_TOOL, TOOL, VERSION, FakeSurface, record, save, tool
 
 from mcp_tool_descriptors import Surface, check_base, main
-from mcp_tool_descriptors.base import ReadScope
+from mcp_tool_descriptors.base import ReadScope, load_at_ref
 
 SERVICE = "ibex-mcp-test"
 DEPRECATIONS = Path("engineering/architecture-v2/contracts/deprecations.json")
@@ -373,6 +373,76 @@ def test_a_missing_git_binary_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert failures[0].startswith("unreadable-base-ref: cannot run ")
 
 
+def test_a_valid_ref_returns_the_record_at_that_ref(tmp_path: Path) -> None:
+    """The record read is the one at the ref, not the one in the working tree."""
+    fake = FakeSurface()
+    repo = _repo(tmp_path, fake, [])
+    at_base = json.loads((repo / "mcp_tools.json").read_text(encoding="utf-8"))
+    fake.tools[0].description = "Changed after the commit."
+    save(repo, record(fake))
+
+    loaded, failures = load_at_ref(repo / "mcp_tools.json", BASE_REF, repo)
+
+    assert failures == []
+    assert loaded == at_base
+
+
+def test_a_path_missing_at_the_base_ref_fails(tmp_path: Path) -> None:
+    """A path that exists now but not at the ref has no record there to compare."""
+    fake = FakeSurface()
+    repo = _repo(tmp_path, fake, [])
+    later = repo / "later.json"
+    later.write_text((repo / "mcp_tools.json").read_text(encoding="utf-8"), encoding="utf-8")
+
+    failures = check_base(_surface(fake), later, BASE_REF, ReadScope(allow_root=repo))
+
+    assert len(failures) == 1, failures
+    assert failures[0] == f"unreadable-base-ref: {BASE_REF}:later.json is not in the repository"
+
+
+def test_the_ref_reaches_git_on_stdin_and_never_as_an_argument(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The command is static: the caller's ref is data on stdin, never an argv element."""
+    fake = FakeSurface()
+    repo = _repo(tmp_path, fake, [])
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+    real_run = subprocess.run
+
+    def _recorded(arguments: list[str], **options: Any) -> subprocess.CompletedProcess[bytes]:
+        calls.append((list(arguments), options))
+        return real_run(arguments, **options)
+
+    monkeypatch.setattr("mcp_tool_descriptors.base.subprocess.run", _recorded)
+    assert _failures(repo, fake) == []
+
+    assert calls, "no git call was recorded"
+    for arguments, _options in calls:
+        assert arguments in (
+            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "cat-file", "--batch"],
+        ), arguments
+        assert "mcp_tools.json" not in " ".join(arguments)
+    requests = [options["input"] for _arguments, options in calls if "input" in options]
+    assert f"{BASE_REF}:mcp_tools.json\n".encode() in requests
+    assert all(Path(options["cwd"]).is_relative_to(repo) for _arguments, options in calls)
+
+
+def test_a_redirecting_git_environment_cannot_aim_the_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An exported ``GIT_DIR`` must not point the read at another repository."""
+    fake = FakeSurface()
+    repo = _repo(tmp_path, fake, [])
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    _git(elsewhere, "init", "-q", "-b", BASE_REF)
+    monkeypatch.setenv("GIT_DIR", str(elsewhere / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(elsewhere))
+
+    assert _failures(repo, fake) == []
+
+
 @pytest.mark.parametrize(
     ("base_text", "prefix"),
     [
@@ -437,6 +507,30 @@ def test_an_entry_that_is_not_usable_fails_the_whole_record(
     assert len(failures) == 1, failures
     assert failures[0].startswith(f"invalid-deprecation-record: {repo / DEPRECATIONS}: ")
     assert reason in failures[0]
+
+
+def test_a_malformed_entry_at_the_base_ref_cannot_waive_a_removal(tmp_path: Path) -> None:
+    """An entry the module cannot validate must not authorise a removal.
+
+    The base-ref record is the one that authorises a removal, so it is validated the
+    same way the on-disk record is. ``headers_implemented`` is not what authorises
+    anything, but the entry carrying a string there is not a usable record entry:
+    reading past that failure would derive coverage from a record that cannot be
+    trusted, and the removal would pass on a malformed entry.
+    """
+    fake = FakeSurface()
+    malformed = {**_deprecation_entry(OTHER_TOOL), "headers_implemented": "yes"}
+    repo = _repo(tmp_path, fake, [malformed])
+    _remove_tool(fake, OTHER_TOOL)
+    save(repo, record(fake))
+    _write_deprecations(repo, [])
+
+    failures = _failures(repo, fake)
+
+    base_label = f"{BASE_REF}:{DEPRECATIONS.as_posix()}"
+    assert len(failures) == 1, failures
+    assert failures[0].startswith(f"invalid-deprecation-record: {base_label}: ")
+    assert "entries[0].headers_implemented must be a boolean, not 'yes'" in failures[0]
 
 
 def test_a_record_with_another_schema_fails(tmp_path: Path) -> None:

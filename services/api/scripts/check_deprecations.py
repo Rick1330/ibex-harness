@@ -50,8 +50,8 @@ promise a window that the real announcement never gave the consumer.
   ``tool`` is absent from that server's committed ``mcp_tools.json``, or whose
   recorded ``stability`` disagrees with the tool's descriptor entry;
 - a ``proxy`` entry whose ``path`` is missing, or whose ``path`` is not one exact
-  route path (``^/[^/]+(/[^/]+)*$``, with no ``{}``, ``?``, ``#``, or
-  whitespace), or a ``path`` on a non-``proxy`` entry;
+  route path (a leading ``/``, non-empty segments, and no trailing slash, with no
+  ``{}``, ``?``, ``#``, or whitespace), or a ``path`` on a non-``proxy`` entry;
 - two announcing ``proxy`` entries on one ``path`` (``duplicate-path``), which the
   proxy refuses to start on. The scope is the loader's, not the surface's: only an
   entry the loader announces (``status: announced`` with
@@ -206,6 +206,7 @@ def check(paths: DeprecationPaths = DEFAULT_PATHS, today: date | None = None) ->
 
     context = CheckContext(
         rest=rest,
+        rest_registry=paths.rest_registry,
         rest_label=display_path(paths.rest_registry),
         mcp=mcp,
         mcp_paths=mcp_paths,

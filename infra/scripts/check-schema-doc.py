@@ -43,8 +43,11 @@ CH_HEADING = "### ClickHouse Schema"
 PLANNING_MARKER = "schema-doc: not-migrated"
 
 # A quoted or unquoted SQL identifier. A quoted identifier may contain a dot, so
-# `"my.schema"."table"` stays two identifier tokens rather than three.
-_IDENTIFIER = r'(?:"[^"]*"|`[^`]*`|\[[^\]]*\]|[A-Za-z_][\w$]*)'
+# `"my.schema"."table"` stays two identifier tokens rather than three. A doubled
+# quote inside one (`"we""ird"`) is that quote once, so the pattern reads the
+# whole identifier instead of stopping at the first closing quote and keying the
+# table as something else.
+_IDENTIFIER = r'(?:"(?:[^"]|"")*"|`[^`]*`|\[[^\]]*\]|[A-Za-z_][\w$]*)'
 
 # `CREATE TABLE [IF NOT EXISTS] <schema>.<name>` and the unqualified form.
 # UNLOGGED/TEMP are accepted so a future migration is parsed, not silently
@@ -88,9 +91,18 @@ HEADING_TABLE_RE = re.compile(
     r"|(?P<bare>[A-Za-z_][\w$]*\.[A-Za-z_][\w$]*))"
 )
 
-# `$tag$` or `$$`, the PostgreSQL dollar-quote delimiter. `re.ASCII` keeps `\w`
-# exactly `[A-Za-z0-9_]`, so a non-ASCII tag is still ordinary SQL.
-DOLLAR_TAG_RE = re.compile(r"\$([A-Za-z_]\w*)?\$", re.ASCII)
+# `$tag$` or `$$`, the PostgreSQL dollar-quote delimiter. The tag follows the
+# unquoted-identifier rules except that it may not contain `$`: a letter
+# (Unicode letters included) or an underscore, then letters, digits, and
+# underscores. `[^\W\d]` is "a word character that is not a digit", so `$café$`
+# is a tag, `$1$` is not (PostgreSQL reads that as a parameter), and a tag stops
+# at the first `$` it meets.
+DOLLAR_TAG_RE = re.compile(r"\$(?:[^\W\d]\w*)?\$")
+
+# The last word of the SQL emitted so far, for the checks that need to know
+# which statement position the next token sits in. `\w` is Unicode-aware, so
+# `caféDO` reads as one word rather than as the `DO` keyword.
+_LAST_WORD_RE = re.compile(r"(?<![\w$])(?P<word>[A-Za-z_]\w*)\Z")
 
 _QUOTE_PAIRS = (('"', '"'), ("`", "`"), ("[", "]"))
 
@@ -104,18 +116,22 @@ def _blank(text: str) -> str:
     return "".join("\n" if char == "\n" else " " for char in text)
 
 
-def strip_sql_comments_and_literals(sql: str) -> str:
+def strip_sql_comments_and_literals(sql: str, dynamic: bool = False) -> str:
     """Blank comments and string literals, keeping newlines and byte offsets.
 
     Quoted identifiers are copied verbatim because a CREATE TABLE may quote its
     schema and table names; their contents are skipped so an apostrophe inside
     one does not open a string. String literals (single-quoted and
     dollar-quoted) are blanked so a `CREATE TABLE` inside one is not DDL.
+
+    `dynamic` marks a `DO $tag$ … $tag$` body, the one place PostgreSQL runs
+    text this file would otherwise call data: the body is scanned as SQL, and so
+    is the literal of an `EXECUTE '…'` inside it.
     """
     out: list[str] = []
     index = 0
     while index < len(sql):
-        end = _blank_token(sql, index, out)
+        end = _blank_token(sql, index, out, dynamic)
         if end is None:
             out.append(sql[index])
             index += 1
@@ -124,7 +140,7 @@ def strip_sql_comments_and_literals(sql: str) -> str:
     return "".join(out)
 
 
-def _blank_token(sql: str, index: int, out: list[str]) -> int | None:
+def _blank_token(sql: str, index: int, out: list[str], dynamic: bool) -> int | None:
     """Blank the comment or literal starting at index, or None for ordinary SQL.
 
     Returns the index just past the token. Every branch keeps the byte count, so
@@ -135,7 +151,9 @@ def _blank_token(sql: str, index: int, out: list[str]) -> int | None:
     if sql.startswith("/*", index):
         return _blank_block_comment(sql, index, out)
     if sql[index] == "'":
-        return _blank_quoted(sql, index, out, "'")
+        return _blank_quoted(
+            sql, index, out, dynamic and _ends_with_keyword(out, "EXECUTE")
+        )
     if sql[index] == '"':
         return _keep_quoted(sql, index, out, '"')
     tag = _dollar_tag(sql, index) if sql[index] == "$" else None
@@ -180,24 +198,59 @@ def _consume_block_token(
     return False, depth, index + 1
 
 
-def _blank_quoted(sql: str, index: int, out: list[str], quote: str) -> int:
-    """Blank a quoted string, honouring doubled quotes and backslash escapes."""
-    out.append(quote)
-    index += len(quote)
+def _blank_quoted(sql: str, index: int, out: list[str], scan: bool) -> int:
+    """Blank a single-quoted string, honouring doubled quotes.
+
+    A backslash escapes the next character only when the string is an `E'…'`
+    escape string. With `standard_conforming_strings` on — the default since
+    PostgreSQL 9.1 — a backslash in an ordinary `'…'` is a literal character, so
+    `'a\'` closes at the second quote and whatever follows is SQL again.
+
+    `scan` marks the literal of an `EXECUTE '…'` inside a `DO` body: PostgreSQL
+    runs that string, so its content is scanned as SQL instead of blanked.
+    """
+    escapes = _backslash_escapes(sql, index)
+    out.append("'")
+    start = index + 1
+    index = start
     while index < len(sql):
-        if sql.startswith(quote * 2, index):
-            out.append(_blank(quote * 2))
+        if sql.startswith("''", index):
             index += 2
-        elif sql.startswith(quote, index):
-            out.append(quote)
-            return index + len(quote)
-        elif sql[index] == "\\":
-            out.append(_blank(sql[index : index + 2]))
+        elif sql[index] == "'":
+            _write_literal(sql[start:index], out, scan)
+            out.append("'")
+            return index + 1
+        elif escapes and sql[index] == "\\":
             index += 2
         else:
-            out.append(_blank(sql[index]))
             index += 1
+    _write_literal(sql[start:], out, scan)
     return index
+
+
+def _write_literal(content: str, out: list[str], scan: bool) -> None:
+    """Write a literal's content: blanked as data, or scanned as SQL, same length."""
+    out.append(
+        strip_sql_comments_and_literals(content, dynamic=True)
+        if scan
+        else _blank(content)
+    )
+
+
+def _backslash_escapes(sql: str, index: int) -> bool:
+    """True when the quote at index opens an `E'…'` (or `e'…'`) escape string.
+
+    The prefix must start a token, so `xE'…'` is the identifier `xe` followed by
+    an ordinary string, and `E` at the start of the file is a prefix.
+    """
+    if index == 0 or sql[index - 1] not in "eE":
+        return False
+    return index == 1 or not _is_identifier_char(sql[index - 2])
+
+
+def _is_identifier_char(char: str) -> bool:
+    """True for a character PostgreSQL accepts inside an unquoted identifier."""
+    return char.isalnum() or char in "_$"
 
 
 def _keep_quoted(sql: str, index: int, out: list[str], quote: str) -> int:
@@ -226,31 +279,75 @@ def _blank_dollar_quoted(sql: str, index: int, out: list[str], tag: str) -> int:
     """Blank a `$tag$ … $tag$` literal; dollar-quoted text has no escapes.
 
     The delimiters are blanked too: a tag could spell a keyword, and neither the
-    body nor the tag is executable SQL.
+    body nor the tag is executable SQL. A `DO` block is the exception: its body is
+    plpgsql that runs, so a `CREATE TABLE` inside it creates a table and must
+    reach the gate.
     """
+    executable = _ends_with_keyword(out, "DO")
     blank_tag = _blank(tag)
     out.append(blank_tag)
     start = index + len(tag)
     end = sql.find(tag, start)
     if end == -1:
-        out.append(_blank(sql[start:]))
+        out.append(_dollar_body(sql[start:], executable))
         return len(sql)
-    out.append(_blank(sql[start:end]))
+    out.append(_dollar_body(sql[start:end], executable))
     out.append(blank_tag)
     return end + len(tag)
 
 
+def _dollar_body(body: str, executable: bool) -> str:
+    """A dollar-quoted body as it stands in the output, keeping its byte count."""
+    if executable:
+        return strip_sql_comments_and_literals(body, dynamic=True)
+    return _blank(body)
+
+
+def _ends_with_keyword(prefix: list[str], keyword: str) -> bool:
+    """True when the SQL emitted so far ends with `keyword` as a whole word.
+
+    Comments and literals are already blanked in `prefix`, so a keyword in prose
+    cannot match. `DO` is the only statement with an executable dollar-quoted
+    body; `EXECUTE` is the only keyword whose string literal runs. `format(…)`
+    and concatenation are not literals of either, so dynamic SQL built that way
+    stays data, exactly as a string literal is data everywhere else in this file.
+    """
+    match = _LAST_WORD_RE.search("".join(prefix).rstrip())
+    return match is not None and match.group("word").upper() == keyword
+
+
 def normalise(identifier: str) -> str:
-    """Lower-case an identifier and remove one surrounding quote pair."""
-    return _unquote(identifier.strip()).lower()
+    """Canonical identity of an identifier token.
+
+    PostgreSQL folds an unquoted identifier to lower case and keeps a quoted one
+    exactly as written, so `ibex_core.users` and `ibex_core."Users"` are two
+    different tables and must stay two different keys.
+    """
+    ident = identifier.strip()
+    if _quote_pair(ident) is None:
+        return ident.lower()
+    return _unquote(ident)
+
+
+def _quote_pair(ident: str) -> tuple[str, str] | None:
+    """The quote pair surrounding ident, or None when it is unquoted."""
+    for left, right in _QUOTE_PAIRS:
+        if _wrapped_in(ident, left, right):
+            return left, right
+    return None
 
 
 def _unquote(ident: str) -> str:
-    """The identifier without one surrounding quote pair, or unchanged."""
-    for left, right in _QUOTE_PAIRS:
-        if _wrapped_in(ident, left, right):
-            return ident[1:-1]
-    return ident
+    """The identifier's content: one quote pair removed and its escapes resolved.
+
+    The original case is kept, because that is the identity a quoted identifier
+    has. A doubled closing quote inside one spells that quote once.
+    """
+    pair = _quote_pair(ident)
+    if pair is None:
+        return ident
+    left, right = pair
+    return ident[1:-1].replace(left + right, right)
 
 
 def _wrapped_in(ident: str, left: str, right: str) -> bool:

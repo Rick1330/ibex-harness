@@ -25,7 +25,8 @@ import (
 //   - double-quoted identifiers and backtick-quoted identifiers (an apostrophe
 //     inside a double-quoted identifier is not a string opener), and
 //   - `$tag$ … $tag$` heredoc literals, which are consumed as one unit before
-//     ordinary quotes are considered.
+//     ordinary quotes are considered. A tag is a run of letters, digits, and
+//     underscores, so `$$`, `$tag$`, and `$1$` each open one.
 //
 // Refused forms:
 //
@@ -156,16 +157,43 @@ func TestUnit_ReviewedExceptions_NameRealMigrations(t *testing.T) {
 	}
 }
 
+// ddlPatternCase is one refused-form fixture: the subtest name it reports
+// under, the statement to scan, and the finding name it must produce.
+type ddlPatternCase struct {
+	name string
+	sql  string
+	want string
+}
+
 // TestUnit_DestructiveDDL_CatchesPatterns proves each refused form is caught
-// and reported under its own name.
+// and reported under its own name. The fixtures are split in two: the refused
+// forms written as ordinary statements, and the ones where a comment, a quoted
+// literal, or a heredoc sits in front of the refused statement.
 func TestUnit_DestructiveDDL_CatchesPatterns(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name string
-		sql  string
-		want string
-	}{
+	assertDDLPatternCases(t, plainDDLPatternCases())
+	assertDDLPatternCases(t, escapedLiteralPatternCases())
+}
+
+// assertDDLPatternCases runs every fixture as its own subtest and requires the
+// refused pattern that fixture names.
+func assertDDLPatternCases(t *testing.T, cases []ddlPatternCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			findings := destructiveDDLFindings(tc.sql)
+			if !hasPattern(findings, tc.want) {
+				t.Fatalf("%q: want pattern %q, got %v", tc.sql, tc.want, findings)
+			}
+		})
+	}
+}
+
+// plainDDLPatternCases are the refused forms written as ordinary statements.
+func plainDDLPatternCases() []ddlPatternCase {
+	return []ddlPatternCase{
 		{"drop table", "DROP TABLE ibex.llm_traces", "DROP TABLE"},
 		{"drop table if exists", "DROP TABLE IF EXISTS ibex.llm_traces", "DROP TABLE"},
 		{"drop column", "ALTER TABLE ibex.llm_traces DROP COLUMN provider", "DROP COLUMN"},
@@ -184,6 +212,15 @@ func TestUnit_DestructiveDDL_CatchesPatterns(t *testing.T) {
 		{"truncate table", "TRUNCATE TABLE ibex.llm_traces", "TRUNCATE"},
 		{"truncate bare", "TRUNCATE ibex.llm_traces", "TRUNCATE"},
 		{"lowercase", "drop table ibex.llm_traces", "DROP TABLE"},
+	}
+}
+
+// escapedLiteralPatternCases are the fixtures where a comment, a quoted
+// literal, or a heredoc sits in front of the refused statement. A scanner that
+// misreads one of those delimiters blanks the statement that follows, so the
+// gate would miss a real drop.
+func escapedLiteralPatternCases() []ddlPatternCase {
+	return []ddlPatternCase{
 		{
 			// Backslash escaping: the scanner must stay inside the literal at
 			// `\'`, or the statement after it is blanked and the drop is missed.
@@ -240,15 +277,13 @@ func TestUnit_DestructiveDDL_CatchesPatterns(t *testing.T) {
 			"SELECT $tag$it's$tag$;\nDROP TABLE ibex.llm_traces",
 			"DROP TABLE",
 		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			findings := destructiveDDLFindings(tc.sql)
-			if !hasPattern(findings, tc.want) {
-				t.Fatalf("%q: want pattern %q, got %v", tc.sql, tc.want, findings)
-			}
-		})
+		{
+			// A tag may start with a digit. Refusing `$1$` leaves the apostrophe
+			// in `it's` to open a string that blanks the DROP that follows.
+			"digit-leading heredoc tag does not hide a drop",
+			"SELECT $1$it's$1$; DROP TABLE ibex.x;",
+			"DROP TABLE",
+		},
 	}
 }
 
@@ -605,9 +640,9 @@ func (s *sqlScanner) skipBlockComment() {
 }
 
 // heredocTagLen is the length of the `$tag$` opening delimiter at pos, or 0.
-// ClickHouse accepts an empty tag (`$$ … $$`) or a tag that starts with a letter
-// or underscore and continues with letters, digits, or underscores. A `$` that
-// does not open a delimiter is ordinary SQL text.
+// ClickHouse accepts an empty tag (`$$ … $$`) or a tag of letters, digits, and
+// underscores, so a tag may start with a digit (`$1$`). A `$` that does not
+// open a delimiter is ordinary SQL text.
 func (s *sqlScanner) heredocTagLen() int {
 	if s.peek() != '$' {
 		return 0
@@ -633,10 +668,12 @@ func (s *sqlScanner) namedHeredocTagLen(index int) int {
 	return end - s.pos + 1
 }
 
-// atHeredocTagStart reports whether a tag may start at index: a letter or an
-// underscore. An index at or past the end of the input is not a tag start.
+// atHeredocTagStart reports whether a tag may start at index: a letter, a digit,
+// or an underscore. Refusing a digit-leading tag would leave the apostrophe in
+// `$1$it's$1$` to open a string that blanks the statement after the literal. An
+// index at or past the end of the input is not a tag start.
 func (s *sqlScanner) atHeredocTagStart(index int) bool {
-	return index < len(s.src) && isHeredocTagStart(s.src[index])
+	return index < len(s.src) && isHeredocTagByte(s.src[index])
 }
 
 // heredocTagEnd is the first index at or after index that is not a tag byte.
@@ -654,11 +691,15 @@ func (s *sqlScanner) atHeredocTagClose(index int) bool {
 
 func (s *sqlScanner) atHeredoc() bool { return s.heredocTagLen() > 0 }
 
-func isHeredocTagStart(b byte) bool {
-	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+// isHeredocTagByte reports whether b may appear in a heredoc tag: a letter, a
+// digit, or an underscore. A tag's first byte uses the same set, so `$1$` and
+// `$_x$` are delimiters and `$1x$` is too.
+func isHeredocTagByte(b byte) bool {
+	return b == '_' ||
+		(b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9')
 }
-
-func isHeredocTagByte(b byte) bool { return isHeredocTagStart(b) || (b >= '0' && b <= '9') }
 
 // skipHeredoc consumes a `$tag$ … $tag$` literal as one unit, blanking the body
 // and the delimiters (a tag could itself spell a keyword, e.g. `$DROP$`). An

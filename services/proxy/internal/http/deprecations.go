@@ -113,6 +113,7 @@ func loadProxyDeprecationNotices(configured string) (deprecationNotices, error) 
 	if !ok {
 		return nil, nil
 	}
+	// nosemgrep: go_filesystem_rule-fileread -- the path is either an operator-set file or DefaultDeprecationsFile, a compiled-in repo-relative constant, joined to an ancestor of the process working directory; no request data reaches it and the ancestor search stops at the filesystem root.
 	data, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // operator config or repo path, never request input
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil

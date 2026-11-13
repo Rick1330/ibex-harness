@@ -32,6 +32,7 @@ if str(SCRIPTS) not in sys.path:
 # script modules resolve each other by bare name.
 cli = importlib.import_module("check_deprecations")
 model = importlib.import_module("deprecations_model")
+path_rules = importlib.import_module("deprecations_paths")
 
 REST_CONTRACT = "management.agents.read.v1"
 EVIDENCE = "engineering/architecture-v2/16-compatibility-and-versioning.md"

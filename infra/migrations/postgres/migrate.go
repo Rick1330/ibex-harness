@@ -129,15 +129,37 @@ func closeMigrate(m *migrate.Migrate) {
 	}
 }
 
-// RedactedDSN returns a DSN safe for logging (password removed).
+// RedactedDSN returns a DSN safe for logging: the userinfo password and every
+// credential-bearing query parameter are masked, and every other parameter is
+// kept, so a failure message still says which host, database, and sslmode the
+// run used.
+//
+// It does not understand lib/pq's keyword/value form (`host=… password=…`):
+// normalizePostgresDSN appends `?sslmode=disable` to such a string, so the
+// harness only ever holds the URL form.
 func RedactedDSN(dsn string) string {
 	u, err := url.Parse(dsn)
 	if err != nil {
 		return "(invalid dsn)"
 	}
 	if u.User != nil {
-		user := u.User.Username()
-		u.User = url.UserPassword(user, "REDACTED")
+		u.User = url.UserPassword(u.User.Username(), "REDACTED")
 	}
+	u.RawQuery = redactedQuery(u.Query())
 	return u.String()
 }
+
+// redactedQuery masks the query parameters that carry a password or name a file
+// holding one, and leaves the rest of the query untouched.
+func redactedQuery(values url.Values) string {
+	for _, key := range redactedQueryKeys {
+		if values.Has(key) {
+			values.Set(key, "REDACTED")
+		}
+	}
+	return values.Encode()
+}
+
+// redactedQueryKeys are the lib/pq and pgx parameters that are, or point at, a
+// credential.
+var redactedQueryKeys = []string{"password", "passfile"}

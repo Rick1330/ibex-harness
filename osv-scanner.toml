@@ -22,11 +22,17 @@ id = "GHSA-gcqx-w48m-w2h4"
 ignoreUntil = 2026-12-01
 reason = "No upstream fixed release; carried by @rollup/plugin-node-resolve at build time and absent from the deployed Nitro output. Revisit when a fixed release exists."
 
-# nitro-server advisory (GHSA-vjh5-4x84-xrqp): OSV reports no fixed release as
-# of 4.6.3. The Console uses the Nitro node-server preset, but no Console
-# hostname, workload, or production promotion is claimed (ADR-0088). Re-audit
-# before any hosted rollout and when an upstream fix exists.
+# nuxt / nitro-server case-variant route-rule advisory (GHSA-vjh5-4x84-xrqp,
+# CVE-2026-114132). The 4.x line was fixed upstream in 4.6.2, and this lock now
+# resolves nuxt and @nuxt/nitro-server 4.6.4, so the code actually installed is
+# past the 4.x fix. OSV still reports the advisory because it also carries an
+# open-ended range (introduced >= 3.0.0, no `fixed` event) for the 3.x line,
+# which this repository does not use; osv-scanner therefore shows
+# "FIXED VERSION: --". Removing this filter makes the gate fail on 4.6.4, so it
+# is kept until OSV closes the 3.x range. The Console uses the Nitro
+# node-server preset, but no Console hostname, workload, or production
+# promotion is claimed (ADR-0088). Re-audit before any hosted rollout.
 [[IgnoredVulns]]
 id = "GHSA-vjh5-4x84-xrqp"
 ignoreUntil = 2026-12-01
-reason = "No upstream fixed release as of @nuxt/nitro-server 4.6.3; the Console is not hosted and claims no production deployment. Re-audit before any hosted rollout."
+reason = "4.x fixed upstream in 4.6.2; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (introduced >= 3.0.0, no fixed event), which this repository does not use. The Console is not hosted and claims no production deployment. Re-audit when OSV closes the 3.x range or before any hosted rollout."

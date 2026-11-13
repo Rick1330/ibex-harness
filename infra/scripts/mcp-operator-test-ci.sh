@@ -42,10 +42,17 @@ if [[ -z "$BASE_REF" && -n "${GITHUB_BASE_REF:-}" ]]; then
     echo "warning: the CI checkout must run: git fetch --no-tags --depth=1 origin \"+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}\"" >&2
   fi
 fi
+# The descriptor gate reads two records outside this service: the committed
+# record's deprecation notice at engineering/architecture-v2/contracts/
+# deprecations.json, and the same record at BASE_REF. The CLI confines every
+# path it reads to --allow-root (default: the working directory), so the gate
+# declares the repository root as its read scope. This is a scope declaration,
+# not a bypass: the record path is still confined, still validated, and still
+# compared against BASE_REF.
 if [[ -n "$BASE_REF" ]]; then
-  .venv/bin/python -m app.descriptors --check-base "$BASE_REF"
+  .venv/bin/python -m app.descriptors --allow-root "$ROOT" --check-base "$BASE_REF"
 else
-  .venv/bin/python -m app.descriptors --check
+  .venv/bin/python -m app.descriptors --allow-root "$ROOT" --check
 fi
 .venv/bin/pytest -q \
   -m "not integration" \

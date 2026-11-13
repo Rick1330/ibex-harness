@@ -180,6 +180,20 @@ FENCE_CASES = (
             """,
         needle="ibex_core.b",
     ),
+    DocCase(
+        name="a literal with a backslash does not hide the table after it",
+        body="""
+            ### PostgreSQL Schema
+
+            ```sql
+            CREATE TABLE ibex_core.a (id UUID);
+            INSERT INTO ibex_core.a (path) VALUES ('C:\\');
+            CREATE TABLE ibex_core.b (id UUID);
+            ```
+
+            ### ClickHouse Schema
+            """,
+    ),
 )
 
 
@@ -232,10 +246,64 @@ class TableKeyTests(unittest.TestCase):
         )
         self.assertEqual(keys, ["ibex_core.real"])
 
-    def test_create_table_inside_a_dollar_quoted_body_is_ignored(self) -> None:
+    def test_a_backslash_in_an_ordinary_string_does_not_hide_the_next_table(
+        self,
+    ) -> None:
+        # standard_conforming_strings is on by default, so the backslash is a
+        # literal and the string closes at the quote after it. Treating the
+        # backslash as an escape runs the string to end of file and loses the
+        # CREATE TABLE that follows.
         keys = check_schema_doc.table_keys(
-            "DO $body$ BEGIN EXECUTE 'CREATE TABLE ibex_core.ghost (id UUID);'; END $body$;\n"
+            "INSERT INTO ibex_core.a (path) VALUES ('C:\\');\n"
             "CREATE TABLE ibex_core.real (id UUID);"
+        )
+        self.assertEqual(keys, ["ibex_core.real"])
+
+    def test_a_backslash_in_an_escape_string_still_escapes(self) -> None:
+        # `E'…'` is the one string form where a backslash escapes, so the quote
+        # after it does not close the string and the keyword stays data.
+        keys = check_schema_doc.table_keys(
+            "SELECT E'it\\'s CREATE TABLE ibex_core.ghost (id UUID);';\n"
+            "CREATE TABLE ibex_core.real (id UUID);"
+        )
+        self.assertEqual(keys, ["ibex_core.real"])
+
+    def test_create_table_inside_a_do_body_is_detected(self) -> None:
+        # A DO block is plpgsql that runs, so the table it creates exists.
+        keys = check_schema_doc.table_keys(
+            "DO $body$ BEGIN CREATE TABLE ibex_core.dynamic (id UUID); END $body$;\n"
+            "CREATE TABLE ibex_core.real (id UUID);"
+        )
+        self.assertEqual(keys, ["ibex_core.dynamic", "ibex_core.real"])
+
+    def test_create_table_inside_an_inert_dollar_quoted_body_is_ignored(self) -> None:
+        keys = check_schema_doc.table_keys(
+            "SELECT $body$ CREATE TABLE ibex_core.ghost (id UUID); $body$;\n"
+            "CREATE TABLE ibex_core.real (id UUID);"
+        )
+        self.assertEqual(keys, ["ibex_core.real"])
+
+    def test_dynamic_sql_inside_an_execute_literal_is_scanned(self) -> None:
+        # `EXECUTE '…'` runs its literal, so the table it creates exists.
+        keys = check_schema_doc.table_keys(
+            "DO $body$ BEGIN EXECUTE 'CREATE TABLE ibex_core.dynamic (id UUID);'; END $body$;\n"
+            "CREATE TABLE ibex_core.real (id UUID);"
+        )
+        self.assertEqual(keys, ["ibex_core.dynamic", "ibex_core.real"])
+
+    def test_a_non_execute_string_inside_a_do_body_is_still_data(self) -> None:
+        keys = check_schema_doc.table_keys(
+            "DO $body$ BEGIN RAISE NOTICE 'CREATE TABLE ibex_core.ghost (id UUID);'; "
+            "END $body$;\nCREATE TABLE ibex_core.real (id UUID);"
+        )
+        self.assertEqual(keys, ["ibex_core.real"])
+
+    def test_dynamic_sql_built_by_format_is_not_scanned(self) -> None:
+        # `EXECUTE format(…)` is a call, not a literal, so it stays data; the
+        # scanner must not try to parse a format string as DDL.
+        keys = check_schema_doc.table_keys(
+            "DO $body$ BEGIN EXECUTE format('CREATE TABLE %I (id UUID)', 'ghost'); "
+            "END $body$;\nCREATE TABLE ibex_core.real (id UUID);"
         )
         self.assertEqual(keys, ["ibex_core.real"])
 
@@ -264,14 +332,55 @@ class TableKeyTests(unittest.TestCase):
         )
         self.assertEqual(keys, ["table", "table"])
 
-    def test_a_non_ascii_dollar_tag_is_not_a_tag(self) -> None:
-        # `\w` is matched under re.ASCII, so a non-ASCII tag stays ordinary SQL
-        # and the statement inside it is still parsed, as `[A-Za-z0-9_]*` did.
+    def test_a_unicode_dollar_tag_is_a_tag(self) -> None:
+        # PostgreSQL tags follow the unquoted-identifier rules, so `$café$` is a
+        # delimiter and the statement inside it is data.
         keys = check_schema_doc.table_keys(
             "SELECT $café$ CREATE TABLE ibex_core.ghost (id UUID); $café$;\n"
             "CREATE TABLE ibex_core.real (id UUID);"
         )
-        self.assertEqual(keys, ["ibex_core.ghost", "ibex_core.real"])
+        self.assertEqual(keys, ["ibex_core.real"])
+
+    def test_dollar_tag_forms(self) -> None:
+        cases = {
+            "$$": "$$",
+            "$tag$": "$tag$",
+            "$_x1$": "$_x1$",
+            "$café$": "$café$",
+        }
+        for sql, want in cases.items():
+            with self.subTest(sql=sql):
+                self.assertEqual(check_schema_doc._dollar_tag(sql, 0), want)
+
+    def test_dollar_tag_rejects_a_digit_start_and_stops_at_a_dollar(self) -> None:
+        # `$1` is a parameter in PostgreSQL, not a tag; a tag may not contain `$`.
+        self.assertIsNone(check_schema_doc._dollar_tag("$1$", 0))
+        self.assertEqual(check_schema_doc._dollar_tag("$a$b$", 0), "$a$")
+
+    def test_ends_with_keyword_matches_a_whole_word(self) -> None:
+        self.assertFalse(check_schema_doc._ends_with_keyword(["SELECT caféDO"], "DO"))
+        self.assertTrue(check_schema_doc._ends_with_keyword(["DO"], "DO"))
+        self.assertTrue(
+            check_schema_doc._ends_with_keyword(["BEGIN EXECUTE"], "EXECUTE")
+        )
+
+    def test_a_quoted_identifier_keeps_its_case(self) -> None:
+        keys = check_schema_doc.table_keys(
+            'CREATE TABLE ibex_core."Users" (id UUID);\n'
+            "CREATE TABLE ibex_core.users (id UUID);"
+        )
+        self.assertEqual(keys, ["ibex_core.Users", "ibex_core.users"])
+
+    def test_an_unquoted_identifier_folds_to_lower_case(self) -> None:
+        keys = check_schema_doc.table_keys(
+            "CREATE TABLE IBEX_CORE.Users (id UUID);\n"
+            'CREATE TABLE "ibex_core"."Users" (id UUID);'
+        )
+        self.assertEqual(keys, ["ibex_core.users", "ibex_core.Users"])
+
+    def test_a_doubled_quote_inside_a_quoted_identifier_is_one_quote(self) -> None:
+        keys = check_schema_doc.table_keys('CREATE TABLE "we""ird" (id UUID);')
+        self.assertEqual(keys, ['we"ird'])
 
 
 class FenceScannerTests(unittest.TestCase):
@@ -340,6 +449,16 @@ class CoveredTests(unittest.TestCase):
     def test_exact_match(self) -> None:
         self.assertTrue(
             check_schema_doc.covered("ibex_core.tokens", {"ibex_core.tokens"})
+        )
+
+    def test_a_quoted_identity_is_not_its_unquoted_neighbour(self) -> None:
+        # PostgreSQL folds `users` to lower case and keeps `"Users"` as written,
+        # so the two names are two tables, not one.
+        self.assertFalse(
+            check_schema_doc.covered("ibex_core.Users", {"ibex_core.users"})
+        )
+        self.assertFalse(
+            check_schema_doc.covered("ibex_core.users", {"ibex_core.Users"})
         )
 
 
