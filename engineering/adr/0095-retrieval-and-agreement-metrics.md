@@ -2,17 +2,17 @@
 title: "ADR-0095: Retrieval and labelling metrics are defined in code, once"
 description: "Architecture decision record 0095: nDCG@k with exponential gain, tail-extrapolated RBO for rank shift, and Cohen's kappa with its confusion matrix live in services/memory/app/eval so the benchmark and the shadow path report the same numbers."
 adrId: "0095"
-status: "Proposed"
+status: "Accepted, partially wired"
 date: "2026-11-03"
 authors: "Elshaday Mengesha (@Rick1330)"
 ---
 
-::decision-banner{status="Proposed" date="2026-11-03" id="0095"}
+::decision-banner{status="Accepted, partially wired" date="2026-11-03" id="0095"}
 ::
 
 # ADR-0095: Retrieval and labelling metrics are defined in code, once
 
-- **Status:** Proposed
+- **Status:** Accepted, partially wired. The module exists — `services/memory/app/eval/ranking.py` (`ndcg_at_k`, `rbo`, `top1_agreement`), `services/memory/app/eval/agreement.py` (`cohen_kappa`, `KappaResult`), re-exported by `services/memory/app/eval/__init__.py` — and the benchmark imports it (`benchmarks/memory/ranking_quality/bench_ranking_modes.py`:44 imports `ndcg_at_k`). The agreement half has no importer outside a unit test (`services/memory/tests/unit/test_eval_agreement_unit.py`:7), and the shadow comparison (`5.C.3`) the decision names has no emitter in `services/memory/app` or `services/worker/app`; `app/eval/__init__.py` describes it in prose only. So the definitions are accepted and used where they are wired; the shadow path is not.
 - **Date:** 2026-11-03
 - **Authors:** Elshaday Mengesha (@Rick1330)
 - **Milestone:** [5.C.1 Hybrid-aware gold set v2](/roadmap)

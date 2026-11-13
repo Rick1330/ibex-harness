@@ -2,17 +2,17 @@
 title: "ADR-0094: Bounded lineage traversal and unresolved-conflict suppression are read-path properties"
 description: "Architecture decision record 0094: a depth-capped, tenant-scoped recursive CTE walks memory_relationships in both directions, and unresolved conflict escalations suppress the lower-ranked side of a contradiction on search, hot cache, and context assembly."
 adrId: "0094"
-status: "Proposed"
+status: "Accepted"
 date: "2026-11-03"
 authors: "Elshaday Mengesha (@Rick1330)"
 ---
 
-::decision-banner{status="Proposed" date="2026-11-03" id="0094"}
+::decision-banner{status="Accepted" date="2026-11-03" id="0094"}
 ::
 
 # ADR-0094: Bounded lineage traversal and unresolved-conflict suppression are read-path properties
 
-- **Status:** Proposed
+- **Status:** Accepted. Both properties are wired: the lineage route is `services/memory/app/routers/memories.py`:301, rendered by `services/memory/app/routers/memory_lineage_support.py` through `services/memory/app/read/lineage.py`, and exposed over MCP at `services/mcp-memory/app/tools.py`:307. Suppression runs on the cold search path in `services/memory/app/read/repository.py`:434, on the hot cache in `services/memory/app/read/hot_cache.py`:152, and across the context merge in `services/context/app/conflict.py`:22; `conflict_suppression_enabled` defaults to `True` (`services/memory/app/config.py`:259).
 - **Date:** 2026-11-03
 - **Author:** Elshaday Mengesha (@Rick1330)
 - **Related:** [ADR-0049](0049-memory-relationship-graph.md), [ADR-0057](0057-conflict-escalation.md), [ADR-0068](0068-composite-relevance-gate.md), [ADR-0069](0069-context-packing-knapsack.md), [ADR-0092](0092-hybrid-retrieval-rrf-admission.md).

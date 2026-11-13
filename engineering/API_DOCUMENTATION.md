@@ -58,7 +58,7 @@ Every operator request, stream, export, deletion, replay, and asynchronous job d
 ---
 
 > **Operator platform contract:** The historical Phase 4 dashboard work is gated by Track P. The currently mounted, provisional core read slices include D1 overview/platform health, D2 agent/memory/evidence and metadata trace list/detail, D3 session metadata, and D5 directive-version metadata. Each route and its exclusions are recorded in the status table above; planned contracts for query, privacy, usage/cost, incidents, and operator actions are not route evidence. A permission constant or database table is not an API implementation.
-> **Phase 1 historical baseline (2026-06, superseded):** Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`); proxy HTTP (`GET /v1/internal/auth-probe`, `GET /v1/orgs/{org_id}/auth-probe`, chat); `/health`, `/ready`, `/metrics`. The chat route returned `501` before provider forwarding landed; current behavior is stated in the status table above and under `POST /v1/chat/completions`. Error envelope per ADR-0013 / `packages/apierror`.
+> **Phase 1 historical baseline (2026-06, superseded):** Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`); proxy HTTP (`GET /v1/internal/auth-probe`, `GET /v1/orgs/{org_id}/auth-probe`, chat); `/health`, `/ready`, `/metrics`. Chat forwards to a registered provider and returns `501 PROVIDER_NOT_CONFIGURED` only when no provider matches the requested model; current behavior is stated in the status table above and under `POST /v1/chat/completions`. Error envelope per ADR-0013 / `packages/apierror`.
 >
 > **Phase 2+ (below):** REST resources for memories, sessions, directive mutation/CRUD, analytics, and dashboard APIs are **specified but not implemented** unless a mounted implementation record is called out above. The operator directive metadata-only GET routes are the explicit exception described above. See the [status ledger](https://ibexharness.com/docs/architecture/status-and-evidence).
 
@@ -333,13 +333,15 @@ HTTP 500 - Internal Server Error
 
 HTTP 501 - Not Implemented
   PROVIDER_NOT_CONFIGURED  -- No provider is registered for the requested model
-  DATABASE_ERROR           -- Database operation failed
-  UPSTREAM_ERROR           -- External service error
 
 HTTP 503 - Service Unavailable
   SERVICE_DEGRADED         -- Running in degraded mode
   MAINTENANCE_MODE         -- Planned maintenance window
 ```
+
+`PROVIDER_NOT_CONFIGURED` is the only `501` code `packages/apierror` defines (`packages/apierror/codes.go`:21-22). The
+chat route no longer returns `501` for anything else: a registered provider that fails before the response starts maps
+to `503 PROVIDER_UNAVAILABLE` or `504 PROVIDER_TIMEOUT`, as described under `POST /v1/chat/completions`.
 
 ### Idempotency Keys
 
@@ -400,6 +402,84 @@ The projection deliberately excludes `org_id`, `config`, and `metadata`. `total_
 Returns the same projection for one non-deleted agent in the authenticated organization. A missing agent and an agent owned by another tenant both return `NOT_FOUND` (HTTP 404) to avoid an existence leak.
 
 Both routes require an AuthService-backed operator session outside development, `OPERATOR_METADATA_READ`, an organization-bound database transaction, and `Cache-Control: no-store`. They reuse the management agent query, so the tenant filter is explicit in SQL and enforced again by RLS. Local two-tenant coverage is in `services/api/tests/integration/test_operator_overview_rls.py`.
+
+### Mounted operator route inventory
+
+The routes below are mounted in `services/api` and appear in `services/api/scripts/route_inventory.json`; each row's
+contract ID is the registry value, not a name chosen here. Every operator route requires the operator access cookie and
+is non-cacheable; `GET` reads additionally require `OPERATOR_METADATA_READ` and derive the organization from verified
+session claims. Request and response models are maintained in `services/api/openapi.snapshot.json`.
+
+| Method | Path | Contract ID | Router |
+| --- | --- | --- | --- |
+| `GET` | `/v1/operator/context` | `operator.context.read.v1` | `operator_overview.py` |
+| `GET` | `/v1/operator/overview` | `operator.overview.read.v1` | `operator_overview.py` |
+| `GET` | `/v1/operator/agents` | `operator.agents.read.v1` | `operator_agents.py` |
+| `GET` | `/v1/operator/agents/{agent_id}` | `operator.agents.get.v1` | `operator_agents.py` |
+| `GET` | `/v1/operator/sessions` | `operator.sessions.read.v1` | `operator_sessions.py` |
+| `GET` | `/v1/operator/sessions/{session_id}` | `operator.sessions.get.v1` | `operator_sessions.py` |
+| `GET` | `/v1/operator/memories` | `operator.memories.read.v1` | `operator_memories.py` |
+| `GET` | `/v1/operator/memories/{memory_id}` | `operator.memories.get.v1` | `operator_memories.py` |
+| `GET` | `/v1/operator/directives` | `operator.directives.read.v1` | `operator_directives.py` |
+| `GET` | `/v1/operator/directives/{directive_id}` | `operator.directives.get.v1` | `operator_directives.py` |
+| `GET` | `/v1/operator/evidence/summary` | `operator.evidence.summary.v1` | `operator_evidence.py` |
+| `GET` | `/v1/operator/evidence/deletions` | `operator.evidence-deletions.read.v1` | `operator_evidence_deletions.py` |
+| `GET` | `/v1/operator/platform/health` | `operator.platform.health.v1` | `platform.py` |
+| `GET` | `/v1/operator/traces` | `operator.traces.read.v1` | `operator_traces.py` |
+| `GET` | `/v1/operator/traces/{trace_id}` | `operator.traces.get.v1` | `operator_traces.py` |
+| `GET` | `/v1/operator/traces/runs/{run_id}` | `operator.traces-runs.get.v1` | `operator_traces.py` |
+| `GET` | `/v1/operator/events/stream` | `operator.events.stream.v1` | `operator_events.py` |
+| `POST` | `/v1/operator/session/login` | `operator.session.login.v1` | `session.py` |
+| `POST` | `/v1/operator/session/logout` | `operator.session.logout.v1` | `session.py` |
+| `POST` | `/v1/operator/session/refresh` | `operator.session.refresh.v1` | `session.py` |
+| `GET` | `/v1/operator/session/me` | `operator.session.me.v1` | `session.py` |
+
+### Tenant management route inventory
+
+The management API also mounts the tenant routes below. They are `stable` registry contracts; only the agent, token,
+provider, rate-limit, and model-policy families have prose sections in this document, and the remaining rows are listed
+here so the reference is complete rather than silently partial. Every one requires a bearer token with the permission
+its router enforces; the tenant is `{org_id}` or derived from the token.
+
+| Method | Path | Contract ID | Router |
+| --- | --- | --- | --- |
+| `GET` | `/v1/organizations/{org_id}` | `management.organizations.get.v1` | `organizations.py` |
+| `PATCH` | `/v1/organizations/{org_id}` | `management.organizations.update.v1` | `organizations.py` |
+| `DELETE` | `/v1/organizations/{org_id}` | `management.organizations.delete.v1` | `organizations.py` |
+| `POST` | `/v1/organizations/{org_id}/suspend` | `management.organizations.suspend.v1` | `organizations.py` |
+| `GET` | `/v1/organizations/{org_id}/deletion-jobs/{job_id}` | `management.deletion-jobs.get.v1` | `organizations.py` |
+| `GET` | `/v1/organizations/{org_id}/budget-periods` | `management.budget-periods.read.v1` | `billing.py` |
+| `POST` | `/v1/organizations/{org_id}/budget-periods` | `management.budget-periods.create.v1` | `billing.py` |
+| `GET` | `/v1/organizations/{org_id}/rate-cards` | `management.rate-cards.read.v1` | `billing.py` |
+| `POST` | `/v1/organizations/{org_id}/rate-cards` | `management.rate-cards.create.v1` | `billing.py` |
+| `POST` | `/v1/organizations/{org_id}/rate-cards/{card_id}/versions` | `management.rate-cards.versions.v1` | `billing.py` |
+| `POST` | `/v1/organizations/{org_id}/usage/query` | `management.usage.query.v1` | `usage_query.py` |
+| `GET` | `/v1/organizations/{org_id}/capture-policies` | `management.capture-policies.read.v1` | `capture_policies.py` |
+| `POST` | `/v1/organizations/{org_id}/capture-policies` | `management.capture-policies.create.v1` | `capture_policies.py` |
+| `GET` | `/v1/organizations/{org_id}/capture-policies/resolved` | `management.capture-policies.resolved.v1` | `capture_policies.py` |
+| `PATCH` | `/v1/organizations/{org_id}/capture-policies/{policy_id}` | `management.capture-policies.update.v1` | `capture_policies.py` |
+| `DELETE` | `/v1/organizations/{org_id}/capture-policies/{policy_id}` | `management.capture-policies.delete.v1` | `capture_policies.py` |
+| `GET` | `/v1/organizations/{org_id}/legal-holds` | `management.legal-holds.read.v1` | `legal_holds.py` |
+| `POST` | `/v1/organizations/{org_id}/legal-holds` | `management.legal-holds.create.v1` | `legal_holds.py` |
+| `POST` | `/v1/organizations/{org_id}/legal-holds/{hold_id}/clear` | `management.legal-holds.clear.v1` | `legal_holds.py` |
+| `GET` | `/v1/users` | `management.users.read.v1` | `users.py` |
+| `POST` | `/v1/users` | `management.users.create.v1` | `users.py` |
+| `GET` | `/v1/users/{user_id}` | `management.users.get.v1` | `users.py` |
+| `PATCH` | `/v1/users/{user_id}` | `management.users.update.v1` | `users.py` |
+| `DELETE` | `/v1/users/{user_id}` | `management.users.delete.v1` | `users.py` |
+| `GET` | `/v1/agents` | `management.agents.read.v1` | `agents.py` |
+| `POST` | `/v1/agents` | `management.agents.create.v1` | `agents.py` |
+| `GET` | `/v1/agents/{agent_id}` | `management.agents.get.v1` | `agents.py` |
+| `PATCH` | `/v1/agents/{agent_id}` | `management.agents.update.v1` | `agents.py` |
+| `DELETE` | `/v1/agents/{agent_id}` | `management.agents.delete.v1` | `agents.py` |
+| `POST` | `/v1/agents/{agent_id}/activate` | `management.agents.activate.v1` | `agents.py` |
+| `POST` | `/v1/agents/{agent_id}/pause` | `management.agents.pause.v1` | `agents.py` |
+| `POST` | `/v1/agents/{agent_id}/archive` | `management.agents.archive.v1` | `agents.py` |
+| `GET` | `/v1/tokens` | `management.tokens.read.v1` | `tokens.py` |
+| `POST` | `/v1/tokens` | `management.tokens.create.v1` | `tokens.py` |
+| `GET` | `/v1/tokens/{token_id}` | `management.tokens.get.v1` | `tokens.py` |
+| `DELETE` | `/v1/tokens/{token_id}` | `management.tokens.delete.v1` | `tokens.py` |
+| `GET` | `/v1/tenant/ping` | `management.tenant.ping.v1` | `tenant.py` |
 
 ---
 

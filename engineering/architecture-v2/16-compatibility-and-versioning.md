@@ -65,14 +65,13 @@ than `Mon, 01 Feb 2027 00:00:00 GMT`, 31 days later.
 `Sunset` timestamp must not be earlier than its `Deprecation` timestamp. The former `X-IBEX-Deprecation`,
 `X-IBEX-Deprecation-Date`, `X-IBEX-Sunset-Date`, and `X-IBEX-Successor` headers are retired and must not be emitted.
 
-This table is the policy, not an implementation record: no middleware or interceptor in `services/` emits `Deprecation`,
-`Sunset`, or `Link` today, and [Deliberately out of scope](#deliberately-out-of-scope) records the gap.
+This table is the policy, and two emitters now implement it for REST: `services/api/app/middleware/deprecations.py` (the management API) and `services/proxy/internal/http/deprecations.go` (the proxy). Both emit only for an entry that is **announced**, has `headers_implemented: true`, and whose `sunset_date` is today or later; an entry that is `proposed`, `withdrawn`, or past its sunset emits nothing. `Link` is the remaining gap: neither emitter writes it.
 
 Header enforcement is therefore per surface, because only REST has a standard header to set:
 
 | Surface | `headers_implemented` | What the notice is |
 |---|---|---|
-| `rest` | `false` until an emitter ships, and `true` before `status` may become `announced` | the three response headers above |
+| `rest` | `true` once the emitter ships (it has: the two emitters above), and a `rest` entry cannot reach `announced` on `false` | the three response headers above; `Deprecation` and `Sunset` are emitted, `Link` is not yet |
 | `grpc` | `false` always: the protocol defines no deprecation response header | the committed record, with the method comment naming the successor |
 | `mcp` | `false` always: MCP defines no deprecation header for a tool | the committed record, with the tool description naming the successor |
 
@@ -144,10 +143,10 @@ phantom contract fails without a workflow change.
 | Does every entry keep its class window? | **yes** | `sunset_date` minus the announcement date (`announced_on` when recorded, otherwise `notice_date`) in whole days against 180 (`stable`) / 31 (`beta`); every date field must be an exact `YYYY-MM-DD`, an `announced` entry must carry an `announced_on` no earlier than its `notice_date` and no later than the day of the check, and a `proposed` or `withdrawn` entry must carry none |
 | Is the header flag right for the surface? | **yes** | `headers_implemented: true` fails on a `grpc` or `mcp` entry, which has no standard deprecation header, and on a `proposed` or `withdrawn` `rest` entry; an `announced` `rest` entry fails on `false` |
 | Can a `grpc` or `mcp` entry be announced without headers? | **yes** | those entries record `headers_implemented: false` and reach `announced` on the record plus an existing `evidence` path; only `rest` must reach `true` first |
-| Does a declared `headers_implemented: true` prove an emitter exists? | **no** | the flag is trusted together with an existing `evidence` path; nothing reads a `Deprecation` or `Sunset` header from a running response, so a `rest` entry can announce headers no route sends |
+| Does a declared `headers_implemented: true` prove an emitter exists? | **no** | the flag is a declaration plus an existing `evidence` path; the check does not read a header from a running response. The two emitters named above are exercised by their own tests, but a green check does not prove a given `rest` route sends the header |
 | Does a `rest` entry name a real contract, with the recorded stability? | **yes** | cross-check against [`contracts/rest-route-registry.json`](contracts/rest-route-registry.json) |
 | Does an `mcp` entry name a real tool on a known server, with the recorded stability? | **yes** | cross-check against that server's `mcp_tools.json` (`operator` or `memory`), including the tool's recorded `stability` |
-| Does a `grpc` entry name a real method? | **no** | field set, types, enums, dates, window, successor, evidence and status are checked; the `contract_id` is checked against no method list, and `<package>.<Service>/<Method>` is not validated as a shape, because no gRPC method registry is committed |
+| Does a `grpc` entry name a real method? | **no** (this check) | field set, types, enums, dates, window, successor, evidence and status are checked; `check_deprecations.py` does not resolve the `contract_id` against a method list. The registry now carries `grpc_methods` (20 rows) and [`check_contract_registry.py`](../../services/api/scripts/check_contract_registry.py) derives those IDs from the proto tree, but the *deprecation* check has not been wired to that array |
 | Is a deprecation that exists in code but is missing from the record caught? | **no** | nothing scans handlers, the proto files, or tool registrations for a deprecation marker. The check validates what the record says; it cannot see what the record omits |
 | Is the MCP descriptor compared with the previous commit? | **no** | `python -m app.descriptors --check` (a step of the `mcp-memory-test` and `mcp-operator-test` jobs) compares the committed record with the surface the service publishes now, not with a previous commit |
 | Is an MCP tool `description` pinned? | **yes** | `mcp_tools.json` records `description_sha256` beside name, version, stability, `deprecated` and the input/output JSON Schemas, and `--check` fails with `description-drift` when the published text changes — the model reads that text, so an injected instruction is a schema-level change |
@@ -160,16 +159,9 @@ drift and fails the check; a title-only change still passes, because the hash is
 
 ### Deliberately out of scope
 
-This change is the policy, the record, and the gate. It ships no emitter. No middleware or interceptor in `services/`
-writes `Deprecation`, `Sunset`, or `Link` today, which is exactly why `headers_implemented` exists: for a `rest` entry it
-is the switch that stops a `proposed` entry becoming `announced` before an emitter ships, with existing evidence, while a
-`grpc` or `mcp` entry keeps it `false` because the record is its notice. Three further gaps are deliberate:
+The policy, the record, and the gate are in place, and two REST emitters implement it: `services/api/app/middleware/deprecations.py` and `services/proxy/internal/http/deprecations.go`. Each reads the committed record and emits `Deprecation` and `Sunset` for an `announced` entry with `headers_implemented: true` whose sunset has not passed; `Link` is still not emitted by either. That condition is why `headers_implemented` exists: for a `rest` entry it stops a `proposed` entry becoming `announced` before an emitter ships, with existing evidence, while a `grpc` or `mcp` entry keeps it `false` because the record is its notice. Three further gaps are deliberate:
 
-- a `grpc` entry is validated structurally only: field set, field types, enums, dates, window, successor, evidence and
-  status. Its `contract_id` is resolved against no method list, and `<package>.<Service>/<Method>` is not validated as a
-  shape, because no committed gRPC method registry exists. gRPC shapes are gated by `buf-breaking` (W5.1) — which runs
-  in CI as an advisory job (`continue-on-error: true`) and is not a required check — and by P0-12, as the REST
-  registry's `out_of_scope.grpc` records.
+- a `grpc` entry is validated structurally only: field set, field types, enums, dates, window, successor, evidence and status. `check_deprecations.py` resolves its `contract_id` against no method list, although the contract registry's `grpc_methods` array now exists and is derived from the proto tree by `check_contract_registry.py`. gRPC shapes are also gated by `buf-breaking`, which runs as a blocking job under `ci-gate-go`.
 - a `rest` entry's `successor` is not required to be a registered contract, because the successor may be a contract
   that does not exist until the new version ships. `successor-version` is a forward pointer, not a current one.
 - the MCP descriptor's `deprecated` flag is not cross-checked against this record, and cannot carry the notice:
