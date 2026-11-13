@@ -8,23 +8,41 @@ Every file:line below was opened at the base commit. Where a claim could not be 
 
 ## 1. Rows closed since the audit
 
-Seven rows are addressed here. Five are closed outright; two (P1-04, P1-05) are closed for the supported profile only, and their audit sentence is still true of the reference file it also cites.
+Eight rows are addressed here. Three are closed outright (P1-34, P1-35, P1-51). Five are partial (P1-04, P1-05, P1-27, P1-30, P1-31): each closes part of its audit sentence, and each residual below carries the blocker class from §2.
 
-**P1-04 / P1-05 — TEI unpinned in any profile.** Audit finding: "TEI has no pinned image or model anywhere" (`27-v1-readiness-audit.md`:95-96).
-Closed for `v1-single-node` by `infra/compose/v1-single-node/compose.yml`:358 and :361-362 — the image is digest-pinned (`text-embeddings-inference:cpu-1.9.4@sha256:2538ea1c…`) and the weights carry `--model-id=BAAI/bge-m3` with `--revision=5617a9f61b028005a4858fdac845db406aefb181`.
-Residual, stated precisely: the audit's "in any profile" is now false only of the supported profile. `infra/reference/tei-embeddings.compose.yaml`:47 still floats `text-embeddings-inference:cpu-1.6` and :56-58 passes `--model-id` with no `--revision`. That file is marked "REFERENCE ONLY" at :1 and is not started by `make compose-dev-up`. The capability stays provisional because no embedding-quality evidence exists: the ledger's P1-30/P1-31 row is `provisional` (`00-status-and-evidence.md`:26).
+**P1-04 — the dependency matrix still disagrees across artifacts.** Audit finding at `27-v1-readiness-audit.md`:95 — pgvector mutable in dev/site but pinned in the bundle/CI, Redis and ClickHouse differing across Helm and the sandbox, TEI unpinned.
+Closed part: TEI is pinned for `v1-single-node` — `infra/compose/v1-single-node/compose.yml`:358 and :361-362 digest-pin `text-embeddings-inference:cpu-1.9.4@sha256:2538ea1c…` and pass `--model-id=BAAI/bge-m3` with `--revision=5617a9f61b028005a4858fdac845db406aefb181`.
+Residual (blocker: infrastructure):
+- pgvector is still a mutable `:pg16` tag in `infra/compose/dev/docker-compose.yml`:3 and `site/content/docs/12.deployment/01.docker-compose.md`:48, against the 0.8.6 digest in `infra/compose/bundles/memory-context.yml`:9 and `.github/workflows/ci.yml`:449.
+- Redis disagrees: `redis/redis-stack:7.4.0-v1` in `infra/compose/dev/docker-compose.yml`:21 (dev/test), `redis:7.4.2` under a sentinel digest in `infra/helm/ibex-harness/values.yaml`:17.
+- ClickHouse carries a sentinel Helm digest at `infra/helm/ibex-harness/values.yaml`:18 under the excluded Kubernetes profile.
+- The reference TEI file still floats: `infra/reference/tei-embeddings.compose.yaml`:47 is `text-embeddings-inference:cpu-1.6` and :56-58 passes `--model-id` with no `--revision`. It is marked "REFERENCE ONLY" at :1 and is not started by `make compose-dev-up`.
 
-**P1-30 — search never filters by `embedding_model`.** Audit finding: "search never filters by `embedding_model`" (`27-v1-readiness-audit.md`:120).
-Closed as an optional fence: `services/memory/app/schemas/search.py`:25-27 declares `embedding_model` with `default=None`; `services/memory/app/routers/memory_search_support.py`:181 forwards it into `find_similar`; `services/memory/app/read/repository.py`:194-204 documents and threads it; `services/memory/app/vectorstore/pgvector_store.py`:43-44 applies it in `SEARCH_SQL` (`CAST(:embedding_model AS text) IS NULL OR embedding_model = …`).
-Residual: the fence is off by default (``default=None``), and it bounds the vector channel only — the full-text channels are not fenced, which the repository docstring at `repository.py`:204-212 states and `schemas/search.py`:20-22 repeats. No re-embed path exists (see P1-31), so turning the fence on would drop the existing corpus.
+**P1-05 — embeddings are not shippable for a semantic claim.** Audit finding at `27-v1-readiness-audit.md`:96. The TEI pin above closes its last sentence; the rest stands.
+Residual (blocker: benchmark stack):
+- The dev bundle still forces stub geometry: `infra/compose/bundles/memory-context.yml`:70-71 sets `IBEX_EMBEDDING_PROFILE=cpu` with `IBEX_EMBEDDING_DIM=1024`, so the stub writes schema-valid `vector(1024)` of arbitrary geometry — writes succeed and search returns something.
+- No embedding-quality evidence exists, so the capability stays `provisional` (`00-status-and-evidence.md`:28: "Not a re-embed path and not a semantic-quality claim").
 
-**P1-31 — no model provenance inventory.** Audit finding: "No model provenance inventory (model, revision, licence, fallback); extraction defaults are floating aliases" (`27-v1-readiness-audit.md`:121).
-Closed as an inventory: `engineering/MODEL_INVENTORY.md` and `infra/model-inventory.v1.json` exist and record model id, dimensions, revision and fallback per deployment profile; the document's own status line is `provisional` (`MODEL_INVENTORY.md`:3).
-Residual: `provisional` is the recorded status, not `accepted`; licence and weights-revision fields are incomplete per the ledger row (`00-status-and-evidence.md`:26); and no re-embed task exists — `services/worker/app/task_names.py`:5 lists `ibex.worker.embedding.noop` as the only embedding task, and `re-embed` appears only in comments (`read/repository.py`:204, `vectorstore/pgvector_store.py`:123-124).
+**P1-27 — `full_graph == hybrid_rerank`, and the mode distinction was ungated.** Audit finding at `27-v1-readiness-audit.md`:117 (`graph_mode_distinguished:false` "is reported but not gated").
+Closed part: the gate exists. `benchmarks/memory/ranking_quality/check_mode_gate.py`:243-273 (`declaration_failures`) fails a run that contradicts the baseline's declaration in either direction, and `_declaration` at :159-175 refuses a baseline that omits it; covered by `test_check_mode_gate.py`:146-164 (missing declaration) and :343-379 (contradiction both ways). `.github/workflows/memory-benchmark.yml`:454-465 runs the driver, then the gate.
+Residual (blocker: benchmark stack): the corpus-geometry equality itself — `baseline-modes.json`:27-28 records `full_graph == hybrid_rerank` — needs a gold-set change and a real run. See the W10.2 row in §2 and `31-v1-release-plan-2026-11-09.md`:176.
+
+**P1-30 — search never filters by `embedding_model`; embedding models are version-less IDs.** Audit finding at `27-v1-readiness-audit.md`:120.
+Closed part: the fence. `services/memory/app/schemas/search.py`:25-27 declares `embedding_model` with `default=None`; `services/memory/app/routers/memory_search_support.py`:181 forwards it into `find_similar`; `services/memory/app/read/repository.py`:194-204 documents and threads it; `services/memory/app/vectorstore/pgvector_store.py`:43-44 applies it in `SEARCH_SQL` (`CAST(:embedding_model AS text) IS NULL OR embedding_model = …`).
+Residual (blockers: product, infrastructure):
+- **product** — the fence is off by default (``default=None``) and bounds the vector channel only; the full-text channels are not fenced (`repository.py`:204-212; `schemas/search.py`:20-22). Turning it on would drop the existing corpus, because no re-embed path exists (see P1-31).
+- **infrastructure** — version-less provenance is not fixed on the serving side: the memory write path records `id@revision` (`MODEL_INVENTORY.md`:48-49), but the embedder records no revision of what it actually served — its TEI request carries only `inputs`, and the served model is whatever the server was started with (`MODEL_INVENTORY.md`:66; `services/embedder/app/tei/client.py`:170-175).
+
+**P1-31 — no model provenance inventory; extraction defaults are floating aliases.** Audit finding at `27-v1-readiness-audit.md`:121.
+Closed part: the inventory exists. `engineering/MODEL_INVENTORY.md` and `infra/model-inventory.v1.json` record model id, dimensions, revision and fallback per deployment profile; the document's own status line is `provisional` (`MODEL_INVENTORY.md`:3).
+Residual (blocker: owner decision):
+- `provisional` is the recorded status, not `accepted`; licence and weights-revision fields are incomplete (`00-status-and-evidence.md`:28), and licence for fifteen of fifteen rows needs an owner (`MODEL_INVENTORY.md`:86-94).
+- Extraction defaults are still floating aliases: `services/worker/app/config.py`:181-214 defaults `gpt-4o-mini` and `Qwen2.5-14B-Instruct` on alias-accepting fields, and `MODEL_INVENTORY.md`:39-40 records both as "Floating alias"/"Floating label". The inventory records that they float; it does not pin them.
+- No re-embed task exists — `services/worker/app/task_names.py`:5 lists `ibex.worker.embedding.noop` as the only embedding task, and `re-embed` appears only in comments (`read/repository.py`:204, `vectorstore/pgvector_store.py`:123-124).
 
 **P1-34 — no "data, not instructions" framing on memory-only assemblies.** Audit finding: "The 'data, not instructions' framing is emitted only when a directive exists; memory-only assemblies lack it" (`27-v1-readiness-audit.md`:124).
 Closed by `services/context/app/formatter.py`:120-121 — when there is no directive and a memory block exists, `_data_framing_sentence(assembly_nonce)` is appended as the leading section; `formatter.py`:204-206 builds it, and the directive path keeps the same sentence at `:215`. Covered by `services/context/tests/test_formatter.py`:233 and :304.
-Residual: context assembly remains `provisional` for reasons unrelated to this row (`00-status-and-evidence.md`:27 — shared caller token, unsigned `PrincipalContext`, no hosted evidence); this row's own finding is closed.
+Residual: context assembly remains `provisional` for reasons unrelated to this row (`00-status-and-evidence.md`:29 — shared caller token, unsigned `PrincipalContext`, no hosted evidence); this row's own finding is closed.
 
 **P1-35 — no injection quarantine.** Audit finding: "No injection-risk classifier or quarantine; instruction-like content is stored active and injected" (`27-v1-readiness-audit.md`:125).
 Closed by `services/memory/app/pipeline/stages.py`:86-89 — `InjectionStage` sets `ctx.status = "quarantined"`, records the reason, sets `ctx.stop = True`, and the docstring at :71-73 states the pipeline then takes the quarantine persist path with no embedding, no dedup and no index write. The stage is registered unconditionally in the write pipeline at `services/memory/app/write/factory.py`:71, ahead of the PII stage.
@@ -32,7 +50,7 @@ Residual: this is a heuristic classifier over the write path only; the ledger's 
 
 **P1-51 — README evidence wording.** Audit finding: "README says the platform 'attaches evidence to every request'; the finalizer is post-response and the relay is default-off" (`27-v1-readiness-audit.md`:141).
 Closed: `README.md`:14-16 now reads "attempts best-effort post-response evidence for governed sessions when the PostgreSQL evidence plane is configured". The words "attaches evidence to every request" no longer occur (`grep -n "attaches evidence" README.md` returns nothing).
-Residual: none for this row; the evidence plane's own status is unchanged (`00-status-and-evidence.md`:33).
+Residual: none for this row; the evidence plane's own status is unchanged (`00-status-and-evidence.md`:35).
 
 **What did not change.** No capability status is promoted, and no status value or review date in the ledger moves; the only ledger edit is the pointer paragraph at the top of `00-status-and-evidence.md`. The three claim-bearing sources (`00-status-and-evidence.md`, `site/app/data/ledger.ts`, `site/content/docs/02.architecture/05.status-and-evidence.md`) therefore stay in sync without a content change.
 
@@ -103,14 +121,14 @@ One line each. Blocker classes: **owner decision**, **credential**, **workflow/b
 | Row | What is still open (file:line) | Blocker |
 |---|---|---|
 | P0-19 | Routing exists, delivery does not: the receivers point at the in-network placeholder `http://alert-receiver:8080/alerts/{page,digest}` (`infra/monitoring/alertmanager/alertmanager.yml`:48, :53), and no workflow runs the routing gate (see §3.3) | owner decision + workflow |
-| P0-20 | All 28 published HNSW runs are unrecorded — no `provenance` block, so no runner CPU/RAM, commit, gold-set hash or seed (`site/public/benchmarks/hnsw-benchmark-data.json`; `python3 benchmarks/scripts/check_reproducibility.py` → "28 of 28 run(s) are unrecorded") | benchmark stack |
+| P0-20 | Two artifacts. (a) All 28 published HNSW runs are unrecorded — no `provenance` block, so no runner CPU/RAM, commit, gold-set hash or seed (`site/public/benchmarks/hnsw-benchmark-data.json`; `python3 benchmarks/scripts/check_reproducibility.py` → "28 of 28 run(s) are unrecorded"). (b) The ranking baseline records a run URL but no commit `sha`, `gold_set_hash` or `seed` (`benchmarks/memory/ranking_quality/baseline-modes.json` has none of the three), and `check_mode_gate.py`:185-195 compares gold-set and reranker *labels* (`artifact.gold_set != baseline.gold_set`), not corpus hashes — so HNSW provenance alone does not satisfy the row | benchmark stack (values) + product (a producer and a checker are code work) |
 | W10.2 | `graph_mode_distinguished` **is** implemented and gated (`benchmarks/memory/ranking_quality/check_mode_gate.py`:79, :166-172); open is only `full_graph == hybrid_rerank`, which needs a gold-set change and a real run, plus the decision whether a v2 number is published at all (`31-v1-release-plan-2026-11-09.md`:176) | benchmark stack + owner decision |
 
-**P0-20 correction.** The plan's shorthand "no CI invocation of the publisher" (`31-v1-release-plan-2026-11-09.md`:53) did not hold up against the tree: the artifact is collected by `collect-hnsw-benchmarks` (`.github/workflows/memory-benchmark.yml`:95) and overlaid from that run in `.github/workflows/ci.yml`:2197-2237. The verified open part is provenance only — the runs carry no `provenance` block, so they are not reproducible evidence.
+**P0-20 correction.** The plan's shorthand "no CI invocation of the publisher" (`31-v1-release-plan-2026-11-09.md`:53) did not hold up against the tree: the artifact is collected by `collect-hnsw-benchmarks` (`.github/workflows/memory-benchmark.yml`:95) and overlaid from that run in `.github/workflows/ci.yml`:2197-2237. The verified open part is provenance only — the runs carry no `provenance` block, so they are not reproducible evidence. The gap has a second artifact: `baseline-modes.json` carries no `sha`, `gold_set_hash` or `seed`, and the gate matches labels, so recording HNSW provenance would still leave the ranking baseline unreproducible.
 
 ## 3. Gates documented as running that do not run in CI
 
-Each of these is described somewhere as a gate. Each passes locally. None runs on a pull request. Fixing any of them changes `.github/workflows/**`, so each needs an owner.
+Each of these is described somewhere as a gate, and each passes locally. None is as strong in CI as its description: two do not run on a pull request at all, and one runs with its schema assertions skipped. Fixing any of them changes `.github/workflows/**`, so each needs an owner.
 
 ### 3.1 `benchmarks/scripts/check_reproducibility.py`
 
@@ -120,21 +138,19 @@ Documented as the consumer of the provenance contract (`check_reproducibility.py
 
 `grep -c check_reproducibility .github/workflows/ci.yml` → **0**; no other workflow references it either. So the published artifacts are checked only when a human runs `./infra/scripts/dev-tool.sh reproducibility_check`.
 
-**Exact fix:** add a `reproducibility` step to `ci.yml` `repo-guards` (it needs no service, no database, and no network beyond the pinned requirements) running `python3 benchmarks/scripts/check_reproducibility.py`, and decide whether the four current warnings become failures. Turning the unrecorded-run warning into an error is a separate decision: today it would fail on all 81 published runs.
+**Exact fix:** in the same job that runs it, install `jsonschema` from `.github/requirements/jsonschema.txt` with `--require-hashes` **before** invoking `python3 benchmarks/scripts/check_reproducibility.py`. The checker is fail-closed without the import — it reports "jsonschema is not installed" and exits 1 (`check_reproducibility.py`:46-50, :216-217) — and the only existing install of that file is in a different job (`benchmark-gate`, `.github/workflows/ci.yml`:952-958) and into a different interpreter (`services/context/.venv/bin/python`). Then decide whether the four current warnings become failures; turning the unrecorded-run warning into an error today would fail on all 81 published runs.
 
-### 3.2 `benchmarks/scripts/test_pipeline.py`
+### 3.2 `benchmarks/scripts/test_pipeline.py` — the test runs, its schema assertions skip
 
-Described in the ledger as the benchmark gate's own evidence (`00-status-and-evidence.md`:76 records `python3 benchmarks/scripts/test_pipeline.py` → `Ran 40 tests … OK (skipped=1)`). In CI it runs as the second half of a step that installs nothing:
+The test file is not missing from CI: `test_pipeline.py` loads `test_check_reproducibility` (`test_pipeline.py`:12-19) and runs on qualifying pull requests in **both** workflows — `benchmark-gate` at `.github/workflows/ci.yml`:946-950 and `verify-benchmark-pipeline` at `.github/workflows/benchmark.yml`:106. The ledger records it as the benchmark gate's own evidence (`00-status-and-evidence.md`:78: `Ran 40 tests … OK (skipped=1)`).
 
-> `- name: Run benchmark pipeline unit tests` / `run: | … python benchmarks/scripts/test_pipeline.py` — `.github/workflows/ci.yml`:946-950
-
-`jsonschema` is installed in the **next** step: `- name: Install uv` at `:951`, then `uv pip install … -r .github/requirements/jsonschema.txt` at `:956-958`. The module under test skips its schema cases when the import is absent:
+What fails is narrower. `test_check_reproducibility.py` skips its schema cases when the import is absent:
 
 > `NEEDS_JSONSCHEMA = unittest.skipUnless(check.jsonschema is not None, "needs jsonschema: …")` — `benchmarks/scripts/test_check_reproducibility.py`:33-35
 
-So the schema assertions in `test_check_reproducibility.py` skip, the step stays green, and the run reports a skip that looks benign.
+and `benchmark-gate` installs `jsonschema` in a step **after** the one that runs the tests: `- name: Install uv` at `.github/workflows/ci.yml`:951, then `uv pip install … -r .github/requirements/jsonschema.txt` at `:952-958`. `verify-benchmark-pipeline` never installs it. So the schema assertions skip, the step stays green, and the run reports a skip that looks benign.
 
-**Exact fix:** install `jsonschema` (or run the step inside the context venv) **before** the pipeline-tests step, and fail rather than skip when it is missing under CI — e.g. pass an env var that turns the `skipUnless` into an error. Both edits are inside `ci.yml` / the test module.
+**Exact fix:** install `jsonschema` from `.github/requirements/jsonschema.txt` with `--require-hashes` **before** the pipeline-tests step, in **both** `ci.yml` (`benchmark-gate`) and `benchmark.yml` (`verify-benchmark-pipeline`), into the interpreter that runs `test_pipeline.py` (`benchmark-gate`'s install targets `services/context/.venv`, not that interpreter). Then fail rather than skip when it is missing under CI — e.g. an env var that turns the `skipUnless` into an error. The edits are inside both workflows and the test module.
 
 ### 3.3 `infra/scripts/check-alert-routing.py`
 
@@ -159,12 +175,13 @@ The CI `repo-guards` job (`.github/workflows/ci.yml`:25-140) runs the layout, la
 | D-A | `VERSION_RELEASE_TOKEN` + tag-signing key | W7.1-7.3 and P0-15: a green Version Release run, a release PR, and a signed annotated tag |
 | D-C | Console 1.0 is login+mutations, or login + declared read-only | W9.2 and P0-05's acceptance criterion; roughly a week of W9 either way |
 | D-D | Off-host backup target (S3/MinIO or external POSIX) and the signed RPO/RTO numbers | W4.1, W4.4, P0-11, and the `rpo_pass=true` half of P0-10 |
-| — | Approval to wire §3 into CI (three edits under `.github/workflows/**`) | P0-13/P0-19's routing half, plus the reproducibility and pipeline-test gates above |
+| — | Approval to wire §3 into CI (edits under `.github/workflows/**`) | P0-19's routing half, plus the reproducibility and pipeline-test gates above |
+| — | Approval for a separate `.github/workflows/**` change that runs `infra/scripts/api-breaking.sh` (oasdiff) on pull requests and makes it a required check | P0-13 |
 | — | P0-06: move each service DSN to its capability login | The per-service DSN swap; RLS is enforced only on paths that already pin, and the Compose profile still connects as the owner |
 
 ## 5. Method
 
-- `sed -n '<line>p' <file>` on every citation above, at `708a42d6`; drift found while verifying was corrected, not carried forward (the P0-20 publisher claim in §2).
+- `sed -n '<line>p' <file>` on every citation above, at `708a42d6`; drift found while verifying was corrected, not carried forward (the P0-20 publisher claim in §2; ledger line numbers, which the pointer paragraph shifted by two).
 - `npx --yes markdownlint-cli2 --no-globs engineering/architecture-v2/34-readiness-audit-addendum-2026-11-13.md engineering/architecture-v2/00-status-and-evidence.md` → 0 problems.
 - `bash infra/scripts/agent-docs-check.sh fast` → 0.
 - `node site/scripts/check-claims.mjs` → pass (this file is outside the scanned roots).
