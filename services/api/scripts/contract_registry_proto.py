@@ -14,7 +14,10 @@ from pathlib import Path
 from typing import Final
 
 PROTO_PACKAGE_PATTERN: Final = re.compile(r"^package\s+([\w.]+)\s*;", re.MULTILINE)
-PROTO_SERVICE_PATTERN: Final = re.compile(r"^service\s+(\w+)\s*\{", re.MULTILINE)
+# Proto allows a declaration to be indented, so the anchor allows leading spaces
+# and tabs: a service whose declaration is indented is still a contract, and
+# missing it would hide every rpc it declares from the coverage check.
+PROTO_SERVICE_PATTERN: Final = re.compile(r"^[ \t]*service\s+(\w+)\s*\{", re.MULTILINE)
 PROTO_RPC_PATTERN: Final = re.compile(r"\brpc\s+(\w+)\s*\(")
 PROTO_BLOCK_COMMENT: Final = re.compile(r"/\*.*?\*/", re.DOTALL)
 PROTO_LINE_COMMENT: Final = re.compile(r"//[^\n]*")

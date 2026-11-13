@@ -14,8 +14,20 @@ import (
 // recovery path. This gate refuses the destructive forms listed below before the
 // migration set can be applied.
 //
-// Detected, case-insensitively, in executable SQL only (comments, string
-// literals, and quoted identifiers are blanked before matching):
+// Detected, case-insensitively, in executable SQL only. The scanner blanks
+// every non-executable token before matching, and it must agree with
+// ClickHouse's lexer or a token it misreads hides a later statement:
+//
+//   - `--`, `#`, and `//` line comments (including `#!` shebang lines),
+//   - `/* … */` block comments, which ClickHouse nests, so the scanner tracks
+//     depth and only returns at the outermost close,
+//   - single-quoted string literals,
+//   - double-quoted identifiers and backtick-quoted identifiers (an apostrophe
+//     inside a double-quoted identifier is not a string opener), and
+//   - `$tag$ … $tag$` heredoc literals, which are consumed as one unit before
+//     ordinary quotes are considered.
+//
+// Refused forms:
 //
 //	DROP TABLE   DROP COLUMN   CLEAR COLUMN
 //	DELETE FROM  RENAME        TRUNCATE
@@ -185,6 +197,49 @@ func TestUnit_DestructiveDDL_CatchesPatterns(t *testing.T) {
 			"CREATE TABLE ibex.y (`a\\`b` String) ENGINE = MergeTree ORDER BY tuple();\nDROP TABLE ibex.z",
 			"DROP TABLE",
 		},
+		{
+			// A double-quoted identifier may contain an apostrophe. If `"` is not
+			// recognised as a delimiter, that apostrophe starts a string that
+			// blanks the DROP that follows.
+			"apostrophe inside a double-quoted identifier hides a drop",
+			"ALTER TABLE \"it's\" ADD COLUMN y String;\nDROP TABLE ibex.llm_traces",
+			"DROP TABLE",
+		},
+		{
+			// ClickHouse nests block comments. Returning at the inner `*/` emits
+			// the rest of the comment as SQL, where the apostrophe starts a string
+			// that swallows the ALTER.
+			"nested block comment does not hide an alter drop",
+			"/* outer /* nested DROP PARTITION 1 */ it's still a comment */\n" +
+				"ALTER TABLE ibex.llm_traces DROP PARTITION 202601",
+			"ALTER ... DROP",
+		},
+		{
+			// `#` is a line comment. Without it, the apostrophe starts a string
+			// that blanks the DROP on the next line.
+			"hash comment does not hide a drop",
+			"# it's a maintenance note\nDROP TABLE ibex.llm_traces",
+			"DROP TABLE",
+		},
+		{
+			// `//` is a line comment with the same failure mode.
+			"slash comment does not hide a drop",
+			"// it's a maintenance note\nDROP TABLE ibex.llm_traces",
+			"DROP TABLE",
+		},
+		{
+			// `#!` is a shebang-style line comment; `#` already runs to end of line.
+			"shebang comment does not hide a drop",
+			"#! it's a shebang note\nDROP TABLE ibex.llm_traces",
+			"DROP TABLE",
+		},
+		{
+			// A `$tag$` heredoc is one literal. Without it, the apostrophe in
+			// `it's` starts a string that blanks the DROP that follows.
+			"heredoc literal does not hide a drop",
+			"SELECT $tag$it's$tag$;\nDROP TABLE ibex.llm_traces",
+			"DROP TABLE",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -283,6 +338,30 @@ func TestUnit_DestructiveDDL_IgnoresCommentsAndLiterals(t *testing.T) {
 		{
 			"backtick identifier escapes a keyword",
 			"CREATE TABLE ibex.y (`odd\\`DROP TABLE` String) ENGINE = MergeTree ORDER BY tuple()",
+		},
+		{
+			"hash line comment",
+			"# DROP TABLE ibex.x; TRUNCATE TABLE ibex.x;\nCREATE TABLE ibex.y (org_id UUID) ENGINE = MergeTree ORDER BY org_id",
+		},
+		{
+			"slash line comment",
+			"// DROP TABLE ibex.x; TRUNCATE TABLE ibex.x;\nCREATE TABLE ibex.y (org_id UUID) ENGINE = MergeTree ORDER BY org_id",
+		},
+		{
+			"shebang line comment",
+			"#! DROP TABLE ibex.x; TRUNCATE TABLE ibex.x;\nCREATE TABLE ibex.y (org_id UUID) ENGINE = MergeTree ORDER BY org_id",
+		},
+		{
+			"double-quoted identifier around a keyword",
+			"CREATE TABLE ibex.y (\"odd DROP TABLE\" String) ENGINE = MergeTree ORDER BY tuple()",
+		},
+		{
+			"heredoc literal around a keyword",
+			"SELECT $body$DROP TABLE ibex.x; TRUNCATE TABLE ibex.x;$body$",
+		},
+		{
+			"heredoc tag that spells a keyword",
+			"SELECT $DROP$ a value $DROP$",
 		},
 	}
 	for _, tc := range cases {
@@ -386,10 +465,11 @@ func splitSQLStatements(stripped string) []sqlStatement {
 	return statements
 }
 
-// stripSQLCommentsAndLiterals replaces `--` line comments, `/* */` block
-// comments, single-quoted string literals, and backtick-quoted identifiers with
-// spaces, preserving newlines and byte offsets so the statement text stays
-// readable in a failure message.
+// stripSQLCommentsAndLiterals replaces `--`, `#`, and `//` line comments,
+// nested `/* */` block comments, single-quoted string literals, double- and
+// backtick-quoted identifiers, and `$tag$` heredocs with spaces, preserving
+// newlines and byte offsets so the statement text stays readable in a failure
+// message.
 func stripSQLCommentsAndLiterals(sqlText string) string {
 	scanner := sqlScanner{src: sqlText}
 	scanner.out.Grow(len(sqlText))
@@ -409,13 +489,19 @@ type sqlScanner struct {
 }
 
 // step consumes one token: a comment, a quoted literal or identifier, or one
-// byte of SQL.
+// byte of SQL. Heredoc literals are checked before ordinary quotes so a `$tag$`
+// opener is not misread as SQL text and an apostrophe inside it cannot start a
+// string.
 func (s *sqlScanner) step() {
+	if markerLen := s.lineCommentLen(); markerLen > 0 {
+		s.skipLineComment(markerLen)
+		return
+	}
 	switch {
-	case s.atLineComment():
-		s.skipLineComment()
 	case s.atBlockComment():
 		s.skipBlockComment()
+	case s.atHeredoc():
+		s.skipHeredoc()
 	case s.atQuote():
 		s.skipQuoted()
 	default:
@@ -425,10 +511,10 @@ func (s *sqlScanner) step() {
 }
 
 // atQuote reports whether the scanner is on a byte that opens quoted text:
-// a single-quoted string literal or a backtick-quoted identifier.
+// a single-quoted string literal, or a double- or backtick-quoted identifier.
 func (s *sqlScanner) atQuote() bool {
 	quote := s.peek()
-	return quote == '\'' || quote == '`'
+	return quote == '\'' || quote == '"' || quote == '`'
 }
 
 // peek returns the byte at pos, or 0 at end of input.
@@ -447,23 +533,39 @@ func (s *sqlScanner) next() byte {
 	return 0
 }
 
-func (s *sqlScanner) atLineComment() bool { return s.peek() == '-' && s.next() == '-' }
+// lineCommentLen is the length of the line-comment marker at pos, or 0. ClickHouse
+// accepts all three SQL line-comment forms: `--`, `#` (which also covers `#!`
+// shebang lines, since `#` runs to end of line), and `//`.
+func (s *sqlScanner) lineCommentLen() int {
+	switch {
+	case s.peek() == '-' && s.next() == '-':
+		return 2
+	case s.peek() == '/' && s.next() == '/':
+		return 2
+	case s.peek() == '#':
+		return 1
+	}
+	return 0
+}
 
 func (s *sqlScanner) atBlockComment() bool { return s.peek() == '/' && s.next() == '*' }
 
 func (s *sqlScanner) atBlockEnd() bool { return s.peek() == '*' && s.next() == '/' }
 
 // atDoubledQuote reports whether the scanner is on the two-byte escape that
-// writes one quote inside quoted text: two single quotes, or two backticks.
+// writes one quote inside quoted text: two single quotes, two double quotes, or
+// two backticks.
 func (s *sqlScanner) atDoubledQuote(quote byte) bool {
 	return s.peek() == quote && s.next() == quote
 }
 
-// skipLineComment blanks `-- ...` through the end of the line, keeping the
-// newline that ends it.
-func (s *sqlScanner) skipLineComment() {
-	s.out.WriteString("  ")
-	s.pos += 2
+// skipLineComment blanks a line comment through the end of the line, keeping the
+// newline that ends it. markerLen is the marker length lineCommentLen reported.
+func (s *sqlScanner) skipLineComment(markerLen int) {
+	for i := 0; i < markerLen; i++ {
+		s.out.WriteByte(' ')
+	}
+	s.pos += markerLen
 	for s.pos < len(s.src) {
 		if s.peek() == '\n' {
 			s.out.WriteByte('\n')
@@ -475,14 +577,102 @@ func (s *sqlScanner) skipLineComment() {
 	}
 }
 
-// skipBlockComment blanks `/* ... */`, keeping the newlines inside it.
+// skipBlockComment blanks `/* … */`, keeping the newlines inside it. ClickHouse
+// nests block comments, so the scanner tracks depth and returns only when the
+// outermost comment closes. Returning at the first `*/` would emit the rest of a
+// nested comment as SQL, where an apostrophe starts a string that swallows the
+// statement after it.
 func (s *sqlScanner) skipBlockComment() {
-	s.out.WriteString("  ")
-	s.pos += 2
+	depth := 0
 	for s.pos < len(s.src) {
-		if s.atBlockEnd() {
+		switch {
+		case s.atBlockComment():
+			depth++
 			s.out.WriteString("  ")
 			s.pos += 2
+		case s.atBlockEnd():
+			depth--
+			s.out.WriteString("  ")
+			s.pos += 2
+			if depth == 0 {
+				return
+			}
+		default:
+			s.writeBlank()
+			s.pos++
+		}
+	}
+}
+
+// heredocTagLen is the length of the `$tag$` opening delimiter at pos, or 0.
+// ClickHouse accepts an empty tag (`$$ … $$`) or a tag that starts with a letter
+// or underscore and continues with letters, digits, or underscores. A `$` that
+// does not open a delimiter is ordinary SQL text.
+func (s *sqlScanner) heredocTagLen() int {
+	if s.peek() != '$' {
+		return 0
+	}
+	index := s.pos + 1
+	if s.atHeredocTagClose(index) {
+		return 2
+	}
+	return s.namedHeredocTagLen(index)
+}
+
+// namedHeredocTagLen is the length of a `$tag$` delimiter whose opening `$` sits
+// at pos and whose first tag byte sits at index, or 0 when those bytes do not
+// spell a tag that a closing `$` follows.
+func (s *sqlScanner) namedHeredocTagLen(index int) int {
+	if !s.atHeredocTagStart(index) {
+		return 0
+	}
+	end := s.heredocTagEnd(index)
+	if !s.atHeredocTagClose(end) {
+		return 0
+	}
+	return end - s.pos + 1
+}
+
+// atHeredocTagStart reports whether a tag may start at index: a letter or an
+// underscore. An index at or past the end of the input is not a tag start.
+func (s *sqlScanner) atHeredocTagStart(index int) bool {
+	return index < len(s.src) && isHeredocTagStart(s.src[index])
+}
+
+// heredocTagEnd is the first index at or after index that is not a tag byte.
+func (s *sqlScanner) heredocTagEnd(index int) int {
+	for index < len(s.src) && isHeredocTagByte(s.src[index]) {
+		index++
+	}
+	return index
+}
+
+// atHeredocTagClose reports whether index holds the `$` that closes a delimiter.
+func (s *sqlScanner) atHeredocTagClose(index int) bool {
+	return index < len(s.src) && s.src[index] == '$'
+}
+
+func (s *sqlScanner) atHeredoc() bool { return s.heredocTagLen() > 0 }
+
+func isHeredocTagStart(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+func isHeredocTagByte(b byte) bool { return isHeredocTagStart(b) || (b >= '0' && b <= '9') }
+
+// skipHeredoc consumes a `$tag$ … $tag$` literal as one unit, blanking the body
+// and the delimiters (a tag could itself spell a keyword, e.g. `$DROP$`). An
+// apostrophe inside the body is data, so it must not open a string that hides
+// the next statement.
+func (s *sqlScanner) skipHeredoc() {
+	delimiter := s.src[s.pos : s.pos+s.heredocTagLen()]
+	blank := strings.Repeat(" ", len(delimiter))
+	s.out.WriteString(blank)
+	s.pos += len(delimiter)
+	for s.pos < len(s.src) {
+		if strings.HasPrefix(s.src[s.pos:], delimiter) {
+			s.out.WriteString(blank)
+			s.pos += len(delimiter)
 			return
 		}
 		s.writeBlank()
@@ -494,12 +684,12 @@ func (s *sqlScanner) skipBlockComment() {
 // quotes and its escapes.
 //
 // ClickHouse accepts two escapes, and both must be consumed as one unit or the
-// closing quote is found in the wrong place. A doubled quote (two single quotes
-// or two backticks) writes one quote; a backslash escapes the byte after it
-// (`\'`, a backslash before a backtick, `\\`). Ignoring the backslash form
-// produces both halves of the bug: it hides a statement that follows the
-// literal (`'it\'s fine'); DROP TABLE ibex.llm_traces`) and it invents one
-// inside it (`'it\'s a DROP TABLE, not a command'`).
+// closing quote is found in the wrong place. A doubled quote (two single quotes,
+// two double quotes, or two backticks) writes one quote; a backslash escapes the
+// byte after it (`\'`, a backslash before a backtick, `\\`). Ignoring the
+// backslash form produces both halves of the bug: it hides a statement that
+// follows the literal (`'it\'s fine'); DROP TABLE ibex.llm_traces`) and it
+// invents one inside it (`'it\'s a DROP TABLE, not a command'`).
 func (s *sqlScanner) skipQuoted() {
 	quote := s.peek()
 	s.out.WriteByte(quote)

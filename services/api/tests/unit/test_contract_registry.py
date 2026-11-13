@@ -287,6 +287,70 @@ def test_derivation_rule_is_mechanical(method: str, path: str, expected: str) ->
     assert derive.derive_contract_id(method, path) == expected
 
 
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("ValidateToken", "validate-token"),
+        ("BeginTotpEnrollment", "begin-totp-enrollment"),
+        ("AssembleContext", "assemble-context"),
+        ("Ping", "ping"),
+        ("XMLHttpRequest", "xml-http-request"),
+        ("HTTPRequest", "http-request"),
+        ("AABc", "aa-bc"),
+        ("ABCDEFGHIJKLMNOPQRSTUVWXYZab", "abcdefghijklmnopqrstuvwxy-zab"),
+        ("A" * 64 + "Bc", "a" * 64 + "-bc"),
+    ],
+)
+def test_kebab_boundaries_are_acronym_safe(name: str, expected: str) -> None:
+    """The accepted forms are pinned, including the long-acronym case the rule must survive.
+
+    The rule is a single character plus a fixed-width lookahead per boundary, so a name
+    with a long run of capitals is linear work. The previous ``([A-Z]+)([A-Z][a-z])``
+    form matched the same strings but backtracked over that run at every position.
+    """
+    assert derive._kebab(name) == expected
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("ibex.auth.v1.AuthService.ValidateToken", "grpc.auth.validate-token.v1"),
+        ("ibex.memory.v1.MemoryService.GetMemory", "grpc.memory.get-memory.v1"),
+        (
+            "ibex.context.v1.ContextAssemblyService.AssembleContext",
+            "grpc.context.assemble-context.v1",
+        ),
+        ("ibex.auth.v1.ValidateToken", "grpc.auth.validate-token.v1"),
+        ("nonsense", ""),
+        ("a.b", ""),
+        ("", ""),
+    ],
+    ids=["auth", "memory", "context", "no-service-segment", "one-segment", "two-segments", "empty"],
+)
+def test_grpc_contract_id_accepts_and_rejects_the_documented_forms(key: str, expected: str) -> None:
+    """A derived ID is accepted exactly for the documented key forms and empty otherwise."""
+    assert derive.grpc_contract_id(key) == expected
+    assert derive.is_valid_contract_id(expected) is bool(expected)
+
+
+@pytest.mark.parametrize(
+    ("server", "tool", "expected"),
+    [
+        ("ibex-mcp-operator", "budget.get", "mcp.operator.budget-get.v1"),
+        ("ibex-mcp-memory", "search_memory", "mcp.memory.search-memory.v1"),
+        ("operator", "budget.get", "mcp.operator.budget-get.v1"),
+        ("", "budget.get", ""),
+        ("ibex-mcp-operator", "", ""),
+    ],
+    ids=["operator", "memory", "unprefixed-server", "no-server", "no-tool"],
+)
+def test_mcp_contract_id_accepts_and_rejects_the_documented_forms(
+    server: str, tool: str, expected: str
+) -> None:
+    assert derive.mcp_contract_id(server, tool) == expected
+    assert derive.is_valid_contract_id(expected) is bool(expected)
+
+
 def test_synthetic_workspace_baseline_passes(tmp_path: Path, registry_check: ModuleType) -> None:
     paths = workspace(tmp_path, [("GET", "/v1/agents")])
     assert registry_check.check(paths) == []
@@ -348,6 +412,27 @@ def test_invented_contract_id_fails(tmp_path: Path, registry_check: ModuleType) 
         WorkspaceSpec(rows=[row], doc_ids=["management.agents.invented.v1"]),
     )
     assert any(failure.startswith("contract-id-mismatch: GET /v1/agents ") for failure in failures)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, 7, ["api"], {"owner": "api"}],
+    ids=["null", "number", "list", "object"],
+)
+def test_a_required_field_that_is_not_a_string_fails(tmp_path: Path, value: object) -> None:
+    """Presence is not validity: a value that is not a string is as unusable as an empty one."""
+    row: dict[str, object] = {**route_row(RowSpec("GET", "/v1/agents")), "owner": value}
+    failures = checked_rows(tmp_path, WorkspaceSpec(rows=[row]))
+    assert f"invalid-field: GET /v1/agents.owner must be a string, not {value!r}" in failures, (
+        failures
+    )
+
+
+def test_an_empty_required_field_fails(tmp_path: Path, registry_check: ModuleType) -> None:
+    """The empty string is reported as empty, not as a type error."""
+    row = route_row(RowSpec("GET", "/v1/agents", owner=""))
+    failures = checked_rows(tmp_path, WorkspaceSpec(rows=[row]))
+    assert "empty-field: GET /v1/agents has empty owner" in failures, failures
 
 
 def test_unregistered_status_fails(tmp_path: Path, registry_check: ModuleType) -> None:
@@ -598,7 +683,9 @@ def test_write_scaffolds_unregistered_rows_and_leaves_the_gate_red(
     assert any(failure.startswith("unassigned-owner: POST /v1/agents ") for failure in failures)
 
 
-def test_write_is_atomic(tmp_path: Path, registry_check: ModuleType) -> None:
+def test_write_is_atomic(
+    tmp_path: Path, registry_check: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
     paths = workspace(
         tmp_path,
         [("GET", "/v1/agents"), ("POST", "/v1/agents")],
@@ -612,12 +699,9 @@ def test_write_is_atomic(tmp_path: Path, registry_check: ModuleType) -> None:
             raise OSError("simulated interruption")
         real_replace(src, dst, *args, **kwargs)
 
-    write.os.replace = _interrupted
-    try:
-        with pytest.raises(OSError):
-            cli.scaffold(paths)
-    finally:
-        write.os.replace = real_replace
+    monkeypatch.setattr(write.os, "replace", _interrupted)
+    with pytest.raises(OSError):
+        cli.scaffold(paths)
 
     assert paths.registry.read_text(encoding="utf-8") == before
     assert sorted(path.name for path in tmp_path.glob("*.tmp")) == []

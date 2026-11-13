@@ -35,7 +35,8 @@ model = importlib.import_module("deprecations_model")
 
 REST_CONTRACT = "management.agents.read.v1"
 EVIDENCE = "engineering/architecture-v2/16-compatibility-and-versioning.md"
-GRPC_CONTRACT = "ibex.memory.v1.MemoryService/GetMemory"
+GRPC_METHOD = "ibex.memory.v1.MemoryService.GetMemory"
+GRPC_CONTRACT = "grpc.memory.get-memory.v1"
 MCP_TOOLS = {
     "operator": {"budget.get": "beta"},
     "memory": {"get_memory_lineage": "beta"},
@@ -56,6 +57,7 @@ class WorkspaceSpec:
     """Overrides for the synthetic registry workspace."""
 
     rest_stability: str = "stable"
+    grpc_stability: str | None = None
     tools: dict[str, dict[str, str]] = field(
         default_factory=lambda: {server: dict(tools) for server, tools in MCP_TOOLS.items()}
     )
@@ -128,7 +130,9 @@ def workspace(
     entries: list[dict[str, Any]],
     spec: WorkspaceSpec | None = None,
 ) -> object:
-    options = spec or WorkspaceSpec(rest_stability=entry_stability(entries))
+    options = spec or WorkspaceSpec(
+        rest_stability=entry_stability(entries), grpc_stability=entry_stability(entries)
+    )
     write_registries(tmp_path, options)
     evidence = tmp_path / EVIDENCE
     evidence.parent.mkdir(parents=True, exist_ok=True)
@@ -155,7 +159,20 @@ def write_registries(tmp_path: Path, spec: WorkspaceSpec) -> None:
         "status": "shipped",
         "evidence": "services/api/app/routers/agents.py",
     }
-    registry = {"schema": "ibex.contract-registry.v1", "routes": [rest_row]}
+    registry = {
+        "schema": "ibex.contract-registry.v2",
+        "routes": [rest_row],
+        "grpc_methods": [
+            {
+                "key": GRPC_METHOD,
+                "contract_id": GRPC_CONTRACT,
+                "owner": "api",
+                "stability": spec.grpc_stability or "stable",
+                "status": "shipped",
+                "evidence": "packages/proto/proto/ibex/memory/v1/memory.proto",
+            }
+        ],
+    }
     (tmp_path / "rest-route-registry.json").write_text(
         json.dumps(registry, indent=2) + "\n", encoding="utf-8"
     )

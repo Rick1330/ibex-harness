@@ -39,12 +39,35 @@ def _git(directory: Path, *arguments: str) -> None:
 
 
 def _deprecation_entry(tool: str, status: str = "proposed") -> dict[str, str]:
+    """A complete ``mcp`` entry: the record validates every entry before it is read."""
     return {
         "id": f"dep-{tool}",
         "surface": "mcp",
         "server": "test",
         "tool": tool,
         "status": status,
+        "stability": "stable",
+        "notice_date": "2026-01-01",
+        "sunset_date": "2026-06-30",
+        "successor": "session.read",
+        "headers_implemented": False,
+        "evidence": "engineering/architecture-v2/16-compatibility-and-versioning.md",
+    }
+
+
+def _rest_entry() -> dict[str, str]:
+    """A complete ``rest`` entry: another surface's entry cannot cover an MCP tool."""
+    return {
+        "id": "dep-rest",
+        "surface": "rest",
+        "contract_id": "management.agents.read.v1",
+        "status": "proposed",
+        "stability": "stable",
+        "notice_date": "2026-01-01",
+        "sunset_date": "2026-06-30",
+        "successor": "management.agents.v2",
+        "headers_implemented": False,
+        "evidence": "engineering/architecture-v2/16-compatibility-and-versioning.md",
     }
 
 
@@ -185,8 +208,7 @@ def test_a_description_change_fails(tmp_path: Path) -> None:
 
 def test_a_deprecation_on_another_surface_does_not_authorise_removal(tmp_path: Path) -> None:
     fake = FakeSurface()
-    entry = {**_deprecation_entry(OTHER_TOOL), "surface": "rest"}
-    repo = _repo(tmp_path, fake, [entry])
+    repo = _repo(tmp_path, fake, [_rest_entry()])
     _remove_tool(fake, OTHER_TOOL)
     save(repo, record(fake))
     assert _failures(repo, fake) != []
@@ -291,12 +313,11 @@ def test_cli_rejects_deprecations_without_check_base(
 ) -> None:
     fake = FakeSurface()
     repo = _repo(tmp_path, fake, [])
+    surface = _surface(fake)
+    path = repo / "mcp_tools.json"
+    record_path = str(tmp_path / "deprecations.json")
     with pytest.raises(SystemExit) as conflict:
-        main(
-            _surface(fake),
-            repo / "mcp_tools.json",
-            ["--deprecations", str(tmp_path / "deprecations.json")],
-        )
+        main(surface, path, ["--deprecations", record_path])
     assert conflict.value.code == 2
 
 
@@ -389,33 +410,81 @@ def test_a_malformed_deprecation_record_fails(tmp_path: Path, deprecations_text:
     assert any(failure.startswith("invalid-deprecation-record: ") for failure in failures), failures
 
 
-def test_a_deprecation_entry_without_a_tool_is_ignored(tmp_path: Path) -> None:
-    fake = FakeSurface()
-    repo = _repo(tmp_path, fake, entries=[])
-    entry = {"surface": "mcp", "server": "test", "tool": 3, "status": "proposed"}
-    _write_deprecations(repo, [entry])
-    _remove_tool(fake, OTHER_TOOL)
-    save(repo, record(fake))
-    failures = _failures(repo, fake)
-    assert any(
-        failure.startswith(f"removed-tool-without-deprecation: {OTHER_TOOL} ")
-        for failure in failures
-    ), failures
-
-
-@pytest.mark.parametrize(("server_name", "tool_name"), [("", OTHER_TOOL), ("test", "")])
-def test_a_deprecation_entry_with_an_empty_name_is_ignored(
-    tmp_path: Path, server_name: str, tool_name: str
+@pytest.mark.parametrize(
+    ("override", "reason"),
+    [
+        ({"tool": 3}, "entries[0] has non-string or empty tool"),
+        ({"server": ""}, "entries[0] has non-string or empty server"),
+        ({"status": "retired"}, "entries[0] has status 'retired'"),
+        ({"headers_implemented": "yes"}, "entries[0].headers_implemented must be a boolean"),
+    ],
+    ids=["tool-is-a-number", "server-is-empty", "unknown-status", "headers-is-a-string"],
+)
+def test_an_entry_that_is_not_usable_fails_the_whole_record(
+    tmp_path: Path, override: dict[str, object], reason: str
 ) -> None:
-    """An empty name covers no tool, so it cannot authorise a removal either."""
+    """A malformed entry is a named failure, not an entry that is quietly skipped.
+
+    Skipping it would let a record whose entry the module cannot validate still look
+    like it authorises nothing, when the truth is that the record cannot be trusted.
+    """
     fake = FakeSurface()
     repo = _repo(tmp_path, fake, entries=[])
-    entry = {**_deprecation_entry(OTHER_TOOL), "server": server_name, "tool": tool_name}
-    _write_deprecations(repo, [entry])
+    _write_deprecations(repo, [{**_deprecation_entry(OTHER_TOOL), **override}])
     _remove_tool(fake, OTHER_TOOL)
     save(repo, record(fake))
     failures = _failures(repo, fake)
-    assert any(
-        failure.startswith(f"removed-tool-without-deprecation: {OTHER_TOOL} ")
-        for failure in failures
-    ), failures
+    assert len(failures) == 1, failures
+    assert failures[0].startswith(f"invalid-deprecation-record: {repo / DEPRECATIONS}: ")
+    assert reason in failures[0]
+
+
+def test_a_record_with_another_schema_fails(tmp_path: Path) -> None:
+    """The record declares its own schema; a different one is not read as this format."""
+    fake = FakeSurface()
+    repo = _repo(tmp_path, fake, entries=[])
+    path = repo / DEPRECATIONS
+    path.write_text(json.dumps({"schema": "ibex.deprecations.v2", "entries": []}), encoding="utf-8")
+    failures = _failures(repo, fake)
+    assert len(failures) == 1, failures
+    assert "schema is 'ibex.deprecations.v2'; expected 'ibex.deprecations.v1'" in failures[0]
+
+
+def test_a_completed_removal_passes_when_the_tool_and_its_entry_go_together(tmp_path: Path) -> None:
+    """The policy removes a tool and its entry in one change; this check agrees with it.
+
+    ``check_deprecations.py`` rejects an entry whose tool the descriptor no longer
+    records (``unknown-tool``), so the only state in which a removed tool passes both
+    checks is this one: the entry was live at the base ref and is gone now.
+    """
+    fake = FakeSurface()
+    repo = _repo(tmp_path, fake, [_deprecation_entry(OTHER_TOOL, status="announced")])
+    _remove_tool(fake, OTHER_TOOL)
+    save(repo, record(fake))
+    _write_deprecations(repo, [])
+    assert _failures(repo, fake) == []
+
+
+def test_a_removal_is_not_authorised_by_an_entry_added_with_it(tmp_path: Path) -> None:
+    """The entry must predate the removal: that is the state the record check allows."""
+    fake = FakeSurface()
+    repo = _repo(tmp_path, fake, entries=[])
+    _remove_tool(fake, OTHER_TOOL)
+    save(repo, record(fake))
+    _write_deprecations(repo, [_deprecation_entry(OTHER_TOOL, status="announced")])
+    failures = _failures(repo, fake)
+    assert len(failures) == 1, failures
+    assert failures[0].startswith(f"removed-tool-without-deprecation: {OTHER_TOOL} ")
+
+
+@pytest.mark.parametrize(
+    "ref",
+    ["", "-c", "--upload-pack=/bin/true", "main branch", "main\t", "main..other", "main/"],
+    ids=["empty", "short-option", "long-option", "space", "tab", "range", "trailing-slash"],
+)
+def test_an_unusable_ref_is_refused_before_git_runs(tmp_path: Path, ref: str) -> None:
+    """The ref becomes an argv element, so an option-like or malformed one never reaches git."""
+    fake = FakeSurface()
+    repo = _repo(tmp_path, fake, [])
+    failures = check_base(_surface(fake), repo / "mcp_tools.json", ref, ReadScope(allow_root=repo))
+    assert failures == [f"unreadable-base-ref: {ref!r} is not a usable git ref"]

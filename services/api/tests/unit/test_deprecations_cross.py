@@ -13,9 +13,11 @@ in ``test_deprecations_paths.py``; the builders they all share are in
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from tests.unit.deprecations_test_support import (
+    GRPC_CONTRACT,
     REST_CONTRACT,
     TODAY,
     WorkspaceSpec,
@@ -23,6 +25,7 @@ from tests.unit.deprecations_test_support import (
     checked,
     cli,
     entry,
+    grpc_entry,
     mcp_entry,
     workspace,
 )
@@ -67,6 +70,23 @@ def test_mcp_deprecation_passes_and_unknown_tool_fails(tmp_path: Path) -> None:
     assert "mcp-operator/mcp_tools.json" in failures[0]
 
 
+def test_an_entry_outliving_its_tool_is_a_phantom_whatever_its_window_says(
+    tmp_path: Path,
+) -> None:
+    """A completed removal is the tool *and* its entry gone in one change, so this is never it.
+
+    ``packages/mcp_tool_descriptors`` reads the same definition from the other side: a
+    removal is authorised by the entry that covered the tool at the base ref, which is
+    the entry this check stops requiring once the tool is gone. A tool that never
+    existed has no such entry and is reported here, never as a completed removal.
+    """
+    failures = checked(tmp_path, [mcp_entry(tool="budget.delete")], today=date(2027, 1, 1))
+    assert any(
+        failure.startswith("unknown-tool: dep.agents.read deprecates tool 'budget.delete'")
+        for failure in failures
+    ), failures
+
+
 def test_mcp_stability_must_match_the_tool_descriptor(tmp_path: Path) -> None:
     """The descriptor's class sets the window, so a `stable` claim on a beta tool cannot buy 180 days."""
     failures = checked(tmp_path, [mcp_entry(stability="stable")])
@@ -96,3 +116,31 @@ def test_unknown_mcp_server_fails(tmp_path: Path) -> None:
     assert len(failures) == 1, failures
     assert failures[0].startswith("unknown-server: dep.agents.read names server 'worker'")
     assert "['memory', 'operator']" in failures[0]
+
+
+def test_grpc_contract_id_must_resolve_against_a_method_row(tmp_path: Path) -> None:
+    """A gRPC entry resolves against ``grpc_methods``, the same way a REST one resolves."""
+    failures = checked(tmp_path, [grpc_entry(contract_id="grpc.ghost.missing.v1")])
+    assert len(failures) == 1, failures
+    assert failures[0].startswith(
+        "unknown-contract: dep.agents.read deprecates grpc.ghost.missing.v1"
+    )
+    assert "rest-route-registry.json" in failures[0]
+
+
+def test_grpc_stability_must_match_the_registered_method(tmp_path: Path) -> None:
+    """The registry row's class sets the window, so a ``beta`` claim cannot buy 180 days."""
+    paths = workspace(
+        tmp_path, [grpc_entry(stability="beta")], WorkspaceSpec(grpc_stability="stable")
+    )
+    failures = cli.check(paths, today=TODAY)
+    assert len(failures) == 1, failures
+    assert failures[0].startswith("stability-mismatch: dep.agents.read records 'beta' ")
+    assert "records 'stable'" in failures[0]
+    assert GRPC_CONTRACT in failures[0]
+
+
+def test_grpc_stable_method_accepts_a_stable_entry(tmp_path: Path) -> None:
+    """A resolved contract with the recorded class is the state the check is meant to pass."""
+    paths = workspace(tmp_path, [grpc_entry(stability="stable")])
+    assert cli.check(paths, today=TODAY) == []

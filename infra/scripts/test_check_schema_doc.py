@@ -114,6 +114,75 @@ DOC_CASES = (
 )
 
 
+# The fence and literal shapes, each row one structural case the scanner must
+# read the same way a Markdown renderer and the PostgreSQL lexer do: a tilde
+# fence documents a table, a fence-like body line does not close its fence, a
+# CREATE TABLE inside a doc string literal is not DDL, and a heading inside a
+# non-sql fence documents nothing (so `ibex_core.b` stays undocumented).
+FENCE_CASES = (
+    DocCase(
+        name="a tilde fence documents a table",
+        body="""
+            ### PostgreSQL Schema
+
+            ~~~sql
+            CREATE TABLE ibex_core.a (id UUID);
+            ~~~
+
+            ##### `ibex_core.b` (migration `000001`)
+
+            ### ClickHouse Schema
+            """,
+    ),
+    DocCase(
+        name="a fence-like body line does not close the fence",
+        body="""
+            ### PostgreSQL Schema
+
+            ```sql
+            CREATE TABLE ibex_core.a (id UUID);
+            ```python
+            CREATE TABLE ibex_core.b (id UUID);
+            ```
+
+            ### ClickHouse Schema
+            """,
+    ),
+    DocCase(
+        name="a CREATE TABLE inside a doc literal adds no table",
+        body="""
+            ### PostgreSQL Schema
+
+            ```sql
+            CREATE TABLE ibex_core.a (id UUID);
+            CREATE TABLE ibex_core.b (id UUID);
+            INSERT INTO ibex_core.a (note)
+            VALUES ('CREATE TABLE ibex_core.ghost (id UUID);');
+            ```
+
+            ### ClickHouse Schema
+            """,
+    ),
+    DocCase(
+        name="a heading inside a fence does not document a table",
+        body="""
+            ### PostgreSQL Schema
+
+            ```sql
+            CREATE TABLE ibex_core.a (id UUID);
+            ```
+
+            ```text
+            ##### `ibex_core.b` (migration `000001`)
+            ```
+
+            ### ClickHouse Schema
+            """,
+        needle="ibex_core.b",
+    ),
+)
+
+
 class TableKeyTests(unittest.TestCase):
     def test_qualified_and_unqualified(self) -> None:
         keys = check_schema_doc.table_keys(
@@ -136,16 +205,142 @@ class TableKeyTests(unittest.TestCase):
         )
         self.assertEqual(keys, ["ibex_core.real"])
 
+    def test_quoted_qualified_identifiers(self) -> None:
+        keys = check_schema_doc.table_keys(
+            'CREATE TABLE "ibex_core"."quoted_table" (id UUID);'
+        )
+        self.assertEqual(keys, ["ibex_core.quoted_table"])
+
+    def test_quoted_unqualified_identifier(self) -> None:
+        keys = check_schema_doc.table_keys('CREATE TABLE "standalone" (id UUID);')
+        self.assertEqual(keys, ["standalone"])
+
+    def test_apostrophe_inside_a_quoted_identifier_is_not_a_string(self) -> None:
+        keys = check_schema_doc.table_keys(
+            'CREATE TABLE "it\'s" (id UUID);\nCREATE TABLE ibex_core.after (id UUID);'
+        )
+        self.assertEqual(keys, ["it's", "ibex_core.after"])
+
+    def test_unparsable_create_table_is_a_structural_error(self) -> None:
+        with self.assertRaises(check_schema_doc.DocError):
+            check_schema_doc.table_keys("CREATE TABLE (id UUID);")
+
+    def test_create_table_inside_a_string_literal_is_ignored(self) -> None:
+        keys = check_schema_doc.table_keys(
+            "INSERT INTO ibex_core.a (note) VALUES ('CREATE TABLE ibex_core.ghost (id UUID);');\n"
+            "CREATE TABLE ibex_core.real (id UUID);"
+        )
+        self.assertEqual(keys, ["ibex_core.real"])
+
+    def test_create_table_inside_a_dollar_quoted_body_is_ignored(self) -> None:
+        keys = check_schema_doc.table_keys(
+            "DO $body$ BEGIN EXECUTE 'CREATE TABLE ibex_core.ghost (id UUID);'; END $body$;\n"
+            "CREATE TABLE ibex_core.real (id UUID);"
+        )
+        self.assertEqual(keys, ["ibex_core.real"])
+
+    def test_every_accepted_qualifier_parses(self) -> None:
+        qualifiers = ["", *sorted(check_schema_doc.CREATE_TABLE_QUALIFIERS)]
+        for qualifier in qualifiers:
+            for spelling in (qualifier.upper(), qualifier.lower(), qualifier.title()):
+                prefix = f"CREATE {spelling} TABLE" if spelling else "CREATE TABLE"
+                with self.subTest(prefix=prefix):
+                    keys = check_schema_doc.table_keys(
+                        f"{prefix} ibex_core.t (id UUID);"
+                    )
+                    self.assertEqual(keys, ["ibex_core.t"])
+
+    def test_a_word_that_is_not_a_qualifier_is_not_a_create_table(self) -> None:
+        keys = check_schema_doc.table_keys(
+            "CREATE FOO TABLE ibex_core.a (id UUID);\n"
+            "CREATE UNLOGGEDX TABLE ibex_core.b (id UUID);\n"
+            "CREATE MATERIALIZED VIEW mv AS SELECT 1;"
+        )
+        self.assertEqual(keys, [])
+
+    def test_a_table_named_table_parses_as_the_unqualified_form(self) -> None:
+        keys = check_schema_doc.table_keys(
+            "CREATE TABLE table (id UUID);\nCREATE TEMP TABLE table (id UUID);"
+        )
+        self.assertEqual(keys, ["table", "table"])
+
+    def test_a_non_ascii_dollar_tag_is_not_a_tag(self) -> None:
+        # `\w` is matched under re.ASCII, so a non-ASCII tag stays ordinary SQL
+        # and the statement inside it is still parsed, as `[A-Za-z0-9_]*` did.
+        keys = check_schema_doc.table_keys(
+            "SELECT $café$ CREATE TABLE ibex_core.ghost (id UUID); $café$;\n"
+            "CREATE TABLE ibex_core.real (id UUID);"
+        )
+        self.assertEqual(keys, ["ibex_core.ghost", "ibex_core.real"])
+
+
+class FenceScannerTests(unittest.TestCase):
+    def test_fence_opener_shapes(self) -> None:
+        cases = {
+            "```sql": ("```", "sql"),
+            "````sql": ("````", "sql"),
+            "~~~sql": ("~~~", "sql"),
+            "~~~~ postgresql": ("~~~~", "postgresql"),
+            "  ~~~": ("~~~", ""),
+            "\t```sql": ("```", "sql"),
+            "``` not a closer": ("```", "not a closer"),
+            "```py`x": None,
+            "```` `": None,
+            "``": None,
+            "~~": None,
+            "CREATE TABLE ibex_core.a (id UUID);": None,
+        }
+        for line, expected in cases.items():
+            with self.subTest(line=line):
+                self.assertEqual(check_schema_doc._fence_opener(line), expected)
+
+    def test_tilde_fence_is_sql(self) -> None:
+        lines = ["~~~sql", "CREATE TABLE ibex_core.a (id UUID);", "~~~"]
+        self.assertEqual(
+            check_schema_doc.fenced_sql_blocks(lines),
+            [(1, "CREATE TABLE ibex_core.a (id UUID);")],
+        )
+
+    def test_longer_opener_ignores_a_shorter_run(self) -> None:
+        lines = ["````sql", "```", "CREATE TABLE ibex_core.a (id UUID);", "````"]
+        self.assertEqual(
+            check_schema_doc.fenced_sql_blocks(lines),
+            [(1, "```\nCREATE TABLE ibex_core.a (id UUID);")],
+        )
+
+    def test_a_different_marker_does_not_close(self) -> None:
+        lines = ["~~~sql", "```", "CREATE TABLE ibex_core.a (id UUID);", "~~~"]
+        blocks = check_schema_doc.fenced_sql_blocks(lines)
+        self.assertEqual(len(blocks), 1)
+        self.assertIn("CREATE TABLE", blocks[0][1])
+
+    def test_trailing_text_does_not_close(self) -> None:
+        lines = [
+            "```sql",
+            "CREATE TABLE ibex_core.a (id UUID);",
+            "``` not a closer",
+            "```",
+        ]
+        blocks = check_schema_doc.fenced_sql_blocks(lines)
+        self.assertEqual(len(blocks), 1)
+        self.assertIn("not a closer", blocks[0][1])
+
 
 class CoveredTests(unittest.TestCase):
     def test_bare_key_matches_any_schema(self) -> None:
-        self.assertTrue(check_schema_doc.covered("organizations", {"ibex_core.organizations"}))
+        self.assertTrue(
+            check_schema_doc.covered("organizations", {"ibex_core.organizations"})
+        )
 
     def test_qualified_key_requires_exact_schema(self) -> None:
-        self.assertFalse(check_schema_doc.covered("ibex_audit.tokens", {"ibex_core.tokens"}))
+        self.assertFalse(
+            check_schema_doc.covered("ibex_audit.tokens", {"ibex_core.tokens"})
+        )
 
     def test_exact_match(self) -> None:
-        self.assertTrue(check_schema_doc.covered("ibex_core.tokens", {"ibex_core.tokens"}))
+        self.assertTrue(
+            check_schema_doc.covered("ibex_core.tokens", {"ibex_core.tokens"})
+        )
 
 
 class CheckTests(unittest.TestCase):
@@ -167,6 +362,12 @@ class CheckTests(unittest.TestCase):
 
     def test_the_gate_reaches_the_recorded_verdict_for_each_doc(self) -> None:
         for case in DOC_CASES:
+            with self.subTest(case.name):
+                problems, summary = self._check(case.body)
+                self._assert_verdict(case, problems, summary)
+
+    def test_the_gate_reaches_the_recorded_verdict_for_each_fence_shape(self) -> None:
+        for case in FENCE_CASES:
             with self.subTest(case.name):
                 problems, summary = self._check(case.body)
                 self._assert_verdict(case, problems, summary)
@@ -202,8 +403,69 @@ class CheckTests(unittest.TestCase):
             """,
         )
         problems, _ = check_schema_doc.check(self.root, doc)
-        self.assertTrue(any("ibex_core.unmarked" in line for line in problems), problems)
+        self.assertTrue(
+            any("ibex_core.unmarked" in line for line in problems), problems
+        )
         self.assertFalse(any("ibex_core.sketch" in line for line in problems), problems)
+
+    def test_quoted_table_a_migration_creates_is_not_skipped(self) -> None:
+        root = Path(self._tmp.name) / "quoted-missing"
+        make_repo(
+            root, {"000001_init.up.sql": 'CREATE TABLE "ibex_core"."quoted" (id UUID);'}
+        )
+        doc = make_doc(root, "### PostgreSQL Schema\n\n### ClickHouse Schema\n")
+        problems, _ = check_schema_doc.check(root, doc)
+        self.assertTrue(any("ibex_core.quoted" in line for line in problems), problems)
+
+    def test_quoted_table_documented_with_the_same_key(self) -> None:
+        root = Path(self._tmp.name) / "quoted-documented"
+        make_repo(
+            root, {"000001_init.up.sql": 'CREATE TABLE "ibex_core"."quoted" (id UUID);'}
+        )
+        doc = make_doc(
+            root,
+            """
+            ### PostgreSQL Schema
+
+            ```sql
+            CREATE TABLE "ibex_core"."quoted" (id UUID);
+            ```
+
+            ### ClickHouse Schema
+            """,
+        )
+        problems, summary = check_schema_doc.check(root, doc)
+        self.assertEqual(problems, [])
+        self.assertTrue(summary.startswith("OK:"), summary)
+
+    def test_create_table_inside_a_migration_literal_adds_no_table(self) -> None:
+        root = Path(self._tmp.name) / "literal-migration"
+        make_repo(
+            root,
+            {
+                "000001_init.up.sql": """
+                    CREATE TABLE ibex_core.a (id UUID);
+                    CREATE TABLE ibex_core.b (id UUID);
+                    INSERT INTO ibex_core.a (note)
+                    VALUES ('CREATE TABLE ibex_core.ghost (id UUID);');
+                """,
+            },
+        )
+        doc = make_doc(
+            root,
+            """
+            ### PostgreSQL Schema
+
+            ```sql
+            CREATE TABLE ibex_core.a (id UUID);
+            CREATE TABLE ibex_core.b (id UUID);
+            ```
+
+            ### ClickHouse Schema
+            """,
+        )
+        problems, _ = check_schema_doc.check(root, doc)
+        self.assertEqual(problems, [])
 
     def test_missing_heading_is_a_structural_error(self) -> None:
         doc = make_doc(self.root, "# Title\n\nNo headings here.\n")

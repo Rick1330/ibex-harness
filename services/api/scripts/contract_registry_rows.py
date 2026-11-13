@@ -36,7 +36,7 @@ def row_key(row: object) -> str | None:
 def row_shape_failures(
     row: dict[str, object], label: str, fields: tuple[str, ...] = REQUIRED_FIELDS
 ) -> list[str]:
-    """Field rules: every required field present, no unknown field, none empty."""
+    """Field rules: every required field present, no unknown field, each a non-empty string."""
     failures: list[str] = []
     missing = [field for field in fields if field not in row]
     unknown = sorted(set(row) - set(fields))
@@ -44,9 +44,22 @@ def row_shape_failures(
         failures.append(f"missing-field: {label} lacks {', '.join(missing)}")
     if unknown:
         failures.append(f"unknown-field: {label} has {', '.join(unknown)}")
+    failures.extend(_field_value_failures(row, label, fields))
+    return failures
+
+
+def _field_value_failures(row: dict[str, object], label: str, fields: tuple[str, ...]) -> list[str]:
+    """Presence is not validity: a value that is not a string is as unusable as an empty one.
+
+    ``null``, a number, a list, and an object all pass a presence check, so each is
+    reported here instead of being read as absent by the rule that consumes the field.
+    """
     empty = [field for field in fields if isinstance(row.get(field), str) and not row[field]]
-    if empty:
-        failures.append(f"empty-field: {label} has empty {', '.join(empty)}")
+    mistyped = [field for field in fields if field in row and not isinstance(row[field], str)]
+    failures = [f"empty-field: {label} has empty {', '.join(empty)}"] if empty else []
+    failures.extend(
+        f"invalid-field: {label}.{field} must be a string, not {row[field]!r}" for field in mistyped
+    )
     return failures
 
 

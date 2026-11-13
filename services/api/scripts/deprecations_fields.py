@@ -221,7 +221,8 @@ def _window_failures(entry: dict[str, object], label: str) -> list[str]:
 
 
 def _contract_target(entry: dict[str, object]) -> str:
-    for field in ("contract_id", "tool"):
+    """The name the entry deprecates: its contract, its tool, or its proxy path."""
+    for field in ("contract_id", "tool", "path"):
         value = entry.get(field)
         if non_empty_str(value):
             return str(value)
