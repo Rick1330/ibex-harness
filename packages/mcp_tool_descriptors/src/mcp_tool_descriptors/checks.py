@@ -56,7 +56,7 @@ from mcp_tool_descriptors.writer import write_atomic
 
 def check(surface: Surface, path: Path, allow_root: Path | None = None) -> list[str]:
     """Return every drift failure between the record and the surface; print warnings."""
-    record, failures = _load(path, allow_root)
+    record, failures = load_record(path, allow_root)
     if failures:
         return failures
     published = build_record(surface)
@@ -73,7 +73,7 @@ def update(surface: Surface, path: Path, allow_root: Path | None = None) -> int:
     return len(record["tools"])
 
 
-def _load(path: Path, allow_root: Path | None = None) -> tuple[dict[str, Any], list[str]]:
+def load_record(path: Path, allow_root: Path | None = None) -> tuple[dict[str, Any], list[str]]:
     """Read the record and validate the outer shape the comparison depends on."""
     checked = confine(path, allow_root)
     if not checked.is_file():
@@ -88,13 +88,13 @@ def _load(path: Path, allow_root: Path | None = None) -> tuple[dict[str, Any], l
         return {}, [f"unreadable-descriptor: {path}: {error}"]
     if not isinstance(record, dict):
         return {}, ["invalid-descriptor: the record must be a JSON object"]
-    failures = _record_failures(record)
+    failures = record_failures(record)
     if failures:
         return {}, failures
     return record, []
 
 
-def _record_failures(record: dict[str, Any]) -> list[str]:
+def record_failures(record: dict[str, Any]) -> list[str]:
     generator_entry = record.get("generator")
     if not isinstance(generator_entry, dict):
         return ['invalid-descriptor: the record needs a "generator" object']

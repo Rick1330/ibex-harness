@@ -25,6 +25,7 @@ and the record says so rather than implying stable support. That claim lives in
 here.
 """
 
+from mcp_tool_descriptors.base import check_base
 from mcp_tool_descriptors.checks import check, update
 from mcp_tool_descriptors.cli import EXIT_DRIFT, EXIT_OK, EXIT_REFUSED, main
 from mcp_tool_descriptors.hashing import canonical_sha256, short_digest
@@ -62,6 +63,7 @@ __all__ = [
     "build_record",
     "canonical_sha256",
     "check",
+    "check_base",
     "confine",
     "default_allow_root",
     "generator",

@@ -1,5 +1,5 @@
 {
-  "schema": "ibex.contract-registry.v1",
+  "schema": "ibex.contract-registry.v2",
   "routes": [
     {
       "key": "DELETE /v1/agents/{agent_id}",
@@ -602,9 +602,237 @@
       "evidence": "services/api/app/routers/users.py"
     }
   ],
+  "grpc_methods": [
+    {
+      "key": "ibex.auth.v1.AuthService.BeginTotpEnrollment",
+      "contract_id": "grpc.auth.begin-totp-enrollment.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.ConfirmTotpEnrollment",
+      "contract_id": "grpc.auth.confirm-totp-enrollment.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.ConsumeStepUp",
+      "contract_id": "grpc.auth.consume-step-up.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.CreateProviderCredential",
+      "contract_id": "grpc.auth.create-provider-credential.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.CreateStepUpToken",
+      "contract_id": "grpc.auth.create-step-up-token.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.CreateToken",
+      "contract_id": "grpc.auth.create-token.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.DeleteProviderCredential",
+      "contract_id": "grpc.auth.delete-provider-credential.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.GetProviderCredential",
+      "contract_id": "grpc.auth.get-provider-credential.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.IssueOperatorSession",
+      "contract_id": "grpc.auth.issue-operator-session.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.IssuePolicySnapshot",
+      "contract_id": "grpc.auth.issue-policy-snapshot.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.ListProviderCredentials",
+      "contract_id": "grpc.auth.list-provider-credentials.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.ListTokens",
+      "contract_id": "grpc.auth.list-tokens.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.RevokeOperatorSession",
+      "contract_id": "grpc.auth.revoke-operator-session.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.RevokeToken",
+      "contract_id": "grpc.auth.revoke-token.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.ValidateAgent",
+      "contract_id": "grpc.auth.validate-agent.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.ValidateOperatorSession",
+      "contract_id": "grpc.auth.validate-operator-session.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.auth.v1.AuthService.ValidateToken",
+      "contract_id": "grpc.auth.validate-token.v1",
+      "owner": "auth",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/auth/v1/auth.proto"
+    },
+    {
+      "key": "ibex.context.v1.ContextAssemblyService.AssembleContext",
+      "contract_id": "grpc.context.assemble-context.v1",
+      "owner": "context",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/context/v1/context.proto"
+    },
+    {
+      "key": "ibex.context.v1.ContextAssemblyService.RecordMemoryFeedback",
+      "contract_id": "grpc.context.record-memory-feedback.v1",
+      "owner": "context",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/context/v1/context.proto"
+    },
+    {
+      "key": "ibex.context.v1.ContextAssemblyService.SearchMemories",
+      "contract_id": "grpc.context.search-memories.v1",
+      "owner": "context",
+      "stability": "beta",
+      "status": "shipped",
+      "evidence": "packages/proto/proto/ibex/context/v1/context.proto"
+    }
+  ],
+  "mcp_tools": [
+    {
+      "key": "ibex-mcp-memory/get_memory_lineage",
+      "contract_id": "mcp.memory.get-memory-lineage.v1",
+      "server": "ibex-mcp-memory",
+      "owner": "memory",
+      "status": "shipped",
+      "evidence": "services/mcp-memory/mcp_tools.json"
+    },
+    {
+      "key": "ibex-mcp-memory/record_feedback",
+      "contract_id": "mcp.memory.record-feedback.v1",
+      "server": "ibex-mcp-memory",
+      "owner": "memory",
+      "status": "shipped",
+      "evidence": "services/mcp-memory/mcp_tools.json"
+    },
+    {
+      "key": "ibex-mcp-memory/search_memory",
+      "contract_id": "mcp.memory.search-memory.v1",
+      "server": "ibex-mcp-memory",
+      "owner": "memory",
+      "status": "shipped",
+      "evidence": "services/mcp-memory/mcp_tools.json"
+    },
+    {
+      "key": "ibex-mcp-memory/write_memory",
+      "contract_id": "mcp.memory.write-memory.v1",
+      "server": "ibex-mcp-memory",
+      "owner": "memory",
+      "status": "shipped",
+      "evidence": "services/mcp-memory/mcp_tools.json"
+    },
+    {
+      "key": "ibex-mcp-operator/budget.get",
+      "contract_id": "mcp.operator.budget-get.v1",
+      "server": "ibex-mcp-operator",
+      "owner": "operator",
+      "status": "shipped",
+      "evidence": "services/mcp-operator/mcp_tools.json"
+    },
+    {
+      "key": "ibex-mcp-operator/evidence.query",
+      "contract_id": "mcp.operator.evidence-query.v1",
+      "server": "ibex-mcp-operator",
+      "owner": "operator",
+      "status": "shipped",
+      "evidence": "services/mcp-operator/mcp_tools.json"
+    },
+    {
+      "key": "ibex-mcp-operator/run.get",
+      "contract_id": "mcp.operator.run-get.v1",
+      "server": "ibex-mcp-operator",
+      "owner": "operator",
+      "status": "shipped",
+      "evidence": "services/mcp-operator/mcp_tools.json"
+    },
+    {
+      "key": "ibex-mcp-operator/session.get",
+      "contract_id": "mcp.operator.session-get.v1",
+      "server": "ibex-mcp-operator",
+      "owner": "operator",
+      "status": "shipped",
+      "evidence": "services/mcp-operator/mcp_tools.json"
+    }
+  ],
   "out_of_scope": {
     "grpc": {
-      "reason": "gRPC request/response shapes are frozen by buf-breaking (W5.1) and tracked under P0-12; this registry only asserts that every protobuf service is accounted for, not its message shapes.",
+      "reason": "gRPC request/response shapes are frozen by buf-breaking (W5.1) and tracked under P0-12; grpc_methods registers every rpc by name, and this object keeps the service-level index plus the accepted principal-context.v1 shape. Message shapes stay out of scope.",
       "tracked_by": "P0-12",
       "registered_services": [
         {
@@ -621,7 +849,7 @@
       "declared_out": []
     },
     "mcp_tools": {
-      "reason": "MCP tool schemas are versioned descriptors; the descriptor diff and its deprecation record are the gate (W5.5), not the REST route inventory.",
+      "reason": "MCP tool names are registered in the top-level mcp_tools array; their schemas are versioned descriptors, and the descriptor diff plus its deprecation record remain the gate for schema change (W5.5).",
       "tracked_by": "W5.5"
     }
   }
