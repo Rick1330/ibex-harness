@@ -147,11 +147,20 @@ import re
 import sys
 
 SAFE = re.compile(r"[A-Za-z0-9_./:@+-]+")
+# Every escape below is one the repository's reader decodes
+# (infra/scripts/lib/dotenv.py: ESCAPES). A literal CR is not cosmetic: this
+# function reads the file back with universal newlines, so the next write pass
+# turns a literal CR into a real line break, splits the assignment in two and
+# leaves its tail as an orphan line -- after which the retained passphrase, the
+# only key to every backup object, reads back as `alpha` and every backup
+# encrypted with it becomes unreadable. `\t` needs no entry: a literal tab is
+# not a line break and survives both readers unchanged inside the quotes.
 ESCAPES = (
     ("\\", "\\\\"),
     ('"', '\\"'),
     ("$", "\\$"),
     ("\n", "\\n"),
+    ("\r", "\\r"),
 )
 
 

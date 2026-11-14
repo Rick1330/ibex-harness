@@ -560,7 +560,16 @@ async function performSessionAction(
   event: H3Event,
   action: OperatorSessionAction,
   body?: { pat: string },
-  options: { csrfFromCookie?: boolean; synthesizeOrigin?: boolean } = {},
+  options: {
+    csrfFromCookie?: boolean
+    synthesizeOrigin?: boolean
+    /**
+     * Relay `Set-Cookie` to `event` here. The rotation path sets this to false
+     * and relays the retained headers itself, so every response that uses the
+     * rotation carries them — not only the one that happened to start it.
+     */
+    relayCookies?: boolean
+  } = {},
 ): Promise<SessionOutcome> {
   const target = new URL(SESSION_PATHS[action], configuredOrigin(event))
   const headers = new Headers({ Accept: "application/json" })
@@ -626,8 +635,12 @@ async function performSessionAction(
   }
 
   // Relay before the status check: logout clears cookies even when it reports
-  // an invalid session, so the browser must still receive the deletions.
-  const setCookies = relaySessionCookies(event, response)
+  // an invalid session, so the browser must still receive the deletions. A
+  // rotation opts out and relays from the cache instead (see `relayRotation`).
+  const setCookies =
+    options.relayCookies === false
+      ? setCookieHeaders(response)
+      : relaySessionCookies(event, response)
 
   const parsed: unknown = await response.json().catch(() => null)
   if (!response.ok) {
@@ -649,10 +662,9 @@ async function performSessionAction(
  * refresh token once, so a rotation is shared in two ways:
  *
  * - while it is in flight, every overlapping read awaits the same promise;
- * - after it settles, the resolved access value is retained for
- *   `ROTATION_TTL_MS`, so a caller that arrives *later* with the same refresh
- *   token is served the rotated value instead of replaying a token the API has
- *   already consumed.
+ * - after it settles, the resolved value is retained for `ROTATION_TTL_MS`, so
+ *   a caller that arrives *later* with the same refresh token is served the
+ *   rotated value instead of replaying a token the API has already consumed.
  *
  * The second half is what a server render needs, and it is not a race. The
  * outer request's `Cookie` header never changes during a render, so every SSR
@@ -661,6 +673,12 @@ async function performSessionAction(
  * and a page are enough to reach this. Without the retained value the second
  * read 401s, a valid session renders as signed out, and an API that treats a
  * replayed refresh token as reuse may revoke the whole session family.
+ *
+ * A rotation is retained together with the `Set-Cookie` headers it produced,
+ * because the browser must receive them on *every* response that uses the
+ * rotation. If the initiating response is cancelled or lost after the refresh
+ * succeeded, a later cached hit still carries the rotated cookies; without them
+ * the browser keeps the expired access cookie and the consumed refresh token.
  *
  * Retaining the value grants no new authority: a caller that presents the
  * refresh token already holds it, and what is retained is the access cookie
@@ -671,11 +689,22 @@ async function performSessionAction(
  * hashes to its own key either way.
  */
 const ROTATION_TTL_MS = 10_000
-const MAX_CACHED_ROTATIONS = 256
+/** Exported so the eviction test can fill the map past the cap deliberately. */
+export const MAX_CACHED_ROTATIONS = 256
+
+/**
+ * One successful rotation: the access value the API issued and the `Set-Cookie`
+ * headers that carried it. The headers are kept with the value so a response
+ * that reuses the rotation can hand the browser the rotated cookies too.
+ */
+type RotationResult = {
+  access: string
+  setCookies: string[]
+}
 
 type RotationEntry = {
-  /** Settles with the rotated access value, or null when the rotation failed. */
-  readonly promise: Promise<string | null>
+  /** Settles with the rotation, or null when the rotation failed. */
+  readonly promise: Promise<RotationResult | null>
   /** `Date.now()` after which the resolved value is no longer served. */
   expiresAt: number
   /** Removes the entry when the TTL elapses; cleared by any earlier removal. */
@@ -683,6 +712,13 @@ type RotationEntry = {
 }
 
 const ROTATIONS = new Map<string, RotationEntry>()
+
+/**
+ * Rotation results already relayed to an event, so one response never carries
+ * the same `Set-Cookie` twice. The result is one rotation, so a fresh rotation
+ * of the same key (after the TTL) relays again.
+ */
+const RELAYED_RESULTS = new WeakMap<H3Event, WeakSet<RotationResult>>()
 
 function rotationKey(refreshToken: string): string {
   return createHash("sha256").update(refreshToken).digest("hex")
@@ -706,19 +742,49 @@ export function resetRotationCache(): void {
 }
 
 /**
- * Bound the map, not the rotation. Expired entries go first; if none are left
- * the oldest is dropped. Its waiters still hold the promise, and a new caller
- * starts its own rotation rather than the map growing without limit.
+ * Relay a rotation's `Set-Cookie` headers to `event`, then return its access
+ * value.
+ *
+ * Every response that uses the rotation calls this — the one that initiated it,
+ * a concurrent waiter, and a later cached hit — so a browser that missed the
+ * initiating response still receives the rotated cookies. Relaying is
+ * idempotent per event and rotation result, so a response never carries the
+ * same cookie twice. A failed rotation (`null`) relays nothing and yields
+ * `null`, leaving the caller to fail closed.
+ */
+function relayRotation(event: H3Event, result: RotationResult | null): string | null {
+  if (!result) return null
+  let relayed = RELAYED_RESULTS.get(event)
+  if (!relayed) {
+    relayed = new WeakSet<RotationResult>()
+    RELAYED_RESULTS.set(event, relayed)
+  }
+  if (!relayed.has(result)) {
+    relayed.add(result)
+    for (const cookie of result.setCookies) {
+      appendResponseHeader(event, "set-cookie", cookie)
+    }
+  }
+  return result.access
+}
+
+/**
+ * Eviction policy: drop only a settled rotation whose window has elapsed.
+ *
+ * An in-flight rotation must never be removed. Its refresh token has already
+ * been presented upstream, so a later read that missed the entry would present
+ * the same token again; the API accepts each refresh token once and treats
+ * reuse as a signal to revoke the whole session family. A settled entry inside
+ * its window is kept for the same reason — it can still be evicted and its
+ * token replayed. If nothing is evictable the map is allowed to exceed
+ * `MAX_CACHED_ROTATIONS` rather than dropping a live rotation; each entry's
+ * eviction timer removes it as its window elapses, bringing the map back under
+ * the cap without ever replaying a token.
  */
 function evictRotations(): void {
   const now = Date.now()
-  for (const [key, entry] of ROTATIONS) {
+  for (const [key, entry] of [...ROTATIONS]) {
     if (now >= entry.expiresAt) dropRotation(key)
-  }
-  while (ROTATIONS.size >= MAX_CACHED_ROTATIONS) {
-    const oldest = ROTATIONS.keys().next().value
-    if (oldest === undefined) return
-    dropRotation(oldest)
   }
 }
 
@@ -731,9 +797,13 @@ function evictRotations(): void {
  * and a later attempt is asked of the API instead of being answered from a
  * stale refusal.
  */
-function settleRotation(key: string, entry: RotationEntry, access: string | null): void {
+function settleRotation(
+  key: string,
+  entry: RotationEntry,
+  result: RotationResult | null,
+): void {
   if (ROTATIONS.get(key) !== entry) return
-  if (access === null) {
+  if (result === null) {
     dropRotation(key)
     return
   }
@@ -752,16 +822,18 @@ function settleRotation(key: string, entry: RotationEntry, access: string | null
  * Rotate the access cookie once, server-side, and return the newly issued value.
  *
  * Returns null when there is no refresh cookie to present or the API refuses to
- * rotate. The rotated `Set-Cookie` headers are relayed to this response; the
- * caller retries the original read with the returned value because the incoming
- * request still carries the expired cookie. Callers that present the same
- * refresh cookie share one rotation — concurrently through the promise, and
- * afterwards through the retained value — so the API's single-use refresh token
- * is never replayed by a second caller.
+ * rotate. The rotated `Set-Cookie` headers are relayed to this response whether
+ * the rotation was started here, awaited in flight, or served from the retained
+ * value; the caller retries the original read with the returned value because
+ * the incoming request still carries the expired cookie. Callers that present
+ * the same refresh cookie share one rotation — concurrently through the
+ * promise, and afterwards through the retained value — so the API's single-use
+ * refresh token is never replayed by a second caller.
  *
  * The refresh is a direct `fetch` to the upstream API through
- * `performSessionAction`, which relays `Set-Cookie` to *this* event. Do not
- * reimplement it through `event.$fetch`/`useRequestFetch`: h3's
+ * `performSessionAction` with `relayCookies: false`; the retained result is the
+ * single relay point, so every response that uses the rotation receives the
+ * cookies. Do not reimplement it through `event.$fetch`/`useRequestFetch`: h3's
  * `fetchWithEvent` forwards request headers only and resolves to the parsed
  * body, so an inner route's `Set-Cookie` never reaches the outer SSR response
  * and the browser keeps its stale cookies. A server-render caller that reaches
@@ -777,7 +849,7 @@ async function rotateAccessCookie(event: H3Event): Promise<string | null> {
   if (cached) {
     // Expire on read as well as on the timer: a timer that has not run yet must
     // not serve a value past its TTL.
-    if (Date.now() < cached.expiresAt) return cached.promise
+    if (Date.now() < cached.expiresAt) return relayRotation(event, await cached.promise)
     dropRotation(key)
   }
 
@@ -793,14 +865,14 @@ async function rotateAccessCookie(event: H3Event): Promise<string | null> {
   // `performRefresh` answers null rather than rejecting, but a rejection must
   // still leave no cached entry and no unhandled rejection behind.
   void entry.promise
-    .then((access) => settleRotation(key, entry, access))
+    .then((result) => settleRotation(key, entry, result))
     .catch(() => {
       if (ROTATIONS.get(key) === entry) dropRotation(key)
     })
-  return entry.promise
+  return relayRotation(event, await entry.promise)
 }
 
-async function performRefresh(event: H3Event): Promise<string | null> {
+async function performRefresh(event: H3Event): Promise<RotationResult | null> {
   try {
     const { setCookies } = await performSessionAction(event, "refresh", undefined, {
       // The API enforces CSRF double-submit on refresh. The browser's CSRF
@@ -810,8 +882,11 @@ async function performRefresh(event: H3Event): Promise<string | null> {
       // A read is a GET, so it usually carries no Origin/Referer. Supply the
       // Console's own origin so the API's origin check can pass.
       synthesizeOrigin: true,
+      // Relayed from the retained rotation to every response that uses it.
+      relayCookies: false,
     })
-    return cookieValueFromSetCookie(setCookies, accessCookieName(event))
+    const access = cookieValueFromSetCookie(setCookies, accessCookieName(event))
+    return access ? { access, setCookies } : null
   } catch {
     return null
   }
