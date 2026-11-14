@@ -608,6 +608,15 @@ async function performSessionAction(
  * rotate. The rotated `Set-Cookie` headers are relayed to this response; the
  * caller retries the original read with the returned value because the incoming
  * request still carries the expired cookie.
+ *
+ * The refresh is a direct `fetch` to the upstream API through
+ * `performSessionAction`, which relays `Set-Cookie` to *this* event. Do not
+ * reimplement it through `event.$fetch`/`useRequestFetch`: h3's
+ * `fetchWithEvent` forwards request headers only and resolves to the parsed
+ * body, so an inner route's `Set-Cookie` never reaches the outer SSR response
+ * and the browser keeps its stale cookies. A server-render caller that reaches
+ * an operator route as a sub-request must use `$fetch.raw()` and relay the
+ * response headers itself.
  */
 async function rotateAccessCookie(event: H3Event): Promise<string | null> {
   if (!getCookie(event, refreshCookieName())) return null

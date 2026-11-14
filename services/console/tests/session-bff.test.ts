@@ -316,6 +316,107 @@ describe("BFF refresh-and-retry", () => {
     )
   })
 
+  it("relays the rotated cookies to the event it renders during a server-side refresh", async () => {
+    // The refresh is a direct upstream fetch, so its Set-Cookie reaches this
+    // event. This is the half of the contract `http.ts` owns; an SSR caller
+    // that reaches the route through `event.$fetch` drops the headers one
+    // layer up, which is why that path must not be reintroduced here.
+    const { event, res } = fakeEvent({
+      url: "/api/operator/overview",
+      headers: {
+        accept: "application/json",
+        cookie: "ibex_session=expired; ibex_refresh=refresh-token; ibex_csrf=csrf-value",
+      },
+    })
+    stubFetch((target, init) => {
+      const headers = new Headers(init.headers)
+      if (target.pathname === "/v1/operator/session/refresh") {
+        return upstream(
+          { status: "ok", org_id: "org-1" },
+          {
+            setCookie: [
+              "ibex_session=fresh-access; Path=/; HttpOnly; Secure; SameSite=Lax",
+              "ibex_refresh=rotated-refresh; Path=/; HttpOnly; Secure; SameSite=Lax",
+            ],
+          },
+        )
+      }
+      return headers.get("cookie")?.includes("fresh-access")
+        ? upstream({ org_id: "org-1", ok: true })
+        : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 })
+    })
+
+    const result = await fetchOperatorJson(event, "overview", (value) => value)
+
+    expect(result).toEqual({ org_id: "org-1", ok: true })
+    const cookies = setCookieList(res)
+    expect(cookies.find((cookie) => cookie.startsWith("ibex_session="))).toContain(
+      "ibex_session=fresh-access",
+    )
+    // The rotated refresh token is relayed too, so a rotating token stays in
+    // step with the browser instead of being replayed from the stale copy.
+    expect(cookies.find((cookie) => cookie.startsWith("ibex_refresh="))).toContain(
+      "ibex_refresh=rotated-refresh",
+    )
+  })
+
+  it("appends each rotated cookie exactly once", async () => {
+    // A second relay (for example `rotateAccessCookie` and a route handler both
+    // forwarding) would emit duplicate Set-Cookie headers for the same name and
+    // leave the browser's choice between them undefined.
+    const { event, res } = fakeEvent({
+      url: "/api/operator/overview",
+      headers: {
+        accept: "application/json",
+        cookie: "ibex_session=expired; ibex_refresh=refresh-token; ibex_csrf=csrf-value",
+      },
+    })
+    stubFetch((target, init) => {
+      const headers = new Headers(init.headers)
+      if (target.pathname === "/v1/operator/session/refresh") {
+        return upstream(
+          { status: "ok", org_id: "org-1" },
+          {
+            setCookie: [
+              "ibex_session=fresh-access; Path=/; HttpOnly; Secure; SameSite=Lax",
+              "ibex_refresh=rotated-refresh; Path=/; HttpOnly; Secure; SameSite=Lax",
+            ],
+          },
+        )
+      }
+      return headers.get("cookie")?.includes("fresh-access")
+        ? upstream({ org_id: "org-1", ok: true })
+        : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 })
+    })
+
+    await fetchOperatorJson(event, "overview", (value) => value)
+
+    const names = setCookieList(res).map((cookie) => cookie.split("=", 1)[0])
+    expect(names.filter((name) => name === "ibex_session")).toHaveLength(1)
+    expect(names.filter((name) => name === "ibex_refresh")).toHaveLength(1)
+  })
+
+  it("writes no Set-Cookie header when the refresh returns none", async () => {
+    // An unconditional append would emit an empty header. With no rotated
+    // access value the read must still fail closed with a login redirect.
+    const { event, res } = fakeEvent({
+      url: "/api/operator/overview",
+      headers: { accept: "application/json", cookie: "ibex_session=expired; ibex_refresh=refresh-token" },
+    })
+    stubFetch((target) =>
+      target.pathname === "/v1/operator/session/refresh"
+        ? upstream({ status: "ok" })
+        : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 }),
+    )
+
+    await expect(fetchOperatorJson(event, "overview", (value) => value)).rejects.toBeInstanceOf(
+      OperatorLoginRedirect,
+    )
+
+    expect(res.getHeader("set-cookie")).toBeUndefined()
+    expect(setCookieList(res)).toHaveLength(0)
+  })
+
   it("stops after one retry when the refreshed session is still rejected", async () => {
     // A second 401 must not trigger a second refresh: the retry flag is the
     // recursion guard, and the read still fails closed with a login redirect.

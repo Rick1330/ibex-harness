@@ -42,4 +42,8 @@ RUN apt-get update \
 # that needs root. Starting the server as uid 999 directly means the long-running
 # container never holds root, and the restore and backup one-shots that share
 # this image write into the data volume as the same uid that owns it.
-USER postgres
+#
+# The uid is numeric on purpose: hadolint DL3066 rejects a named user because the
+# name may not resolve on the host, and 999 is the postgres uid in this image
+# (verified with `id postgres`).
+USER 999:999
