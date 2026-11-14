@@ -20,15 +20,36 @@ declared incident with an incident note, not a routine maintenance command.
 ## Detection and preconditions
 
 1. Confirm a usable backup exists before you destroy anything. Run this from the
-   repository root, and **export** the same config and stanza the restore reads.
-   An unexported shell variable is invisible to `make v1-restore`, which runs as
-   a separate process and would fall back to the wrapper's own defaults:
+   repository root and **resolve the config to an absolute path**, then export it
+   with the stanza the restore reads:
 
    ```bash
-   export PGBACKREST_CONF="${PGBACKREST_CONF:-infra/backup/pgbackrest/pgbackrest.conf}"
+   # Docker bind-mount sources must be absolute (:142). A relative value here
+   # fails after PostgreSQL is already stopped (:110-115).
+   export PGBACKREST_CONF="${PGBACKREST_CONF:-$(realpath infra/backup/pgbackrest/pgbackrest.conf)}"
    export PGBACKREST_STANZA="${PGBACKREST_STANZA:-ibex-main}"
+   case "$PGBACKREST_CONF" in
+     /*) : ;;
+     *) echo "PGBACKREST_CONF must be an absolute path: $PGBACKREST_CONF" >&2; exit 1 ;;
+   esac
    pgbackrest --config="$PGBACKREST_CONF" --stanza="$PGBACKREST_STANZA" info
    ```
+
+   **Why absolute.** `pgbackrest-restore.sh` stops PostgreSQL first
+   (`:110-115`), then bind-mounts the config into the restore container as
+   `-v "${CONF}:/etc/pgbackrest/pgbackrest.conf:ro"` (`:142`). Docker requires an
+   absolute bind-mount source; a relative `PGBACKREST_CONF` is resolved against
+   an unknown host directory and the mount fails with the database already down,
+   turning a recoverable incident into an outage. The wrapper's own default is
+   already absolute (`infra/scripts/dev-tool.sh`:557); only a relative value the
+   operator supplies breaks it. For a **custom** config, pass an absolute path
+   yourself — `realpath /path/to/custom.conf`. The `case` check proves the *form*
+   of the path, not that the file exists: GNU `realpath` resolves a missing final
+   component without error, so existence is proven by `pgbackrest info`
+   succeeding (and the wrapper refuses a missing file before the restore starts,
+   `infra/scripts/dev-tool.sh`:556-580). In a fresh checkout the default resolves
+   to `infra/backup/pgbackrest/pgbackrest.conf`, which exists only after you copy
+   the shipped `.example`; `info` failing there is the correct stop.
 
    `pgbackrest-restore.sh` resolves the repository config from `PGBACKREST_CONF`
    and falls back to `infra/backup/pgbackrest/pgbackrest.conf`, and reads the
@@ -39,22 +60,46 @@ declared incident with an incident note, not a routine maintenance command.
    stanza `make v1-restore` will use. A set `PGBACKREST_CONF` is honoured only when
    the file exists, and the wrapper refuses the shipped `.example`
    (`pgbackrest-restore.sh`:8-25; `infra/scripts/dev-tool.sh`:556-580).
-2. Confirm the selection reaches the restore process, not only `info`. The same
-   values must be visible to `make v1-restore`; either export them as in step 1
-   and leave them exported, or pass them explicitly on the `make` command line.
-   Check what will be inherited right before restoring:
+
+   **Stop condition.** If the check prints `PGBACKREST_CONF must be an absolute
+   path`, or `info` reports a stanza or repository you did not expect, **stop**:
+   do not restore until the config resolves to an absolute path and `info` reads
+   the repository and stanza you intend.
+2. Confirm the selection reaches the restore process, not only `info`. Pass both
+   values **explicitly on the `make` command line**, so the restore cannot fall
+   back to the wrapper's defaults. Immediately before restoring, print the
+   resolved values and re-read the repository with them:
 
    ```bash
-   env | grep '^PGBACKREST_'        # after the export in step 1
-   make -n v1-restore PGBACKREST_CONF=... PGBACKREST_STANZA=...   # echoed recipe
+   printf 'CONF=%s\nSTANZA=%s\n' "$PGBACKREST_CONF" "$PGBACKREST_STANZA"
+   pgbackrest --config="$PGBACKREST_CONF" --stanza="$PGBACKREST_STANZA" info
    ```
 
-   **Stop condition.** The config and stanza the restore will use must be
-   byte-identical to the ones `info` inspected in step 1. If `env` shows nothing,
-   shows a different path or stanza, or you cannot say which values `make` will
-   pass through, **stop and re-export** — do not restore. A restore that reads a
-   different repository or stanza than the one you verified restores a different
-   backup over PostgreSQL.
+   Then run the restore with exactly those values on the command line:
+
+   ```bash
+   make v1-restore PGBACKREST_CONF="$PGBACKREST_CONF" PGBACKREST_STANZA="$PGBACKREST_STANZA"
+   ```
+
+   The `v1-restore` recipe itself is `@"$(BASH)" "$(DEV_TOOL)" v1 restore`
+   (`Makefile`:224-225) and does **not** name either variable, so the values
+   reach `dev-tool.sh` only because GNU make exports command-line variable
+   assignments into the recipe environment; `v1_restore` then runs
+   `pgbackrest-restore.sh` with its environment inherited
+   (`infra/scripts/dev-tool.sh`:597-600), and `resolve_conf` reads
+   `PGBACKREST_CONF` (`pgbackrest-restore.sh`:101). That is why the values are
+   written out here rather than assumed: nothing between `make` and the script
+   re-reads or defaults them.
+
+   **Stop condition.** Read the printed `CONF=` and `STANZA=` lines and the
+   `info` output they produced. The restore command you are about to run must
+   carry those **exact** values — the same absolute path, byte for byte, and the
+   same stanza. If a printed value is empty, is relative, differs from the
+   `make v1-restore` line you are about to run, or `info` names a different
+   repository or stanza than you verified in step 1, **stop** — do not restore,
+   re-resolve the value, and re-run this check. A restore that reads a different
+   repository or stanza than the one you verified restores a different backup
+   over PostgreSQL.
 3. Confirm the repository is reachable. The backup/restore scripts expect an
    S3/MinIO-backed repository (`infra/scripts/platform/pgbackrest-backup.sh`:1-2).
    If `repo1-s3` is unreachable, there is no restore.
@@ -75,22 +120,26 @@ declared incident with an incident note, not a routine maintenance command.
 **Latest restore (supported):**
 
 ```bash
-# The restore runs as a child process: export, or pass on the make line below.
-export PGBACKREST_CONF="${PGBACKREST_CONF:-infra/backup/pgbackrest/pgbackrest.conf}"
+# The restore runs as a child process: pass both values on the make line.
+export PGBACKREST_CONF="${PGBACKREST_CONF:-$(realpath infra/backup/pgbackrest/pgbackrest.conf)}"
 export PGBACKREST_STANZA="${PGBACKREST_STANZA:-ibex-main}"
+case "$PGBACKREST_CONF" in
+  /*) : ;;
+  *) echo "PGBACKREST_CONF must be an absolute path: $PGBACKREST_CONF" >&2; exit 1 ;;
+esac
+printf 'CONF=%s\nSTANZA=%s\n' "$PGBACKREST_CONF" "$PGBACKREST_STANZA"
 pgbackrest --config="$PGBACKREST_CONF" --stanza="$PGBACKREST_STANZA" info
-env | grep '^PGBACKREST_'              # must match what info just inspected
-make v1-restore                        # restores the latest backup into the profile
-# Equivalent, if you prefer not to rely on the export:
-# make v1-restore PGBACKREST_CONF="$PGBACKREST_CONF" PGBACKREST_STANZA="$PGBACKREST_STANZA"
+make v1-restore PGBACKREST_CONF="$PGBACKREST_CONF" PGBACKREST_STANZA="$PGBACKREST_STANZA"
 ```
 
-**Stop condition.** If `env` is empty, or names a different config path or stanza
-than the `info` output above, **do not run the restore**. Re-export and re-run
-`info`: `make v1-restore` reads `PGBACKREST_CONF` and `PGBACKREST_STANZA` from
-its environment and silently falls back to the wrapper's defaults when they are
-absent (`pgbackrest-restore.sh`:7-23,101-102; `infra/scripts/dev-tool.sh`:556-580),
-so a mismatch means it would restore a different backup over PostgreSQL.
+**Stop condition.** If `CONF=` or `STANZA=` is empty, is relative, or names a
+different config path or stanza than the `info` output above, **do not run the
+restore**. `v1-restore` takes these values from its environment and, absent them,
+silently falls back to the wrapper's defaults
+(`pgbackrest-restore.sh`:7-23,101-102; `infra/scripts/dev-tool.sh`:556-580,901), so
+a mismatch means it would restore a different backup over PostgreSQL — and a
+relative config path fails inside Docker after PostgreSQL is already stopped
+(`pgbackrest-restore.sh`:110-115,142).
 
 Do **not** create a backup from the readable database before restoring. A backup
 taken now captures the corrupted or partially lost state and can become the
@@ -108,21 +157,24 @@ taken now captures the corrupted or partially lost state and can become the
 
 `make v1-restore` forwards to `dev-tool.sh v1 restore`, which first requires a
 real pgBackRest config and then runs `pgbackrest-restore.sh`
-(`infra/scripts/dev-tool.sh`:549-552; `Makefile`:224-225). The script stops
-Postgres, runs `pgbackrest ... restore` inside the compose network, and prints
+(`infra/scripts/dev-tool.sh`:597-600,901; `Makefile`:224-225). The script stops
+Postgres, runs `pgbackrest restore` inside the compose network, and prints
 `[restore] ok <timestamp>` on success (`pgbackrest-restore.sh`:134-150).
 
-**Point-in-time restore is not available yet.** `make v1-pitr TARGET=...`
-**refuses** because `pgbackrest-restore.sh` has no `--type=time` / `--target`
-support (no `PGBACKREST_RESTORE_TARGET` pass-through either). The wrapper probes
-the script and exits non-zero rather than run a latest restore and label it PITR
-(`infra/scripts/dev-tool.sh`:554-576). Do not work around it by editing the
-script during an incident; a PITR restore is a code change plus a drill, not a
-runtime toggle. If support is added, invoke it in the same exported shell as
-`v1-restore` — export `PGBACKREST_CONF` and `PGBACKREST_STANZA` (or repeat them
-on the `make v1-pitr` line) and re-run the step-2 check — because it resolves
-the same config and stanza through the same wrapper
-(`infra/scripts/dev-tool.sh`:605-625).
+**Point-in-time restore is not available yet.** `make v1-pitr` with a
+`TARGET=2026-11-14T03:00:00Z` **refuses** because `pgbackrest-restore.sh` has no
+`--type=time` / `--target` support (no `PGBACKREST_RESTORE_TARGET` pass-through
+either). The wrapper probes the script and exits non-zero rather than run a
+latest restore and label it PITR (`infra/scripts/dev-tool.sh`:605-625). Do not
+work around it by editing the script during an incident; a PITR restore is a
+code change plus a drill, not a runtime toggle. If support is added, resolve and
+carry the same values explicitly: the config must be the absolute path from step
+1 and the stanza the one you verified, passed on the `make v1-pitr` line as
+`PGBACKREST_CONF="$PGBACKREST_CONF" PGBACKREST_STANZA="$PGBACKREST_STANZA"`, with
+the step-2 check re-run first — because it resolves the same config and stanza
+through the same wrapper (`infra/scripts/dev-tool.sh`:605-625). A relative
+`PGBACKREST_CONF` fails there for the same Docker bind-mount reason as
+`v1-restore` (`pgbackrest-restore.sh`:142).
 
 **After a restore:**
 
