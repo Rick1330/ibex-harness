@@ -2,7 +2,7 @@
 # test-v1-backup-credentials.sh — regression tests for the v1 backup-repository
 # credential chain.
 #
-# Five properties are guarded here because they all protect the same secret:
+# Seven properties are guarded here because they all protect the same secret:
 #
 #   1. gen-v1-secrets.sh never loses or silently replaces
 #      PGBACKREST_REPO1_CIPHER_PASS. That passphrase is the only key to every
@@ -20,6 +20,13 @@
 #   5. A direct invocation that selects the v1 profile refuses to stop Postgres
 #      when it has no credentials, instead of collecting an empty credential
 #      list and skipping the delivery probe.
+#   6. The profile dotenv is a fallback for a missing value, not a precondition:
+#      an invocation that already holds all three credentials in its environment
+#      proceeds when no dotenv exists at all, and still proves delivery before
+#      Postgres is stopped.
+#   7. Every escape the repository's dotenv reader decodes is emitted on a
+#      rewrite, including the carriage return that would otherwise split the
+#      retained passphrase across two lines.
 #
 # Every path is redirected: IBEX_V1_ENV_FILE, IBEX_V1_SECRETS_DIR,
 # IBEX_V1_CERTS_DIR and IBEX_V1_PGBACKREST_CONF keep the generator out of the
@@ -540,5 +547,90 @@ if grep -qF -- "$expected_cipher" "$dir/out.log"; then
   fail "v1 dotenv: a credential value appeared in the output"
 fi
 pass "a direct v1 invocation loads the credentials from the profile .env and proves delivery before stopping Postgres"
+
+# --- case 12: a retained passphrase with a carriage return survives --force -
+
+dir="$WORK/force-carriage-return"
+gen_env "$dir"
+# The seed is what an installation written by an older renderer can hold: a
+# double-quoted value carrying the `\r` escape. The repository's reader decodes
+# it to a real CR, which is a line break for str.splitlines(), so writing the
+# character back literally splits the assignment and the next read returns
+# `alpha`.
+printf '%s\n' 'PGBACKREST_REPO1_CIPHER_PASS="alpha\rbravo"' >"$IBEX_V1_ENV_FILE"
+chmod 0600 "$IBEX_V1_ENV_FILE"
+before="$(env_read PGBACKREST_REPO1_CIPHER_PASS)"
+[[ "$before" == *$'\r'* ]] \
+  || fail "carriage return: the fixture .env did not decode to a value containing CR"
+if ! bash "$GEN" --force >"$dir/out.log" 2>&1; then
+  cat "$dir/out.log" >&2
+  fail "carriage return: generator exited non-zero"
+fi
+after="$(env_read PGBACKREST_REPO1_CIPHER_PASS)"
+# Byte-identical, not merely equal after normalisation: a CR that became a
+# newline, or a trailing byte that vanished, would still decrypt nothing.
+if ! printf '%s' "$after" | cmp -s - <(printf '%s' "$before"); then
+  fail "carriage return: --force changed the value the repository's dotenv reader decodes"
+fi
+if grep -q $'\r' "$IBEX_V1_ENV_FILE"; then
+  fail "carriage return: the retained passphrase was written back with a literal CR, which splits the assignment across lines"
+fi
+if grep -qF -- "$before" "$dir/out.log"; then
+  fail "carriage return: a credential value appeared in the output"
+fi
+pass "--force preserves a passphrase containing a carriage return byte for byte"
+
+# --- case 13: an environment-only invocation needs no profile dotenv --------
+
+dir="$WORK/restore-env-only"
+mkdir -p "$dir"
+printf '[global]\nrepo1-type=s3\n' >"$dir/pgbackrest.conf"
+write_stub "$dir/stub-engine"
+STUB_LOG="$dir/calls.log"
+STUB_ENV_REPORT="$dir/env-report.txt"
+export STUB_LOG STUB_ENV_REPORT
+: >"$STUB_LOG"
+: >"$STUB_ENV_REPORT"
+
+# Recovery with all three credentials supplied through the environment and no
+# profile .env available at all (a recovery host, a break-glass shell). The
+# loader must not demand the file, the probe must still prove delivery intact,
+# and Postgres must be stopped only after that.
+cipher="$(new_cipher)"
+s3_key="$(new_cipher)"
+s3_secret="$(new_cipher)"
+# shellcheck disable=SC2030,SC2031
+if ! (
+  export PGBACKREST_REPO1_CIPHER_PASS="$cipher"
+  export PGBACKREST_REPO1_S3_KEY="$s3_key"
+  export PGBACKREST_REPO1_S3_KEY_SECRET="$s3_secret"
+  export PGBACKREST_CONF="$dir/pgbackrest.conf"
+  export PGBACKREST_STANZA=ibex-main
+  export PGBACKREST_COMPOSE_VOLUME=stubvol
+  export COMPOSE_FILE="$ROOT_DIR/infra/compose/v1-single-node/compose.yml"
+  export IBEX_V1_ENV="$dir/absent.env"
+  export IBEX_CONTAINER_CLI="$dir/stub-engine"
+  bash "$RESTORE"
+) >"$dir/out.log" 2>&1; then
+  cat "$dir/out.log" >&2
+  fail "environment-only credentials: the restore refused although all three were supplied and no .env was needed"
+fi
+[[ ! -e "$dir/absent.env" ]] \
+  || fail "environment-only credentials: the case created the dotenv it exists to omit"
+[[ "$(stub_report_value ENVFILE_KEYS)" == "3" ]] \
+  || fail "environment-only credentials: the credential file did not carry all three credentials"
+expected_sha="$(printf '%s' "$cipher" | sha256sum | awk '{print $1}')"
+[[ "$(stub_report_value ENVFILE_CIPHER_SHA)" == "$expected_sha" ]] \
+  || fail "environment-only credentials: the container did not receive the passphrase the environment held"
+probe_line="$(grep -n -- '--entrypoint sh' "$STUB_LOG" | head -n1 | cut -d: -f1)"
+stop_line="$(grep -n -- ' stop postgres' "$STUB_LOG" | head -n1 | cut -d: -f1)"
+[[ -n "$probe_line" && -n "$stop_line" && "$probe_line" -lt "$stop_line" ]] \
+  || fail "environment-only credentials: Postgres was not stopped after credential delivery was proven"
+for secret in "$cipher" "$s3_key" "$s3_secret"; do
+  if grep -qF -- "$secret" "$dir/out.log"; then
+    fail "environment-only credentials: a credential value appeared in the output"
+  fi
+done
+pass "an environment-only v1 invocation proceeds without a profile .env and proves delivery before stopping Postgres"
 
 echo "v1 backup credential tests: PASS ($PASSED cases)"

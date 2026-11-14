@@ -239,7 +239,7 @@ v1_repository_profile_selected() {
   grep -q 'PGBACKREST_REPO1_CIPHER_PASS' "$compose_file"
 }
 
-# load_v1_repository_credentials reads the three credentials from the profile
+# load_v1_repository_credentials fills the three credentials from the profile
 # dotenv (0600) when the v1 configuration is selected and they are not already
 # in this script's environment.
 #
@@ -250,6 +250,14 @@ v1_repository_profile_selected() {
 # Postgres was stopped for a restore that then could not authenticate against an
 # encrypted repository.
 #
+# The dotenv is a *fallback for a missing value*, never a precondition. Checking
+# for the file before looking at the environment refused a legitimate recovery
+# path: an operator who supplies all three values through the environment and has
+# no profile .env available (a recovery host, a break-glass shell, a restore of
+# the secrets backup) was rejected before the values it already held were
+# considered. The file is therefore required — and read — only when a credential
+# actually has to be loaded from it.
+#
 # The dotenv is read with the repository's Compose-dotenv reader, never sourced:
 # sourcing would execute the file as shell code and would not decode it the way
 # Compose does. Values land in shell variables only; nothing is exported,
@@ -258,16 +266,16 @@ load_v1_repository_credentials() {
   local env_file="${IBEX_V1_ENV:-$ROOT/infra/compose/v1-single-node/.env}"
   local var key value
   local -a missing=()
-  if [[ ! -f "$env_file" ]]; then
-    echo "[restore] FAILED: $env_file is missing, so the repository credentials the v1 profile needs cannot be read; nothing has been stopped" >&2
-    echo "[restore] run 'make v1-restore' (or 'make v1-pitr TARGET=...'), which loads them from the profile .env first" >&2
-    return 1
-  fi
   for var in "${CRED_NAMES[@]}"; do
     if [[ -n "${!var:-}" ]]; then
       continue
     fi
     key="$(credential_source_key "$var")"
+    if [[ ! -f "$env_file" ]]; then
+      echo "[restore] FAILED: $var is not in the environment and $env_file is missing, so it cannot be loaded; nothing has been stopped" >&2
+      echo "[restore] export the three PGBACKREST_REPO1_* values, or run 'make v1-restore' (or 'make v1-pitr TARGET=...'), which loads them from the profile .env first" >&2
+      return 1
+    fi
     if ! value="$(python3 "$ROOT/infra/scripts/lib/dotenv.py" "$key" <"$env_file")"; then
       echo "[restore] FAILED: could not read $key from $env_file; nothing has been stopped" >&2
       return 1
