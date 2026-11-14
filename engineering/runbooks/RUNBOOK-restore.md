@@ -19,20 +19,24 @@ declared incident with an incident note, not a routine maintenance command.
 
 ## Detection and preconditions
 
-1. Confirm a usable backup exists before you destroy anything:
+1. Confirm a usable backup exists before you destroy anything. Run this from the
+   repository root, and use the same config and stanza the restore reads:
 
    ```bash
-   pgbackrest --config=infra/backup/pgbackrest/pgbackrest.conf \
-     --stanza=ibex-main info
+   PGBACKREST_CONF="${PGBACKREST_CONF:-infra/backup/pgbackrest/pgbackrest.conf}"
+   PGBACKREST_STANZA="${PGBACKREST_STANZA:-ibex-main}"
+   pgbackrest --config="$PGBACKREST_CONF" --stanza="$PGBACKREST_STANZA" info
    ```
 
-   Pass the repository config explicitly with `--config`. `PGBACKREST_CONF` is a
-   variable the platform scripts read (`pgbackrest-restore.sh`:7-23); the
-   `pgbackrest` binary itself does not read it, so relying on it here queries the
-   default config instead of the repository you are about to restore from.
-
-   A real `pgbackrest.conf` must exist; the scripts refuse the `.example`
-   (`pgbackrest-restore.sh`:10-25).
+   `pgbackrest-restore.sh` resolves the repository config from `PGBACKREST_CONF`
+   and falls back to `infra/backup/pgbackrest/pgbackrest.conf`, and reads the
+   stanza from `PGBACKREST_STANZA` with the default `ibex-main`
+   (`pgbackrest-restore.sh`:7-23,101-102). The `pgbackrest` binary reads neither
+   variable, so set both in the shell as above: unset, `info` queries the binary's
+   default config and stanza, which is not necessarily the repository and stanza
+   `make v1-restore` will use. A set `PGBACKREST_CONF` is honoured only when the
+   file exists, and the wrapper refuses the shipped `.example`
+   (`pgbackrest-restore.sh`:8-25; `infra/scripts/dev-tool.sh`:556-580).
 2. Confirm the repository is reachable. The backup/restore scripts expect an
    S3/MinIO-backed repository (`infra/scripts/platform/pgbackrest-backup.sh`:1-2).
    If `repo1-s3` is unreachable, there is no restore.
@@ -53,7 +57,9 @@ declared incident with an incident note, not a routine maintenance command.
 **Latest restore (supported):**
 
 ```bash
-pgbackrest --config=infra/backup/pgbackrest/pgbackrest.conf --stanza=ibex-main info
+PGBACKREST_CONF="${PGBACKREST_CONF:-infra/backup/pgbackrest/pgbackrest.conf}"
+PGBACKREST_STANZA="${PGBACKREST_STANZA:-ibex-main}"
+pgbackrest --config="$PGBACKREST_CONF" --stanza="$PGBACKREST_STANZA" info
 make v1-restore               # restores the latest backup into the profile
 ```
 
@@ -87,18 +93,64 @@ runtime toggle.
 
 **After a restore:**
 
-1. **Before starting the profile**, confirm forgotten content did **not** come
-   back. The restore-replay integration test is the contract: a restore must
-   carry tombstones, the lifecycle-outbox marker and the deletion receipt, and
-   the sentinel must be absent
-   (`infra/migrations/postgres/restore_replay_integration_test.go`:1-30). Run the
-   check against the restored data while traffic is still blocked.
-   - If a forgotten sentinel is present, **do not start the profile**: keep
-     traffic blocked and escalate. A restore that resurrects deleted content is
-     an incident, not a completed recovery.
-2. A restored provider credential must decrypt under the recovered
-   `IBEX_CREDENTIALS_MASTER_KEY`; if it does not, use the master-key runbook.
-3. Only after steps 1–2 pass, start the profile (`make v1-up`) and confirm
+1. **Start PostgreSQL alone; leave ingress closed.** The restore stops Postgres
+   and leaves it stopped (`pgbackrest-restore.sh`:110-115). Bring up only the
+   database through the profile's own service control, which also selects the
+   container runtime and the profile env file:
+
+   ```bash
+   bash infra/scripts/dev-tool.sh v1 up --no-build postgres
+   ```
+
+   That resolves to `compose_with_mode v1 up -d --no-build postgres`
+   (`infra/scripts/dev-tool.sh`:627-644) over the profile's Compose file, env file
+   and container runtime (`infra/scripts/dev-tool.sh`:74-106), so Compose starts
+   `postgres` and its dependencies only: `postgres` declares none
+   (`infra/compose/v1-single-node/compose.yml`:22-38). Every application service
+   gates on the `migrate`, `provision` and `bootstrap` one-shots or on another
+   service (`compose.yml`:57-147,182-188,232-240), and the only published port is
+   the edge terminator (`compose.yml`:511-537). Confirm with `make v1-ps`
+   (`Makefile`:215-216) that `postgres` is running and no application service is.
+   Do not run `make v1-up` yet: it starts the whole profile and then the smoke
+   request (`Makefile`:174-196), which reopens traffic.
+2. **Check the restored data against the replay contract.** The restore-replay
+   integration test states what a restored copy must satisfy: the memory is a
+   tombstone (`content = '[forgotten]'`, `status = 'deleted'`,
+   `tombstoned = TRUE`), exactly one `forgotten/2` lifecycle-outbox marker
+   exists, the deletion receipt has `verified_absent_at` set, the idempotency
+   ledger holds the erased marker `{"erased": true}`, and the content is not
+   resurrected — the test first proves a pre-forget restore *does* resurrect it,
+   so the assertion discriminates
+   (`infra/migrations/postgres/restore_replay_integration_test.go`:1-30,61,549-559,567-581,594-647).
+   Query the restored database while traffic is still blocked and compare against
+   that contract. If the restored data resurrects content, **do not start the
+   profile**: keep traffic blocked and escalate. A restore that brings deleted
+   content back is an incident, not a completed recovery.
+3. **Establish what should be absent from a source outside the restored
+   database.** The markers in step 2 were restored from the same backup, so they
+   prove the copy is self-consistent, not that it is complete; and the
+   integration test's sentinel
+   (`restore_replay_integration_test.go`:61) is a test-database fixture, not
+   production evidence. Before serving traffic, obtain the set of production
+   content deleted after the backup from a record the restore cannot rewrite:
+   the erasure and deletion request/job records the operator holds, a deletion
+   evidence export taken from the live system before the restore, or a receipt or
+   audit copy kept outside this database. A receipt in
+   `ibex_core.deletion_store_receipts` is a row of the database being restored
+   (`infra/migrations/postgres/000037_privacy_governance.up.sql`:354), so it is
+   not that record, and neither is anything else inside the restored copy. Where
+   the profile enables no such store, that record is the operator's — the
+   ClickHouse projection is a default-off, non-production pilot
+   (`engineering/adr/0085-evidence-relay-daemon-and-session-fence.md`:60), so do
+   not assume it. Check each of those identifiers in the restored database and
+   confirm it is absent or tombstoned. If the independent record cannot be
+   produced or checked, **keep traffic blocked and escalate**: an unverified
+   restore is not a recovery. Never present the in-database markers or the test
+   sentinel as that record.
+4. A restored provider credential must decrypt under the recovered
+   `IBEX_CREDENTIALS_MASTER_KEY`; if it does not, use the master-key runbook
+   (`engineering/runbooks/RUNBOOK-master-key.md`).
+5. Only after steps 1–4 pass, start the profile (`make v1-up`) and confirm
    `/ready` on each service.
 
 ## Escalation
