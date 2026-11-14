@@ -237,11 +237,11 @@ before a restore, and the restore runbook states that sequence.
 **Credentials.** `make v1-restore` and `make v1-pitr` export `PGBACKREST_REPO1_CIPHER_PASS`,
 `PGBACKREST_REPO1_S3_KEY` and `PGBACKREST_REPO1_S3_KEY_SECRET` from the profile's `0600` `.env`
 (`infra/scripts/dev-tool.sh`:607-610). The script writes them to a `0600` file created with `mktemp`, passes it to the
-engine with `--env-file`, and removes it on exit (`infra/scripts/platform/pgbackrest-restore.sh`:309-390). It does not
+engine with `--env-file`, and removes it on exit (`infra/scripts/platform/pgbackrest-restore.sh`:317-398). It does not
 use `-e VAR`: with a rootful engine (`IBEX_PODMAN_SUDO=1` makes the engine `sudo -n podman`) sudo's `env_reset` drops
 the exported values, so a name-only `-e` arrives empty and the restore fails after Postgres is already stopped. Before
 that destructive step the script starts a probe container the same way and requires every value to arrive intact
-(`:400-429,516-518`); a direct invocation with `COMPOSE_FILE` pointing at the v1 profile loads the same three values
+(`:422-437,524-526`); a direct invocation with `COMPOSE_FILE` pointing at the v1 profile loads the same three values
 from the profile `.env` itself (`:265-295`). No credential belongs on a command line; a process listing would expose it.
 
 **Scheduling.** There is no looping backup service in the profile: a restart-looping scheduler inside Compose is a second

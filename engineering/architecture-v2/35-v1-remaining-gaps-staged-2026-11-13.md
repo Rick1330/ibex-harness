@@ -145,7 +145,7 @@ Rows no gate item names: none — all 25 are evidenced above.
 
 | ID | Gap | Evidence | Blocker | Source |
 |---|---|---|---|---|
-| P0-09 | No backup service or WAL archive in the supported profile; `pgbackrest` config is `.example` only; a runnable environment and D-D are needed | 34:79; 31:44 | infrastructure | 27:64 |
+| P0-09 | The supported profile now archives WAL and backs up: `archive_mode=on` with a pgBackRest `archive-push` command (`infra/compose/v1-single-node/compose.yml`), a generated `infra/backup/pgbackrest/pgbackrest.conf` (the `.example` is refused by path identity), and `make v1-backup` / `v1-backup-init`. What remains open is the off-host target and a signed RPO/RTO (`D-D`) | 34:79; 31:44 | infrastructure | 27:64 |
 | P0-10 | No PITR evidence: the committed drill report is a `pg_dump` fallback with `rpo_pass: false`. The restore script now accepts a time target and `make v1-pitr` passes one, but no run has exercised a target | `infra/scripts/platform/evidence/4p5-restore-drill/restore-drill-report.json`:13,15; `infra/scripts/platform/pgbackrest-restore.sh`:157-181; 34:80 | infrastructure | 27:65 |
 | P0-11 | RPO/RTO classes defined, no signed numbers | 34:81; `15-runtime-operations-and-recovery.md`:11 | owner decision (D-D) | 27:66 |
 | P0-19 | Routing built, no human paging destination; the paging destination is deployment config | 34:125; 31:55 | owner decision + workflow | 27:84 |
