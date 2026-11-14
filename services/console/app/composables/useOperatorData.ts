@@ -17,21 +17,93 @@ import type {
   PublicPlatformHealth,
 } from "~~/shared/operator/public"
 
+type OperatorResponseError = Error & {
+  statusCode: number
+  status: number
+  statusText: string
+  data: unknown
+}
+
+/** Parse a BFF body the way ofetch's `destr` does: JSON when possible, text otherwise. */
+function parseOperatorBody(text: string): unknown {
+  if (!text) return undefined
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
+}
+
+/**
+ * Apply an operator BFF response to the outer SSR response and return its body.
+ *
+ * `Set-Cookie` is relayed verbatim: cookie flags are the API's decision and are
+ * never rewritten here. A 4xx/5xx throws an `Error` carrying `statusCode` and
+ * the parsed body in `data`, matching the `FetchError` ofetch throws on the
+ * client so `useAsyncData` reports the same failure on both paths.
+ */
+export async function applyOperatorResponse<T>(
+  response: Response,
+  appendCookie: (cookie: string) => void,
+): Promise<T> {
+  for (const cookie of response.headers.getSetCookie()) {
+    appendCookie(cookie)
+  }
+  const data = parseOperatorBody(await response.text())
+  if (response.status >= 400) {
+    const error = new Error(
+      `[GET] ${JSON.stringify(response.url)}: ${response.status} ${response.statusText}`,
+    ) as OperatorResponseError
+    error.statusCode = response.status
+    error.status = response.status
+    error.statusText = response.statusText
+    error.data = data
+    throw error
+  }
+  return data as T
+}
+
+/**
+ * Read an operator BFF route, relaying its cookies to the outer SSR response.
+ *
+ * On the server `useRequestFetch()` resolves to `event.$fetch`, which Nitro wires
+ * through h3's `fetchWithEvent`: it forwards request headers only and resolves to
+ * the parsed body, so a `Set-Cookie` the inner route emitted is discarded and the
+ * browser keeps the stale access cookie after a server-side session refresh.
+ * `event.fetch` returns the raw `Response`, whose cookies are appended to the page
+ * response. On the client there is no outer SSR response; the browser applies the
+ * header itself.
+ */
+function requestOperator<T>(path: string): Promise<T> {
+  const event = useRequestEvent()
+  if (!event) {
+    const request = useRequestFetch()
+    return request(path) as Promise<T>
+  }
+  return event
+    .fetch(path)
+    .then((response) =>
+      applyOperatorResponse<T>(response, (cookie) =>
+        event.node.res.appendHeader("set-cookie", cookie),
+      ),
+    )
+}
+
 export function useOperatorContext() {
   return useAsyncData<PublicOperatorContext>("operator-context", () => {
-    return useRequestFetch()("/api/operator/context")
+    return requestOperator<PublicOperatorContext>("/api/operator/context")
   })
 }
 
 export function useOperatorOverview() {
   return useAsyncData<PublicOperatorOverview>("operator-overview", () => {
-    return useRequestFetch()("/api/operator/overview")
+    return requestOperator<PublicOperatorOverview>("/api/operator/overview")
   })
 }
 
 export function usePlatformHealth() {
   return useAsyncData<PublicPlatformHealth>("operator-platform-health", () => {
-    return useRequestFetch()("/api/operator/platform/health")
+    return requestOperator<PublicPlatformHealth>("/api/operator/platform/health")
   })
 }
 
@@ -39,19 +111,19 @@ export function useTraceList(params: URLSearchParams, enabled = true) {
   const query = params.toString()
   return useAsyncData<PublicOperatorTraceList | null>(`operator-traces:${enabled ? query : "disabled"}`, () => {
     if (!enabled) return Promise.resolve(null)
-    return useRequestFetch()(`/api/operator/traces${query ? `?${query}` : ""}`)
+    return requestOperator<PublicOperatorTraceList>(`/api/operator/traces${query ? `?${query}` : ""}`)
   })
 }
 
 export function useTraceRuns(traceId: string) {
   return useAsyncData<PublicOperatorTraceList>(`operator-trace-runs:${traceId}`, () => {
-    return useRequestFetch()(`/api/operator/traces/${encodeURIComponent(traceId)}`)
+    return requestOperator<PublicOperatorTraceList>(`/api/operator/traces/${encodeURIComponent(traceId)}`)
   })
 }
 
 export function useTraceDetail(runId: string) {
   return useAsyncData<PublicOperatorTraceDetail>(`operator-trace-detail:${runId}`, () => {
-    return useRequestFetch()(`/api/operator/traces/runs/${encodeURIComponent(runId)}`)
+    return requestOperator<PublicOperatorTraceDetail>(`/api/operator/traces/runs/${encodeURIComponent(runId)}`)
   })
 }
 

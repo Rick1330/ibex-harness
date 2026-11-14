@@ -8,7 +8,10 @@ from typing import Final
 from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Hard cap for AssembleContextRequest.options.max_memories (0 = unlimited).
+# Hard cap for AssembleContextRequest.options.max_memories. A request value of 0
+# means "no request preference": the server default from IBEX_CONTEXT_MAX_MEMORIES
+# applies (see _with_memory_cap in assemble.py), so 0 is not "unlimited" when a
+# default is configured. Only a configured default of 0 leaves assembly uncapped.
 MAX_ASSEMBLY_OPTION_MEMORIES: Final[int] = 100
 
 
