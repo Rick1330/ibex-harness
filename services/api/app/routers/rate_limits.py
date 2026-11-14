@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.authz import RequireOperatorMetadataRead, RequireOrgSettings, assert_path_org
+from app.authz import RequireMetadataRead, RequireOrgSettings, assert_path_org
 from app.deps import org_session
 from app.rate_limit_publish import NoopRateLimitConfigPublisher, RedisRateLimitCounter
 from app.schemas.rate_limits import RateLimitsPatchRequest, RateLimitsResponse
@@ -71,7 +71,7 @@ def _make_ctx(
 def _rate_limit_read_ctx(
     request: Request,
     org_id: UUID,
-    token: RequireOperatorMetadataRead,
+    token: RequireMetadataRead,
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> _RateLimitCtx:
     return _make_ctx(request, org_id, token.org_id, session)

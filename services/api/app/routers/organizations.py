@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.authz import (
-    RequireOperatorMetadataRead,
+    RequireMetadataRead,
     RequireOrgSettings,
     RequireOwnerOrgSettings,
     assert_path_org,
@@ -30,7 +30,7 @@ router = APIRouter(prefix="/v1/organizations", tags=["organizations"])
 @router.get("/{org_id}")
 async def get_org(
     org_id: UUID,
-    token: RequireOperatorMetadataRead,
+    token: RequireMetadataRead,
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> OrganizationResponse:
     assert_path_org(token.org_id, org_id)

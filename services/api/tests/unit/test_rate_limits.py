@@ -181,3 +181,31 @@ def test_get_rate_limits_with_operator_metadata_read() -> None:
     ):
         resp = client.get(_rate_limits_url(org_id), headers=bearer_headers())
     assert resp.status_code == 200
+
+
+def test_get_rate_limits_survives_disabled_operator_feature() -> None:
+    """The operator feature gate covers the operator surface, not these org reads."""
+    org_id = uuid4()
+    with (
+        managed_org_client(
+            ManagedClientOpts(
+                org_id=org_id,
+                result=_result(org_id, OPERATOR_METADATA_READ),
+            )
+        ) as (client, _res, _pub),
+        _mock_service("get_rate_limits", org_id),
+    ):
+        client.app.state.settings.operator_feature_enabled = False
+        resp = client.get(_rate_limits_url(org_id), headers=bearer_headers())
+    assert resp.status_code == 200
+
+
+def test_get_rate_limits_denies_missing_bit_with_operator_disabled() -> None:
+    org_id = uuid4()
+    with managed_org_client(
+        ManagedClientOpts(org_id=org_id, result=_result(org_id, READ_ONLY))
+    ) as (client, _res, _pub):
+        client.app.state.settings.operator_feature_enabled = False
+        resp = client.get(_rate_limits_url(org_id), headers=bearer_headers())
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == INSUFFICIENT_PERMISSIONS

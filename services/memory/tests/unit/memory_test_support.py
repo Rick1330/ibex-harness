@@ -8,10 +8,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from ibex_idempotency import ClaimToken
+from ibex_idempotency import ClaimToken, LedgerValidationError
 from sqlalchemy.exc import IntegrityError
 
-from app.routers.memory_write_support import IdempotencyHandle
+from app.routers.memory_write_idempotency import IdempotencyHandle
 from app.write.models import MemoryRow
 
 
@@ -192,3 +192,32 @@ def agent_fk_violation_integrity_error(
         pgcode=cfg.pgcode,
         constraint_name=cfg.constraint_name,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class LedgerFkViolationOpts:
+    sqlstate: str | None = "23503"
+    constraint_name: str = "idempotency_ledger_agent_id_fkey"
+    message: str = (
+        'insert or update on table "idempotency_ledger" violates foreign key constraint '
+        '"idempotency_ledger_agent_id_fkey"'
+    )
+
+
+def ledger_validation_error(
+    opts: LedgerFkViolationOpts | None = None,
+) -> LedgerValidationError:
+    """LedgerValidationError shaped like the ledger's own claim rejection.
+
+    ``PostgresIdempotencyLedger.claim`` raises it ``from`` the driver's
+    IntegrityError, so the cause is what carries the constraint name that tells
+    a missing agent apart from a missing organization.
+    """
+    cfg = opts or LedgerFkViolationOpts()
+    error = LedgerValidationError("idempotency ledger claim references unknown rows")
+    error.__cause__ = _integrity_error(
+        message=cfg.message,
+        sqlstate=cfg.sqlstate,
+        constraint_name=cfg.constraint_name,
+    )
+    return error

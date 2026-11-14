@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.authz import RequireOperatorMetadataRead, RequireOrgSettings, assert_path_org
+from app.authz import RequireMetadataRead, RequireOrgSettings, assert_path_org
 from app.deps import org_session
 from app.schemas.capture_policies import (
     CapturePolicyCreate,
@@ -34,7 +34,7 @@ def _make_ctx(org_id: UUID, token_org_id: UUID, session: AsyncSession) -> _Ctx:
 
 def _read_ctx(
     org_id: UUID,
-    token: RequireOperatorMetadataRead,
+    token: RequireMetadataRead,
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> _Ctx:
     return _make_ctx(org_id, token.org_id, session)

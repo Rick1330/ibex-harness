@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -26,7 +28,7 @@ from app.lifecycle import (
 from app.pipeline.context import WriteContext
 from app.pipeline.write import WritePipeline
 from app.routers.memories import ForgetMemoryContext
-from app.routers.memory_write_support import erased_create_prepare
+from app.routers.memory_write_idempotency import erased_create_prepare
 from app.schemas.memories import ForgetMemoryRequest
 from app.vectorstore.base import SearchMode, SearchRequest, UpsertRequest
 from app.vectorstore.pgvector_store import PgVectorStore
@@ -93,31 +95,37 @@ async def _seed_memory_with_embedding(
     return org_id, agent_id, memory_id, query, store
 
 
-async def _assert_tombstoned_vector_fence(
-    store: PgVectorStore,
-    *,
-    org_id,
-    agent_id,
-    memory_id,
-    query: list[float],
-) -> None:
+@dataclass(frozen=True, slots=True)
+class _VectorFence:
+    """One seeded memory plus the store that must refuse its stale operations."""
+
+    store: PgVectorStore
+    org_id: Any
+    agent_id: Any
+    memory_id: Any
+    query: list[float]
+
+
+async def _assert_tombstoned_vector_fence(fence: _VectorFence) -> None:
     with pytest.raises(LookupError):
-        await store.delete(memory_id=memory_id, org_id=org_id, expected_revision=2)
+        await fence.store.delete(
+            memory_id=fence.memory_id, org_id=fence.org_id, expected_revision=2
+        )
     stale_upsert = UpsertRequest(
-        memory_id=memory_id,
-        org_id=org_id,
-        embedding=query,
+        memory_id=fence.memory_id,
+        org_id=fence.org_id,
+        embedding=fence.query,
         embedding_model="test",
         expected_revision=1,
     )
     with pytest.raises(LookupError):
-        await store.upsert(stale_upsert)
+        await fence.store.upsert(stale_upsert)
     for mode in SearchMode:
-        hits = await store.search(
+        hits = await fence.store.search(
             SearchRequest(
-                org_id=org_id,
-                agent_id=agent_id,
-                query_embedding=query,
+                org_id=fence.org_id,
+                agent_id=fence.agent_id,
+                query_embedding=fence.query,
                 limit=5,
                 min_similarity=0.1,
                 mode=mode,
@@ -161,7 +169,13 @@ async def test_forget_http_scope_revision_and_tombstone_vector_fence(
     )
     assert (revision, tombstoned, status, embedding) == (2, True, "deleted", None)
     await _assert_tombstoned_vector_fence(
-        store, org_id=org_id, agent_id=agent_id, memory_id=memory_id, query=query
+        _VectorFence(
+            store=store,
+            org_id=org_id,
+            agent_id=agent_id,
+            memory_id=memory_id,
+            query=query,
+        )
     )
     assert await _read_outbox(
         session_factory, org_id=org_id, memory_id=memory_id

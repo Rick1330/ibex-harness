@@ -85,7 +85,7 @@
     "path": "/v1/agents",
     "response_model": "<class 'app.pagination.CursorPage[AgentResponse]'>",
     "security": [
-      "app.authz.require_operator_permission.<locals>._dep",
+      "app.authz.require_permission.<locals>._dep",
       "app.routers.agents._agent_list_ctx"
     ],
     "source": "services/api/app/routers/agents.py"
@@ -127,7 +127,7 @@
     "path": "/v1/agents/{agent_id}",
     "response_model": "<class 'app.schemas.agents.AgentResponse'>",
     "security": [
-      "app.authz.require_operator_permission.<locals>._dep",
+      "app.authz.require_permission.<locals>._dep",
       "app.deps.org_session"
     ],
     "source": "services/api/app/routers/agents.py"
@@ -498,7 +498,7 @@
     "path": "/v1/organizations/{org_id}",
     "response_model": "<class 'app.schemas.organizations.OrganizationResponse'>",
     "security": [
-      "app.authz.require_operator_permission.<locals>._dep",
+      "app.authz.require_permission.<locals>._dep",
       "app.deps.org_session"
     ],
     "source": "services/api/app/routers/organizations.py"

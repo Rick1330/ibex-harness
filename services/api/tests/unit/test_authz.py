@@ -345,3 +345,25 @@ def test_require_any_permission_dependency() -> None:
         org_id=uuid4(), permissions=TOKEN_REVOKE, user_id=str(uuid4())
     )
     assert dep(token=revoke_only) is revoke_only
+
+
+def test_metadata_read_dependency_checks_only_the_bitmap() -> None:
+    """Org-management metadata reads must not consult the operator feature gate.
+
+    ``require_operator_permission`` takes ``request`` first and applies the
+    feature gate; this dependency takes only the token, so re-pointing it at the
+    gated helper fails here instead of silently 503ing the read routes.
+    """
+    from authclient.permissions import OPERATOR_METADATA_READ
+
+    from app.authz import RequireMetadataRead
+
+    dep = RequireMetadataRead.__metadata__[0].dependency
+    allowed = ValidateResult(
+        org_id=uuid4(), permissions=OPERATOR_METADATA_READ, user_id=str(uuid4())
+    )
+    assert dep(token=allowed) is allowed
+
+    with pytest.raises(ApiError) as exc:
+        dep(token=ValidateResult(org_id=uuid4(), permissions=0, user_id=str(uuid4())))
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS

@@ -335,7 +335,7 @@ def test_main_auth_not_ready() -> None:
 
 
 def test_http_error_for_write_reraises_unknown() -> None:
-    from app.routers.memory_write_support import http_error_for_write
+    from app.routers.memory_write_errors import http_error_for_write
 
     err = ValueError("nope")
     with pytest.raises(ValueError, match="nope"):
@@ -343,7 +343,7 @@ def test_http_error_for_write_reraises_unknown() -> None:
 
 
 def test_http_error_for_write_maps_embedding() -> None:
-    from app.routers.memory_write_support import http_error_for_write
+    from app.routers.memory_write_errors import http_error_for_write
 
     exc = http_error_for_write(EmbeddingServiceError("down"))
     assert exc.status_code == 503
@@ -354,7 +354,7 @@ def test_http_error_for_write_maps_embedding() -> None:
 async def test_begin_idempotency_conflict_and_in_progress() -> None:
     from ibex_idempotency import KIND_CONFLICT, KIND_IN_PROGRESS, ClaimOutcome
 
-    from app.routers.memory_write_support import Principal, begin_idempotency
+    from app.routers.memory_write_idempotency import Principal, begin_idempotency
 
     ledger = AsyncMock()
     ledger.claim = AsyncMock(return_value=ClaimOutcome(kind=KIND_CONFLICT))

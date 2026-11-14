@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
-from authclient.permissions import MEMORY_DELETE
 from fastapi.testclient import TestClient
 from ibex_idempotency import (
     KIND_CONFLICT,
@@ -39,12 +38,13 @@ from app.exceptions import (
     ValidationError,
 )
 from app.main import create_app
-from app.permissions import MEMORY_WRITE
-from app.routers import memories as memories_router
-from app.routers import memory_write_support
+from app.permissions import MEMORY_READ, MEMORY_WRITE
+from app.routers import memory_forget_support
 from app.write.models import WriteOutcome, WriteOutcomeKind
 from tests.unit.memory_test_support import (
+    LedgerFkViolationOpts,
     agent_fk_violation_integrity_error,
+    ledger_validation_error,
     sample_memory_row,
 )
 
@@ -95,7 +95,7 @@ def client() -> TestClient:
         {
             TOKEN: ValidateResult(
                 org_id=ORG,
-                permissions=MEMORY_WRITE | MEMORY_DELETE,
+                permissions=MEMORY_WRITE,
                 agent_id=AGENT,
             )
         }
@@ -142,6 +142,18 @@ class _FakeLedger:
         self.released.append(claim)
 
 
+class _ClaimRejectedLedger(_FakeLedger):
+    """Ledger whose claim is rejected before any write is attempted."""
+
+    def __init__(self, exc: BaseException) -> None:
+        super().__init__(_owned_outcome())
+        self._exc = exc
+
+    async def claim(self, *, org_id, agent_id, key, request_hash):
+        del org_id, agent_id, key, request_hash
+        raise self._exc
+
+
 def test_create_memory_201(client) -> None:
     http, mock_orch = client
     mock_orch.create = AsyncMock(
@@ -186,6 +198,95 @@ def test_create_memory_unknown_agent_id_is_404(client) -> None:
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "NOT_FOUND"
     assert resp.json()["detail"]["message"] == "Agent not found"
+
+
+def _org_scoped_write_token(http: TestClient) -> None:
+    """Override the token, not the permission check, so the request may name any agent.
+
+    The real ``memory:write`` dependency still runs; only the agent binding is
+    dropped, which is what an org-scoped token looks like.
+    """
+    http.app.dependency_overrides[require_token] = lambda: ValidateResult(
+        org_id=ORG, permissions=MEMORY_WRITE, agent_id=None
+    )
+
+
+def test_create_memory_keyed_unknown_agent_is_the_same_404_as_unkeyed(client) -> None:
+    """A keyed write for an unknown agent must answer like the unkeyed one.
+
+    The ledger's claim INSERT references ``ibex_core.agents(id)``, so an unknown
+    agent is rejected there — before the write and before the composite-FK
+    mapping runs. Adding an idempotency key must not turn that 404 into a 400.
+    """
+    http, mock_orch = client
+    _org_scoped_write_token(http)
+    unknown = uuid4()
+    mock_orch.create = AsyncMock(side_effect=agent_fk_violation_integrity_error())
+    with http:
+        unkeyed = _post_memory(http, agent_id=unknown)
+        _with_idempotency_ledger(http, _ClaimRejectedLedger(ledger_validation_error()))
+        mock_orch.create = AsyncMock(
+            return_value=WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=_memory_row())
+        )
+        keyed = _post_memory(http, agent_id=unknown, idempotency_key="key-1")
+    assert unkeyed.status_code == 404
+    assert keyed.status_code == 404
+    assert keyed.json() == unkeyed.json()
+    mock_orch.create.assert_not_called()
+
+
+def test_create_memory_keyed_foreign_agent_is_404(client) -> None:
+    """An agent owned by another org gets the same 404, never a different signal.
+
+    The ledger FK names ``agent_id`` alone, so a foreign agent's claim is
+    admitted; the composite ``(agent_id, org_id)`` FK on the memory insert is
+    what rejects it. Both paths answer the identical 404, so the key cannot be
+    used to learn whether an agent id exists in another organization.
+    """
+    http, mock_orch = client
+    _org_scoped_write_token(http)
+    ledger = _FakeLedger(_owned_outcome())
+    _with_idempotency_ledger(http, ledger)
+    mock_orch.create = AsyncMock(side_effect=agent_fk_violation_integrity_error())
+    with http:
+        resp = _post_memory(http, agent_id=uuid4(), idempotency_key="key-1")
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == {"code": "NOT_FOUND", "message": "Agent not found"}
+    # The slot is released, so a retry can re-claim it.
+    assert len(ledger.released) == 1
+
+
+def test_create_memory_keyed_unknown_org_keeps_its_400(client) -> None:
+    """Only the agent case has an unkeyed 404 twin; the org case is unchanged."""
+    http, mock_orch = client
+    _with_idempotency_ledger(
+        http,
+        _ClaimRejectedLedger(
+            ledger_validation_error(
+                LedgerFkViolationOpts(constraint_name="idempotency_ledger_organization_id_fkey")
+            )
+        ),
+    )
+    with http:
+        resp = _post_memory(http, idempotency_key="key-1")
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "VALIDATION_ERROR"
+    mock_orch.create.assert_not_called()
+
+
+def test_create_memory_keyed_valid_agent_is_201(client) -> None:
+    http, mock_orch = client
+    ledger = _FakeLedger(_owned_outcome())
+    _with_idempotency_ledger(http, ledger)
+    mock_orch.create = AsyncMock(
+        return_value=WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=_memory_row())
+    )
+    with http:
+        resp = _post_memory(http, idempotency_key="key-1")
+    assert resp.status_code == 201
+    assert resp.headers["X-Idempotency-Replayed"] == "false"
+    assert len(ledger.finalized) == 1
+    assert ledger.finalized[0][1] == 201
 
 
 def test_create_memory_passes_valid_interval_and_token_org(client) -> None:
@@ -496,7 +597,7 @@ def test_forget_returns_success_when_post_commit_cache_invalidation_fails(
         return 2
 
     memory_id = uuid4()
-    monkeypatch.setattr(memory_write_support, "forget_memory_session", _forget)
+    monkeypatch.setattr(memory_forget_support, "forget_memory_session", _forget)
     http.app.dependency_overrides[get_session_factory] = lambda: _FakeSession
     http.app.dependency_overrides[get_memory_cache_writer] = lambda: _FailingCacheWriter()
     with http:
@@ -528,8 +629,10 @@ class _ForgetSession(_ForgetContext):
 
 def test_forget_requires_agent_scoped_token(client) -> None:
     http, _mock_orch = client
-    http.app.dependency_overrides[memories_router.require_memory_delete] = lambda: ValidateResult(
-        org_id=ORG, permissions=MEMORY_DELETE, agent_id=None
+    # Override the token, not the permission dependency, so the real
+    # memory:write check runs and only the agent scope is left to reject.
+    http.app.dependency_overrides[require_token] = lambda: ValidateResult(
+        org_id=ORG, permissions=MEMORY_WRITE, agent_id=None
     )
     with http:
         response = http.post(
@@ -541,11 +644,11 @@ def test_forget_requires_agent_scoped_token(client) -> None:
     assert response.json()["detail"]["code"] == "AGENT_SCOPE_REQUIRED"
 
 
-def test_forget_requires_memory_delete_permission(client) -> None:
+def test_forget_requires_memory_write_permission(client) -> None:
     http, _mock_orch = client
-    # Write-only token: creating memories is allowed, forgetting is not.
+    # A read-only token may read memories, but forgetting is a mutation.
     http.app.dependency_overrides[require_token] = lambda: ValidateResult(
-        org_id=ORG, permissions=MEMORY_WRITE, agent_id=AGENT
+        org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT
     )
     with http:
         response = http.post(
@@ -555,17 +658,26 @@ def test_forget_requires_memory_delete_permission(client) -> None:
         )
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "INSUFFICIENT_PERMISSIONS"
-    assert response.json()["detail"]["message"] == "Permission required: memory:delete"
+    assert response.json()["detail"]["message"] == "Permission required: memory:write"
 
 
-def test_forget_succeeds_with_memory_delete_permission(client, monkeypatch) -> None:
+def test_forget_succeeds_with_write_permission(client, monkeypatch) -> None:
+    """Pre-change behaviour: ``memory:write`` plus agent scope forgets.
+
+    ``MEMORY_DELETE`` (bit 2) is granted by no role bitmap, so gating forget on
+    it left the route unreachable for every real owner, admin and member token.
+    A write-only, agent-scoped token must still be able to forget.
+    """
     http, _mock_orch = client
     memory_id = uuid4()
 
     async def _forget(_session, _request):
         return 2
 
-    monkeypatch.setattr(memory_write_support, "forget_memory_session", _forget)
+    monkeypatch.setattr(memory_forget_support, "forget_memory_session", _forget)
+    http.app.dependency_overrides[require_token] = lambda: ValidateResult(
+        org_id=ORG, permissions=MEMORY_WRITE, agent_id=AGENT
+    )
     http.app.dependency_overrides[get_session_factory] = lambda: _ForgetSession
     http.app.dependency_overrides[get_memory_cache_writer] = lambda: None
     with http:
@@ -595,7 +707,7 @@ def test_forget_maps_domain_errors(client, monkeypatch, side_effect, expected) -
     async def _forget(_session, _request):
         raise side_effect
 
-    monkeypatch.setattr(memory_write_support, "forget_memory_session", _forget)
+    monkeypatch.setattr(memory_forget_support, "forget_memory_session", _forget)
     http.app.dependency_overrides[get_session_factory] = lambda: _ForgetSession
     http.app.dependency_overrides[get_memory_cache_writer] = lambda: None
     with http:

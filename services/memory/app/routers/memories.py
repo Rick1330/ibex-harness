@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Annotated, Any
 from uuid import UUID
 
-from authclient.permissions import MEMORY_DELETE
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from ibex_idempotency import IDEMPOTENCY_CONTRACT, fingerprint_request
@@ -28,15 +27,18 @@ from app.deps import (
     get_memory_cache_writer,
     get_search_memory_context,
     get_session_factory,
-    require_token,
+    require_memory_write,
 )
 from app.exceptions import EmbeddingServiceError, MemoryNotFoundError, ValidationError
 from app.feedback.models import ApplyFeedbackCommand, FeedbackKind
 from app.feedback.persist import require_agent_id
 from app.lifecycle import ForgetMemory
-from app.permissions import has_permission
 from app.read.lineage import DEFAULT_LINEAGE_DEPTH, MAX_LINEAGE_DEPTH, LineageQuery
 from app.read.models import HotMemoryQuery
+from app.routers.memory_forget_support import (
+    forget_memory_with_error_mapping,
+    invalidate_forgotten_memory,
+)
 from app.routers.memory_lineage_support import lineage_response_from_result
 from app.routers.memory_search_support import (
     SearchMemoriesExecution,
@@ -48,18 +50,17 @@ from app.routers.memory_search_support import (
     run_memory_search,
     search_response_from_results,
 )
+from app.routers.memory_write_authz import (
+    ensure_write_agent_authorized,
+    require_agent_scope,
+)
+from app.routers.memory_write_idempotency import Principal, begin_idempotency
 from app.routers.memory_write_support import (
     CreatedResponseContext,
-    Principal,
-    begin_idempotency,
     create_memory_outcome,
-    ensure_write_agent_authorized,
     finalize_created_response,
     finalize_quarantine_response,
-    forget_memory_with_error_mapping,
-    invalidate_forgotten_memory,
     memory_command_from_request,
-    require_agent_scope,
 )
 from app.schemas.feedback import (
     FeedbackErrorEnvelope,
@@ -82,21 +83,6 @@ router = APIRouter(prefix="/v1/memories", tags=["memories"])
 CREATE_MEMORY_PATH = "/v1/memories"
 
 
-def require_memory_delete(
-    token: Annotated[ValidateResult, Depends(require_token)],
-) -> ValidateResult:
-    """Require ``memory:delete``; forgetting is destructive, not a write."""
-    if not has_permission(token.permissions, MEMORY_DELETE):
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "INSUFFICIENT_PERMISSIONS",
-                "message": "Permission required: memory:delete",
-            },
-        )
-    return token
-
-
 @dataclass(frozen=True, slots=True)
 class ForgetMemoryContext:
     """Authenticated scope and dependencies for the forget route."""
@@ -107,7 +93,7 @@ class ForgetMemoryContext:
 
 
 def get_forget_memory_context(
-    token: Annotated[ValidateResult, Depends(require_memory_delete)],
+    token: Annotated[ValidateResult, Depends(require_memory_write)],
     session_factory: Annotated[Any, Depends(get_session_factory)],
     cache_writer: Annotated[Any, Depends(get_memory_cache_writer)],
 ) -> ForgetMemoryContext:
@@ -180,7 +166,7 @@ async def create_memory(
     summary="Forget a memory",
     responses={
         401: {"description": "Authentication required"},
-        403: {"description": "Agent-scoped token and memory:delete permission required"},
+        403: {"description": "Agent-scoped token and memory:write permission required"},
         404: {"description": "Memory not found in caller scope"},
         409: {"description": "Expected lifecycle revision is stale"},
         422: {"description": "Invalid memory UUID or expected_revision body"},
@@ -194,8 +180,10 @@ async def forget_memory(
 ) -> ForgetMemoryResponse:
     """Tombstone a memory in the authenticated token's org and agent scope.
 
-    Forget is destructive (erasure, not a visibility toggle), so it requires
-    ``memory:delete`` rather than the write permission that creates memories.
+    Authorisation is ``memory:write`` plus an agent-scoped token, matching the
+    documented provisional contract. The agent scope is enforced separately
+    because a memory is addressed within exactly one agent: an org-scoped token
+    gets ``AGENT_SCOPE_REQUIRED`` rather than acting for an arbitrary agent.
     """
     agent_id = require_agent_scope(ctx.token)
     revision = await forget_memory_with_error_mapping(
