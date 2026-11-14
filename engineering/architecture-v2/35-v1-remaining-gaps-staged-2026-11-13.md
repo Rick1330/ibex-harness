@@ -139,14 +139,14 @@ Rows no gate item names: none — all 25 are evidenced above.
 | O06 | `make v1-up` now proves liveness with an authenticated edge request (200 + org match, plus 401/403 negatives) (`infra/scripts/dev-tool.sh`:356-371,380-443`) |
 | P1-49 | The Tempo assertion searches the exact trace id the script sent in a `traceparent` header, not a service-scoped "newest trace" (`infra/scripts/observability-live-verify.sh`:77-95,254-267,324-349). Residual: it is still operator-invoked via `make observability-live-verify`, not a scheduled workflow |
 | P2-21 | Platform ingestion lag is a real org-scoped ClickHouse query, null only when ClickHouse is unavailable or the org has no events (`services/api/app/routers/platform.py`:50-58,223-300`) |
-| W4.6 | `v1-backup`, `v1-restore` and `v1-pitr` targets exist (`Makefile`:232-242) and forward to the pgBackRest scripts. **A live backup/restore was not run in this change, so a working backup remains unverified** |
+| W4.6 | `v1-backup`, `v1-restore` and `v1-pitr` targets exist (`Makefile`:232-242) and forward to the pgBackRest scripts. Stage 4 ran all three live against the v1 profile: `TYPE=check` ok, a full backup set of 6.3 MB, a latest restore, and a PITR to a timestamp before a written row (row absent, `pg_is_in_recovery()=false`, timeline advanced). What is still absent is a **committed** evidence artefact — the drill report under `infra/scripts/platform/evidence/` remains the `pg_dump` fallback |
 
 ### 4.2 Remaining (12 rows)
 
 | ID | Gap | Evidence | Blocker | Source |
 |---|---|---|---|---|
 | P0-09 | The supported profile now archives WAL and backs up: `archive_mode=on` with a pgBackRest `archive-push` command (`infra/compose/v1-single-node/compose.yml`), a generated `infra/backup/pgbackrest/pgbackrest.conf` (the `.example` is refused by path identity), and `make v1-backup` / `v1-backup-init`. What remains open is the off-host target and a signed RPO/RTO (`D-D`) | 34:79; 31:44 | infrastructure | 27:64 |
-| P0-10 | No PITR evidence: the committed drill report is a `pg_dump` fallback with `rpo_pass: false`. The restore script now accepts a time target and `make v1-pitr` passes one, but no run has exercised a target | `infra/scripts/platform/evidence/4p5-restore-drill/restore-drill-report.json`:13,15; `infra/scripts/platform/pgbackrest-restore.sh`:157-181; 34:80 | infrastructure | 27:65 |
+| P0-10 | No **committed** PITR evidence: the drill report is a `pg_dump` fallback with `rpo_pass: false`. PITR has been exercised live — `make v1-pitr TARGET=<timestamp>` restored to that moment and the row written afterwards was absent — but no run has produced a committed report, so the row stays open | `infra/scripts/platform/evidence/4p5-restore-drill/restore-drill-report.json`:13,15; `infra/scripts/platform/pgbackrest-restore.sh`:171-190; 34:80 | infrastructure | 27:65 |
 | P0-11 | RPO/RTO classes defined, no signed numbers | 34:81; `15-runtime-operations-and-recovery.md`:11 | owner decision (D-D) | 27:66 |
 | P0-19 | Routing built, no human paging destination; the paging destination is deployment config | 34:125; 31:55 | owner decision + workflow | 27:84 |
 | P1-47 | No soak evidence; the one k6 run had 15.7 % failures | 27:137 | benchmark stack | 27:137 |
