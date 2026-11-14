@@ -132,12 +132,16 @@ export function useOperatorAgents(params: () => URLSearchParams) {
     const query = params().toString()
     return `/api/operator/agents${query ? `?${query}` : ""}`
   })
-  return useFetch<PublicOperatorAgentPage>(url, { key: url, watch: [url] })
+  return useAsyncData<PublicOperatorAgentPage>(url, () => requestOperator<PublicOperatorAgentPage>(url.value), {
+    watch: [url],
+  })
 }
 
 export function useOperatorAgent(agentId: () => string) {
   const url = computed(() => `/api/operator/agents/${encodeURIComponent(agentId())}`)
-  return useFetch<PublicOperatorAgent>(url, { key: url, watch: [url] })
+  return useAsyncData<PublicOperatorAgent>(url, () => requestOperator<PublicOperatorAgent>(url.value), {
+    watch: [url],
+  })
 }
 
 export function useOperatorMemories(params: () => URLSearchParams) {
@@ -145,12 +149,16 @@ export function useOperatorMemories(params: () => URLSearchParams) {
     const query = params().toString()
     return `/api/operator/memories${query ? `?${query}` : ""}`
   })
-  return useFetch<PublicOperatorMemoryPage>(url, { key: url, watch: [url] })
+  return useAsyncData<PublicOperatorMemoryPage>(url, () => requestOperator<PublicOperatorMemoryPage>(url.value), {
+    watch: [url],
+  })
 }
 
 export function useOperatorMemory(memoryId: () => string) {
   const url = computed(() => `/api/operator/memories/${encodeURIComponent(memoryId())}`)
-  return useFetch<PublicOperatorMemoryDetail>(url, { key: url, watch: [url] })
+  return useAsyncData<PublicOperatorMemoryDetail>(url, () => requestOperator<PublicOperatorMemoryDetail>(url.value), {
+    watch: [url],
+  })
 }
 
 export function useOperatorDirectives(params: () => URLSearchParams) {
@@ -158,7 +166,9 @@ export function useOperatorDirectives(params: () => URLSearchParams) {
     const query = params().toString()
     return `/api/operator/directives${query ? `?${query}` : ""}`
   })
-  return useFetch<PublicOperatorDirectivePage>(url, { key: url, watch: [url] })
+  return useAsyncData<PublicOperatorDirectivePage>(url, () => requestOperator<PublicOperatorDirectivePage>(url.value), {
+    watch: [url],
+  })
 }
 
 export function useOperatorDirective(directiveId: () => string, params: () => URLSearchParams) {
@@ -166,7 +176,11 @@ export function useOperatorDirective(directiveId: () => string, params: () => UR
     const query = params().toString()
     return `/api/operator/directives/${encodeURIComponent(directiveId())}${query ? `?${query}` : ""}`
   })
-  return useFetch<PublicOperatorDirectiveDetail>(url, { key: url, watch: [url] })
+  return useAsyncData<PublicOperatorDirectiveDetail>(
+    url,
+    () => requestOperator<PublicOperatorDirectiveDetail>(url.value),
+    { watch: [url] },
+  )
 }
 
 export function useOperatorEvidenceDeletions(params: () => URLSearchParams) {
@@ -174,7 +188,11 @@ export function useOperatorEvidenceDeletions(params: () => URLSearchParams) {
     const query = params().toString()
     return `/api/operator/evidence/deletions${query ? `?${query}` : ""}`
   })
-  return useFetch<PublicOperatorEvidenceDeletions>(url, { key: url, watch: [url] })
+  return useAsyncData<PublicOperatorEvidenceDeletions>(
+    url,
+    () => requestOperator<PublicOperatorEvidenceDeletions>(url.value),
+    { watch: [url] },
+  )
 }
 
 export function useOperatorEvidenceSummary(params: () => URLSearchParams) {
@@ -182,7 +200,9 @@ export function useOperatorEvidenceSummary(params: () => URLSearchParams) {
     const query = params().toString()
     return `/api/operator/evidence/summary${query ? `?${query}` : ""}`
   })
-  return useFetch<PublicOperatorEvidenceSummary>(url, { key: url, watch: [url] })
+  return useAsyncData<PublicOperatorEvidenceSummary>(url, () => requestOperator<PublicOperatorEvidenceSummary>(url.value), {
+    watch: [url],
+  })
 }
 
 export function useOperatorSessions(params: () => URLSearchParams) {
@@ -190,10 +210,18 @@ export function useOperatorSessions(params: () => URLSearchParams) {
     const query = params().toString()
     return `/api/operator/sessions${query ? `?${query}` : ""}`
   })
-  return useFetch<PublicOperatorSessionRecordPage>(url, { key: url, watch: [url] })
+  return useAsyncData<PublicOperatorSessionRecordPage>(
+    url,
+    () => requestOperator<PublicOperatorSessionRecordPage>(url.value),
+    { watch: [url] },
+  )
 }
 
 export function useOperatorSession(sessionId: () => string) {
   const url = computed(() => `/api/operator/sessions/${encodeURIComponent(sessionId())}`)
-  return useFetch<PublicOperatorSessionRecordDetail>(url, { key: url, watch: [url] })
+  return useAsyncData<PublicOperatorSessionRecordDetail>(
+    url,
+    () => requestOperator<PublicOperatorSessionRecordDetail>(url.value),
+    { watch: [url] },
+  )
 }
