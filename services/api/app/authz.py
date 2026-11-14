@@ -155,6 +155,15 @@ RequireBillingRead = Annotated[
     ValidateResult,
     Depends(require_permission(BILLING_READ)),
 ]
+# Org-management reads that carry the operator metadata bit check that bit only.
+# ``RequireOperatorMetadataRead`` also applies the operator feature gate and the
+# per-action kill switches, which govern the operator console session/SSE
+# surface (``Settings.operator_feature_enabled`` defaults to off); a bearer-token
+# management read must not be unavailable because that surface is disabled.
+RequireMetadataRead = Annotated[
+    ValidateResult,
+    Depends(require_permission(OPERATOR_METADATA_READ)),
+]
 # Token-management entry gate: either management bit admits the request; the
 # route enforces the operation-specific bit (TOKEN_CREATE vs TOKEN_REVOKE) so a
 # revoke-only token keeps working for delete and cannot create.

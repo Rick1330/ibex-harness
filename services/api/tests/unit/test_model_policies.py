@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
@@ -138,25 +140,33 @@ def test_admin_patch_allowed() -> None:
     assert resp.json()["allowed"] is False
 
 
-def test_delete_model_policy_ok() -> None:
+@dataclass(frozen=True)
+class _SinglePolicyCall:
+    """One single-policy route call: HTTP verb and the stubbed service method."""
+
+    verb: str
+    service: str
+
+
+def _call_single_policy(call: _SinglePolicyCall):
     org_id = uuid4()
     policy_id = uuid4()
+    value = _policy(org_id, id=policy_id) if call.verb == "get" else None
     with (
         managed_org_client(ManagedClientOpts(org_id=org_id)) as (client, _, _),
-        _mock_svc("delete_policy", None),
+        _mock_svc(call.service, value),
     ):
-        resp = client.delete(f"{_base(org_id)}/{policy_id}", headers=bearer_headers())
+        resp = getattr(client, call.verb)(f"{_base(org_id)}/{policy_id}", headers=bearer_headers())
+    return resp, policy_id
+
+
+def test_delete_model_policy_ok() -> None:
+    resp, _policy_id = _call_single_policy(_SinglePolicyCall("delete", "delete_policy"))
     assert resp.status_code == 204
 
 
 def test_get_model_policy_ok() -> None:
-    org_id = uuid4()
-    policy_id = uuid4()
-    with (
-        managed_org_client(ManagedClientOpts(org_id=org_id)) as (client, _, _),
-        _mock_svc("get_policy", _policy(org_id, id=policy_id)),
-    ):
-        resp = client.get(f"{_base(org_id)}/{policy_id}", headers=bearer_headers())
+    resp, policy_id = _call_single_policy(_SinglePolicyCall("get", "get_policy"))
     assert resp.status_code == 200
     assert resp.json()["id"] == str(policy_id)
 
@@ -241,39 +251,71 @@ def _result(org_id: UUID, permissions: int) -> ValidateResult:
     )
 
 
-@pytest.mark.parametrize("single", [False, True])
-def test_read_model_policies_deny_viewer_bitmap(single: bool) -> None:
+@dataclass(frozen=True)
+class _PolicyRead:
+    """One model-policy read: collection or single, permission bitmap, gate state."""
+
+    single: bool
+    permissions: int = OPERATOR_METADATA_READ
+    operator_feature_enabled: bool = True
+    stub_service: bool = True
+
+
+def _policy_read_response(case: _PolicyRead):
     org_id = uuid4()
     policy_id = uuid4()
-    path = f"{_base(org_id)}/{policy_id}" if single else _base(org_id)
-    with managed_org_client(
-        ManagedClientOpts(org_id=org_id, result=_result(org_id, READ_ONLY))
-    ) as (client, _res, _pub):
-        resp = client.get(path, headers=bearer_headers())
+    if case.single:
+        target, value = "get_policy", _policy(org_id, id=policy_id)
+        path = f"{_base(org_id)}/{policy_id}"
+    else:
+        target, value = "list_policies", _page(org_id)
+        path = _base(org_id)
+    opts = ManagedClientOpts(org_id=org_id, result=_result(org_id, case.permissions))
+    with ExitStack() as stack:
+        client, _res, _pub = stack.enter_context(managed_org_client(opts))
+        if case.stub_service:
+            stack.enter_context(_mock_svc(target, value))
+        client.app.state.settings.operator_feature_enabled = case.operator_feature_enabled
+        return client.get(path, headers=bearer_headers())
+
+
+def _assert_policy_read_allowed(case: _PolicyRead) -> None:
+    assert _policy_read_response(case).status_code == 200
+
+
+def _assert_policy_read_denied(case: _PolicyRead) -> None:
+    resp = _policy_read_response(case)
     assert resp.status_code == 403
     assert resp.json()["error"]["code"] == INSUFFICIENT_PERMISSIONS
 
 
 @pytest.mark.parametrize("single", [False, True])
+def test_read_model_policies_deny_viewer_bitmap(single: bool) -> None:
+    _assert_policy_read_denied(
+        _PolicyRead(single=single, permissions=READ_ONLY, stub_service=False)
+    )
+
+
+@pytest.mark.parametrize("single", [False, True])
 def test_read_model_policies_with_operator_metadata_read(single: bool) -> None:
-    org_id = uuid4()
-    policy_id = uuid4()
-    if single:
-        target = "get_policy"
-        value = _policy(org_id, id=policy_id)
-        path = f"{_base(org_id)}/{policy_id}"
-    else:
-        target = "list_policies"
-        value = _page(org_id)
-        path = _base(org_id)
-    with (
-        managed_org_client(
-            ManagedClientOpts(
-                org_id=org_id,
-                result=_result(org_id, OPERATOR_METADATA_READ),
-            )
-        ) as (client, _res, _pub),
-        _mock_svc(target, value),
-    ):
-        resp = client.get(path, headers=bearer_headers())
-    assert resp.status_code == 200
+    _assert_policy_read_allowed(_PolicyRead(single=single))
+
+
+@pytest.mark.parametrize("single", [False, True])
+def test_read_model_policies_survive_disabled_operator_feature(single: bool) -> None:
+    """The operator feature gate covers the operator surface, not these org reads."""
+    _assert_policy_read_allowed(_PolicyRead(single=single, operator_feature_enabled=False))
+
+
+@pytest.mark.parametrize("single", [False, True])
+def test_read_model_policies_deny_missing_bit_with_operator_disabled(
+    single: bool,
+) -> None:
+    _assert_policy_read_denied(
+        _PolicyRead(
+            single=single,
+            permissions=READ_ONLY,
+            operator_feature_enabled=False,
+            stub_service=False,
+        )
+    )

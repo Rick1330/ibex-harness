@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.authz import RequireOperatorMetadataRead, RequireOrgSettings, assert_path_org
+from app.authz import RequireMetadataRead, RequireOrgSettings, assert_path_org
 from app.deps import org_session
 from app.model_policy_publish import ModelPolicyPublisher, NoopModelPolicyPublisher
 from app.pagination import CursorPage, ListQuery
@@ -51,7 +51,7 @@ def _make_ctx(
 def _read_ctx(
     request: Request,
     org_id: UUID,
-    token: RequireOperatorMetadataRead,
+    token: RequireMetadataRead,
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> _Ctx:
     return _make_ctx(request, org_id, token.org_id, session)

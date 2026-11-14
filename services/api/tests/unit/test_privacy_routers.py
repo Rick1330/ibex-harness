@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -190,20 +192,59 @@ def test_make_ctx_asserts_org() -> None:
         capture_router._make_ctx(org, other, session)
 
 
-@pytest.mark.parametrize(
-    "suffix",
-    ["/legal-holds", "/capture-policies", "/capture-policies/resolved"],
+@dataclass(frozen=True)
+class _OrgRead:
+    """One org-scoped GET: path suffix, optional stubbed capture service, gate state."""
+
+    suffix: str
+    operator_feature_enabled: bool = True
+    service: str | None = None
+    value: object = None
+
+
+_CAPTURE_READ_SUFFIXES = ("/capture-policies", "/capture-policies/resolved")
+
+_CAPTURE_READS = (
+    pytest.param(
+        _OrgRead("/capture-policies", service="list_policies", value=[]),
+        id="list-policies",
+    ),
+    pytest.param(
+        _OrgRead("/capture-policies/resolved", service="resolve_mode", value="full"),
+        id="resolved-mode",
+    ),
 )
-def test_org_read_routes_deny_viewer_bitmap(suffix: str) -> None:
+
+
+def _org_read_response(case: _OrgRead, permissions: int):
     org = uuid4()
-    with managed_org_client(
-        ManagedClientOpts(org_id=org, result=_client_result(org, READ_ONLY))
-    ) as (client, _res, _pub):
-        resp = client.get(
-            f"/v1/organizations/{org}{suffix}", headers=bearer_headers()
-        )
+    opts = ManagedClientOpts(org_id=org, result=_client_result(org, permissions))
+    with ExitStack() as stack:
+        client, _res, _pub = stack.enter_context(managed_org_client(opts))
+        if case.service is not None:
+            stack.enter_context(
+                patch(
+                    f"app.services.capture_policies.{case.service}",
+                    new=AsyncMock(return_value=case.value),
+                )
+            )
+        client.app.state.settings.operator_feature_enabled = case.operator_feature_enabled
+        return client.get(f"/v1/organizations/{org}{case.suffix}", headers=bearer_headers())
+
+
+def _assert_org_read_allowed(case: _OrgRead) -> None:
+    assert _org_read_response(case, OPERATOR_METADATA_READ).status_code == 200
+
+
+def _assert_org_read_denied(case: _OrgRead) -> None:
+    resp = _org_read_response(case, READ_ONLY)
     assert resp.status_code == 403
     assert resp.json()["error"]["code"] == INSUFFICIENT_PERMISSIONS
+
+
+@pytest.mark.parametrize("suffix", ("/legal-holds", *_CAPTURE_READ_SUFFIXES))
+def test_org_read_routes_deny_viewer_bitmap(suffix: str) -> None:
+    _assert_org_read_denied(_OrgRead(suffix))
 
 
 def test_list_holds_with_legal_hold_manage() -> None:
@@ -227,30 +268,21 @@ def test_list_holds_with_legal_hold_manage() -> None:
     assert resp.json() == []
 
 
-@pytest.mark.parametrize(
-    ("suffix", "service", "value"),
-    [
-        ("/capture-policies", "list_policies", []),
-        ("/capture-policies/resolved", "resolve_mode", "full"),
-    ],
-)
-def test_capture_policy_reads_with_operator_metadata_read(
-    suffix: str, service: str, value: object
+@pytest.mark.parametrize("case", _CAPTURE_READS)
+def test_capture_policy_reads_with_operator_metadata_read(case: _OrgRead) -> None:
+    _assert_org_read_allowed(case)
+
+
+@pytest.mark.parametrize("case", _CAPTURE_READS)
+def test_capture_policy_reads_survive_disabled_operator_feature(
+    case: _OrgRead,
 ) -> None:
-    org = uuid4()
-    with (
-        managed_org_client(
-            ManagedClientOpts(
-                org_id=org,
-                result=_client_result(org, OPERATOR_METADATA_READ),
-            )
-        ) as (client, _res, _pub),
-        patch(
-            f"app.services.capture_policies.{service}",
-            new=AsyncMock(return_value=value),
-        ),
-    ):
-        resp = client.get(
-            f"/v1/organizations/{org}{suffix}", headers=bearer_headers()
-        )
-    assert resp.status_code == 200
+    """The operator feature gate covers the operator surface, not these org reads."""
+    _assert_org_read_allowed(replace(case, operator_feature_enabled=False))
+
+
+@pytest.mark.parametrize("suffix", _CAPTURE_READ_SUFFIXES)
+def test_capture_policy_reads_still_deny_missing_bit_with_operator_disabled(
+    suffix: str,
+) -> None:
+    _assert_org_read_denied(_OrgRead(suffix, operator_feature_enabled=False))

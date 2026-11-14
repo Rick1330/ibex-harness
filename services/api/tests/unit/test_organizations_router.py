@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from authclient.permissions import ADMIN, READ_ONLY
+from authclient.permissions import ADMIN, OPERATOR_METADATA_READ, READ_ONLY
 
 from app.auth.client import ValidateResult
 from app.authz import assert_path_org
@@ -102,6 +103,52 @@ def test_get_and_patch_org_happy_paths() -> None:
         )
     assert patched.status_code == 200
     assert patched.json()["name"] == "Renamed"
+
+
+def test_org_read_survives_disabled_operator_feature() -> None:
+    """The operator feature gate covers the operator surface, not this org read."""
+    org_id = uuid4()
+    row = sample_org_row(org_id)
+
+    async def _fake_get(_session, oid):
+        assert oid == org_id
+        return OrganizationResponse(**row)
+
+    with patched_managed_client(
+        ManagedClientOpts(
+            org_id=org_id,
+            role="viewer",
+            result=ValidateResult(
+                org_id=org_id,
+                permissions=OPERATOR_METADATA_READ,
+                user_id="viewer-1",
+            ),
+        ),
+        "app.routers.organizations.org_service.get_organization",
+        _fake_get,
+    ) as (client, _res, _pub):
+        client.app.state.settings.operator_feature_enabled = False
+        resp = client.get(f"/v1/organizations/{org_id}", headers=bearer_headers())
+
+    assert resp.status_code == 200
+    assert resp.json()["id"] == str(org_id)
+
+
+def test_org_read_denies_missing_bit_with_operator_disabled() -> None:
+    org_id = uuid4()
+    with patched_managed_client(
+        ManagedClientOpts(
+            org_id=org_id,
+            result=ValidateResult(org_id=org_id, permissions=READ_ONLY, user_id="member-1"),
+        ),
+        "app.routers.organizations.org_service.get_organization",
+        AsyncMock(),
+    ) as (client, _res, _pub):
+        client.app.state.settings.operator_feature_enabled = False
+        resp = client.get(f"/v1/organizations/{org_id}", headers=bearer_headers())
+
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
 
 
 def test_suspend_owner_publishes() -> None:

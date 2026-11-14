@@ -23,23 +23,28 @@ from ibex_idempotency import (
 from app.auth.client import ValidateResult
 from app.erased_response import ERASED_MARKER_BODY, is_erased_marker
 from app.exceptions import DuplicateMemoryError, StaleLifecycleError, ValidationError
-from app.routers.memory_write_support import (
+from app.routers.memory_write_authz import ensure_write_agent_authorized
+from app.routers.memory_write_errors import (
+    http_error_for_unknown_agent,
+    http_error_for_write,
+    is_unknown_agent_ledger_rejection,
+    is_unknown_agent_violation,
+)
+from app.routers.memory_write_idempotency import (
     _FINALIZE_ATTEMPTS,
     Principal,
     begin_idempotency,
     commit_idempotency,
     commit_idempotency_fail_closed,
-    ensure_write_agent_authorized,
     erased_create_prepare,
-    http_error_for_unknown_agent,
-    http_error_for_write,
-    is_unknown_agent_violation,
     release_idempotency,
 )
 from tests.unit.memory_test_support import (
     AgentFkViolationOpts,
+    LedgerFkViolationOpts,
     active_idempotency_handle,
     agent_fk_violation_integrity_error,
+    ledger_validation_error,
 )
 
 
@@ -184,12 +189,29 @@ async def test_begin_idempotency_without_ledger_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_begin_idempotency_validation_error_is_400() -> None:
+async def test_begin_idempotency_unknown_agent_is_404() -> None:
+    """A keyed write for an unknown agent must match the unkeyed 404."""
     ledger = AsyncMock()
-    ledger.claim = AsyncMock(side_effect=LedgerValidationError("bad agent"))
+    ledger.claim = AsyncMock(side_effect=ledger_validation_error())
+    with pytest.raises(HTTPException) as exc:
+        await _begin(ledger)
+    assert exc.value.status_code == 404
+    assert exc.value.detail == {"code": "NOT_FOUND", "message": "Agent not found"}
+
+
+@pytest.mark.asyncio
+async def test_begin_idempotency_unknown_org_keeps_its_400() -> None:
+    """The organization case is unchanged: only the agent case has a 404 twin."""
+    ledger = AsyncMock()
+    ledger.claim = AsyncMock(
+        side_effect=ledger_validation_error(
+            LedgerFkViolationOpts(constraint_name="idempotency_ledger_organization_id_fkey")
+        )
+    )
     with pytest.raises(HTTPException) as exc:
         await _begin(ledger)
     assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "VALIDATION_ERROR"
 
 
 @pytest.mark.asyncio
@@ -223,7 +245,7 @@ async def test_release_idempotency_swallows_ledger_error() -> None:
 
 @pytest.mark.asyncio
 async def test_commit_fail_closed_retries_then_returns_503(monkeypatch) -> None:
-    monkeypatch.setattr("app.routers.memory_write_support._FINALIZE_BACKOFF_SECONDS", 0.0)
+    monkeypatch.setattr("app.routers.memory_write_idempotency._FINALIZE_BACKOFF_SECONDS", 0.0)
     ledger = AsyncMock()
     ledger.finalize = AsyncMock(side_effect=LedgerError("down"))
     handle = active_idempotency_handle(ledger=ledger)
@@ -236,7 +258,7 @@ async def test_commit_fail_closed_retries_then_returns_503(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_commit_fail_closed_recovers_on_transient_retry(monkeypatch) -> None:
-    monkeypatch.setattr("app.routers.memory_write_support._FINALIZE_BACKOFF_SECONDS", 0.0)
+    monkeypatch.setattr("app.routers.memory_write_idempotency._FINALIZE_BACKOFF_SECONDS", 0.0)
     ledger = AsyncMock()
     ledger.finalize = AsyncMock(side_effect=[LedgerError("blip"), None])
     handle = active_idempotency_handle(ledger=ledger)
@@ -274,7 +296,7 @@ def test_http_error_for_write_maps_stale_lifecycle() -> None:
 
 
 def test_parse_idempotency_key_rejects_too_long() -> None:
-    from app.routers.memory_write_support import parse_idempotency_key
+    from app.routers.memory_write_idempotency import parse_idempotency_key
 
     with pytest.raises(HTTPException) as exc:
         parse_idempotency_key("k" * 300)
@@ -349,3 +371,35 @@ def test_http_error_for_unknown_agent_is_404() -> None:
     exc = http_error_for_unknown_agent()
     assert exc.status_code == 404
     assert exc.detail == {"code": "NOT_FOUND", "message": "Agent not found"}
+
+
+def test_is_unknown_agent_ledger_rejection_matches_the_ledger_agent_fk() -> None:
+    assert is_unknown_agent_ledger_rejection(ledger_validation_error()) is True
+
+
+def test_is_unknown_agent_ledger_rejection_ignores_the_ledger_org_fk() -> None:
+    exc = ledger_validation_error(
+        LedgerFkViolationOpts(constraint_name="idempotency_ledger_organization_id_fkey")
+    )
+    assert is_unknown_agent_ledger_rejection(exc) is False
+
+
+def test_is_unknown_agent_ledger_rejection_falls_back_to_the_message() -> None:
+    # Some drivers omit constraint_name; the message still names the constraint.
+    exc = ledger_validation_error(LedgerFkViolationOpts(constraint_name=""))
+    assert is_unknown_agent_ledger_rejection(exc) is True
+
+
+def test_is_unknown_agent_ledger_rejection_requires_a_cause() -> None:
+    assert is_unknown_agent_ledger_rejection(LedgerValidationError("no cause")) is False
+
+
+def test_is_unknown_agent_ledger_rejection_ignores_a_non_fk_cause() -> None:
+    exc = LedgerValidationError("rejected")
+    exc.__cause__ = RuntimeError("boom")
+    assert is_unknown_agent_ledger_rejection(exc) is False
+
+
+def test_is_unknown_agent_ledger_rejection_ignores_a_wrong_sqlstate() -> None:
+    exc = ledger_validation_error(LedgerFkViolationOpts(sqlstate="23505"))
+    assert is_unknown_agent_ledger_rejection(exc) is False

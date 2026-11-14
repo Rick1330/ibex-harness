@@ -160,6 +160,58 @@ def test_agent_read_denies_missing_metadata_permission() -> None:
     assert response.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
 
 
+def test_agent_reads_survive_disabled_operator_feature() -> None:
+    """The operator feature gate covers the operator surface, not these org reads."""
+    org_id = uuid4()
+    agent = _agent_response(org_id=org_id)
+    page = CursorPage(data=[agent], pagination=PaginationMeta(has_more=False))
+    with patched_managed_client(
+        ManagedClientOpts(
+            org_id=org_id,
+            role="viewer",
+            result=ValidateResult(
+                org_id=org_id,
+                permissions=OPERATOR_METADATA_READ,
+                user_id="viewer-1",
+            ),
+        ),
+        "app.routers.agents.agent_service.list_agents",
+        AsyncMock(return_value=page),
+    ) as (client, _res, _pub):
+        from unittest.mock import patch
+
+        with patch(
+            "app.routers.agents.agent_service.get_agent",
+            new=AsyncMock(return_value=agent),
+        ):
+            client.app.state.settings.operator_feature_enabled = False
+            listed = client.get("/v1/agents", headers=bearer_headers())
+            got = client.get(f"/v1/agents/{agent.id}", headers=bearer_headers())
+
+    assert listed.status_code == 200
+    assert got.status_code == 200
+
+
+def test_agent_reads_deny_missing_bit_with_operator_disabled() -> None:
+    org_id = uuid4()
+    with patched_managed_client(
+        ManagedClientOpts(
+            org_id=org_id,
+            result=ValidateResult(org_id=org_id, permissions=0, user_id="member-1"),
+        ),
+        "app.routers.agents.agent_service.get_agent",
+        AsyncMock(),
+    ) as (client, _res, _pub):
+        client.app.state.settings.operator_feature_enabled = False
+        listed = client.get("/v1/agents", headers=bearer_headers())
+        got = client.get(f"/v1/agents/{uuid4()}", headers=bearer_headers())
+
+    assert listed.status_code == 403
+    assert listed.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
+    assert got.status_code == 403
+    assert got.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
+
+
 def test_soft_provider_validation_on_create() -> None:
     org_id = uuid4()
     with patched_managed_client(
