@@ -2,7 +2,7 @@
 
 **Title:** Every gap still standing between the tree and an honest `v1.0.0`, classified into four stages with the evidence that closes each stage.
 **Base:** `main` at `55a62bc4` (2026-11-13).
-**Status:** Discovery record, updated by the 2026-11-13 stage-1 pass, the stage-2 recovery pass, and the 2026-11-14 stage-3 tenancy pass. It classifies; the stage-1 pass closed 20 stage-1 rows, recorded in §3.1, the stage-2 pass closed 13 stage-2 rows, recorded in §4.1, leaving two rows only partially closed (R05, W6.3) in §4.2 with their residual stated, and the stage-3 pass closed 5 stage-3 rows, recorded in §5.1, leaving 35 in §5.2 with their blockers. Rows a pass could not close keep their blocker and residual. No ledger row changes value and no review date moves. The original record was this file plus one link line in [`34-readiness-audit-addendum-2026-11-13.md`](34-readiness-audit-addendum-2026-11-13.md) §5; the passes also land the code, workflow, and documentation changes their rows name. The stage-3 rows that change authorization or tenant-isolation posture are separated into a decision record, [`36-tenancy-posture-decisions-2026-11-14.md`](36-tenancy-posture-decisions-2026-11-14.md), so each can be approved or rejected on its own.
+**Status:** Discovery record, updated by the 2026-11-13 stage-1 pass, the stage-2 recovery pass, the 2026-11-14 stage-3 tenancy pass, and the 2026-11-14 stage-4 console pass. It classifies; the stage-1 pass closed 20 stage-1 rows, recorded in §3.1, the stage-2 pass closed 13 stage-2 rows, recorded in §4.1, leaving two rows only partially closed (R05, W6.3) in §4.2 with their residual stated, the stage-3 pass closed 5 stage-3 rows, recorded in §5.1, leaving 35 in §5.2 with their blockers, and the stage-4 pass closed 1 stage-4 row (D01), recorded in §6.1, amended D02 to the clause that still holds, and added one stage-3 row (S14) for the exception-message log residual. Rows a pass could not close keep their blocker and residual. No ledger row changes value and no review date moves. The original record was this file plus one link line in [`34-readiness-audit-addendum-2026-11-13.md`](34-readiness-audit-addendum-2026-11-13.md) §5; the passes also land the code, workflow, and documentation changes their rows name. The stage-3 rows that change authorization or tenant-isolation posture are separated into a decision record, [`36-tenancy-posture-decisions-2026-11-14.md`](36-tenancy-posture-decisions-2026-11-14.md), so each can be approved or rejected on its own.
 
 ## 1. Purpose and method
 
@@ -121,7 +121,7 @@ A closed row is closed by its own merged change, not by this classification.
 
 Rows no gate item names: none — all 25 are evidenced above.
 
-**Decisions needed.** D-D: repository type and the signed RPO/RTO table (P0-11, P0-19's delivery half). Whether Redis is allowed to remain the Celery broker while the recovery record calls it ephemeral — the two cannot both be true (O04). Whether durable-before-ack is a 1.0 claim at all, which decides D4 and D11 rather than closing them by default. A live backup/restore run in an environment with a real WAL archive (P0-09/W4.6) and a PITR restore once the script supports a target (P0-10) are still needed to exit the stage; the targets and the drill now exist, but this change did not run them.
+**Decisions needed.** D-D: repository type and the signed RPO/RTO table (P0-11, P0-19's delivery half). Whether Redis is allowed to remain the Celery broker while the recovery record calls it ephemeral — the two cannot both be true (O04). Whether durable-before-ack is a 1.0 claim at all, which decides D4 and D11 rather than closing them by default. A live backup/restore run in an environment with a real WAL archive (P0-09/W4.6) and a PITR restore to a recorded target (P0-10) are still needed to exit the stage; the targets, the time-target support and the drill now exist, but this change did not run them.
 
 ### 4.1 Closed in this change (13 rows)
 
@@ -139,14 +139,14 @@ Rows no gate item names: none — all 25 are evidenced above.
 | O06 | `make v1-up` now proves liveness with an authenticated edge request (200 + org match, plus 401/403 negatives) (`infra/scripts/dev-tool.sh`:356-371,380-443`) |
 | P1-49 | The Tempo assertion searches the exact trace id the script sent in a `traceparent` header, not a service-scoped "newest trace" (`infra/scripts/observability-live-verify.sh`:77-95,254-267,324-349). Residual: it is still operator-invoked via `make observability-live-verify`, not a scheduled workflow |
 | P2-21 | Platform ingestion lag is a real org-scoped ClickHouse query, null only when ClickHouse is unavailable or the org has no events (`services/api/app/routers/platform.py`:50-58,223-300`) |
-| W4.6 | `v1-backup`, `v1-restore` and `v1-pitr` targets exist (`Makefile`:221-228) and forward to the pgBackRest scripts. **A live backup/restore was not run in this change, so a working backup remains unverified** |
+| W4.6 | `v1-backup`, `v1-restore` and `v1-pitr` targets exist (`Makefile`:232-242) and forward to the pgBackRest scripts. **A live backup/restore was not run in this change, so a working backup remains unverified** |
 
 ### 4.2 Remaining (12 rows)
 
 | ID | Gap | Evidence | Blocker | Source |
 |---|---|---|---|---|
 | P0-09 | No backup service or WAL archive in the supported profile; `pgbackrest` config is `.example` only; a runnable environment and D-D are needed | 34:79; 31:44 | infrastructure | 27:64 |
-| P0-10 | No PITR evidence: the committed drill is a `pg_dump` fallback and `pgbackrest-restore.sh` has no target support, so `make v1-pitr` refuses | `infra/scripts/platform/evidence/4p5-restore-drill/restore-drill-report.json`:13,15; `infra/scripts/dev-tool.sh`:554-576; 34:80 | infrastructure | 27:65 |
+| P0-10 | No PITR evidence: the committed drill report is a `pg_dump` fallback with `rpo_pass: false`. The restore script now accepts a time target and `make v1-pitr` passes one, but no run has exercised a target | `infra/scripts/platform/evidence/4p5-restore-drill/restore-drill-report.json`:13,15; `infra/scripts/platform/pgbackrest-restore.sh`:157-181; 34:80 | infrastructure | 27:65 |
 | P0-11 | RPO/RTO classes defined, no signed numbers | 34:81; `15-runtime-operations-and-recovery.md`:11 | owner decision (D-D) | 27:66 |
 | P0-19 | Routing built, no human paging destination; the paging destination is deployment config | 34:125; 31:55 | owner decision + workflow | 27:84 |
 | P1-47 | No soak evidence; the one k6 run had 15.7 % failures | 27:137 | benchmark stack | 27:137 |
@@ -158,7 +158,7 @@ Rows no gate item names: none — all 25 are evidenced above.
 | R05 | Post-restore erasure is proven for **PostgreSQL only**. The restore-replay test seeds a sentinel, runs the forget path, restores, and asserts the tombstone, the erased ledger payload and the deletion receipt survive while the sentinel is gone — but it does **not** assert ClickHouse or object-storage absence, which the exit gate requires | `infra/migrations/postgres/restore_replay_integration_test.go`:1-30,124-139,567-581; §4 exit gate item 2 | code | sweep 3 |
 | W6.3 | Context-assembly and memory-retrieval **SLIs** and absence alerts are recorded (`infra/monitoring/prometheus/rules/ibex-slo.yml`:293-370) with promtool unit tests (`infra/monitoring/prometheus/rules/test/unit/ibex-slo-context-memory.test.yml`); the **SLOs** are not: the burn thresholds await ratification and no synthetic burn test fires yet, which exit-gate item 7 requires | `ibex-slo.yml`:293-370; §4 exit gate item 7 | owner decision | sweep 3 |
 
-## 5. Stage 3 — Scope the tenant claim (isolation, authorization, erasure) — 40 rows (5 closed; 35 remaining)
+## 5. Stage 3 — Scope the tenant claim (isolation, authorization, erasure) — 41 rows (5 closed; 36 remaining)
 
 **Goal.** The tenancy and authorization the product claims are the ones actually enforced, and erasure is complete across every store.
 
@@ -178,7 +178,7 @@ Rows no gate item names: none — all 25 are evidenced above.
 8. Upgrade and migration are rehearsed: a v0.1.9→head run (P1-22), an up→down→up cycle (P1-23), the irreversible families named (P2-14), and keyset grace implemented or removed from the docs (P2-06).
 9. Deployed seed cannot mint an owner-role credential (P2-13), service-token rotation and waiver entries are recorded (P1-17, P1-18), and the management API including login is rate limited (P2-22).
 
-Rows no gate item names — S02, P1-14, P2-15, GAP-006, GAP-007, GAP-009 — are closed by the closure rule alone: a merged change with its recorded evidence, not a new run. S02 is **decision-bound as well**: the step-up policy question under **Decisions needed** must be answered before any code change can land, so it cannot close on code alone.
+Rows no gate item names — S02, P1-14, P2-15, GAP-006, GAP-007, GAP-009, S14 — are closed by the closure rule alone: a merged change with its recorded evidence, not a new run. S02 is **decision-bound as well**: the step-up policy question under **Decisions needed** must be answered before any code change can land, so it cannot close on code alone.
 
 **Decisions needed.** The P0-06 posture: move every service DSN to its capability login, or narrow the tenancy claim. Whether multi-tenant operation is a v1 claim at all (§9 item 5). The S04 split: separate tokens for session issue/validate/revoke and step-up consumption, and org-bound issuance. Whether org deletion requires step-up (S02). Seed policy for a deployed install (P2-13). Whether `PrincipalContext` is signed before a 1.0 claim cites the context-assembly row, or the row records it unsigned (D6). Each posture-changing question is written out with its evidence, blast radius and proof requirement in [`36-tenancy-posture-decisions-2026-11-14.md`](36-tenancy-posture-decisions-2026-11-14.md) (D-S1…D-S9).
 
@@ -194,7 +194,7 @@ Each row is closed by a change that exists in this tree; per the stage closure r
 | P2-08 | Memory create checks a body `agent_id` against an agent-scoped token and rejects a mismatch with 403 `AGENT_NOT_AUTHORIZED` before any write (`services/memory/app/routers/memory_write_authz.py`:17-34; call site `services/memory/app/routers/memories.py`:132), and maps the composite `memories_agent_org_fk` foreign-key violation to 404 `NOT_FOUND` instead of 500 (`services/memory/app/routers/memory_write_errors.py`:85-93,112-114; applied in `services/memory/app/routers/memory_write_support.py`:96-97), so an unknown agent and a foreign-tenant agent are the same response. Body and array bounds are the separate P2-09 subject (the per-field create limits live in `services/memory/app/schemas/memories.py`:22-36) and do not close this row. Covered by `services/memory/tests/unit/test_memory_write_support.py` and `test_memories_router_unit.py` |
 | S12 | Token management now requires `TOKEN_CREATE` to list, create and read, and `TOKEN_REVOKE` to revoke (`services/api/app/routers/tokens.py`:61,70,79,88), behind a `RequireTokenManage` entry gate that admits either bit (`services/api/app/authz.py`:170-173); a revoke-only token cannot create. The gap carried **no register ID**; it is added here as S12 so the arithmetic stays explicit. Covered by `services/api/tests/unit/test_tokens_router.py` |
 
-### 5.2 Remaining (35 rows)
+### 5.2 Remaining (36 rows)
 
 | ID | Gap | Evidence | Blocker | Source |
 |---|---|---|---|---|
@@ -232,9 +232,10 @@ Each row is closed by a change that exists in this tree; per the stage closure r
 | S10 | Post-commit cache invalidation failure on forget is logged, not retried | `services/memory/app/routers/memory_write_support.py`:541-560 | code | sweep 2 |
 | S11 | MCP servers default `IBEX_ENV=development`, relaxing transport trust if unset | `services/mcp-memory/app/main.py`:79; `services/mcp-memory/app/config.py`:31-33 | code | sweep 2 |
 | S13 | A forget is gated on the write permission that creates memories; the destructive bit `MEMORY_DELETE` (`packages/authclient/src/authclient/permissions.py`:7) is granted by **no** role bitmap (`:38-56,76-81`), so gating forget on it made forgetting impossible for every real owner, admin and member token and was reverted to `require_memory_write` (`services/memory/app/routers/memories.py`:92-102; `services/memory/app/deps.py`:94-97) | `services/memory/app/routers/memories.py`:92-102,161-203; `packages/authclient/src/authclient/permissions.py`:38-56,76-81 | owner decision: grant `MEMORY_DELETE` to a role (owner/admin, or a new role) or keep write-permissioned forget and record it | sweep 2 |
+| S14 | An unhandled exception's **message** can reach the ASGI server log. Starlette's `ServerErrorMiddleware` re-raises the exception after the memory handler writes the JSON envelope, and uvicorn then logs the traceback whose last line is `Type: str(exc)` (`starlette/middleware/errors.py`:186; `services/memory/app/errors.py`:11-22). The response and the handler's own record carry no exception text, so the residual is a rule for raise sites: no memory content, SQL with bound parameters, or other tenant data in an exception message. Nothing currently proves that rule across the service — the unit test pins the re-raise, not the message hygiene | `services/memory/app/errors.py`:11-22; `services/memory/tests/unit/test_unhandled_error_envelope.py`:78-85 | code | sweep 2 |
 | D6 | `PrincipalContext` is unsigned; the context-assembly claim row cites this limitation | `00-status-and-evidence.md`:72; 34 §1 P1-34 | owner decision | sweep 1 |
 
-## 6. Stage 4 — Ship it (operator product, release integrity, reproducible evidence) — 32 rows
+## 6. Stage 4 — Ship it (operator product, release integrity, reproducible evidence) — 32 rows (1 closed; 31 remaining)
 
 **Goal.** A person can use it, a tag can be cut through the pipeline, the supported profile serves a real request in production mode, and every published number reproduces from that tag.
 
@@ -253,6 +254,16 @@ Each row is closed by a change that exists in this tree; per the stage closure r
 Rows no gate item names — P1-38, P1-39, P1-40, P1-41, P1-42, P2-01, P2-16, P2-17, P2-18, P2-19, P2-25 — are closed by the closure rule alone: a merged change with its recorded evidence, not a new run.
 
 **Decisions needed.** D-A: `VERSION_RELEASE_TOKEN` and the tag-signing key. D-C: Console 1.0 is login + mutations, or login + declared read-only. Whether a v2 ranking number is published at all (P1-26, P1-27, GAP-004). Whether the benchmark gate turns warnings into failures now that the runs are recordable (R04, D03).
+
+### 6.1 Closed in this change (1 row)
+
+Each row is closed by a change that exists in this tree; per the stage closure rule the row closes when that change merges. None is a claim that a hosted run exists.
+
+| ID | What the tree now shows |
+|---|---|
+| D01 | The sidebar renders a `Preview` chip for every nav item whose surface availability is `preview` (`services/console/app/components/console/AppSidebar.vue`:72-77), so a core preview surface can no longer appear in core navigation unmarked. The two such surfaces are Policies and Settings (`services/console/shared/operator/surfaces.ts`:133,174), and `services/console/tests/sidebar-preview.test.ts` asserts that exact set. The rendered chip itself is a visual-review item, not a string assertion |
+
+### 6.2 Remaining (31 rows)
 
 | ID | Gap | Evidence | Blocker | Source |
 |---|---|---|---|---|
@@ -284,10 +295,9 @@ Rows no gate item names — P1-38, P1-39, P1-40, P1-41, P1-42, P2-01, P2-16, P2-
 | P2-19 | SSE drain returns an ad-hoc error envelope with no `request_id` | 27:166 | code | 27:166 |
 | P2-25 | Dependabot covers Docker for 2 of 8 build dirs; waivers expire silently | 27:172 | code | 27:172 |
 | GAP-004 | The 20/40/45/50/100 ms claims conflict and are unmeasured | 18:10 | benchmark stack | 18:10 |
-| D01 | Two core `preview` surfaces appear in core navigation with no preview marker; the only `Preview` badge is on the Platform-tier group | `services/console/app/lib/navigation.ts`:107-112; `services/console/app/components/console/AppSidebar.vue`:70-72,90 | product | sweep 4 |
-| D02 | `README.md` never reaches the supported `v1-single-node` profile and points at a Console with no login | `README.md`:79-122 | product | sweep 4 |
+| D02 | `README.md` never reaches the supported `v1-single-node` profile: the quick start runs the dev stack and no step starts the profile. The Console it points at now has a login page and a session BFF, so the "no login" clause no longer holds; every BFF route is still a read, which is `P0-05` and awaits `D-C` | `README.md`:79-123; `services/console/app/pages/login.vue`; `services/console/server/api/operator/session/login.post.ts` | product | sweep 4 |
 | D03 | Benchmark artifacts carry run URLs but no corpus hash or seed (81 runs across four artifacts) | `python3 benchmarks/scripts/check_reproducibility.py` → 81 unrecorded; `site/public/benchmarks/ranking-quality-benchmark-data.json` run keys | benchmark stack | sweep 4 |
-| W7.5 | No `v1-smoke` target or CI job exists; `grep -rn v1-smoke` hits only documents | 31:158,200 | workflow/branch-protection | sweep 3 |
+| W7.5 | The `v1-smoke` target exists and is strict — an authenticated `200` with a matching `org_id` plus the `401` and `403` negatives, and a missing bootstrap PAT fails a standalone run instead of skipping (`Makefile`:218; `infra/scripts/dev-tool.sh`:370-385,411-418) — but no workflow runs it, so the CI half of `31`:158 is unmet | `Makefile`:218; `infra/scripts/dev-tool.sh`:370-385; no caller under `.github/workflows/` | workflow/branch-protection | sweep 3 |
 
 ## 7. Not required for v1
 
@@ -328,21 +338,23 @@ P2: `P2-12` `P2-20` `P2-21` (3).
 GAP: `GAP-011` (1).
 NEW: `O01`–`O08` (8), `W6.3` (1), `W4.6` (1), `R05` (1), `D4` (1), `D11` (1) — 13.
 
-**Stage 3 (40 rows: 5 closed, 35 remaining).**
-Remaining: `P0-06` `P0-21`; `P1-14` `P1-15` `P1-16` `P1-17` `P1-18` `P1-21` `P1-22` `P1-23` `P1-24`; `P2-06` `P2-07` `P2-09` `P2-13` `P2-14` `P2-15` `P2-22`; `GAP-002` `GAP-005` `GAP-006` `GAP-007` `GAP-009`; `S01` `S02` `S04` `S05` `S06` `S07` `S08` `S09` `S10` `S11` `S13`; `D6` (35).
+**Stage 3 (41 rows: 5 closed, 36 remaining).**
+Remaining: `P0-06` `P0-21`; `P1-14` `P1-15` `P1-16` `P1-17` `P1-18` `P1-21` `P1-22` `P1-23` `P1-24`; `P2-06` `P2-07` `P2-09` `P2-13` `P2-14` `P2-15` `P2-22`; `GAP-002` `GAP-005` `GAP-006` `GAP-007` `GAP-009`; `S01` `S02` `S04` `S05` `S06` `S07` `S08` `S09` `S10` `S11` `S13` `S14`; `D6` (36).
 Closed in §5.1: `P1-12` `P1-13` `S03` `P2-08` (4 rows that existed at `55a62bc4`) plus `S12` (1 row added by this pass and closed by the same change) — 5. `S13` is reopened by the 2026-11-14 review and sits in §5.2.
 P0: `P0-06` `P0-21` (2).
 P1: `P1-14` `P1-15` `P1-16` `P1-17` `P1-18` `P1-21` `P1-22` `P1-23` `P1-24` (9).
 P2: `P2-06` `P2-07` `P2-09` `P2-13` `P2-14` `P2-15` `P2-22` (7).
 GAP: `GAP-002` `GAP-005` `GAP-006` `GAP-007` `GAP-009` (5).
-NEW: `S01` `S02` `S04`–`S11` (10), `S13` (1), `D6` (1) — 12. The other two NEW rows, `S03` `S12`, are closed in §5.1; `S13` is open in §5.2.
+NEW: `S01` `S02` `S04`–`S11` (10), `S13` (1), `S14` (1), `D6` (1) — 13. The other two NEW rows, `S03` `S12`, are closed in §5.1; `S13` and `S14` are open in §5.2.
 
-**Stage 4 (32 rows).**
+**Stage 4 (32 rows: 1 closed, 31 remaining).**
+Remaining: `P0-04` `P0-05` `P0-15` `P0-20` `P0-22`; `P1-04` `P1-07` `P1-08` `P1-09` `P1-10` `P1-26` `P1-27` `P1-33` `P1-38` `P1-39` `P1-40` `P1-41` `P1-42` `P1-50` `P1-52`; `P2-01` `P2-05` `P2-16` `P2-17` `P2-18` `P2-19` `P2-25`; `GAP-004`; `D02` `D03` `W7.5` (31).
+Closed in §6.1: `D01` (1).
 P0: `P0-04` `P0-05` `P0-15` `P0-20` `P0-22` (5).
 P1: `P1-04` `P1-07` `P1-08` `P1-09` `P1-10` `P1-26` `P1-27` `P1-33` `P1-38` `P1-39` `P1-40` `P1-41` `P1-42` `P1-50` `P1-52` (15).
 P2: `P2-01` `P2-05` `P2-16` `P2-17` `P2-18` `P2-19` `P2-25` (7).
 GAP: `GAP-004` (1).
-NEW: `D01` `D02` `D03` (3), `W7.5` (1) — 4.
+NEW: `D02` `D03` (2), `W7.5` (1) — 3 open, plus `D01` closed in §6.1.
 
 **Not in v1 (15 rows).**
 GAP: `GAP-008` `GAP-010` `GAP-012` (3).
@@ -358,14 +370,16 @@ Ledger: `D1` `G9` (2).
 
 **Closed in the 2026-11-14 stage-3 pass (5 rows).** `P1-12` `P1-13` `S03` `P2-08`, plus the one row this pass adds and closes, `S12`. Each has its own row and evidence in §5.1; none is re-listed in §5.2. `S13`, which this pass first closed, is reopened here: `MEMORY_DELETE` is granted by no role bitmap, so the gate was reverted to `require_memory_write` and the row returns to §5.2. Nothing else in stage 3 closed: every row that changes isolation or authorization posture stays open with its blocker, and its decision is written out in [`36-tenancy-posture-decisions-2026-11-14.md`](36-tenancy-posture-decisions-2026-11-14.md). The brief for this pass listed a subset of the open rows; `P1-15` and `D6` are not in that subset but were open before it and are still open — neither is closed here, because `P1-15` has no negative test and `D6` is an owner decision.
 
+**Closed in the 2026-11-14 stage-4 pass (1 row).** `D01`. It has its own row and evidence in §6.1 and is not re-listed in §6.2. `D02` is **amended, not closed**: its "Console with no login" clause is fixed by `services/console/app/pages/login.vue` and the session BFF, while the README's missing `v1-single-node` path and the read-only BFF (`P0-05`, awaiting `D-C`) still hold, so the row stays in §6.2 with the corrected text. The same pass adds one open stage-3 row, `S14` (§5.2), for the exception-message log residual, so stage 3 moves from 40 rows to 41.
+
 **Arithmetic.**
 
 - **P0: 22 = 11 in stages + 11 closed.** 11 = S1 0 + S2 4 + S3 2 + S4 5; closed = 8 since the audit + `P0-12` `P0-13` `P0-14`.
 - **P1: 51 issued = 28 in stages + 8 not in v1 + 15 closed.** 28 = S1 3 + S2 1 + S3 9 + S4 15; closed = 4 since the audit + `P1-01` `P1-02` `P1-03` `P1-43` `P1-44` `P1-45` + the stage-2 closures `P1-06` `P1-48` `P1-49` + the stage-3 closures `P1-12` `P1-13`. `P1-19` was never issued: the audit runs `P1-01`…`P1-18` then `P1-20`, so the numbering skips and the set of issued rows is 51, all placed.
 - **P2: 25 = 15 in stages + 2 not in v1 + 8 closed.** 15 = S1 0 + S2 1 + S3 7 + S4 7; closed = `P2-03` `P2-04` `P2-10` `P2-11` `P2-23` + the stage-2 closures `P2-20` `P2-21` + the stage-3 closure `P2-08`.
 - **GAP: 12 IDs = 11 rows + 1 alias.** 8 stage rows (S1 1 + S2 1 + S3 5 + S4 1) + 3 in §7 = 11; `GAP-003` aliases `P0-14` for routes, gRPC methods and MCP tools, with event contracts recorded out of scope on that row, and adds no row.
-- **NEW and ledger rows: 40 = 22 in stages + 2 in §7 + 16 closed.** 22 = S1 1 + S2 5 + S3 12 + S4 4; §7 holds `D1` and `G9`; closed = `G01` `G02` `G03` `R01` `R03` `R04` + the stage-2 closures `O01` `O02` `O03` `O05` `O06` `O07` `O08` `W4.6` + the stage-3 closures `S03` `S12`. **Check:** correcting the S03 omission on its own gives 40 = 21 + 2 + 17 with `S03` in the closed set and stage-3 open at 11; reopening `S13` under §5.1's review then moves that one row back from closed to open, so the split returns to 22 open / 16 closed with `S03` closed and `S13` open in the stage-3 count. `R05` and `W6.3` stay in the 5 open stage-2 rows because they are only partially closed. The count is 40 rather than 38 because S12 and S13 are new rows; S12 is closed and S13 is open, so they add to the total and one to each side.
-- **Staged rows still open: 84 = S1 5 + S2 12 + S3 35 + S4 32.** 122 original staged rows (120 at `55a62bc4`, plus the two S12/S13 rows this pass adds) minus the 20 closed in the stage-1 pass, the 13 in the stage-2 pass and the 5 in the stage-3 pass.
+- **NEW and ledger rows: 41 = 22 in stages + 2 in §7 + 17 closed.** 22 = S1 1 + S2 5 + S3 13 + S4 3; §7 holds `D1` and `G9`; closed = `G01` `G02` `G03` `R01` `R03` `R04` + the stage-2 closures `O01` `O02` `O03` `O05` `O06` `O07` `O08` `W4.6` + the stage-3 closures `S03` `S12` + the stage-4 closure `D01`. **Check:** correcting the S03 omission on its own gave 40 = 21 + 2 + 17 with `S03` in the closed set and stage-3 open at 11; reopening `S13` then moved that one row back from closed to open, so the split was 22 open / 16 closed; closing `D01` in the stage-4 pass moves one row the other way and adding `S14` adds one open row, so the split is 22 open / 17 closed. `R05` and `W6.3` stay in the 5 open stage-2 rows because they are only partially closed. The count is 41 rather than 38 because S12, S13 and S14 are new rows; S12 is closed and S13/S14 are open, so they add to the total and one to each side.
+- **Staged rows still open: 84 = S1 5 + S2 12 + S3 36 + S4 31.** 123 original staged rows (120 at `55a62bc4`, plus the three S12/S13/S14 rows these passes add) minus the 20 closed in the stage-1 pass, the 13 in the stage-2 pass, the 5 in the stage-3 pass and the 1 in the stage-4 pass.
 - **W-waves: 38 items, each mapped once.** 38 = W0 3 + W4 6 + W5 5 + W6 4 + W7 5 + W8 6 + W9 4 + W10 5.
 
 **W-wave → stage map.** Every item in `31-v1-release-plan-2026-11-09.md` §4, accounted for once:

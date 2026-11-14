@@ -25,7 +25,6 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.authz import assert_operator_permission
 from app.db import session_with_org
@@ -180,21 +179,33 @@ def _load_drill() -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-async def _outbox_watermark(session: AsyncSession | None, org_id: UUID) -> int | None:
-    if session is None:
-        return None
+async def _probe_outbox(session_factory: Any, org_id: UUID) -> tuple[int | None, str]:
+    """Return ``(watermark, dependency_state)`` for the tenant outbox probe."""
+    # ``watermark`` is None when the value is unknown. ``dependency_state`` is
+    # ``ok`` when the probe answered (including 0 for an empty outbox),
+    # ``degraded`` when the query failed, and ``unavailable`` when no session
+    # factory is configured.
+    #
+    # The failure is reported instead of swallowed into a null watermark: the
+    # route used to do that, so a broken probe rendered as a healthy empty
+    # outbox. ``COALESCE(..., 0)`` keeps an empty table a real answer (0).
+    if session_factory is None:
+        return None, "unavailable"
     try:
-        row = await session.execute(
-            text(
-                "SELECT COALESCE(MAX(aggregate_seq), 0) FROM ibex_core.evidence_outbox "
-                "WHERE org_id = CAST(:org_id AS uuid)"
-            ),
-            {"org_id": str(org_id)},
-        )
-        return int(row.scalar_one())
-    except (SQLAlchemyError, OSError, RuntimeError, TypeError, ValueError):
-        logger.debug("outbox watermark unavailable", exc_info=True)
-        return None
+        async with session_with_org(session_factory, str(org_id)) as session:
+            row = await session.execute(
+                text(
+                    "SELECT COALESCE(MAX(aggregate_seq), 0) "
+                    "FROM ibex_core.evidence_outbox "
+                    "WHERE org_id = CAST(:org_id AS uuid)"
+                ),
+                {"org_id": str(org_id)},
+            )
+            return int(row.scalar_one()), "ok"
+    except (SQLAlchemyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        # Type only: a driver error message can carry the statement.
+        logger.warning("outbox watermark probe failed type=%s", type(exc).__name__)
+        return None, "degraded"
 
 
 def _parse_dlq_depth() -> int | None:
@@ -314,16 +325,14 @@ async def platform_health(
     deps = await _dep_health(request)
     drain = getattr(request.app.state.api, "drain", None)
     draining = bool(drain is not None and getattr(drain, "is_draining", lambda: False)())
-    degraded = any(v != "ok" for v in deps.values()) or draining
 
     session_factory = getattr(request.app.state.api, "session_factory", None)
-    outbox_seq: int | None = None
-    if session_factory is not None:
-        try:
-            async with session_with_org(session_factory, str(claims.org_id)) as session:
-                outbox_seq = await _outbox_watermark(session, claims.org_id)
-        except (SQLAlchemyError, OSError, RuntimeError):
-            outbox_seq = None
+    # A null watermark is ambiguous on its own, so the probe's own state travels
+    # with it: an empty outbox is "ok" (watermark 0), a failed query is "degraded"
+    # and feeds degraded_mode below.
+    outbox_seq, outbox_state = await _probe_outbox(session_factory, claims.org_id)
+    deps["outbox"] = outbox_state
+    degraded = any(v != "ok" for v in deps.values()) or draining
 
     last_backup, last_drill, ingestion_lag = await asyncio.gather(
         asyncio.to_thread(_parse_backup_stamp),

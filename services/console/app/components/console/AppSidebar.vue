@@ -69,6 +69,12 @@ function itemClass(item: NavItem): string[] {
                   <NuxtLink :to="item.to">
                     <component :is="item.icon" :size="15" :stroke-width="1.75" aria-hidden="true" />
                     <span>{{ item.label }}</span>
+                    <span
+                      v-if="item.availability === 'preview'"
+                      class="ml-auto shrink-0 rounded-full border border-dashed border-line-strong px-1.5 py-0.5 font-mono text-[0.75rem] text-fg-3"
+                    >
+                      Preview
+                    </span>
                   </NuxtLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>

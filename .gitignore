@@ -120,3 +120,6 @@ MODEL-POLICY.md
 
 # Local bundle smoke evidence (generated)
 bundle-smoke-result.json
+
+# Generated per-deployment pgBackRest repository config (credentials live in .env)
+infra/backup/pgbackrest/pgbackrest.conf

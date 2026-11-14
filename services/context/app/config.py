@@ -142,6 +142,17 @@ class ContextSettings(BaseSettings):
             "delimiters (ADR-0070); allowed range 1..64."
         ),
     )
+    max_memories: int = Field(
+        default=20,
+        ge=0,
+        le=MAX_ASSEMBLY_OPTION_MEMORIES,
+        validation_alias="IBEX_CONTEXT_MAX_MEMORIES",
+        description=(
+            "Memories injected per assembly when the request sets no cap. A "
+            "request's own max_memories (1..MAX_ASSEMBLY_OPTION_MEMORIES) wins; "
+            "0 disables the server-side cap (unlimited)."
+        ),
+    )
 
     @property
     def retrieval_wall_ms(self) -> float:

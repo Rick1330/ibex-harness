@@ -17,6 +17,19 @@ def test_config_empty_and_nonempty_database_url() -> None:
     assert a is b
 
 
+def test_rate_limit_default_rpm_reads_the_documented_env_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`env_prefix="IBEX_API_"` maps the field, so the documented name has a reader.
+
+    Pinned because the name is documented in engineering/ENVIRONMENT_VARIABLES.md:
+    if the prefix or the field name changes, the row becomes a knob that does nothing.
+    """
+    monkeypatch.setenv("IBEX_API_RATE_LIMIT_DEFAULT_RPM", "240")
+    monkeypatch.delenv("RATE_LIMIT_DEFAULT_RPM", raising=False)
+    assert Settings().rate_limit_default_rpm == 240
+
+
 def test_non_development_operator_sessions_require_auth_service_token() -> None:
     kwargs = {
         "environment": "staging",

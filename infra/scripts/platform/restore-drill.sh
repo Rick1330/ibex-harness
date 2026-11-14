@@ -363,6 +363,22 @@ if [[ "$PG_USED_PGBACKREST" == "true" ]]; then
   if [[ "$ready" != "true" ]]; then
     echo "[drill] WARN Postgres did not accept connections after restore restart"
   fi
+  # A restore that returned 0 is not evidence until the data directory exists
+  # and the server has left recovery. Check PG_VERSION first: a server started
+  # over an empty PGDATA runs initdb, so a liveness check alone would report a
+  # fresh cluster as a successful restore.
+  if command -v docker >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]]; then
+    if ! docker compose -f "$COMPOSE_FILE" exec -T postgres \
+      sh -c 'test -f "${PGDATA:-/var/lib/postgresql/data}/PG_VERSION"' 2>/dev/null; then
+      echo "[drill] ERROR: restored data directory has no PG_VERSION — the restore did not produce a cluster" >&2
+      PG_RESTORE_OK=false
+    fi
+  fi
+  RECOVERY_STATE="$(psql_cmd -Atc "SELECT pg_is_in_recovery()" 2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ "$RECOVERY_STATE" != "f" ]]; then
+    echo "[drill] ERROR: pg_is_in_recovery()=${RECOVERY_STATE:-no answer} after restore — not claiming restore success" >&2
+    PG_RESTORE_OK=false
+  fi
 fi
 
 PG_RESTORE_END=$(date +%s)

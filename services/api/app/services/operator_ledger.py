@@ -1,4 +1,14 @@
-"""Operator action ledger helpers (4.P.1 — deny without preview_token)."""
+"""Operator action ledger helpers (4.P.1 — deny without preview_token).
+
+Not wired into any route. This module has no production caller: `assert_preview_token`,
+`record_ledger_row` and `assert_dual_approval_satisfied` are referenced only by
+`tests/unit/test_operator_ledger.py`, and `insert_ledger_row` is never invoked outside that test.
+The preview-token gate and the dual-approval gate therefore enforce nothing today, and no request
+path writes a row to `ibex_core.operator_action_ledger`. The ledger and both gates are tracked as
+gate G9 ("governed side effects"), recorded `PROPOSED` with "Specified only. No runtime or
+acceptance evidence." (`site/app/data/ledger.ts`:241-246). Do not read this module as evidence that
+the operator action ledger exists or that a high-impact mutation requires approval.
+"""
 
 from __future__ import annotations
 

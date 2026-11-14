@@ -184,3 +184,29 @@ export function findNavigationItem(path: string): NavItem | null {
 export function navigationGroupFor(item: NavItem): string {
   return item.group
 }
+
+/**
+ * Post-login return target. Only same-origin application paths are accepted;
+ * absolute URLs, protocol-relative URLs, API routes, control characters, and
+ * the auth pages themselves fall back to the overview so `?next=` cannot become
+ * an open redirect or loop back into the login page.
+ */
+const LOGIN_EXCLUDED_PREFIXES = ["/login", "/logout", "/api/", "/_nuxt/", "/__nuxt"]
+
+export function safeLoginNext(value: unknown): string {
+  const candidate = Array.isArray(value) ? value[0] : value
+  if (typeof candidate !== "string") return "/"
+  if (!candidate.startsWith("/") || candidate.startsWith("//")) return "/"
+  const hasControlCharacter = [...candidate].some((character) => {
+    const code = character.codePointAt(0) ?? 0
+    return code < 0x20 || code === 0x7f
+  })
+  if (candidate.includes("\\") || hasControlCharacter) return "/"
+
+  const path = candidate.split(/[?#]/, 1)[0] ?? ""
+  if (path.split("/").includes("..")) return "/"
+  const excluded = LOGIN_EXCLUDED_PREFIXES.some(
+    (prefix) => path === prefix.replace(/\/$/, "") || path.startsWith(prefix),
+  )
+  return excluded ? "/" : candidate
+}

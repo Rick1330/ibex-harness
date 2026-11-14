@@ -175,6 +175,9 @@ v1-up: ## Start the v1-single-node supported profile and wait for every service
 	@# Idempotent: creates .env when absent, fills missing secrets, and never
 	@# overwrites a non-empty value without --force. Images are rebuilt so an
 	@# upgrade cannot run the previous checkout's binaries or embedded migrations.
+	@# IBEX_V1_SKIP_BUILD=1 skips that rebuild: the rollback path retags recorded
+	@# image IDs and a rebuild would replace the images being recovered. The
+	@# flag is honoured here and by `v1 up`, so a documented skip actually skips.
 	@"$(BASH)" infra/scripts/gen-v1-secrets.sh
 	@# The marker lives under the configured certificate directory, and a failed
 	@# teardown must stop the recipe: otherwise the marker is cleared while the
@@ -186,9 +189,17 @@ v1-up: ## Start the v1-single-node supported profile and wait for every service
 			"$(BASH)" "$(DEV_TOOL)" v1 down; \
 			rm -f "$$certs/.certificates-changed"; \
 		fi
-	@"$(BASH)" "$(DEV_TOOL)" v1 build
+	@if [ "$${IBEX_V1_SKIP_BUILD:-0}" = "1" ]; then \
+		echo 'IBEX_V1_SKIP_BUILD=1: reusing existing images (no build)'; \
+	else \
+		"$(BASH)" "$(DEV_TOOL)" v1 build; \
+	fi
 	@"$(BASH)" "$(DEV_TOOL)" v1 up -d
 	@"$(BASH)" "$(DEV_TOOL)" v1 wait
+	@# Arm WAL archiving. Idempotent, and soft on purpose: a repository outage
+	@# must not stop the profile from serving. A failed arm is printed as a
+	@# warning; `make v1-backup-init` is the strict check.
+	@"$(BASH)" "$(DEV_TOOL)" v1 backup-init --soft
 	@"$(BASH)" "$(DEV_TOOL)" v1 url
 	@# O06: the URL check only proves the edge answers a static string. Follow it
 	@# with an authenticated request. A re-run whose one-time PAT was already
@@ -218,14 +229,17 @@ v1-ps: ## Show v1-single-node service status
 v1-smoke: ## Prove the v1 profile with an authenticated edge request (O06)
 	@"$(BASH)" "$(DEV_TOOL)" v1 smoke
 
-v1-backup: ## Back up the v1-single-node Postgres with pgBackRest (TYPE=full|diff|incr)
+v1-backup: ## Back up the v1-single-node Postgres with pgBackRest (TYPE=full|diff|incr|check)
 	@"$(BASH)" "$(DEV_TOOL)" v1 backup "$(if $(TYPE),$(TYPE),full)"
+
+v1-backup-init: ## Create/verify the pgBackRest stanza and repository (idempotent, strict)
+	@"$(BASH)" "$(DEV_TOOL)" v1 backup-init
 
 v1-restore: ## Restore the latest pgBackRest backup into the v1-single-node profile
 	@"$(BASH)" "$(DEV_TOOL)" v1 restore
 
-v1-pitr: ## Restore to a timestamp target (TARGET=<ISO8601>; requires pgbackrest-restore.sh support)
-	@"$(BASH)" "$(DEV_TOOL)" v1 pitr "$(TARGET)"
+v1-pitr: ## Restore to a timestamp (TARGET=<ISO8601>; SCRATCH_VOLUME=<name> restores beside the live cluster)
+	@IBEX_PITR_SCRATCH_VOLUME="$(SCRATCH_VOLUME)" "$(BASH)" "$(DEV_TOOL)" v1 pitr "$(TARGET)"
 
 observability-up: ## Start local LGTM observability stack (Prometheus/Grafana/Tempo/Loki)
 	@"$(BASH)" infra/scripts/observability-up.sh
