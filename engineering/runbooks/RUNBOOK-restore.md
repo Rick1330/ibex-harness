@@ -4,7 +4,7 @@
 after data loss or corruption. The restore is **destructive**: it stops
 PostgreSQL, reconciles the live data directory with `--delta`, starts the cluster
 and proves it left recovery before printing `ok`
-(`infra/scripts/platform/pgbackrest-restore.sh`:528-533,556-590,702). Treat it as a
+(`infra/scripts/platform/pgbackrest-restore.sh`:528-533,564-598,702). Treat it as a
 declared incident with an incident note, not a routine maintenance command.
 
 ## Symptoms
@@ -247,7 +247,7 @@ becomes `+00`, because pgBackRest rejects both (`pgbackrest-restore.sh`:171-190)
 then restores with `--type=time --target=<normalised> --target-action=promote`
 (`:192-195`). It takes the same destructive path as `v1-restore`: stop Postgres,
 `--delta`, `PG_VERSION` before the server starts, and `pg_is_in_recovery()=false`
-before `ok` (`:197-205,520-525,556-590,694`). On success it also leaves the cluster
+before `ok` (`:197-205,528-533,564-598,702`). On success it also leaves the cluster
 running and verified.
 
 **Rehearse on a scratch volume first.** `make v1-pitr TARGET=… SCRATCH_VOLUME=<name>`
@@ -268,7 +268,7 @@ export `PGBACKREST_REPO1_CIPHER_PASS`, `PGBACKREST_REPO1_S3_KEY` and
 (`infra/scripts/dev-tool.sh`:607-610; `infra/scripts/gen-v1-secrets.sh`:527-544). The
 script writes them to a `0600` file created with `mktemp` and hands that file to
 the engine with `--env-file`, removing it on exit
-(`pgbackrest-restore.sh`:309-390). It does not use `-e VAR`: with a rootful
+(`pgbackrest-restore.sh`:317-398). It does not use `-e VAR`: with a rootful
 engine (`IBEX_PODMAN_SUDO=1` makes the engine `sudo -n podman`) sudo's
 `env_reset` discards the exported values, and a name-only `-e` then reaches the
 container empty — after Postgres has already been stopped. The script also proves
@@ -286,7 +286,7 @@ expose it.
 1. **PostgreSQL is already running and verified; leave the rest of the profile
    down.** Both destructive paths stop Postgres, restore, start it, and require
    `pg_is_in_recovery()=false` before printing `ok`
-   (`pgbackrest-restore.sh`:528-533,556-590,702). They do **not** stop the
+   (`pgbackrest-restore.sh`:528-533,564-598,702). They do **not** stop the
    application services, which is why [First response](#first-response) step 2
    stops them before the restore starts. Confirm with `make v1-ps`
    (`Makefile`:226-227) that `postgres` is running and no application service is.
