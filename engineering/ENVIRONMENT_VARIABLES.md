@@ -614,9 +614,10 @@ Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or one of
 | `IBEX_CONTEXT_GRPC_ADDR` | No | `127.0.0.1:9092` | ContextAssemblyService bind address (`python -m app`); must be a loopback IP literal (`127.0.0.1` or `::1`) — hostnames are rejected rather than resolved — or the server refuses to start ([ADR-0096](adr/0096-context-grpc-caller-authentication.md)) |
 | `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` | Yes | (none) | Shared caller token compared against the `x-ibex-context-service-token` metadata entry on every RPC; 32–512 characters of `[A-Za-z0-9_-]`. Secret; never logged. The server refuses to start without it and refuses a value equal to `IBEX_CONTEXT_MEMORY_API_TOKEN` |
 | `IBEX_CONTEXT_P95_TARGET_MS` | No | `50` | Target p95 | Alerting/benchmarks |
-| `IBEX_CONTEXT_MAX_MEMORIES` | No | `20` | Max memories injected |
+| `IBEX_CONTEXT_MAX_MEMORIES` | No | `20` | Memories injected per assembly when the request sets no `max_memories`; a request cap (1–100) wins, `0` disables the server cap (unlimited) |
 | `IBEX_CONTEXT_RESPONSE_RESERVE_RATIO` | No | `0.15` | Reserve for model output |
-| `IBEX_CONTEXT_SAFETY_BUFFER_RATIO` | No | `0.10` | Buffer to avoid overflow |
+
+`IBEX_CONTEXT_SAFETY_BUFFER_RATIO` is not configurable: the safety buffer is a per-tokenizer-family value in the capability catalog (`services/context/app/data/model_capabilities.v1.json`), applied at `services/context/app/budget.py`; an env override would be a second source of truth.
 
 Proxy client switches for assembly live in §9 (`IBEX_CONTEXT_ENABLED`, `IBEX_CONTEXT_GRPC_TARGET`, `IBEX_CONTEXT_GRPC_SERVICE_TOKEN`, `IBEX_CONTEXT_ASSEMBLE_TIMEOUT`, …).
 

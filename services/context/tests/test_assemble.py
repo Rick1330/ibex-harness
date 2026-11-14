@@ -260,6 +260,41 @@ async def test_assemble_max_memories_caps_scored() -> None:
 
 
 @pytest.mark.asyncio
+async def test_assemble_applies_configured_max_memories_when_request_sets_none() -> None:
+    """IBEX_CONTEXT_MAX_MEMORIES caps injection when the request asks for no cap."""
+    hot = [_hit(content=f"hot-{i}") for i in range(3)]
+    cold = [_hit(source="vector", content=f"cold-{i}") for i in range(3)]
+    result = await _assembler(
+        memory=_StubMemory(hot=hot, cold=cold),
+        settings=_settings(max_memories=2),
+    ).assemble(_req())
+    assert result.metrics.candidates_evaluated <= 2
+    assert len(result.packed.memories) <= 2
+
+
+@pytest.mark.asyncio
+async def test_assemble_request_cap_wins_over_configured_default() -> None:
+    hot = [_hit(content=f"hot-{i}") for i in range(3)]
+    cold = [_hit(source="vector", content=f"cold-{i}") for i in range(3)]
+    result = await _assembler(
+        memory=_StubMemory(hot=hot, cold=cold),
+        settings=_settings(max_memories=3),
+    ).assemble(_req(options=AssemblyOptions(max_memories=1)))
+    assert result.metrics.candidates_evaluated <= 1
+
+
+@pytest.mark.asyncio
+async def test_assemble_zero_configured_cap_keeps_unlimited() -> None:
+    hot = [_hit(content=f"hot-{i}") for i in range(3)]
+    cold = [_hit(source="vector", content=f"cold-{i}") for i in range(3)]
+    result = await _assembler(
+        memory=_StubMemory(hot=hot, cold=cold),
+        settings=_settings(max_memories=0),
+    ).assemble(_req())
+    assert result.metrics.candidates_evaluated == 6
+
+
+@pytest.mark.asyncio
 async def test_assemble_deterministic_repeat() -> None:
     hot = _hit(content="same hot")
     cold = _hit(source="vector", content="same cold")

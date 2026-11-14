@@ -12,7 +12,6 @@ from uuid import uuid4
 import httpx
 import pytest
 from apierror_py import INSUFFICIENT_PERMISSIONS, INVALID_TOKEN
-from authclient.permissions import OPERATOR_METADATA_READ
 
 from app.errors import ApiError
 from app.routers import platform as platform_mod
@@ -26,49 +25,8 @@ from app.routers.platform import (
     _require_operator_session,
     platform_health,
 )
-from app.session_stub import SESSION_KIND_ACCESS, SessionClaims
-
-
-def _claims(*, permissions: int = OPERATOR_METADATA_READ) -> SessionClaims:
-    return SessionClaims(
-        sub="user-1",
-        org_id=uuid4(),
-        permissions=permissions,
-        session_kind=SESSION_KIND_ACCESS,
-        exp=9999999999,
-        iat=1,
-        jti="jti-1",
-        verify_method="HS256",
-    )
-
-
-def _authed_request(
-    *,
-    feature: bool = True,
-    redis_url: str | None = "redis://localhost:6379/0",
-) -> MagicMock:
-    req = MagicMock()
-    req.app.state.settings = MagicMock(
-        operator_feature_enabled=feature,
-        environment="development",
-        jwt_hmac_secret="sekrit",
-        jwt_public_keys_pem=None,
-        jwt_issuer="ibex",
-        jwt_audience="ibex-dashboard",
-        dashboard_session_cookie_name="ibex_session",
-        redis_url=redis_url,
-        platform_retention_horizon_days=90,
-    )
-    req.cookies = {"ibex_session": "valid.token.here"}
-    api = MagicMock()
-    api.ready = True
-    validator = MagicMock()
-    validator.ready = AsyncMock(return_value=True)
-    api.validator = validator
-    api.session_factory = None
-    api.drain = MagicMock(is_draining=lambda: False)
-    req.app.state.api = api
-    return req
+from tests.unit.platform_health_test_support import authed_request as _authed_request
+from tests.unit.platform_health_test_support import claims as _claims
 
 
 def test_parse_backup_stamp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -181,6 +139,8 @@ async def test_platform_health_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     assert out.dependency_health["api"] == "ok"
     assert out.dependency_health["postgres"] == "unavailable"
     assert out.dependency_health["auth"] == "ok"
+    # No session factory: the outbox probe cannot run, so it is not "ok".
+    assert out.dependency_health["outbox"] == "unavailable"
     assert out.degraded_mode is True
 
 
@@ -296,36 +256,6 @@ async def test_require_session_verification_failure_is_propagated() -> None:
 
 
 @pytest.mark.asyncio
-async def test_outbox_watermark_none_session() -> None:
-    assert await platform_mod._outbox_watermark(None, uuid4()) is None
-
-
-@pytest.mark.asyncio
-async def test_outbox_watermark_query_error() -> None:
-    session = AsyncMock()
-    session.execute = AsyncMock(side_effect=RuntimeError("boom"))
-    assert await platform_mod._outbox_watermark(session, uuid4()) is None
-
-
-@pytest.mark.asyncio
-async def test_platform_health_outbox_factory_raises() -> None:
-    req = _authed_request()
-    cm = AsyncMock()
-    cm.__aenter__ = AsyncMock(side_effect=RuntimeError("db"))
-    cm.__aexit__ = AsyncMock(return_value=None)
-    req.app.state.api.session_factory = MagicMock()
-    with (
-        patch.object(platform_mod, "_require_operator_session", return_value=_claims()),
-        patch.object(platform_mod, "_postgres_status", AsyncMock(return_value="unavailable")),
-        patch.object(platform_mod, "_redis_status", AsyncMock(return_value="ok")),
-        patch.object(platform_mod, "session_with_org", return_value=cm),
-    ):
-        out = await platform_health(req, _claims())
-    assert out.outbox_max_aggregate_seq is None
-    assert out.dependency_health["postgres"] == "unavailable"
-
-
-@pytest.mark.asyncio
 async def test_auth_status_timeout() -> None:
     validator = MagicMock()
     validator.ready = AsyncMock(side_effect=TimeoutError())
@@ -425,13 +355,6 @@ def test_load_drill_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(Path, "read_text", boom)
     assert _load_drill() is None
-
-
-@pytest.mark.asyncio
-async def test_outbox_watermark_bad_scalar() -> None:
-    session = AsyncMock()
-    session.execute = AsyncMock(return_value=MagicMock(scalar_one=lambda: "not-int"))
-    assert await platform_mod._outbox_watermark(session, uuid4()) is None
 
 
 @pytest.mark.asyncio

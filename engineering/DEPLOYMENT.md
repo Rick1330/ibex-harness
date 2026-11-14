@@ -166,6 +166,103 @@ supported rollback. The capability verifiers live in the database (`pg_authid`),
 snapshot state: a start after a restore must let `provision` run again — `make v1-up` does — before a service
 authenticates with a credential rotated after that snapshot.
 
+#### Backup and point-in-time recovery (pgBackRest)
+
+The profile's Postgres image is built from `infra/compose/v1-single-node/postgres/Dockerfile` (base
+`pgvector/pgvector:0.8.6-pg16` pinned by digest) and adds `pgbackrest` 2.60.0, so the archive command and every base
+backup run inside the cluster container where the data directory is. The Compose service is
+`image: ibex-v1-postgres:local`; the upstream digest is repeated in a comment above the service so the pin stays visible
+from the Compose file.
+
+**Continuous WAL archiving.** Postgres starts with `wal_level=replica`, `archive_mode=on`, `archive_timeout=60` and
+`archive_command=pgbackrest --config=/etc/pgbackrest/pgbackrest.conf --stanza=ibex-main archive-push %p`.
+`restore_command` is deliberately not set on the running server: recovery parameters exist only for the duration of a
+restore, where pgBackRest writes them into `postgresql.auto.conf`. The stanza sets `archive-async=n`: a failed push must
+block WAL recycling so the failure is visible in `pg_stat_archiver` instead of being retried behind the server's back.
+The cost is that a repository outage retains WAL in `pg_wal` (see the risk note below).
+
+**Repository.** `repo1` is an S3-compatible store at `http://objectstore:9000`, bucket `ibex-pgbackrest`, path-style
+addressing, AES-256-CBC repository cipher, `repo1-retention-full=2`. The `objectstore` service is MinIO — Chainguard's
+build, pinned by digest (`cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1`),
+the same pin the dev stack uses. It is not the upstream image because MinIO stopped publishing community images to Docker
+Hub and Quay, so no upstream image can be pulled, let alone pinned. Two one-shots gate it: `objectstore-volume-init`
+chowns the data volume to the image's uid 65532 before the server starts, and `objectstore-init` creates the bucket with
+`mc mb --ignore-existing` and verifies it. MinIO allocates object storage on write and does not preallocate a repository
+file per volume, so the data volume holds only what the backups contain. The stanza config is vendor-neutral: pointing
+`repo1-s3-endpoint` at any other S3-compatible deployment changes nothing else in the profile. This store is the backup
+repository, not the S3 projection excluded by ADR-0097 §10 — the owner should confirm that reading against the ADR.
+`ibex-sessions` is not created because no service in this profile sets the worker's `S3_*` variables, so the worker never
+writes to object storage.
+
+**Config and credentials are separate.** `make v1-secrets` writes `infra/backup/pgbackrest/pgbackrest.conf` (mode `0644`,
+no secrets) and adds `IBEX_OBJECTSTORE_ACCESS_KEY`, `IBEX_OBJECTSTORE_SECRET_KEY` and `PGBACKREST_REPO1_CIPHER_PASS` to
+the `0600` `.env`. The config is bind-mounted read-only into the postgres container, which runs as uid 999, so it must be
+world-readable and must therefore carry no secret; Compose passes the three credentials as `PGBACKREST_REPO1_S3_KEY`,
+`PGBACKREST_REPO1_S3_KEY_SECRET` and `PGBACKREST_REPO1_CIPHER_PASS` in the container environment. The generated config is
+a build artifact, not source: regenerate it with `make v1-secrets` and keep it out of version control.
+
+**Stanza initialisation.** `stanza-create` is idempotent. `make v1-up` runs it soft after the health wait, so a repository
+outage prints a loud warning and leaves the profile serving instead of blocking startup; `make v1-backup-init` is the
+strict form that fails instead.
+
+| Command | What it does |
+|---|---|
+| `make v1-backup` (`TYPE=full` default) | Full backup; `TYPE=diff`, `TYPE=incr`, `TYPE=check` for the others |
+| `make v1-backup-init` | Create/verify the stanza and repository; fails loudly if archiving cannot be armed |
+| `make v1-restore` | Restore the newest backup over the live volume; stops Postgres, restores with `--delta`, then starts and verifies the cluster |
+| `make v1-pitr TARGET=<ISO8601>` | Restore to a timestamp (`--type=time --target-action=promote`); same stop/verify sequence as `v1-restore` |
+| `make v1-pitr TARGET=… SCRATCH_VOLUME=<name>` | Same target, into a separate volume, leaving the live cluster running and untouched |
+
+**What a destructive restore does, in order.** `infra/scripts/platform/pgbackrest-restore.sh` stops the `postgres`
+service through the profile's Compose file (`:276-281`), resolves the live volume from Compose metadata (`:283-289`),
+and runs `pgbackrest restore` inside the Compose network (`:383-395`). The restore carries `--delta` (`:183-191`):
+pgBackRest refuses a non-empty `pg1-path`, and the live data directory is non-empty by definition, so without `--delta`
+the command would abort after Postgres is already stopped. A point-in-time run adds
+`--type=time --target=<normalised> --target-action=promote` (`:178-181`); the target is validated as ISO-8601 and its
+`T` separator and `Z` suffix are rewritten to the `+00` offset pgBackRest's parser accepts (`:157-176`). The script
+then proves the result before reporting it: `PG_VERSION` must exist on the volume *before* the server is started
+(`:314-319`), because the image's entrypoint runs `initdb` on an empty `PGDATA` and a liveness check alone would report
+a fresh cluster as a successful restore; only then does it start Postgres (`:320-324`) and require
+`pg_is_in_recovery()=false` (`:330-344`). `[restore] ok` is printed after that proof (`:401`), and **both destructive
+paths leave the cluster running and verified**. They do not stop the application services — an operator drains those
+before a restore, and the restore runbook states that sequence.
+
+**Credentials.** `make v1-restore` and `make v1-pitr` export `PGBACKREST_REPO1_CIPHER_PASS`,
+`PGBACKREST_REPO1_S3_KEY` and `PGBACKREST_REPO1_S3_KEY_SECRET` from the profile's `0600` `.env`
+(`infra/scripts/dev-tool.sh`:601-610), and the script forwards them by name with `-e VAR`
+(`infra/scripts/platform/pgbackrest-restore.sh`:193-205). No credential belongs on a command line; a process listing
+would expose it.
+
+**Scheduling.** There is no looping backup service in the profile: a restart-looping scheduler inside Compose is a second
+scheduler with its own failure mode and no host-level visibility. Schedule `make v1-backup` from the host instead — a
+systemd timer or a cron entry — and monitor `pg_stat_archiver.failed_count` plus the freshness file the script writes
+(`ibex-last-backup.txt` and `ibex_backup_metrics.prom`, under `${XDG_STATE_HOME:-$HOME/.local/state}/ibex/backup` for a
+non-root operator).
+
+**Proving PITR without touching live data.** `SCRATCH_VOLUME` restores beside the running cluster and is the recommended
+first rehearsal for any target an operator intends to use in an incident: create the volume first
+(`podman volume create <name>` or `docker volume create <name>`), then
+`make v1-pitr TARGET=… SCRATCH_VOLUME=<name>`. The scratch branch stops nothing and never mounts the live data
+directory (`infra/scripts/platform/pgbackrest-restore.sh`:241-274), and it restores without `--delta` because the
+volume is empty. The restore runs the profile image as uid 999 so the restored files are readable by the server, and the
+printed next step starts the scratch cluster with `-c archive_mode=off` so the restored timeline cannot write into the
+live repository (`:258-272`); the scratch copy is left stopped until that command is run. Verify with
+`pg_is_in_recovery()`, `pg_last_xact_replay_timestamp()` and a row-level check around the target. A restore into the live
+volume must run as uid 999 as well; a root-owned restore leaves a data directory the server cannot read.
+
+**Risk: WAL retention during a repository outage.** With `archive-async=n`, a failed `archive-push` blocks WAL recycling,
+so `pg_wal` grows until the repository returns or the disk fills. That is the intended trade — a silent data-loss risk is
+worse than a visible disk alarm — but it must be monitored: alert when `pg_stat_archiver.failed_count` increases and on
+`pg_wal` size, and treat an object-store outage as a P1 with a bounded time-to-disk-full. Retention is
+`repo1-retention-full=2`, so two full backups are kept; a longer window is an operator decision, not a default. On a
+fresh install the first archive attempts can fail before `objectstore-init` creates the bucket; those segments stay in
+`pg_wal` and are retried, so `archived_count` advances once the stanza is armed. Expect a non-zero `failed_count` at
+first start, and alert on it increasing *after* the profile reports up.
+
+**What this does not claim.** This section documents the single-node profile's backup and PITR mechanics. It does not
+claim a measured RPO/RTO SLO, an off-site replica, or that the drill has run in a hosted environment; the drill evidence
+is local and must be repeated per install.
+
 ---
 
 ## 4) Source Control → Artifact → Deployment Flow (High-Level)

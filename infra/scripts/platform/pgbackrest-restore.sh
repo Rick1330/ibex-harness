@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
-# Restore Postgres from pgBackRest (4.P.5). Destructive — stop PG first.
+# Restore Postgres from pgBackRest (4.P.5).
+#
+# Two modes:
+#   latest        restore the newest backup, no recovery target (destructive:
+#                 the live Postgres is stopped first)
+#   point-in-time set PGBACKREST_RESTORE_TARGET to an ISO8601 timestamp; the
+#                 restore passes --type=time --target=... --target-action=promote
+#                 and recovery stops at that moment, not at the end of WAL.
+#
+# PGBACKREST_RESTORE_SCRATCH_VOLUME restores into a separate named volume and
+# leaves the live cluster running. That is the drill path: it is the only way to
+# prove a time target without destroying the running database.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -22,6 +33,34 @@ resolve_conf() {
   exit 1
 }
 
+# container_cli picks the engine that owns the containers; IBEX_CONTAINER_CLI
+# overrides it. docker is preferred so CI behaviour does not change.
+container_cli() {
+  if [[ -n "${IBEX_CONTAINER_CLI:-}" ]]; then
+    printf '%s\n' "$IBEX_CONTAINER_CLI"
+    return
+  fi
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    printf 'docker\n'
+    return
+  fi
+  if command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
+    printf 'podman\n'
+    return
+  fi
+  printf 'docker\n'
+}
+
+CLI="$(container_cli)"
+
+compose() {
+  if [[ "$CLI" == "podman" ]]; then
+    podman compose "$@"
+  else
+    docker compose "$@"
+  fi
+}
+
 # Resolve docker-compose named volume from Compose metadata only (fail closed).
 # Never pick an arbitrary docker volume ls suffix match.
 resolve_compose_volume() {
@@ -29,7 +68,7 @@ resolve_compose_volume() {
   local vol=""
 
   if [[ -n "${PGBACKREST_COMPOSE_VOLUME:-}" ]]; then
-    if ! docker volume inspect "$PGBACKREST_COMPOSE_VOLUME" >/dev/null 2>&1; then
+    if ! "$CLI" volume inspect "$PGBACKREST_COMPOSE_VOLUME" >/dev/null 2>&1; then
       echo "[restore] PGBACKREST_COMPOSE_VOLUME set but volume missing: $PGBACKREST_COMPOSE_VOLUME" >&2
       return 1
     fi
@@ -38,7 +77,7 @@ resolve_compose_volume() {
   fi
 
   vol="$(
-    docker compose -f "$compose_file" config --format json 2>/dev/null | python3 -c '
+    compose -f "$compose_file" config --format json 2>/dev/null | python3 -c '
 import json, sys
 cfg = json.load(sys.stdin)
 vols = cfg.get("volumes") or {}
@@ -69,28 +108,33 @@ raise SystemExit(1)
     echo "[restore] could not resolve postgres volume from Compose metadata; set PGBACKREST_COMPOSE_VOLUME" >&2
     return 1
   fi
-  if ! docker volume inspect "$vol" >/dev/null 2>&1; then
+  if ! "$CLI" volume inspect "$vol" >/dev/null 2>&1; then
     echo "[restore] Compose volume name $vol does not exist locally; set PGBACKREST_COMPOSE_VOLUME" >&2
     return 1
   fi
   printf '%s\n' "$vol"
 }
 
-# Compose project network so repo1-s3-endpoint=minio:9000 resolves.
+# Compose project network so repo1-s3-endpoint resolves. Prefer the object
+# store container: it is the service that has to be reachable from the restore
+# container.
 resolve_compose_network() {
   local compose_file="$1"
   local cid
   local net
-  cid="$(docker compose -f "$compose_file" ps -q minio 2>/dev/null || true)"
+  cid="$(compose -f "$compose_file" ps -q objectstore 2>/dev/null || true)"
   if [[ -z "$cid" ]]; then
-    cid="$(docker compose -f "$compose_file" ps -aq 2>/dev/null | head -n1 || true)"
+    cid="$(compose -f "$compose_file" ps -q minio 2>/dev/null || true)"
+  fi
+  if [[ -z "$cid" ]]; then
+    cid="$(compose -f "$compose_file" ps -aq 2>/dev/null | head -n1 || true)"
   fi
   if [[ -z "$cid" ]]; then
     echo "[restore] could not resolve compose network (no containers)" >&2
     return 1
   fi
   # One network name per line; take the first only (avoid concatenated names).
-  net="$(docker inspect -f '{{range $k, $_ := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$cid" | head -n1 | tr -d '\r')"
+  net="$("$CLI" inspect -f '{{range $k, $_ := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$cid" | head -n1 | tr -d '\r')"
   if [[ -z "$net" ]]; then
     echo "[restore] container $cid has no networks" >&2
     return 1
@@ -102,14 +146,136 @@ CONF="$(resolve_conf)"
 STANZA="${PGBACKREST_STANZA:-ibex-main}"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT/infra/compose/dev/docker-compose.yml}"
 TARGET="${PGBACKREST_PGDATA:-}"
-PGBACKREST_IMAGE="${PGBACKREST_IMAGE:-pgbackrest/pgbackrest:2.53}"
+IMAGE="${PGBACKREST_IMAGE:-pgbackrest/pgbackrest:2.53}"
+RESTORE_USER="${PGBACKREST_RESTORE_USER:-}"
+SCRATCH_VOLUME="${PGBACKREST_RESTORE_SCRATCH_VOLUME:-}"
+RESTORE_TARGET="${PGBACKREST_RESTORE_TARGET:-}"
 stopped=false
 stopped_via_compose=false
 COMPOSE_VOLUME=""
 
+# A recovery target is passed to pgBackRest as an option value, so it is
+# validated as an ISO8601 timestamp rather than forwarded verbatim.
+#
+# pgBackRest's --target parser is not ISO8601: it wants `YYYY-MM-DD HH:MM:SS`
+# with optional milliseconds and optional `+HH[:MM]` offset, and rejects the
+# `T` separator and `Z` suffix that an operator types. Validate the ISO8601
+# form, then normalise it to the shape pgBackRest accepts so the documented
+# `2026-11-14T09:01:00Z` input works instead of failing deep in the restore.
+if [[ -n "$RESTORE_TARGET" ]]; then
+  if ! [[ "$RESTORE_TARGET" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[T\ ][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)?$ ]]; then
+    echo "[restore] PGBACKREST_RESTORE_TARGET is not an ISO8601 timestamp: $RESTORE_TARGET" >&2
+    exit 2
+  fi
+  iso_target="$RESTORE_TARGET"
+  RESTORE_TARGET="${iso_target/T/ }"
+  if [[ "$RESTORE_TARGET" == *Z ]]; then
+    RESTORE_TARGET="${RESTORE_TARGET%Z}+00"
+  fi
+  echo "[restore] point-in-time target=$RESTORE_TARGET (from $iso_target; --type=time --target-action=promote)"
+fi
+
+restore_args=()
+if [[ -n "$RESTORE_TARGET" ]]; then
+  restore_args+=(--type=time --target="$RESTORE_TARGET" --target-action=promote)
+fi
+
+# --delta belongs to the destructive branch only. pgBackRest refuses to restore
+# into a non-empty pg1-path, and the live data directory is non-empty by
+# definition, so without --delta the command aborts *after* Postgres has been
+# stopped: the profile is left down and no data is restored. --delta lets
+# pgBackRest reconcile the existing directory instead (it removes files that are
+# not in the backup), which is safe only because the cluster was cleanly stopped
+# above and nothing is writing to the directory. The scratch path restores into
+# a fresh, empty volume, so it must not carry --delta.
+destructive_restore_args=("${restore_args[@]}" --delta)
+
+# pgBackRest reads the repository credentials from the environment; never put
+# them on a command line.
+run_args=()
+cred_vars=()
+if [[ -n "$RESTORE_USER" ]]; then
+  run_args+=(--user "$RESTORE_USER")
+fi
+for var in PGBACKREST_REPO1_CIPHER_PASS PGBACKREST_REPO1_S3_KEY PGBACKREST_REPO1_S3_KEY_SECRET; do
+  if [[ -n "${!var:-}" ]]; then
+    run_args+=(-e "$var")
+    cred_vars+=("$var")
+  fi
+done
+
+# print_credential_load prints the loading step that belongs above the printed
+# start command. `-e VAR` forwards the value the *operator's* shell holds, and
+# the environment that ran this script does not survive into that shell: a bare
+# shell forwards an empty value and recovery then dies with
+# "archive-get command requires option: repo1-cipher-pass".
+#
+# The values are read from the profile .env (mode 0600) with the repository's
+# Compose-dotenv reader, which reproduces what `make v1-restore` and
+# `make v1-pitr` export. No value is printed and none is placed on a command
+# line: the assignments run command substitution over a redirected file.
+print_credential_load() {
+  local var source_key
+  (( ${#cred_vars[@]} )) || return 0
+  cat <<'LOAD'
+The start command forwards the repository credentials by name (-e VAR), so the
+shell that runs it must hold the values; `make v1-restore` and `make v1-pitr`
+export them from the profile .env before running this script. To start the
+cluster by hand, load the same values the same way — nothing below prints a
+value or puts one on a command line:
+LOAD
+  printf '\n  ENV_FILE="${IBEX_V1_ENV:-%s/infra/compose/v1-single-node/.env}"\n' "$ROOT"
+  printf '  ibex_env_value() { python3 %s/infra/scripts/lib/dotenv.py "$1" < "$ENV_FILE"; }\n' "$ROOT"
+  for var in "${cred_vars[@]}"; do
+    case "$var" in
+      PGBACKREST_REPO1_S3_KEY) source_key=IBEX_OBJECTSTORE_ACCESS_KEY ;;
+      PGBACKREST_REPO1_S3_KEY_SECRET) source_key=IBEX_OBJECTSTORE_SECRET_KEY ;;
+      *) source_key="$var" ;;
+    esac
+    printf '  %s="$(ibex_env_value %s)"\n' "$var" "$source_key"
+    printf '  : "${%s:?empty; check $ENV_FILE}"\n' "$var"
+  done
+  printf '  export %s\n\n' "${cred_vars[*]}"
+}
+
+if [[ -n "$SCRATCH_VOLUME" ]]; then
+  # Drill path: restore beside the live cluster. Nothing is stopped, and the
+  # live data directory is never mounted.
+  if ! "$CLI" volume inspect "$SCRATCH_VOLUME" >/dev/null 2>&1; then
+    echo "[restore] scratch volume $SCRATCH_VOLUME does not exist; create it first" >&2
+    exit 1
+  fi
+  NETWORK="$(resolve_compose_network "$COMPOSE_FILE")"
+  echo "[restore] scratch restore volume=$SCRATCH_VOLUME network=$NETWORK image=$IMAGE"
+  "$CLI" run --rm "${run_args[@]}" \
+    --network "$NETWORK" \
+    -v "${SCRATCH_VOLUME}:/var/lib/postgresql/data" \
+    -v "${CONF}:/etc/pgbackrest/pgbackrest.conf:ro" \
+    "$IMAGE" \
+    pgbackrest --config=/etc/pgbackrest/pgbackrest.conf \
+      --stanza="$STANZA" --pg1-path=/var/lib/postgresql/data "${restore_args[@]}" restore
+  echo "[restore] scratch restore ok $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  cat <<NEXT
+
+The restored cluster is not running. Start it on the scratch volume, with
+archiving disabled so the restored timeline cannot write into the live
+repository, then verify the recovery point.
+
+$(print_credential_load)
+  $CLI run -d --name ibex-pitr-scratch --network $NETWORK ${run_args[*]} \\
+    -v $SCRATCH_VOLUME:/var/lib/postgresql/data \\
+    -v $CONF:/etc/pgbackrest/pgbackrest.conf:ro \\
+    $IMAGE postgres -c archive_mode=off
+
+  $CLI exec ibex-pitr-scratch psql -U ibex -d ibex \\
+    -c 'SELECT pg_is_in_recovery(), pg_last_xact_replay_timestamp()'
+NEXT
+  exit 0
+fi
+
 echo "[restore] stopping Postgres before restore"
-if command -v docker >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]] \
-  && docker compose -f "$COMPOSE_FILE" stop postgres 2>/dev/null; then
+if command -v "$CLI" >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]] \
+  && compose -f "$COMPOSE_FILE" stop postgres 2>/dev/null; then
   stopped=true
   stopped_via_compose=true
 fi
@@ -131,20 +297,105 @@ if [[ "$stopped" != "true" && "${PGBACKREST_ALLOW_UNSAFE_RESTORE:-0}" != "1" ]];
   exit 1
 fi
 
+# verify_destructive_restore_compose proves the restore produced a usable
+# cluster before anything is reported as ok.
+#
+# The order matters: the postgres entrypoint runs initdb when PGDATA is empty,
+# so starting the container first would turn a failed restore into a fresh
+# cluster that passes every liveness check. PG_VERSION is therefore verified
+# before the server is started, through a throwaway read-only container over the
+# same volume (the restore ran as uid 999, so the operator's shell cannot read
+# the directory directly). Only then is the server started and asked for
+# pg_is_in_recovery(), which the restore must have left false: the destructive
+# branch either completes crash recovery (latest) or reaches the recovery target
+# and promotes (PITR, --target-action=promote).
+verify_destructive_restore_compose() {
+  local cid in_recovery=""
+  if ! "$CLI" run --rm --entrypoint sh -v "${COMPOSE_VOLUME}:${TARGET}:ro" "$IMAGE" \
+    -c "test -f ${TARGET}/PG_VERSION"; then
+    echo "[restore] FAILED: ${TARGET}/PG_VERSION is missing on volume ${COMPOSE_VOLUME}; the restore did not produce a data directory" >&2
+    return 1
+  fi
+  echo "[restore] data directory verified: ${TARGET}/PG_VERSION present"
+  echo "[restore] starting Postgres to verify it leaves recovery"
+  if ! compose -f "$COMPOSE_FILE" start postgres >/dev/null; then
+    echo "[restore] FAILED: could not start postgres after restore" >&2
+    return 1
+  fi
+  cid="$(compose -f "$COMPOSE_FILE" ps -q postgres 2>/dev/null | head -n1 || true)"
+  if [[ -z "$cid" ]]; then
+    echo "[restore] FAILED: postgres container not found after restore" >&2
+    return 1
+  fi
+  for _ in $(seq 1 120); do
+    # POSTGRES_USER is the superuser created by the image; the container has it
+    # in its environment, so the query never needs a value from this script.
+    in_recovery="$("$CLI" exec "$cid" sh -c 'psql -U "$POSTGRES_USER" -d postgres -tAc "select pg_is_in_recovery()"' 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "$in_recovery" == "f" ]]; then
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$in_recovery" != "f" ]]; then
+    echo "[restore] FAILED: pg_is_in_recovery() is '${in_recovery:-no answer}' after 120s; the cluster did not leave recovery" >&2
+    echo "[restore] inspect the server log with: $CLI logs $cid" >&2
+    return 1
+  fi
+  echo "[restore] recovery state verified: pg_is_in_recovery()=false"
+  return 0
+}
+
+# verify_destructive_restore_host is the same proof for a host data directory:
+# PG_VERSION first (so an empty directory is never initialised into a false
+# success), then the cluster is started and pg_is_in_recovery() is required to
+# be false. A missing pg_ctl or psql fails closed: an unverified restore is not
+# reported as ok.
+verify_destructive_restore_host() {
+  local in_recovery=""
+  if [[ ! -f "$TARGET/PG_VERSION" ]]; then
+    echo "[restore] FAILED: $TARGET/PG_VERSION is missing; the restore did not produce a data directory" >&2
+    return 1
+  fi
+  echo "[restore] data directory verified: $TARGET/PG_VERSION present"
+  if ! command -v pg_ctl >/dev/null 2>&1; then
+    echo "[restore] FAILED: pg_ctl is not available, so the restored cluster cannot be started and pg_is_in_recovery() cannot be proven" >&2
+    return 1
+  fi
+  if ! pg_ctl -D "$TARGET" -w -t 120 start >/dev/null; then
+    echo "[restore] FAILED: pg_ctl could not start the restored cluster at $TARGET" >&2
+    return 1
+  fi
+  for _ in $(seq 1 120); do
+    in_recovery="$(psql -d postgres -tAc 'select pg_is_in_recovery()' 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "$in_recovery" == "f" ]]; then
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$in_recovery" != "f" ]]; then
+    echo "[restore] FAILED: pg_is_in_recovery() is '${in_recovery:-no answer}' after 120s; the cluster did not leave recovery" >&2
+    return 1
+  fi
+  echo "[restore] recovery state verified: pg_is_in_recovery()=false"
+  return 0
+}
+
 echo "[restore] stanza=$STANZA target=$TARGET conf=$CONF"
 if [[ "$stopped_via_compose" == "true" && -n "$COMPOSE_VOLUME" ]]; then
-  # Host pgbackrest cannot resolve minio:9000; run inside the compose network.
+  # Host pgbackrest cannot resolve the object store; run inside the compose
+  # network.
   NETWORK="$(resolve_compose_network "$COMPOSE_FILE")"
-  echo "[restore] running pgbackrest in compose network=$NETWORK image=$PGBACKREST_IMAGE"
-  docker run --rm \
+  echo "[restore] running pgbackrest in compose network=$NETWORK image=$IMAGE"
+  "$CLI" run --rm "${run_args[@]}" \
     --network "$NETWORK" \
     -v "${COMPOSE_VOLUME}:${TARGET}" \
     -v "${CONF}:/etc/pgbackrest/pgbackrest.conf:ro" \
-    -e PGBACKREST_REPO1_CIPHER_PASS \
-    "$PGBACKREST_IMAGE" \
+    "$IMAGE" \
     pgbackrest --config=/etc/pgbackrest/pgbackrest.conf \
-      --stanza="$STANZA" --pg1-path="$TARGET" restore
+      --stanza="$STANZA" --pg1-path="$TARGET" "${destructive_restore_args[@]}" restore
+  verify_destructive_restore_compose
 else
-  pgbackrest --config="$CONF" --stanza="$STANZA" --pg1-path="$TARGET" restore
+  pgbackrest --config="$CONF" --stanza="$STANZA" --pg1-path="$TARGET" "${destructive_restore_args[@]}" restore
+  verify_destructive_restore_host
 fi
 echo "[restore] ok $(date -u +%Y-%m-%dT%H:%M:%SZ)"

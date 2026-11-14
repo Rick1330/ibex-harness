@@ -76,7 +76,11 @@ services:
       minio-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      # The pinned image ships no curl, wget, or python: mc is the only HTTP
+      # client, and a curl probe exits 127 forever. `mc ready local` probes
+      # /minio/health/cluster through the image's built-in `local` alias
+      # (localhost:9000) and fails when the server is gone.
+      test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 5s
       retries: 10

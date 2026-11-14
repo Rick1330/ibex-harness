@@ -20,6 +20,7 @@ from app.clients.embedding import EmbeddingClient
 from app.clients.rerank import RerankClient, RerankClientConfig
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory
+from app.errors import unhandled_error_handler
 from app.feedback.service import MemoryFeedbackService
 from app.http_metrics import HTTPMetricsMiddleware
 from app.http_validation import request_validation_error_handler
@@ -101,6 +102,7 @@ def create_app(
     application.state.memory = state
     application.state.settings = cfg
     application.add_exception_handler(RequestValidationError, request_validation_error_handler)
+    application.add_exception_handler(Exception, unhandled_error_handler)
     application.include_router(probe_router)
     application.include_router(memories_router)
     application.add_middleware(HTTPMetricsMiddleware)

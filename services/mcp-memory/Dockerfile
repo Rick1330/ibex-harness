@@ -19,12 +19,14 @@ FROM ghcr.io/astral-sh/uv@sha256:2fd1b38e3398a256d6af3f71f0e2ba6a517b249998726a6
 # --------------------------------------------------------------------------- #
 FROM python@sha256:413041be39649714885528a06586416279db85744b6dcdf290af0ae557d782f6 AS deps
 
+# UV_HTTP_TIMEOUT bounds a slow registry fetch; it does not change what is installed.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_SYSTEM_PYTHON=0 \
     UV_NO_BUILD=1 \
     UV_PYTHON=/usr/local/bin/python \
-    UV_PROJECT_ENVIRONMENT=/app/.venv
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    UV_HTTP_TIMEOUT=300
 
 COPY --from=uv /uv /usr/local/bin/uv
 
@@ -80,6 +82,6 @@ USER 10001:10001
 EXPOSE 8090
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"]
 
 CMD ["sh", "-c", "uvicorn app.main:app --host \"${IBEX_MCP_HOST}\" --port \"${IBEX_MCP_PORT}\""]

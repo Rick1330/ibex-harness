@@ -22,12 +22,14 @@ FROM ghcr.io/astral-sh/uv@sha256:2fd1b38e3398a256d6af3f71f0e2ba6a517b249998726a6
 # --------------------------------------------------------------------------- #
 FROM python@sha256:413041be39649714885528a06586416279db85744b6dcdf290af0ae557d782f6 AS deps
 
+# UV_HTTP_TIMEOUT bounds a slow registry fetch; it does not change what is installed.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_SYSTEM_PYTHON=0 \
     UV_NO_BUILD=1 \
     UV_PYTHON=/usr/local/bin/python \
-    UV_PROJECT_ENVIRONMENT=/app/.venv
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    UV_HTTP_TIMEOUT=300
 
 COPY --from=uv /uv /usr/local/bin/uv
 

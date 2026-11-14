@@ -174,7 +174,10 @@ func writeRegistryLookupError(w http.ResponseWriter, meta registryLookupWrite, e
 			msgInternalError, meta.requestID,
 			apierror.WriteOpts{Detail: "model policy unavailable", DocsBase: meta.docsBase})
 	default:
-		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
+		// The registry lookup is a dependency read: a failure here is retryable
+		// and says nothing about the caller's request, so it is 503 like the
+		// policy branch above, not a 500 that blames the request.
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
 			msgInternalError, meta.requestID,
 			apierror.WriteOpts{Detail: "provider registry lookup failed", DocsBase: meta.docsBase})
 	}

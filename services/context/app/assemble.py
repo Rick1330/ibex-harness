@@ -10,8 +10,8 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, replace
+from typing import Literal, cast
 from uuid import UUID
 
 from app.budget import (
@@ -173,6 +173,7 @@ class ContextAssembler:
     async def assemble(self, request: AssembleRequest) -> AssemblyResult:
         """Run the full assembly pipeline and classify L0–L2."""
         started = time.perf_counter()
+        request = _with_memory_cap(request, self._settings.max_memories)
         messages = list(request.recent_messages)
         retrieval = await self._retrieve(request, messages)
         level, intentional_skip = _classify_degradation(retrieval, request.options)
@@ -294,6 +295,25 @@ class ContextAssembler:
             dp_cell_ceiling=self._settings.packer_dp_cell_ceiling,
             max_consecutive_skips=self._settings.packer_max_consecutive_skips,
         )
+
+
+def _with_memory_cap(request: AssembleRequest, default_cap: int) -> AssembleRequest:
+    """Apply ``IBEX_CONTEXT_MAX_MEMORIES`` when the request sets no cap."""
+    # A request-level ``max_memories`` (1..MAX_ASSEMBLY_OPTION_MEMORIES) always
+    # wins. ``0`` from the request means "no request preference", so the
+    # configured server cap applies; a configured cap of ``0`` keeps assembly
+    # unlimited.
+    if request.options.max_memories > 0 or default_cap <= 0:
+        return request
+    # ``dataclasses.replace`` is typed as returning ``DataclassInstance``; the
+    # cast restores the concrete request type for callers and static analysis.
+    return cast(
+        "AssembleRequest",
+        replace(
+            request,
+            options=replace(request.options, max_memories=default_cap),
+        ),
+    )
 
 
 def _score_candidates(

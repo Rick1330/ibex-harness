@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
-from app.config import ContextSettings
+from app.config import MAX_ASSEMBLY_OPTION_MEMORIES, ContextSettings
 
 TOKEN = "context-test-service-token-0123456789abcdef"
 _ALIASES = (
@@ -58,3 +58,18 @@ def test_secret_tokens_default_to_empty(monkeypatch: pytest.MonkeyPatch) -> None
 def test_grpc_addr_defaults_to_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("IBEX_CONTEXT_GRPC_ADDR", raising=False)
     assert ContextSettings().grpc_addr == "127.0.0.1:9092"
+
+
+def test_max_memories_reads_the_env_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("IBEX_CONTEXT_MAX_MEMORIES", raising=False)
+    assert ContextSettings().max_memories == 20
+    monkeypatch.setenv("IBEX_CONTEXT_MAX_MEMORIES", "7")
+    assert ContextSettings().max_memories == 7
+
+
+def test_max_memories_rejects_a_value_above_the_option_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IBEX_CONTEXT_MAX_MEMORIES", str(MAX_ASSEMBLY_OPTION_MEMORIES + 1))
+    with pytest.raises(ValidationError):
+        ContextSettings()

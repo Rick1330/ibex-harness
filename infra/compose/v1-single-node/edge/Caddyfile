@@ -46,6 +46,12 @@
 
 	# Everything else is the Console (Nuxt SSR + Nitro BFF).
 	handle {
+		# Defence in depth for the unauthenticated login route: reject an
+		# oversized body at the edge before the BFF reads a byte. The BFF still
+		# enforces its own cap; this is not the only control.
+		request_body {
+			max_size 8KB
+		}
 		reverse_proxy 127.0.0.1:3000
 	}
 

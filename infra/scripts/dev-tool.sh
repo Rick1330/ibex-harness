@@ -579,14 +579,113 @@ EOF
   printf '%s\n' "$conf"
 }
 
+# v1_container_cli prints the single engine binary the platform scripts can
+# exec. A rootful podman store needs `sudo -n podman`, which is two words and
+# cannot be passed as one CLI; refuse it here instead of failing mid-backup.
+v1_container_cli() {
+  local engine
+  case "$(runtime)" in
+    docker)
+      printf 'docker\n'
+      return 0 ;;
+  esac
+  engine="$(podman_engine)"
+  if [[ "$engine" == *" "* ]]; then
+    echo "v1 backup/restore need the rootless podman store: $engine is multi-word" >&2
+    echo "run them as the store owner, or set IBEX_CONTAINER_CLI explicitly" >&2
+    return 1
+  fi
+  printf '%s\n' "$engine"
+}
+
+# v1_backup_env exports the repository credentials the restore container needs.
+# They live in .env (0600) and are never placed on a command line; the backup
+# path does not need them because it execs into the postgres container, which
+# already carries them in its environment.
+v1_backup_env() {
+  PGBACKREST_REPO1_CIPHER_PASS="$(v1_env_value PGBACKREST_REPO1_CIPHER_PASS)"
+  PGBACKREST_REPO1_S3_KEY="$(v1_env_value IBEX_OBJECTSTORE_ACCESS_KEY)"
+  PGBACKREST_REPO1_S3_KEY_SECRET="$(v1_env_value IBEX_OBJECTSTORE_SECRET_KEY)"
+  export PGBACKREST_REPO1_CIPHER_PASS PGBACKREST_REPO1_S3_KEY PGBACKREST_REPO1_S3_KEY_SECRET
+}
+
+# v1_backup_init arms WAL archiving. It runs inside the postgres container
+# (the image carries pgBackRest and the stanza config), and stanza-create is
+# idempotent, so this is safe on every start.
+#
+# --soft turns a failure into a warning: a repository outage must not stop the
+# profile from serving, and the archive command will retry the WAL it could not
+# push. The warning is loud because archiving is not armed until this succeeds.
+v1_backup_init() {
+  local soft=0 cid cli
+  if [[ "${1:-}" == "--soft" ]]; then
+    soft=1
+    shift
+  fi
+  # Both hard guards sit inside the soft contract, not before it. `make v1-up`
+  # has already built and started every service by the time this arm runs, and
+  # its documented behaviour is that a failed arm is printed as a warning; a
+  # `return 1` here would make a healthy profile exit non-zero at the last step.
+  # That is exactly what happened when podman_engine() returned the multi-word
+  # `sudo -n podman`: v1_container_cli refuses it, and the refusal landed after
+  # the soft branch had already been skipped. Strict `make v1-backup-init` still
+  # fails loudly through the same guards.
+  if ! v1_pgbackrest_conf >/dev/null; then
+    if (( soft )); then
+      echo "WARNING: pgBackRest config missing or refused; PITR is NOT armed." >&2
+      echo "WARNING: fix the config, then run make v1-backup-init." >&2
+      return 0
+    fi
+    return 1
+  fi
+  if ! cli="$(v1_container_cli)"; then
+    if (( soft )); then
+      echo "WARNING: pgBackRest container CLI could not be resolved; PITR is NOT armed." >&2
+      return 0
+    fi
+    return 1
+  fi
+  cid="$(compose_with_mode v1 ps -q postgres 2>/dev/null | head -n1 || true)"
+  if [[ -z "$cid" ]]; then
+    if (( soft )); then
+      echo "WARNING: postgres container not found; pgBackRest stanza not initialised" >&2
+      return 0
+    fi
+    echo "postgres container not found; run make v1-up first" >&2
+    return 1
+  fi
+  if IBEX_CONTAINER_CLI="$cli" PGBACKREST_EXEC_CONTAINER="$cid" \
+    bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-backup.sh" stanza-create; then
+    return 0
+  fi
+  if (( soft )); then
+    echo "WARNING: pgBackRest stanza-create failed; PITR is NOT armed." >&2
+    echo "WARNING: WAL is retained in pg_wal until archiving succeeds. Fix the repository and run make v1-backup-init." >&2
+    return 0
+  fi
+  return 1
+}
+
 v1_backup() {
-  local type="${1:-full}"
+  local type="${1:-full}" cid cli
   case "$type" in
-    full|diff|incr) : ;;
-    *) echo "usage: make v1-backup TYPE=full|diff|incr" >&2; return 2 ;;
+    full|diff|incr|check|stanza-create) : ;;
+    *) echo "usage: make v1-backup TYPE=full|diff|incr|check|stanza-create" >&2; return 2 ;;
   esac
   v1_pgbackrest_conf >/dev/null || return 1
-  bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-backup.sh" "$type"
+  if ! cli="$(v1_container_cli)"; then
+    return 1
+  fi
+  # The backup must run where the cluster is. The v1 postgres image carries
+  # pgBackRest and the repository credentials, so the script execs into it
+  # instead of talking to the cluster over the network.
+  cid="$(compose_with_mode v1 ps -q postgres 2>/dev/null | head -n1 || true)"
+  if [[ -z "$cid" ]]; then
+    echo "postgres container not found; run make v1-up first" >&2
+    return 1
+  fi
+  IBEX_CONTAINER_CLI="$cli" PGBACKREST_EXEC_CONTAINER="$cid" \
+    bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-backup.sh" "$type"
 }
 
 # Both restore paths pin the profile's own Compose file. pgbackrest-restore.sh
@@ -594,34 +693,41 @@ v1_backup() {
 # a v1 restore would stop the dev stack's Postgres and resolve the dev volume.
 # The v1 file carries `name: ibex-v1-single-node`, and Compose loads .env from
 # the Compose file's directory, which is exactly infra/compose/v1-single-node.
-v1_restore() {
-  v1_pgbackrest_conf >/dev/null || return 1
-  COMPOSE_FILE="$V1_COMPOSE" bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh"
+#
+# The restore runs the profile's own postgres image as uid 999: a root-owned
+# restore would leave a data directory the server cannot read, and the image
+# already carries the matching pgBackRest version.
+v1_restore_env() {
+  v1_backup_env
+  PGBACKREST_IMAGE="ibex-v1-postgres:local"
+  PGBACKREST_RESTORE_USER="postgres"
+  IBEX_CONTAINER_CLI="$(v1_container_cli)" || return 1
+  COMPOSE_FILE="$V1_COMPOSE"
+  export PGBACKREST_IMAGE PGBACKREST_RESTORE_USER IBEX_CONTAINER_CLI COMPOSE_FILE
 }
 
-# v1_pitr forwards a timestamp target to the restore script. That script does
-# not implement --type=time/--target yet, so this wrapper probes for support and
-# refuses instead of running a latest restore and labelling it PITR.
+v1_restore() {
+  v1_pgbackrest_conf >/dev/null || return 1
+  v1_restore_env || return 1
+  bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh"
+}
+
+# v1_pitr restores to a timestamp. The target is mandatory: without it the
+# restore would recover to the end of WAL and could not be called PITR.
+# IBEX_PITR_SCRATCH_VOLUME restores beside the live cluster instead of over it.
 v1_pitr() {
-  local target="${1:-}"
+  local target="${1:-}" scratch="${IBEX_PITR_SCRATCH_VOLUME:-}"
   if [[ -z "$target" ]]; then
     echo "usage: make v1-pitr TARGET=2026-11-14T03:00:00Z" >&2
+    echo "       make v1-pitr TARGET=... SCRATCH_VOLUME=<name> (restores beside the live cluster)" >&2
     return 2
   fi
   v1_pgbackrest_conf >/dev/null || return 1
-  local restore_script="$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh"
-  if ! grep -qE -- '--type=time|--target=|PGBACKREST_RESTORE_TARGET' "$restore_script"; then
-    cat >&2 <<EOF
-v1-pitr: $restore_script has no PITR target support.
-Refusing to run a latest restore and label it PITR. Add --type=time --target
-handling to that script (or a PGBACKREST_RESTORE_TARGET pass-through) before
-using this target; this wrapper will forward PGBACKREST_RESTORE_TARGET once the
-script honours it. This is an owner decision on that file, not a repository
-invention here.
-EOF
-    return 1
-  fi
-  COMPOSE_FILE="$V1_COMPOSE" PGBACKREST_RESTORE_TARGET="$target" bash "$restore_script"
+  v1_restore_env || return 1
+  PGBACKREST_RESTORE_TARGET="$target"
+  PGBACKREST_RESTORE_SCRATCH_VOLUME="$scratch"
+  export PGBACKREST_RESTORE_TARGET PGBACKREST_RESTORE_SCRATCH_VOLUME
+  bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh"
 }
 
 v1_up() {
@@ -898,9 +1004,10 @@ case "${1:-help}" in
       smoke) v1_smoke "$@" ;;
       smoke-selftest) v1_smoke_selftest ;;
       backup) v1_backup "${1:-full}" ;;
+      backup-init) v1_backup_init "$@" ;;
       restore) v1_restore ;;
       pitr) v1_pitr "${1:-}" ;;
-      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-provision|v1-logs|v1-ps|v1-bootstrap-pat|v1-smoke|v1-backup|v1-restore|v1-pitr or v1 build|up|down|stop|wait|url|secrets|bootstrap-pat|migrate|provision|logs|ps|smoke|smoke-selftest|backup|restore|pitr' >&2; exit 2 ;;
+      *) echo "unknown v1 command: ${sub:-<missing>}" >&2; echo 'use: v1-up|v1-down|v1-migrate|v1-provision|v1-logs|v1-ps|v1-bootstrap-pat|v1-smoke|v1-backup|v1-backup-init|v1-restore|v1-pitr or v1 build|up|down|stop|wait|url|secrets|bootstrap-pat|migrate|provision|logs|ps|smoke|smoke-selftest|backup|backup-init|restore|pitr' >&2; exit 2 ;;
     esac ;;
   *) echo "unknown command: $1" >&2; echo 'run: make help' >&2; exit 2 ;;
 esac

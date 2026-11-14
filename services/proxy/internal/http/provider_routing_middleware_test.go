@@ -95,6 +95,23 @@ func TestUnit_ProviderRouting_PolicyUnavailable503(t *testing.T) {
 	assertRoutingStatus(t, rec, http.StatusServiceUnavailable, apierror.CodeServiceDegraded)
 }
 
+func TestUnit_ProviderRouting_RegistryLookupFailure503(t *testing.T) {
+	t.Parallel()
+	called := false
+	rec := serveProviderRouting(t, routingCase{
+		model: "gpt-4o", orgID: testOrgID,
+		resolver: errProviderResolver{err: errors.New("registry unavailable")},
+		next: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			called = true
+		}),
+	})
+	if called {
+		t.Fatal("next must not run when the registry lookup fails")
+	}
+	// A registry read failure is retryable and not the caller's fault: 503, never 500.
+	assertRoutingStatus(t, rec, http.StatusServiceUnavailable, apierror.CodeServiceDegraded)
+}
+
 func TestUnit_ProviderRouting_MissingOrg503(t *testing.T) {
 	t.Parallel()
 	rec := serveProviderRouting(t, routingCase{
@@ -272,4 +289,12 @@ type errAgentDefaults struct{}
 
 func (errAgentDefaults) Load(context.Context, uuid.UUID, uuid.UUID) (modelpolicy.AgentDefaults, error) {
 	return modelpolicy.AgentDefaults{}, errors.New("db down")
+}
+
+// errProviderResolver fails every lookup with an error that is not one of the
+// typed sentinels: the registry itself is unavailable.
+type errProviderResolver struct{ err error }
+
+func (e errProviderResolver) ForOrg(context.Context, uuid.UUID, string) (provider.Provider, error) {
+	return nil, e.err
 }
