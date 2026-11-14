@@ -3,6 +3,100 @@
   "benchmark": "hnsw_recall_latency",
   "runs": [
     {
+      "sha": "085e27b20fc19dc6171fe0341f37e35783a76121",
+      "short_sha": "085e27b",
+      "timestamp": "2026-11-14T05:26:42.548728+00:00",
+      "branch": "main",
+      "run_number": 628,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/43561248825",
+      "methodology": {
+        "index": "idx_memories_embedding_hnsw (m=16, ef_construction=64, cosine)",
+        "ef_search": 64,
+        "dim": 1024,
+        "active_dims": 64,
+        "warmup_queries": 100,
+        "truncate_between_sizes": true,
+        "reuse_corpus_across_search_knobs": true,
+        "analyze_after_copy": true,
+        "explain_requires_hnsw": true,
+        "recall": "planted near-neighbor must appear in top-10",
+        "latency": "wall-clock PgVectorStore.search including SET LOCAL",
+        "iterative_scan_modes": [
+          "off"
+        ],
+        "min_similarity_values": [
+          0.7
+        ],
+        "index_build_modes": [
+          "bulk"
+        ],
+        "note": "Published cells: ef_search=64, min_similarity=0.70, iterative_scan=off, index_build_mode=bulk. Full matrix retained under benchmarks/memory/output/."
+      },
+      "results": [
+        {
+          "corpus_size": 10000,
+          "query_count": 500,
+          "recall_at_10": 1.0,
+          "latency_ms_p50": 6.406039499978533,
+          "latency_ms_p95": 7.7867849499966715,
+          "latency_ms_p99": 8.872181980015055,
+          "latency_ms_p95_ci_low": 7.491526599994813,
+          "latency_ms_p95_ci_high": 8.00637499997947,
+          "ef_search": 64,
+          "min_similarity": 0.7,
+          "iterative_scan": "off",
+          "index_build_mode": "bulk",
+          "plan_node_type": "Index Scan",
+          "plan_index_name": "idx_memories_embedding_hnsw",
+          "shared_hit_blocks": 7656,
+          "shared_read_blocks": 16,
+          "idx_scan_delta": 600,
+          "row_count_verified": 10000
+        },
+        {
+          "corpus_size": 100000,
+          "query_count": 200,
+          "recall_at_10": 1.0,
+          "latency_ms_p50": 10.71808900007909,
+          "latency_ms_p95": 13.05950520003307,
+          "latency_ms_p99": 17.82528998994962,
+          "latency_ms_p95_ci_low": 12.43215034994023,
+          "latency_ms_p95_ci_high": 13.707680000038636,
+          "ef_search": 64,
+          "min_similarity": 0.7,
+          "iterative_scan": "off",
+          "index_build_mode": "bulk",
+          "plan_node_type": "Index Scan",
+          "plan_index_name": "idx_memories_embedding_hnsw",
+          "shared_hit_blocks": 7924,
+          "shared_read_blocks": 132,
+          "idx_scan_delta": 300,
+          "row_count_verified": 100000
+        }
+      ],
+      "mean_recall_at_10": 1.0,
+      "status": "pass",
+      "gate_summary": {
+        "recall_ok": true,
+        "recall_floor": 0.98,
+        "worst_recall_at_10": 1.0,
+        "has_1m": false,
+        "note": "1M cell absent (expected on smoke/fast profiles)"
+      },
+      "provenance": {
+        "status": "recorded",
+        "producer": "benchmarks/memory/provenance.py",
+        "runner_cpu_model": "AMD EPYC 7763 64-Core Processor",
+        "runner_cpu_count": 4,
+        "runner_ram_mib": 15983,
+        "corpus_hash": "fd8d1ddcf4e8fea94ce6d1866144b93a57ca50358beff34780f5bf652cebdfa2",
+        "corpus_hash_algo": "sha256",
+        "corpus_manifest": "pgvector|synth.py=8a2c9de8f80191dd9226c5e62f10cecda7b3b2d11e83b69c63964ab737c26f4a|corpus.py=87da85dd0a6a431c1826f205354ed18a381b1796b9a1bd3139c2cd119a2e18e9|dim=1024,active=64",
+        "corpus_status": "current",
+        "dirty": false
+      }
+    },
+    {
       "sha": "d893324303b8014cea855d6d0307c94b13b9b9b9",
       "short_sha": "d893324",
       "timestamp": "2026-11-03T16:19:56.268079+00:00",

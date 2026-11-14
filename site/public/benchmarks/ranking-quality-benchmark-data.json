@@ -3,6 +3,68 @@
   "benchmark": "ranking_quality",
   "runs": [
     {
+      "sha": "085e27b20fc19dc6171fe0341f37e35783a76121",
+      "short_sha": "085e27b",
+      "timestamp": "2026-11-14T05:25:00.626549+00:00",
+      "branch": "main",
+      "run_number": 628,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/43561248825",
+      "gold_set": "v1",
+      "query_count": 20,
+      "memory_count": 51,
+      "metrics": {
+        "precision_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "expected_order_match": 1.0,
+        "top_category_accuracy": 1.0
+      },
+      "status": "pass",
+      "gate_summary": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "precision_at_5 regression (%)",
+            "value": 0.0,
+            "limit": -5.0,
+            "ok": true
+          },
+          {
+            "name": "recall_at_10 regression (%)",
+            "value": 0.0,
+            "limit": -5.0,
+            "ok": true
+          },
+          {
+            "name": "mrr regression (%)",
+            "value": 0.0,
+            "limit": -5.0,
+            "ok": true
+          },
+          {
+            "name": "top_category_accuracy regression (%)",
+            "value": 0.0,
+            "limit": -5.0,
+            "ok": true
+          }
+        ]
+      },
+      "provenance": {
+        "status": "recorded",
+        "producer": "benchmarks/memory/provenance.py",
+        "runner_cpu_model": "AMD EPYC 9V74 80-Core Processor",
+        "runner_cpu_count": 4,
+        "runner_ram_mib": 15983,
+        "corpus_hash": "5db8becdf6d24ad2e10efa7ca1ead4c1d43d961ed378e228366193d5064d4b92",
+        "corpus_hash_algo": "sha256",
+        "corpus_manifest": "gold_set_v1.json=5db8becdf6d24ad2e10efa7ca1ead4c1d43d961ed378e228366193d5064d4b92",
+        "corpus_status": "current",
+        "dirty": false,
+        "gold_set_hash": "5db8becdf6d24ad2e10efa7ca1ead4c1d43d961ed378e228366193d5064d4b92",
+        "gold_set_name": "gold_set_v1.json"
+      }
+    },
+    {
       "sha": "d893324303b8014cea855d6d0307c94b13b9b9b9",
       "short_sha": "d893324",
       "timestamp": "2026-11-03T16:17:27.744293+00:00",
