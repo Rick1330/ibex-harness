@@ -221,24 +221,28 @@ strict form that fails instead.
 | `make v1-pitr TARGET=… SCRATCH_VOLUME=<name>` | Same target, into a separate volume, leaving the live cluster running and untouched |
 
 **What a destructive restore does, in order.** `infra/scripts/platform/pgbackrest-restore.sh` stops the `postgres`
-service through the profile's Compose file (`:276-281`), resolves the live volume from Compose metadata (`:283-289`),
-and runs `pgbackrest restore` inside the Compose network (`:383-395`). The restore carries `--delta` (`:183-191`):
+service through the profile's Compose file (`:520-525`), resolves the live volume from Compose metadata (`:527-530`),
+and runs `pgbackrest restore` inside the Compose network (`:682-689`). The restore carries `--delta` (`:197-205`):
 pgBackRest refuses a non-empty `pg1-path`, and the live data directory is non-empty by definition, so without `--delta`
 the command would abort after Postgres is already stopped. A point-in-time run adds
-`--type=time --target=<normalised> --target-action=promote` (`:178-181`); the target is validated as ISO-8601 and its
-`T` separator and `Z` suffix are rewritten to the `+00` offset pgBackRest's parser accepts (`:157-176`). The script
+`--type=time --target=<normalised> --target-action=promote` (`:192-195`); the target is validated as ISO-8601 and its
+`T` separator and `Z` suffix are rewritten to the `+00` offset pgBackRest's parser accepts (`:171-190`). The script
 then proves the result before reporting it: `PG_VERSION` must exist on the volume *before* the server is started
-(`:314-319`), because the image's entrypoint runs `initdb` on an empty `PGDATA` and a liveness check alone would report
-a fresh cluster as a successful restore; only then does it start Postgres (`:320-324`) and require
-`pg_is_in_recovery()=false` (`:330-344`). `[restore] ok` is printed after that proof (`:401`), and **both destructive
+(`:558-563`), because the image's entrypoint runs `initdb` on an empty `PGDATA` and a liveness check alone would report
+a fresh cluster as a successful restore; only then does it start Postgres (`:565-568`) and require
+`pg_is_in_recovery()=false` (`:574-588`). `[restore] ok` is printed after that proof (`:694`), and **both destructive
 paths leave the cluster running and verified**. They do not stop the application services — an operator drains those
 before a restore, and the restore runbook states that sequence.
 
 **Credentials.** `make v1-restore` and `make v1-pitr` export `PGBACKREST_REPO1_CIPHER_PASS`,
 `PGBACKREST_REPO1_S3_KEY` and `PGBACKREST_REPO1_S3_KEY_SECRET` from the profile's `0600` `.env`
-(`infra/scripts/dev-tool.sh`:601-610), and the script forwards them by name with `-e VAR`
-(`infra/scripts/platform/pgbackrest-restore.sh`:193-205). No credential belongs on a command line; a process listing
-would expose it.
+(`infra/scripts/dev-tool.sh`:607-610). The script writes them to a `0600` file created with `mktemp`, passes it to the
+engine with `--env-file`, and removes it on exit (`infra/scripts/platform/pgbackrest-restore.sh`:309-390). It does not
+use `-e VAR`: with a rootful engine (`IBEX_PODMAN_SUDO=1` makes the engine `sudo -n podman`) sudo's `env_reset` drops
+the exported values, so a name-only `-e` arrives empty and the restore fails after Postgres is already stopped. Before
+that destructive step the script starts a probe container the same way and requires every value to arrive intact
+(`:400-429,516-518`); a direct invocation with `COMPOSE_FILE` pointing at the v1 profile loads the same three values
+from the profile `.env` itself (`:257-296`). No credential belongs on a command line; a process listing would expose it.
 
 **Scheduling.** There is no looping backup service in the profile: a restart-looping scheduler inside Compose is a second
 scheduler with its own failure mode and no host-level visibility. Schedule `make v1-backup` from the host instead — a
@@ -253,10 +257,10 @@ invisible, so the warning is part of the contract rather than advice.
 first rehearsal for any target an operator intends to use in an incident: create the volume first
 (`podman volume create <name>` or `docker volume create <name>`), then
 `make v1-pitr TARGET=… SCRATCH_VOLUME=<name>`. The scratch branch stops nothing and never mounts the live data
-directory (`infra/scripts/platform/pgbackrest-restore.sh`:241-274), and it restores without `--delta` because the
+directory (`infra/scripts/platform/pgbackrest-restore.sh`:469-502), and it restores without `--delta` because the
 volume is empty. The restore runs the profile image as uid 999 so the restored files are readable by the server, and the
 printed next step starts the scratch cluster with `-c archive_mode=off` so the restored timeline cannot write into the
-live repository (`:258-272`); the scratch copy is left stopped until that command is run. Verify with
+live repository (`:486-500`); the scratch copy is left stopped until that command is run. Verify with
 `pg_is_in_recovery()`, `pg_last_xact_replay_timestamp()` and a row-level check around the target. A restore into the live
 volume must run as uid 999 as well; a root-owned restore leaves a data directory the server cannot read.
 

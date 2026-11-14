@@ -127,6 +127,17 @@ env_value() {
 # env_set_file writes one key into an arbitrary env file through a temporary
 # file in the same directory and an atomic rename. A failure removes the partial
 # write and leaves the target untouched.
+#
+# The value is serialised with the quoting and escaping that
+# infra/scripts/lib/dotenv.py decodes -- the reader every lookup here and in
+# dev-tool.sh uses, and the same rules Compose applies -- so the effective value
+# is byte-identical before and after a rewrite.
+# Writing it bare is only safe for a value that cannot be misread: Compose ends
+# an unquoted value at the first whitespace followed by `#`, strips surrounding
+# whitespace, and interpolates `$`. A retained passphrase such as
+# `fixture # suffix` written bare therefore reads back as `fixture`, and the
+# profile would archive and restore with a different key than the one the
+# repository was encrypted with.
 env_set_file() {
   local path="$1" key="$2" value="$3" tmp
   tmp="$(mktemp "${path}.tmp.XXXXXX")"
@@ -134,6 +145,24 @@ env_set_file() {
 import os
 import re
 import sys
+
+SAFE = re.compile(r"[A-Za-z0-9_./:@+-]+")
+ESCAPES = (
+    ("\\", "\\\\"),
+    ('"', '\\"'),
+    ("$", "\\$"),
+    ("\n", "\\n"),
+)
+
+
+def render(value: str) -> str:
+    """Serialise a value so the dotenv reader returns it unchanged."""
+    if value == "" or SAFE.fullmatch(value):
+        return value
+    for literal, escaped in ESCAPES:
+        value = value.replace(literal, escaped)
+    return f'"{value}"'
+
 
 path = sys.argv[1]
 key = os.environ["KEY"]
@@ -150,12 +179,12 @@ out = []
 for line in lines:
     if pattern.match(line):
         if not found:
-            out.append(f"{key}={value}")
+            out.append(f"{key}={render(value)}")
             found = True
         continue
     out.append(line)
 if not found:
-    out.append(f"{key}={value}")
+    out.append(f"{key}={render(value)}")
 sys.stdout.write("\n".join(out) + "\n")
 PY
   then
