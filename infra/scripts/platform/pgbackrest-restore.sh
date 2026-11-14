@@ -216,12 +216,91 @@ destructive_restore_args=("${restore_args[@]}" --delta)
 # on neither sudo's environment nor the invoking shell. The file is created by
 # mktemp at 0600 and removed by the EXIT trap; no value is printed and no value
 # is placed on a command line.
+CRED_NAMES=(PGBACKREST_REPO1_CIPHER_PASS PGBACKREST_REPO1_S3_KEY PGBACKREST_REPO1_S3_KEY_SECRET)
+
+# credential_source_key maps a repository credential onto the key the v1 profile
+# dotenv stores it under. The object-store identity is shared: MinIO's root user
+# and pgBackRest's repo1-s3-key are the same principal in that profile.
+credential_source_key() {
+  case "$1" in
+    PGBACKREST_REPO1_S3_KEY) printf 'IBEX_OBJECTSTORE_ACCESS_KEY\n' ;;
+    PGBACKREST_REPO1_S3_KEY_SECRET) printf 'IBEX_OBJECTSTORE_SECRET_KEY\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# v1_repository_profile_selected reports whether the selected Compose file is a
+# profile that wires the repository credentials into its postgres service. The
+# generated v1-single-node configuration is the one that does; the dev and test
+# stacks mention none of the three names.
+v1_repository_profile_selected() {
+  local compose_file="$1"
+  [[ -f "$compose_file" ]] || return 1
+  grep -q 'PGBACKREST_REPO1_CIPHER_PASS' "$compose_file"
+}
+
+# load_v1_repository_credentials reads the three credentials from the profile
+# dotenv (0600) when the v1 configuration is selected and they are not already
+# in this script's environment.
+#
+# The failure this guards is a *direct* invocation with COMPOSE_FILE pointing at
+# the v1 file. Compose loads the credentials from the dotenv beside that file, so
+# the restore container would receive them, but this script sees none: the
+# credential list came out empty, the delivery probe was skipped entirely, and
+# Postgres was stopped for a restore that then could not authenticate against an
+# encrypted repository.
+#
+# The dotenv is read with the repository's Compose-dotenv reader, never sourced:
+# sourcing would execute the file as shell code and would not decode it the way
+# Compose does. Values land in shell variables only; nothing is exported,
+# printed, or placed on a command line.
+load_v1_repository_credentials() {
+  local env_file="${IBEX_V1_ENV:-$ROOT/infra/compose/v1-single-node/.env}"
+  local var key value
+  local -a missing=()
+  if [[ ! -f "$env_file" ]]; then
+    echo "[restore] FAILED: $env_file is missing, so the repository credentials the v1 profile needs cannot be read; nothing has been stopped" >&2
+    echo "[restore] run 'make v1-restore' (or 'make v1-pitr TARGET=...'), which loads them from the profile .env first" >&2
+    return 1
+  fi
+  for var in "${CRED_NAMES[@]}"; do
+    if [[ -n "${!var:-}" ]]; then
+      continue
+    fi
+    key="$(credential_source_key "$var")"
+    if ! value="$(python3 "$ROOT/infra/scripts/lib/dotenv.py" "$key" <"$env_file")"; then
+      echo "[restore] FAILED: could not read $key from $env_file; nothing has been stopped" >&2
+      return 1
+    fi
+    if [[ -z "$value" ]]; then
+      missing+=("$var (from $key)")
+      continue
+    fi
+    printf -v "$var" '%s' "$value"
+  done
+  if (( ${#missing[@]} )); then
+    echo "[restore] FAILED: the v1 profile is in use but these repository credentials are empty in $env_file: ${missing[*]}" >&2
+    echo "[restore] run 'make v1-restore' (or 'make v1-pitr TARGET=...'), which loads them from the profile .env first" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Require the credentials the selected configuration implies before the first
+# destructive step: before the credential file is written and long before
+# Postgres is stopped, so a refusal leaves the database running.
+if v1_repository_profile_selected "$COMPOSE_FILE"; then
+  if ! load_v1_repository_credentials; then
+    exit 1
+  fi
+fi
+
 run_args=()
 cred_vars=()
 if [[ -n "$RESTORE_USER" ]]; then
   run_args+=(--user "$RESTORE_USER")
 fi
-for var in PGBACKREST_REPO1_CIPHER_PASS PGBACKREST_REPO1_S3_KEY PGBACKREST_REPO1_S3_KEY_SECRET; do
+for var in "${CRED_NAMES[@]}"; do
   if [[ -n "${!var:-}" ]]; then
     cred_vars+=("$var")
   fi
@@ -236,15 +315,38 @@ cleanup_cred_env_file() {
 }
 trap cleanup_cred_env_file EXIT
 
+# digest_of prints the SHA-256 of one value. The value reaches sha256sum through
+# a pipe, never through argv, so it cannot appear in `ps` or in the process
+# table.
+digest_of() {
+  printf '%s' "$1" | sha256sum | awk '{print $1}'
+}
+
 # write_credential_env_file renders one KEY=value line per credential into a
-# 0600 file. A value the format cannot carry is refused by name rather than
-# written and silently mangled: the engines trim surrounding whitespace when
-# they parse --env-file, and a newline would start a second entry.
+# 0600 file, followed by one SHA-256 digest line per credential computed from the
+# in-memory value (never from the file, which is what may be short).
+#
+# Every write is checked individually. This function is called from a negated
+# condition (`if ! write_credential_env_file`), and bash suspends `set -e` inside
+# a function invoked that way, so an unchecked `printf ... >>file` that failed on
+# a full filesystem used to fall through to the trailing `chmod` and an
+# unconditional `return 0`. A truncated last value is still non-empty, so the
+# probe passed, Postgres was stopped, and pgBackRest then failed to authenticate
+# with the database already down. Each write therefore reports its own failure,
+# and the function returns success only after every write and the final mode
+# check succeeded.
 write_credential_env_file() {
-  local var value
+  local var value digest
   (( ${#cred_vars[@]} )) || return 0
-  CRED_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/ibex-pgbackrest-credentials.XXXXXX")"
-  chmod 0600 "$CRED_ENV_FILE"
+  if ! CRED_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/ibex-pgbackrest-credentials.XXXXXX")"; then
+    CRED_ENV_FILE=""
+    echo "[restore] FAILED: could not create a temporary credential file in ${TMPDIR:-/tmp}; nothing has been stopped" >&2
+    return 1
+  fi
+  if ! chmod 0600 "$CRED_ENV_FILE"; then
+    echo "[restore] FAILED: could not set mode 0600 on $CRED_ENV_FILE; nothing has been stopped" >&2
+    return 1
+  fi
   for var in "${cred_vars[@]}"; do
     value="${!var}"
     if [[ -z "$value" ]]; then
@@ -255,10 +357,27 @@ write_credential_env_file() {
       echo "[restore] refusing: $var has leading or trailing whitespace, or contains a newline, which --env-file cannot carry; fix the value in the profile .env" >&2
       return 1
     fi
-    printf '%s=%s\n' "$var" "$value" >>"$CRED_ENV_FILE"
+    digest="$(digest_of "$value")"
+    if [[ -z "$digest" ]]; then
+      echo "[restore] FAILED: sha256sum produced no digest for $var, so the delivery probe could not verify it; nothing has been stopped" >&2
+      return 1
+    fi
+    if ! printf '%s=%s\n' "$var" "$value" >>"$CRED_ENV_FILE"; then
+      echo "[restore] FAILED: could not write $var to the credential file (write error or short write); nothing has been stopped" >&2
+      return 1
+    fi
+    if ! printf 'IBEX_CRED_SHA256_%s=%s\n' "$var" "$digest" >>"$CRED_ENV_FILE"; then
+      echo "[restore] FAILED: could not write the $var digest to the credential file (write error or short write); nothing has been stopped" >&2
+      return 1
+    fi
   done
-  chmod 0600 "$CRED_ENV_FILE"
-  return 0
+  # The final chmod is a real check, not decoration: it is the last thing that
+  # can fail, and the function's exit status is its status. A prior write failure
+  # has already returned 1, so this cannot mask one.
+  if ! chmod 0600 "$CRED_ENV_FILE"; then
+    echo "[restore] FAILED: could not reassert mode 0600 on $CRED_ENV_FILE; nothing has been stopped" >&2
+    return 1
+  fi
 }
 
 cred_file_args=()
@@ -279,20 +398,33 @@ for var in "${cred_vars[@]}"; do
 done
 
 # probe_credential_delivery starts a throwaway container exactly the way the
-# restore starts one and requires every credential to be non-empty inside it.
-# It runs before Postgres is stopped, so a delivery failure leaves the database
-# running instead of leaving a stopped cluster and no restore.
+# restore starts one and requires every credential to arrive *intact*: the
+# SHA-256 the container computes over the value it received must equal the digest
+# written beside that value when the file was produced.
+#
+# A non-empty check is not enough. A short write leaves a truncated last value
+# that is still non-empty, so the old probe passed and Postgres was stopped. The
+# digest line is an independent channel: it is computed from the in-memory value
+# and the container compares against it, so a value the engine truncated,
+# mangled, or dropped fails here, before Postgres is stopped.
+#
+# The probe needs sha256sum inside the image, which the Debian-based postgres
+# image carries (coreutils). A missing sha256sum is refused explicitly rather
+# than surfacing as a misleading digest mismatch.
 probe_credential_delivery() {
-  local image="$1" var script=""
+  local image="$1" var script
   (( ${#cred_vars[@]} )) || return 0
+  script="command -v sha256sum >/dev/null 2>&1 || { echo 'sha256sum is missing from the image, so credential delivery cannot be verified' >&2; exit 1; }; "
   for var in "${cred_vars[@]}"; do
-    script+="test -n \"\${${var}:-}\" || { echo 'missing ${var}' >&2; exit 1; }; "
+    script+="want=\"\${IBEX_CRED_SHA256_${var}:?}\"; "
+    script+="got=\"\$(printf '%s' \"\${${var}:-}\" | sha256sum)\"; got=\"\${got%% *}\"; "
+    script+="[ \"\$got\" = \"\$want\" ] || { echo '${var} arrived truncated or altered' >&2; exit 1; }; "
   done
   if ! "${CLI[@]}" run --rm "${run_args[@]}" "${cred_file_args[@]}" --entrypoint sh "$image" -c "$script" >/dev/null; then
-    echo "[restore] FAILED: the container engine did not deliver the repository credentials (${cred_vars[*]}) to a probe container started like the restore. Nothing has been stopped; Postgres is still running." >&2
+    echo "[restore] FAILED: the container engine did not deliver the repository credentials intact (${cred_vars[*]}) to a probe container started like the restore. Nothing has been stopped; Postgres is still running." >&2
     return 1
   fi
-  echo "[restore] credential delivery verified: ${cred_vars[*]} arrive in a container"
+  echo "[restore] credential delivery verified: ${cred_vars[*]} arrive in a container with the expected values"
   return 0
 }
 
@@ -327,11 +459,7 @@ LOAD
   printf '\n  ENV_FILE="${IBEX_V1_ENV:-%s/infra/compose/v1-single-node/.env}"\n' "$ROOT"
   printf '  ibex_env_value() { python3 %s/infra/scripts/lib/dotenv.py "$1" < "$ENV_FILE"; }\n' "$ROOT"
   for var in "${cred_vars[@]}"; do
-    case "$var" in
-      PGBACKREST_REPO1_S3_KEY) source_key=IBEX_OBJECTSTORE_ACCESS_KEY ;;
-      PGBACKREST_REPO1_S3_KEY_SECRET) source_key=IBEX_OBJECTSTORE_SECRET_KEY ;;
-      *) source_key="$var" ;;
-    esac
+    source_key="$(credential_source_key "$var")"
     printf '  %s="$(ibex_env_value %s)"\n' "$var" "$source_key"
     printf '  : "${%s:?empty; check $ENV_FILE}"\n' "$var"
   done

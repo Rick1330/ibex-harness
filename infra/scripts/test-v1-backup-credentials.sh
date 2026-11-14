@@ -2,15 +2,24 @@
 # test-v1-backup-credentials.sh — regression tests for the v1 backup-repository
 # credential chain.
 #
-# Two properties are guarded here because both protect the same secret:
+# Five properties are guarded here because they all protect the same secret:
 #
 #   1. gen-v1-secrets.sh never loses or silently replaces
 #      PGBACKREST_REPO1_CIPHER_PASS. That passphrase is the only key to every
 #      object in the repository: a regenerated one leaves the repository intact
 #      but unreadable, and the operator finds out at restore time.
-#   2. pgbackrest-restore.sh delivers the repository credentials to its
+#   2. A retained passphrase is written back with the quoting and escaping the
+#      repository's dotenv reader decodes, so a value containing a space or `#`
+#      is not truncated by the next --force.
+#   3. pgbackrest-restore.sh delivers the repository credentials to its
 #      container in a way that survives a rootful `sudo -n podman` engine, and
-#      proves delivery before it stops Postgres.
+#      proves delivery *intact* before it stops Postgres.
+#   4. A credential write that fails part way (a full filesystem, a short write)
+#      aborts the restore instead of leaving a truncated value that still looks
+#      non-empty.
+#   5. A direct invocation that selects the v1 profile refuses to stop Postgres
+#      when it has no credentials, instead of collecting an empty credential
+#      list and skipping the delivery probe.
 #
 # Every path is redirected: IBEX_V1_ENV_FILE, IBEX_V1_SECRETS_DIR,
 # IBEX_V1_CERTS_DIR and IBEX_V1_PGBACKREST_CONF keep the generator out of the
@@ -157,6 +166,27 @@ write_stub() {
 #!/usr/bin/env bash
 set -u
 log() { printf '%s\n' "$*" >>"$STUB_LOG"; }
+# digest reads the value from the environment: a secret never reaches argv.
+digest() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
+
+# truncate_last_value emulates an engine that could not carry the last value
+# whole (a short write, a mangled line): the last credential loses half of its
+# value and keeps a non-empty prefix.
+truncate_last_value() {
+  local file="$1" i keypart valuepart
+  local -a lines=()
+  mapfile -t lines <"$file"
+  for ((i = ${#lines[@]} - 1; i >= 0; i--)); do
+    if [[ "${lines[i]}" == PGBACKREST_REPO1_*=* ]]; then
+      keypart="${lines[i]%%=*}"
+      valuepart="${lines[i]#*=}"
+      lines[i]="$keypart=${valuepart:0:${#valuepart}/2}"
+      break
+    fi
+  done
+  printf '%s\n' "${lines[@]}" >"$file"
+}
+
 first="${1:-}"
 [[ -n "$first" ]] && shift
 case "$first" in
@@ -176,13 +206,23 @@ case "$first" in
     esac
     exit 0
     ;;
+  exec)
+    log "EXEC $*"
+    # The post-restore check asks the cluster for pg_is_in_recovery().
+    printf 'f\n'
+    exit 0
+    ;;
   run)
     log "RUN $*"
     envfile=""
+    script=""
     previous=""
     for arg in "$@"; do
       if [[ "$previous" == "--env-file" ]]; then
         envfile="$arg"
+      fi
+      if [[ "$previous" == "-c" ]]; then
+        script="$arg"
       fi
       previous="$arg"
     done
@@ -192,10 +232,30 @@ case "$first" in
         printf 'ENVFILE_EXISTS=%s\n' "$([[ -f "$envfile" ]] && printf yes || printf no)"
         printf 'ENVFILE_MODE=%s\n' "$(stat -c %a "$envfile" 2>/dev/null || printf none)"
         printf 'ENVFILE_KEYS=%s\n' "$(grep -c '^PGBACKREST_REPO1_' "$envfile" 2>/dev/null || printf 0)"
+        printf 'ENVFILE_DIGESTS=%s\n' "$(grep -c '^IBEX_CRED_SHA256_PGBACKREST_REPO1_' "$envfile" 2>/dev/null || printf 0)"
         printf 'ENVFILE_LINES=%s\n' "$(grep -c . "$envfile" 2>/dev/null || printf 0)"
       } >>"$STUB_ENV_REPORT"
     fi
-    exit "${STUB_RUN_RESULT:-0}"
+    if [[ "${STUB_RUN_RESULT:-0}" != "0" ]]; then
+      exit "$STUB_RUN_RESULT"
+    fi
+    # Emulate the probe container: the engine loads --env-file into the
+    # container environment and runs the probe script inside it. STUB_TRUNCATE_ENV
+    # makes the engine hand over a truncated value, which is what a short write or
+    # a mangling engine would do.
+    if [[ -n "$script" && -n "$envfile" && -f "$envfile" ]]; then
+      if [[ -n "${STUB_TRUNCATE_ENV:-}" ]]; then
+        truncate_last_value "$envfile"
+      fi
+      while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        export "$line" 2>/dev/null || true
+      done <"$envfile"
+      printf 'ENVFILE_CIPHER_SHA=%s\n' "$(digest "${PGBACKREST_REPO1_CIPHER_PASS:-}")" >>"$STUB_ENV_REPORT"
+      sh -c "$script"
+      exit $?
+    fi
+    exit 0
     ;;
 esac
 log "OTHER $first $*"
@@ -251,7 +311,8 @@ envfile="$(stub_report_value ENVFILE_PATH)"
 [[ "$(stub_report_value ENVFILE_EXISTS)" == "yes" ]] || fail "restore scratch: the credential file was absent during the run"
 [[ "$(stub_report_value ENVFILE_MODE)" == "600" ]] || fail "restore scratch: the credential file was not mode 600"
 [[ "$(stub_report_value ENVFILE_KEYS)" == "3" ]] || fail "restore scratch: the credential file did not carry all three keys"
-[[ "$(stub_report_value ENVFILE_LINES)" == "3" ]] || fail "restore scratch: the credential file carried extra entries"
+[[ "$(stub_report_value ENVFILE_DIGESTS)" == "3" ]] || fail "restore scratch: the credential file did not carry all three digests"
+[[ "$(stub_report_value ENVFILE_LINES)" == "6" ]] || fail "restore scratch: the credential file carried extra entries"
 [[ ! -e "$envfile" ]] || fail "restore scratch: the credential file was not removed on exit"
 for secret in "$cipher" "$s3_key" "$s3_secret"; do
   if grep -qF -- "$secret" "$dir/out.log"; then
@@ -293,5 +354,191 @@ if grep -q ' stop ' "$STUB_LOG"; then
   fail "delivery gate: Postgres was stopped before credential delivery was proven"
 fi
 pass "a failed credential probe aborts before Postgres is stopped"
+
+# --- case 7: a short credential write aborts before anything is stopped ----
+
+# A full filesystem does not fail the first write: it writes a prefix and then
+# errors, which used to leave a truncated last value that the non-empty probe
+# accepted. RLIMIT_FSIZE reproduces that exactly, and ignoring SIGXFSZ turns the
+# kernel's signal into the ordinary write error a full filesystem raises.
+dir="$WORK/restore-short-write"
+mkdir -p "$dir/tmp"
+printf '[global]\nrepo1-type=s3\n' >"$dir/pgbackrest.conf"
+printf 'services: {}\n' >"$dir/compose.yml"
+write_stub "$dir/stub-engine"
+STUB_LOG="$dir/calls.log"
+STUB_ENV_REPORT="$dir/env-report.txt"
+export STUB_LOG STUB_ENV_REPORT
+: >"$STUB_LOG"
+: >"$STUB_ENV_REPORT"
+
+# 470-byte values put the third credential write across the 1 KiB limit, so the
+# last value is the one that is cut in half.
+long_value="$(printf 'k%.0s' {1..470})"
+short_write_cipher="$(new_cipher)"
+# shellcheck disable=SC2030,SC2031
+if (
+  trap '' XFSZ 2>/dev/null || true
+  ulimit -f 1
+  export TMPDIR="$dir/tmp"
+  export PGBACKREST_REPO1_CIPHER_PASS="$short_write_cipher"
+  export PGBACKREST_REPO1_S3_KEY="$long_value"
+  export PGBACKREST_REPO1_S3_KEY_SECRET="$long_value"
+  export PGBACKREST_CONF="$dir/pgbackrest.conf"
+  export PGBACKREST_STANZA=ibex-main
+  export COMPOSE_FILE="$dir/compose.yml"
+  export IBEX_CONTAINER_CLI="$dir/stub-engine"
+  bash "$RESTORE"
+) >"$dir/out.log" 2>&1; then
+  fail "short write: the restore continued although the last credential write failed"
+fi
+if grep -q ' stop ' "$STUB_LOG"; then
+  fail "short write: Postgres was stopped after a truncated credential write"
+fi
+grep -q 'could not write PGBACKREST_REPO1_S3_KEY_SECRET to the credential file' "$dir/out.log" \
+  || fail "short write: the failed write was not reported by name"
+[[ ! -s "$STUB_LOG" ]] || fail "short write: the container engine was invoked before the write failure aborted the restore"
+[[ -z "$(ls -A "$dir/tmp")" ]] || fail "short write: a truncated credential file was left behind"
+pass "a short credential write aborts before the engine is invoked and before Postgres is stopped"
+
+# --- case 8: a truncated value cannot pass the delivery probe --------------
+
+dir="$WORK/restore-truncated"
+mkdir -p "$dir"
+printf '[global]\nrepo1-type=s3\n' >"$dir/pgbackrest.conf"
+printf 'services: {}\n' >"$dir/compose.yml"
+write_stub "$dir/stub-engine"
+STUB_LOG="$dir/calls.log"
+STUB_ENV_REPORT="$dir/env-report.txt"
+export STUB_LOG STUB_ENV_REPORT
+: >"$STUB_LOG"
+: >"$STUB_ENV_REPORT"
+
+cipher="$(new_cipher)"
+s3_key="$(new_cipher)"
+s3_secret="$(new_cipher)"
+# shellcheck disable=SC2030,SC2031
+if (
+  export PGBACKREST_REPO1_CIPHER_PASS="$cipher"
+  export PGBACKREST_REPO1_S3_KEY="$s3_key"
+  export PGBACKREST_REPO1_S3_KEY_SECRET="$s3_secret"
+  export PGBACKREST_CONF="$dir/pgbackrest.conf"
+  export PGBACKREST_STANZA=ibex-main
+  export COMPOSE_FILE="$dir/compose.yml"
+  export IBEX_CONTAINER_CLI="$dir/stub-engine"
+  export STUB_TRUNCATE_ENV=1
+  bash "$RESTORE"
+) >"$dir/out.log" 2>&1; then
+  fail "truncated delivery: the restore continued although the container received a truncated value"
+fi
+grep -q 'did not deliver the repository credentials intact' "$dir/out.log" \
+  || fail "truncated delivery: the integrity failure was not reported"
+grep -q -- '--entrypoint sh' "$STUB_LOG" || fail "truncated delivery: the probe container was not started"
+if grep -q ' stop ' "$STUB_LOG"; then
+  fail "truncated delivery: Postgres was stopped although the delivered value was truncated"
+fi
+pass "a value truncated in transit fails the probe before Postgres is stopped"
+
+# --- case 9: a retained passphrase with a space and a # survives --force ---
+
+dir="$WORK/force-quoting"
+gen_env "$dir"
+# Single quotes are literal for the repository's reader, so the effective value
+# is `fixture # suffix` and a bare rewrite would decode as `fixture`.
+printf "PGBACKREST_REPO1_CIPHER_PASS='fixture # suffix'\n" >"$IBEX_V1_ENV_FILE"
+chmod 0600 "$IBEX_V1_ENV_FILE"
+before="$(env_read PGBACKREST_REPO1_CIPHER_PASS)"
+[[ "$before" == 'fixture # suffix' ]] || fail "quoting: the fixture .env did not decode to the expected value"
+if ! bash "$GEN" --force >"$dir/out.log" 2>&1; then
+  cat "$dir/out.log" >&2
+  fail "quoting: generator exited non-zero"
+fi
+after="$(env_read PGBACKREST_REPO1_CIPHER_PASS)"
+[[ "$after" == "$before" ]] \
+  || fail "quoting: --force changed the value the repository's dotenv reader decodes"
+grep -q '^PGBACKREST_REPO1_CIPHER_PASS="' "$IBEX_V1_ENV_FILE" \
+  || fail "quoting: the retained passphrase was written back unquoted"
+pass "--force preserves a passphrase containing a space and a # byte for byte"
+
+# --- case 10: a direct v1 invocation without credentials refuses -----------
+
+dir="$WORK/restore-no-credentials"
+mkdir -p "$dir"
+printf '[global]\nrepo1-type=s3\n' >"$dir/pgbackrest.conf"
+write_stub "$dir/stub-engine"
+STUB_LOG="$dir/calls.log"
+STUB_ENV_REPORT="$dir/env-report.txt"
+export STUB_LOG STUB_ENV_REPORT
+: >"$STUB_LOG"
+: >"$STUB_ENV_REPORT"
+
+# COMPOSE_FILE selects the generated v1 profile, which loads the repository
+# credentials from the dotenv beside it, but this shell exports none of them.
+# shellcheck disable=SC2030,SC2031
+if (
+  unset PGBACKREST_REPO1_CIPHER_PASS PGBACKREST_REPO1_S3_KEY PGBACKREST_REPO1_S3_KEY_SECRET
+  export PGBACKREST_CONF="$dir/pgbackrest.conf"
+  export PGBACKREST_STANZA=ibex-main
+  export COMPOSE_FILE="$ROOT_DIR/infra/compose/v1-single-node/compose.yml"
+  export IBEX_V1_ENV="$dir/absent.env"
+  export IBEX_CONTAINER_CLI="$dir/stub-engine"
+  bash "$RESTORE"
+) >"$dir/out.log" 2>&1; then
+  fail "no credentials: the restore continued although the v1 profile was selected without credentials"
+fi
+grep -q 'make v1-restore' "$dir/out.log" \
+  || fail "no credentials: the refusal did not point at the v1 wrapper"
+[[ ! -s "$STUB_LOG" ]] \
+  || fail "no credentials: the container engine was invoked before the credentials were validated"
+pass "a direct v1 invocation without credentials refuses before the engine is asked to stop"
+
+# --- case 11: the same invocation loads them from the profile dotenv -------
+
+dir="$WORK/restore-v1-env"
+mkdir -p "$dir"
+printf '[global]\nrepo1-type=s3\n' >"$dir/pgbackrest.conf"
+write_stub "$dir/stub-engine"
+# The three credentials as the v1 profile stores them. The passphrase carries a
+# space and a # so the loader has to decode the dotenv the way Compose does.
+cat >"$dir/.env" <<'ENV'
+IBEX_OBJECTSTORE_ACCESS_KEY=fixtureaccesskey
+IBEX_OBJECTSTORE_SECRET_KEY=fixturesecretkey
+PGBACKREST_REPO1_CIPHER_PASS='fixture # suffix'
+ENV
+chmod 0600 "$dir/.env"
+STUB_LOG="$dir/calls.log"
+STUB_ENV_REPORT="$dir/env-report.txt"
+export STUB_LOG STUB_ENV_REPORT
+: >"$STUB_LOG"
+: >"$STUB_ENV_REPORT"
+
+# shellcheck disable=SC2030,SC2031
+if ! (
+  unset PGBACKREST_REPO1_CIPHER_PASS PGBACKREST_REPO1_S3_KEY PGBACKREST_REPO1_S3_KEY_SECRET
+  export PGBACKREST_CONF="$dir/pgbackrest.conf"
+  export PGBACKREST_STANZA=ibex-main
+  export PGBACKREST_COMPOSE_VOLUME=stubvol
+  export COMPOSE_FILE="$ROOT_DIR/infra/compose/v1-single-node/compose.yml"
+  export IBEX_V1_ENV="$dir/.env"
+  export IBEX_CONTAINER_CLI="$dir/stub-engine"
+  bash "$RESTORE"
+) >"$dir/out.log" 2>&1; then
+  cat "$dir/out.log" >&2
+  fail "v1 dotenv: the restore exited non-zero with credentials available in the profile .env"
+fi
+[[ "$(stub_report_value ENVFILE_KEYS)" == "3" ]] \
+  || fail "v1 dotenv: the credential file did not carry all three credentials"
+expected_cipher="$(python3 "$DOTENV" PGBACKREST_REPO1_CIPHER_PASS <"$dir/.env")"
+expected_sha="$(printf '%s' "$expected_cipher" | sha256sum | awk '{print $1}')"
+[[ "$(stub_report_value ENVFILE_CIPHER_SHA)" == "$expected_sha" ]] \
+  || fail "v1 dotenv: the container did not receive the passphrase the profile .env holds"
+probe_line="$(grep -n -- '--entrypoint sh' "$STUB_LOG" | head -n1 | cut -d: -f1)"
+stop_line="$(grep -n -- ' stop postgres' "$STUB_LOG" | head -n1 | cut -d: -f1)"
+[[ -n "$probe_line" && -n "$stop_line" && "$probe_line" -lt "$stop_line" ]] \
+  || fail "v1 dotenv: Postgres was not stopped after credential delivery was proven"
+if grep -qF -- "$expected_cipher" "$dir/out.log"; then
+  fail "v1 dotenv: a credential value appeared in the output"
+fi
+pass "a direct v1 invocation loads the credentials from the profile .env and proves delivery before stopping Postgres"
 
 echo "v1 backup credential tests: PASS ($PASSED cases)"

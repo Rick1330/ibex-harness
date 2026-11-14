@@ -643,21 +643,109 @@ async function performSessionAction(
 }
 
 /**
- * In-flight rotations, keyed by a hash of the refresh cookie value.
+ * Rotations shared by a hash of the refresh cookie value.
  *
- * An expiring access cookie makes several parallel reads 401 at once. The API
- * accepts a refresh token once, so without sharing the rotation every loser is
- * treated as an invalid session and the browser is sent to login during an
- * ordinary page load. The map holds the shared promise only while it is in
- * flight; an entry deletes itself when it settles, and the size cap keeps a
- * pathological burst from growing the map without bound. The key is hashed so
- * the raw refresh token is not retained as a map key.
+ * An expiring access cookie makes several reads 401 at once. The API accepts a
+ * refresh token once, so a rotation is shared in two ways:
+ *
+ * - while it is in flight, every overlapping read awaits the same promise;
+ * - after it settles, the resolved access value is retained for
+ *   `ROTATION_TTL_MS`, so a caller that arrives *later* with the same refresh
+ *   token is served the rotated value instead of replaying a token the API has
+ *   already consumed.
+ *
+ * The second half is what a server render needs, and it is not a race. The
+ * outer request's `Cookie` header never changes during a render, so every SSR
+ * read that starts after the first rotation settled presents the expired access
+ * cookie *and* the consumed refresh token. Two `useAsyncData` calls in a layout
+ * and a page are enough to reach this. Without the retained value the second
+ * read 401s, a valid session renders as signed out, and an API that treats a
+ * replayed refresh token as reuse may revoke the whole session family.
+ *
+ * Retaining the value grants no new authority: a caller that presents the
+ * refresh token already holds it, and what is retained is the access cookie
+ * that token bought. The key is a hash, so the raw token is never a map key,
+ * and the map is bounded in both size and time. A failed rotation is not
+ * retained — it has no value to serve, and keeping it would answer a later
+ * attempt from a stale refusal instead of asking the API. A new refresh token
+ * hashes to its own key either way.
  */
-const ROTATIONS_IN_FLIGHT = new Map<string, Promise<string | null>>()
-const MAX_ROTATIONS_IN_FLIGHT = 256
+const ROTATION_TTL_MS = 10_000
+const MAX_CACHED_ROTATIONS = 256
+
+type RotationEntry = {
+  /** Settles with the rotated access value, or null when the rotation failed. */
+  readonly promise: Promise<string | null>
+  /** `Date.now()` after which the resolved value is no longer served. */
+  expiresAt: number
+  /** Removes the entry when the TTL elapses; cleared by any earlier removal. */
+  eviction: ReturnType<typeof setTimeout> | null
+}
+
+const ROTATIONS = new Map<string, RotationEntry>()
 
 function rotationKey(refreshToken: string): string {
   return createHash("sha256").update(refreshToken).digest("hex")
+}
+
+function dropRotation(key: string): void {
+  const entry = ROTATIONS.get(key)
+  if (!entry) return
+  ROTATIONS.delete(key)
+  // A timer left behind would fire against a key that may already hold a new
+  // rotation, so every removal path clears it.
+  if (entry.eviction) clearTimeout(entry.eviction)
+}
+
+/**
+ * Drop every retained rotation. Tests call this so module state does not carry
+ * between cases; production code never needs it.
+ */
+export function resetRotationCache(): void {
+  for (const key of [...ROTATIONS.keys()]) dropRotation(key)
+}
+
+/**
+ * Bound the map, not the rotation. Expired entries go first; if none are left
+ * the oldest is dropped. Its waiters still hold the promise, and a new caller
+ * starts its own rotation rather than the map growing without limit.
+ */
+function evictRotations(): void {
+  const now = Date.now()
+  for (const [key, entry] of ROTATIONS) {
+    if (now >= entry.expiresAt) dropRotation(key)
+  }
+  while (ROTATIONS.size >= MAX_CACHED_ROTATIONS) {
+    const oldest = ROTATIONS.keys().next().value
+    if (oldest === undefined) return
+    dropRotation(oldest)
+  }
+}
+
+/**
+ * Keep a settled rotation, or drop it when there is no value to keep.
+ *
+ * Only one settle handler runs per rotation, so exactly one eviction timer is
+ * scheduled however many callers await it. A `null` result is a failed
+ * rotation: it is dropped rather than retained, so the map holds no dead entry
+ * and a later attempt is asked of the API instead of being answered from a
+ * stale refusal.
+ */
+function settleRotation(key: string, entry: RotationEntry, access: string | null): void {
+  if (ROTATIONS.get(key) !== entry) return
+  if (access === null) {
+    dropRotation(key)
+    return
+  }
+  entry.expiresAt = Date.now() + ROTATION_TTL_MS
+  const eviction = setTimeout(() => {
+    if (ROTATIONS.get(key) !== entry) return
+    entry.eviction = null
+    ROTATIONS.delete(key)
+  }, ROTATION_TTL_MS)
+  // A pending eviction must never keep the process alive.
+  eviction.unref?.()
+  entry.eviction = eviction
 }
 
 /**
@@ -666,9 +754,10 @@ function rotationKey(refreshToken: string): string {
  * Returns null when there is no refresh cookie to present or the API refuses to
  * rotate. The rotated `Set-Cookie` headers are relayed to this response; the
  * caller retries the original read with the returned value because the incoming
- * request still carries the expired cookie. Concurrent callers that present the
- * same refresh cookie share one in-flight rotation, so the API's single-use
- * refresh token is not replayed by a second caller.
+ * request still carries the expired cookie. Callers that present the same
+ * refresh cookie share one rotation — concurrently through the promise, and
+ * afterwards through the retained value — so the API's single-use refresh token
+ * is never replayed by a second caller.
  *
  * The refresh is a direct `fetch` to the upstream API through
  * `performSessionAction`, which relays `Set-Cookie` to *this* event. Do not
@@ -684,24 +773,31 @@ async function rotateAccessCookie(event: H3Event): Promise<string | null> {
   if (!refreshToken) return null
 
   const key = rotationKey(refreshToken)
-  const shared = ROTATIONS_IN_FLIGHT.get(key)
-  if (shared) return shared
-
-  if (ROTATIONS_IN_FLIGHT.size >= MAX_ROTATIONS_IN_FLIGHT) {
-    // Bound the map, not the rotation: drop the oldest in-flight entry. Its
-    // waiters still hold the promise; a new caller starts its own rotation
-    // instead of the map growing without limit.
-    const oldest = ROTATIONS_IN_FLIGHT.keys().next().value
-    if (oldest !== undefined) ROTATIONS_IN_FLIGHT.delete(oldest)
+  const cached = ROTATIONS.get(key)
+  if (cached) {
+    // Expire on read as well as on the timer: a timer that has not run yet must
+    // not serve a value past its TTL.
+    if (Date.now() < cached.expiresAt) return cached.promise
+    dropRotation(key)
   }
 
-  const rotation = performRefresh(event)
-  ROTATIONS_IN_FLIGHT.set(key, rotation)
-  try {
-    return await rotation
-  } finally {
-    if (ROTATIONS_IN_FLIGHT.get(key) === rotation) ROTATIONS_IN_FLIGHT.delete(key)
+  if (ROTATIONS.size >= MAX_CACHED_ROTATIONS) evictRotations()
+
+  const entry: RotationEntry = {
+    promise: performRefresh(event),
+    // In flight: served to every overlapping caller until it settles.
+    expiresAt: Number.POSITIVE_INFINITY,
+    eviction: null,
   }
+  ROTATIONS.set(key, entry)
+  // `performRefresh` answers null rather than rejecting, but a rejection must
+  // still leave no cached entry and no unhandled rejection behind.
+  void entry.promise
+    .then((access) => settleRotation(key, entry, access))
+    .catch(() => {
+      if (ROTATIONS.get(key) === entry) dropRotation(key)
+    })
+  return entry.promise
 }
 
 async function performRefresh(event: H3Event): Promise<string | null> {

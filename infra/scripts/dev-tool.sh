@@ -934,7 +934,7 @@ case "${1:-help}" in
   # The contract registry and deprecation record guards are the same two steps repo-guards
   # runs in CI. They are stdlib-only and path-independent, so a local edit to a record is
   # checked here instead of only in the python-gated unit suite.
-  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py; python3 infra/scripts/check-schema-doc.py; python3 services/api/scripts/check_contract_registry.py; python3 services/api/scripts/check_deprecations.py; bash infra/scripts/slo-rules-check.sh; reproducibility_check ;;
+  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py; python3 infra/scripts/check-schema-doc.py; python3 services/api/scripts/check_contract_registry.py; python3 services/api/scripts/check_deprecations.py; bash infra/scripts/slo-rules-check.sh; bash infra/scripts/test-v1-backup-credentials.sh; reproducibility_check ;;
   reproducibility-check) reproducibility_check ;;
   slo-rules-check) cd "$ROOT_DIR"; bash infra/scripts/slo-rules-check.sh ;;
   proto-lint) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf lint ;;

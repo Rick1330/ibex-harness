@@ -13,6 +13,7 @@ import {
   appendSessionDeletionCookies,
   callOperatorSession,
   fetchOperatorJson,
+  resetRotationCache,
   toHttpError,
 } from "../server/utils/operator/http"
 
@@ -103,9 +104,14 @@ async function mappedHttpError(run: () => Promise<unknown>): Promise<unknown> {
 beforeEach(() => {
   vi.stubEnv("IBEX_OPERATOR_API_ORIGIN", API_ORIGIN)
   vi.stubGlobal("useRuntimeConfig", () => ({ operatorApiOrigin: "" }))
+  // A rotation is retained per refresh-token hash for 10s of wall-clock time.
+  // Without this reset, a case that rotates would serve its access value to the
+  // next case that reuses the same token.
+  resetRotationCache()
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
 })
@@ -469,6 +475,219 @@ describe("BFF refresh-and-retry", () => {
       { org_id: "org-1", ok: true },
       { org_id: "org-1", ok: true },
     ])
+  })
+
+  it("serves the settled rotation to a later read with the same refresh token (server render)", async () => {
+    // Server rendering is sequential, not a race. The outer request's Cookie
+    // header never changes during the render, so the second internal read still
+    // presents the expired access cookie and the refresh token the first read
+    // already consumed. Two `useAsyncData` calls — a layout and a page — are
+    // enough to reach this.
+    const cookie = "ibex_session=expired; ibex_refresh=ssr-token; ibex_csrf=csrf-value"
+    const layout = fakeEvent({
+      url: "/api/operator/overview",
+      headers: { accept: "application/json", cookie },
+    })
+    const page = fakeEvent({
+      url: "/api/operator/context",
+      headers: { accept: "application/json", cookie },
+    })
+
+    let refreshCalls = 0
+    const readCookies: string[] = []
+    stubFetch((target, init) => {
+      const headers = new Headers(init.headers)
+      if (target.pathname === "/v1/operator/session/refresh") {
+        refreshCalls += 1
+        // The API accepts a refresh token once. A second presentation is
+        // refused, which is exactly what made the second SSR read sign the
+        // operator out.
+        if (refreshCalls > 1) {
+          return upstream(
+            { error: { code: "INVALID_TOKEN", message: "refresh token already used" } },
+            { status: 401 },
+          )
+        }
+        return upstream(
+          { status: "ok", org_id: "org-1" },
+          { setCookie: ["ibex_session=fresh-access; Path=/; HttpOnly; Secure; SameSite=Lax"] },
+        )
+      }
+      readCookies.push(headers.get("cookie") ?? "")
+      return headers.get("cookie")?.includes("fresh-access")
+        ? upstream({ org_id: "org-1", ok: true })
+        : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 })
+    })
+
+    const layoutData = await fetchOperatorJson(layout.event, "overview", (value) => value)
+    const pageData = await fetchOperatorJson(page.event, "context", (value) => value)
+
+    expect(refreshCalls).toBe(1)
+    expect(layoutData).toEqual({ org_id: "org-1", ok: true })
+    expect(pageData).toEqual({ org_id: "org-1", ok: true })
+    // Both reads 401'd with the stale cookie and retried with the same rotated
+    // value, so the single-use refresh token was presented upstream once.
+    expect(readCookies).toEqual([
+      "ibex_session=expired",
+      "ibex_session=fresh-access",
+      "ibex_session=expired",
+      "ibex_session=fresh-access",
+    ])
+  })
+
+  it("rotates again for a different refresh token", async () => {
+    // The retained value is keyed by the refresh token, so a second session
+    // must still get its own rotation rather than being served the first one.
+    const first = fakeEvent({
+      url: "/api/operator/overview",
+      headers: {
+        accept: "application/json",
+        cookie: "ibex_session=expired; ibex_refresh=token-a; ibex_csrf=csrf-value",
+      },
+    })
+    const second = fakeEvent({
+      url: "/api/operator/overview",
+      headers: {
+        accept: "application/json",
+        cookie: "ibex_session=expired; ibex_refresh=token-b; ibex_csrf=csrf-value",
+      },
+    })
+
+    const refreshed: string[] = []
+    stubFetch((target, init) => {
+      const headers = new Headers(init.headers)
+      if (target.pathname === "/v1/operator/session/refresh") {
+        const presented = headers.get("cookie") ?? ""
+        const token = presented.includes("token-a")
+          ? "token-a"
+          : presented.includes("token-b")
+            ? "token-b"
+            : "unknown"
+        refreshed.push(token)
+        return upstream(
+          { status: "ok", org_id: "org-1" },
+          { setCookie: [`ibex_session=fresh-${token}; Path=/; HttpOnly; Secure; SameSite=Lax`] },
+        )
+      }
+      const cookie = headers.get("cookie") ?? ""
+      return cookie.includes("fresh-token-a") || cookie.includes("fresh-token-b")
+        ? upstream({ org_id: "org-1", ok: true })
+        : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 })
+    })
+
+    await fetchOperatorJson(first.event, "overview", (value) => value)
+    await fetchOperatorJson(second.event, "overview", (value) => value)
+
+    expect(refreshed).toEqual(["token-a", "token-b"])
+  })
+
+  it("stops serving the retained rotation after its TTL", async () => {
+    // Fake timers, not a sleep: the TTL is wall-clock time, so the clock and the
+    // eviction timer advance together.
+    vi.useFakeTimers()
+    const { event } = fakeEvent({
+      url: "/api/operator/overview",
+      headers: {
+        accept: "application/json",
+        cookie: "ibex_session=expired; ibex_refresh=ttl-token; ibex_csrf=csrf-value",
+      },
+    })
+
+    let refreshCalls = 0
+    stubFetch((target, init) => {
+      const headers = new Headers(init.headers)
+      if (target.pathname === "/v1/operator/session/refresh") {
+        refreshCalls += 1
+        return upstream(
+          { status: "ok", org_id: "org-1" },
+          { setCookie: [`ibex_session=fresh-${refreshCalls}; Path=/; HttpOnly; Secure; SameSite=Lax`] },
+        )
+      }
+      return headers.get("cookie")?.includes("fresh-")
+        ? upstream({ org_id: "org-1", ok: true })
+        : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 })
+    })
+
+    await fetchOperatorJson(event, "overview", (value) => value)
+    expect(refreshCalls).toBe(1)
+
+    // One millisecond past the 10s TTL.
+    vi.advanceTimersByTime(10_001)
+
+    // The entry is gone, so the stale refresh token is presented again and the
+    // API issues a second value. A retained entry would answer from cache.
+    await fetchOperatorJson(event, "overview", (value) => value)
+    expect(refreshCalls).toBe(2)
+  })
+
+  it("relays the rotation to the initiating response only; the waiter renders from the shared value", async () => {
+    // Two independent responses, not one shared event: the waiter must succeed
+    // on the shared access value, and it has no cookies of its own to relay.
+    // That is correct — it renders from the value, while the initiating
+    // response carries the Set-Cookie. During SSR both internal responses are
+    // appended to the one outer page response by `applyOperatorResponse`, so the
+    // browser still receives the rotation.
+    const cookie = "ibex_session=expired; ibex_refresh=shared-token; ibex_csrf=csrf-value"
+    const initiator = fakeEvent({
+      url: "/api/operator/overview",
+      headers: { accept: "application/json", cookie },
+    })
+    const waiter = fakeEvent({
+      url: "/api/operator/context",
+      headers: { accept: "application/json", cookie },
+    })
+
+    let refreshCalls = 0
+    let rejections = 0
+    let bothRejected!: () => void
+    const bothReadsRejected = new Promise<void>((resolve) => {
+      bothRejected = resolve
+    })
+
+    stubFetch((target, init) => {
+      const headers = new Headers(init.headers)
+      if (target.pathname === "/v1/operator/session/refresh") {
+        refreshCalls += 1
+        // Hold the rotation open until both reads have 401'd, so the second
+        // event overlaps it instead of finding a settled entry.
+        return bothReadsRejected.then(() =>
+          upstream(
+            { status: "ok", org_id: "org-1" },
+            {
+              setCookie: [
+                "ibex_session=fresh-access; Path=/; HttpOnly; Secure; SameSite=Lax",
+                "ibex_refresh=rotated-refresh; Path=/; HttpOnly; Secure; SameSite=Lax",
+              ],
+            },
+          ),
+        )
+      }
+      if (headers.get("cookie")?.includes("fresh-access")) {
+        return upstream({ org_id: "org-1", ok: true })
+      }
+      rejections += 1
+      if (rejections === 2) bothRejected()
+      return upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 })
+    })
+
+    const initiatingRead = fetchOperatorJson(initiator.event, "overview", (value) => value)
+    const waitingRead = fetchOperatorJson(waiter.event, "context", (value) => value)
+    const [initiatingData, waitingData] = await Promise.all([initiatingRead, waitingRead])
+
+    expect(refreshCalls).toBe(1)
+    expect(initiatingData).toEqual({ org_id: "org-1", ok: true })
+    expect(waitingData).toEqual({ org_id: "org-1", ok: true })
+
+    const initiatingCookies = setCookieList(initiator.res)
+    expect(initiatingCookies.find((value) => value.startsWith("ibex_session="))).toContain(
+      "ibex_session=fresh-access",
+    )
+    expect(initiatingCookies.find((value) => value.startsWith("ibex_refresh="))).toContain(
+      "ibex_refresh=rotated-refresh",
+    )
+    // The waiter relays nothing of its own: it holds no rotation. This is the
+    // assertion a single shared event cannot make.
+    expect(setCookieList(waiter.res)).toHaveLength(0)
   })
 
   it("fails every concurrent waiter when the shared rotation is refused", async () => {
