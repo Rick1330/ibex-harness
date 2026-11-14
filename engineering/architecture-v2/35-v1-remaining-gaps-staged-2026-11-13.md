@@ -267,8 +267,8 @@ Each row is closed by a change that exists in this tree; per the stage closure r
 
 | ID | Gap | Evidence | Blocker | Source |
 |---|---|---|---|---|
-| P0-04 | No login/logout/refresh page; the e2e suite mints a fixture cookie | 34:67; 31:39 | product | 27:53 |
-| P0-05 | Every Console BFF route is a read; cookies cannot mutate | 34:68; 31:40 | product (D-C) | 27:54 |
+| P0-04 | The login, logout and refresh surfaces exist (`services/console/app/pages/login.vue`, `logout.vue`, `services/console/server/api/operator/session/*.post.ts`), but no test drives login → live page → refresh → logout without a fixture cookie: `services/console/e2e/live-d1.spec.ts` still mints one, so the clean-browser journey is unproven | 34:67; 31:39 | product | 27:53 |
+| P0-05 | Every Console operator *data* route is a read (22 `*.get.ts`); the only cookie mutations are the three session routes (login, logout, refresh), so operator actions still cannot mutate state | 34:68; 31:40 | product (D-C) | 27:54 |
 | P0-15 | Release pipeline blocked: manifest `0.1.9`, `VERSION_RELEASE_TOKEN` unset | 34:104; 31:50 | credential | 27:75 |
 | P0-20 | HNSW runs carry no provenance; the ranking baseline lacks `sha`, gold-set hash and seed | 34:126; 31:53 | benchmark stack | 27:85 |
 | P0-22 | The only recorded start is `IBEX_ENV=staging`, `IBEX_LLM_MODE=mock`; acceptance needs a production-profile start serving one authenticated chat request plus two negatives | 34:73; 31:57 | infrastructure | 27:55 |
@@ -295,7 +295,7 @@ Each row is closed by a change that exists in this tree; per the stage closure r
 | P2-19 | SSE drain returns an ad-hoc error envelope with no `request_id` | 27:166 | code | 27:166 |
 | P2-25 | Dependabot covers Docker for 2 of 8 build dirs; waivers expire silently | 27:172 | code | 27:172 |
 | GAP-004 | The 20/40/45/50/100 ms claims conflict and are unmeasured | 18:10 | benchmark stack | 18:10 |
-| D02 | `README.md` never reaches the supported `v1-single-node` profile: the quick start runs the dev stack and no step starts the profile. The Console it points at now has a login page and a session BFF, so the "no login" clause no longer holds; every BFF route is still a read, which is `P0-05` and awaits `D-C` | `README.md`:79-123; `services/console/app/pages/login.vue`; `services/console/server/api/operator/session/login.post.ts` | product | sweep 4 |
+| D02 | `README.md` never reaches the supported `v1-single-node` profile: the quick start runs the dev stack and no step starts the profile. The Console it points at now has a login page and a session BFF, so the "no login" clause no longer holds; every operator *data* route is still a read (the three session routes are the only cookie mutations), which is `P0-05` and awaits `D-C` | `README.md`:79-123; `services/console/app/pages/login.vue`; `services/console/server/api/operator/session/login.post.ts` | product | sweep 4 |
 | D03 | Benchmark artifacts carry run URLs but no corpus hash or seed (81 runs across four artifacts) | `python3 benchmarks/scripts/check_reproducibility.py` → 81 unrecorded; `site/public/benchmarks/ranking-quality-benchmark-data.json` run keys | benchmark stack | sweep 4 |
 | W7.5 | The `v1-smoke` target exists and is strict — an authenticated `200` with a matching `org_id` plus the `401` and `403` negatives, and a missing bootstrap PAT fails a standalone run instead of skipping (`Makefile`:218; `infra/scripts/dev-tool.sh`:370-385,411-418) — but no workflow runs it, so the CI half of `31`:158 is unmet | `Makefile`:218; `infra/scripts/dev-tool.sh`:370-385; no caller under `.github/workflows/` | workflow/branch-protection | sweep 3 |
 

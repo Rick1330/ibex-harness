@@ -257,7 +257,7 @@ invisible, so the warning is part of the contract rather than advice.
 first rehearsal for any target an operator intends to use in an incident: create the volume first
 (`podman volume create <name>` or `docker volume create <name>`), then
 `make v1-pitr TARGET=… SCRATCH_VOLUME=<name>`. The scratch branch stops nothing and never mounts the live data
-directory (`infra/scripts/platform/pgbackrest-restore.sh`:469-502), and it restores without `--delta` because the
+directory (`infra/scripts/platform/pgbackrest-restore.sh`:477-510), and it restores without `--delta` because the
 volume is empty. The restore runs the profile image as uid 999 so the restored files are readable by the server, and the
 printed next step starts the scratch cluster with `-c archive_mode=off` so the restored timeline cannot write into the
 live repository (`:486-500`); the scratch copy is left stopped until that command is run. Verify with
