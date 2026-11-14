@@ -21,6 +21,12 @@
 # CA and only reissues missing or invalid leaves. Use gen-v1-tls.sh --force when
 # a CA rotation is actually intended.
 #
+# --force also preserves PGBACKREST_REPO1_CIPHER_PASS when the previous .env had
+# one: that passphrase is the only key to every object in the backup repository,
+# so regenerating it would orphan every existing backup. A rotation is requested
+# explicitly with --rotate-pgbackrest-cipher, which refuses while a value exists
+# unless IBEX_PGBACKREST_ALLOW_CIPHER_ROTATION=1 is set.
+#
 # The container copies in the secrets directory are mode 0444 so uid 10001 can
 # read them. The directory itself is 0700; that is the access boundary. Canonical
 # TLS private keys under certs/ stay 0600.
@@ -41,18 +47,27 @@ TLS_SCRIPT="$ROOT_DIR/infra/scripts/gen-v1-tls.sh"
 
 usage() {
   cat <<'EOF'
-Usage: gen-v1-secrets.sh [--force]
+Usage: gen-v1-secrets.sh [--force] [--rotate-pgbackrest-cipher]
 
 Creates the v1-single-node .env and file secrets.
   --force   rewrite .env from infra/compose/v1-single-node/.env.example and regenerate all
-            secrets and keypairs (the TLS CA is not rotated)
+            secrets and keypairs (the TLS CA is not rotated). PGBACKREST_REPO1_CIPHER_PASS
+            is preserved when one exists: rotating it would make every existing backup
+            unreadable.
+  --rotate-pgbackrest-cipher
+            generate a new PGBACKREST_REPO1_CIPHER_PASS. Refused when a value already
+            exists, because that passphrase encrypts the existing repository. Set
+            IBEX_PGBACKREST_ALLOW_CIPHER_ROTATION=1 only after recording the old pass and
+            accepting that backups encrypted with it become unreadable.
 EOF
 }
 
 FORCE=0
+ROTATE_CIPHER=0
 for arg in "$@"; do
   case "$arg" in
     --force) FORCE=1 ;;
+    --rotate-pgbackrest-cipher) ROTATE_CIPHER=1 ;;
     -h | --help) usage; exit 0 ;;
     *)
       echo "gen-v1-secrets.sh: unknown option: $arg" >&2
@@ -370,6 +385,27 @@ echo "  secrets dir:  $SECRETS_DIR"
 echo "  certs dir:    $CERTS_DIR"
 echo
 
+# --force rewrites .env from the template, which drops the repository cipher
+# passphrase. Capture it first: it is the only key to every object in the
+# repository, so losing it makes existing backups unreadable. --force reuses it;
+# only --rotate-pgbackrest-cipher replaces it.
+PREVIOUS_CIPHER_PASS=""
+if [[ -f "$ENV_FILE" ]]; then
+  PREVIOUS_CIPHER_PASS="$(env_value PGBACKREST_REPO1_CIPHER_PASS || true)"
+fi
+if (( ROTATE_CIPHER )) && [[ -n "$PREVIOUS_CIPHER_PASS" ]] \
+  && [[ "${IBEX_PGBACKREST_ALLOW_CIPHER_ROTATION:-0}" != "1" ]]; then
+  cat >&2 <<EOF
+gen-v1-secrets.sh: refusing to rotate PGBACKREST_REPO1_CIPHER_PASS.
+The existing passphrase encrypts every object in the backup repository, so a new
+one makes every existing backup unreadable. Decommission or empty the repository
+and remove PGBACKREST_REPO1_CIPHER_PASS from $ENV_FILE first, or set
+IBEX_PGBACKREST_ALLOW_CIPHER_ROTATION=1 after recording the old pass and
+accepting that existing backups become unreadable.
+EOF
+  exit 1
+fi
+
 ensure_env_file
 
 echo "env secrets:"
@@ -402,7 +438,19 @@ set_secret IBEX_OBJECTSTORE_SECRET_KEY "$(openssl rand -hex 32)"
 # Repository cipher passphrase. pgBackRest's only supported repo cipher is
 # aes-256-cbc (see infra/backup/pgbackrest/pgbackrest.conf.example); the
 # passphrase never enters the generated config, only the container environment.
-set_secret PGBACKREST_REPO1_CIPHER_PASS "$(openssl rand -hex 32)"
+#
+# A rerun reuses the previous value. Regenerating it silently would leave the
+# repository intact but unreadable, which is worse than a failed rotation: the
+# operator would discover it at restore time.
+if (( ROTATE_CIPHER )); then
+  env_set PGBACKREST_REPO1_CIPHER_PASS "$(openssl rand -hex 32)"
+  log_item PGBACKREST_REPO1_CIPHER_PASS "rotated"
+  echo "gen-v1-secrets.sh: WARNING: rotated PGBACKREST_REPO1_CIPHER_PASS; backups encrypted with the previous value are unreadable" >&2
+elif [[ -n "$PREVIOUS_CIPHER_PASS" ]]; then
+  set_secret PGBACKREST_REPO1_CIPHER_PASS "$PREVIOUS_CIPHER_PASS"
+else
+  set_secret PGBACKREST_REPO1_CIPHER_PASS "$(openssl rand -hex 32)"
+fi
 # The in-profile repository endpoint. Override in .env to point at an external
 # S3-compatible store; the value is written into the generated stanza config on
 # the next run.

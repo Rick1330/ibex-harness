@@ -51,14 +51,15 @@ container_cli() {
   printf 'docker\n'
 }
 
-CLI="$(container_cli)"
+# The engine may be multi-word (`sudo -n podman` for a rootful store), so it is
+# split into an argv array and every call expands the array. `compose` uses the
+# same engine, which keeps the compose metadata lookup and the container calls
+# in the same store.
+CLI=()
+read -r -a CLI <<<"$(container_cli)"
 
 compose() {
-  if [[ "$CLI" == "podman" ]]; then
-    podman compose "$@"
-  else
-    docker compose "$@"
-  fi
+  "${CLI[@]}" compose "$@"
 }
 
 # Resolve docker-compose named volume from Compose metadata only (fail closed).
@@ -68,7 +69,7 @@ resolve_compose_volume() {
   local vol=""
 
   if [[ -n "${PGBACKREST_COMPOSE_VOLUME:-}" ]]; then
-    if ! "$CLI" volume inspect "$PGBACKREST_COMPOSE_VOLUME" >/dev/null 2>&1; then
+    if ! "${CLI[@]}" volume inspect "$PGBACKREST_COMPOSE_VOLUME" >/dev/null 2>&1; then
       echo "[restore] PGBACKREST_COMPOSE_VOLUME set but volume missing: $PGBACKREST_COMPOSE_VOLUME" >&2
       return 1
     fi
@@ -108,7 +109,7 @@ raise SystemExit(1)
     echo "[restore] could not resolve postgres volume from Compose metadata; set PGBACKREST_COMPOSE_VOLUME" >&2
     return 1
   fi
-  if ! "$CLI" volume inspect "$vol" >/dev/null 2>&1; then
+  if ! "${CLI[@]}" volume inspect "$vol" >/dev/null 2>&1; then
     echo "[restore] Compose volume name $vol does not exist locally; set PGBACKREST_COMPOSE_VOLUME" >&2
     return 1
   fi
@@ -134,7 +135,7 @@ resolve_compose_network() {
     return 1
   fi
   # One network name per line; take the first only (avoid concatenated names).
-  net="$("$CLI" inspect -f '{{range $k, $_ := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$cid" | head -n1 | tr -d '\r')"
+  net="$("${CLI[@]}" inspect -f '{{range $k, $_ := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$cid" | head -n1 | tr -d '\r')"
   if [[ -z "$net" ]]; then
     echo "[restore] container $cid has no networks" >&2
     return 1
@@ -144,6 +145,10 @@ resolve_compose_network() {
 
 CONF="$(resolve_conf)"
 STANZA="${PGBACKREST_STANZA:-ibex-main}"
+# The path pgBackRest reads inside the restore container. The selected host
+# config is mounted at exactly this path, so a custom PGBACKREST_CONF is the one
+# the container reads (the backup path verifies the same agreement).
+CONTAINER_CONF="${PGBACKREST_CONTAINER_CONF:-/etc/pgbackrest/pgbackrest.conf}"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT/infra/compose/dev/docker-compose.yml}"
 TARGET="${PGBACKREST_PGDATA:-}"
 IMAGE="${PGBACKREST_IMAGE:-pgbackrest/pgbackrest:2.53}"
@@ -241,18 +246,18 @@ LOAD
 if [[ -n "$SCRATCH_VOLUME" ]]; then
   # Drill path: restore beside the live cluster. Nothing is stopped, and the
   # live data directory is never mounted.
-  if ! "$CLI" volume inspect "$SCRATCH_VOLUME" >/dev/null 2>&1; then
+  if ! "${CLI[@]}" volume inspect "$SCRATCH_VOLUME" >/dev/null 2>&1; then
     echo "[restore] scratch volume $SCRATCH_VOLUME does not exist; create it first" >&2
     exit 1
   fi
   NETWORK="$(resolve_compose_network "$COMPOSE_FILE")"
   echo "[restore] scratch restore volume=$SCRATCH_VOLUME network=$NETWORK image=$IMAGE"
-  "$CLI" run --rm "${run_args[@]}" \
+  "${CLI[@]}" run --rm "${run_args[@]}" \
     --network "$NETWORK" \
     -v "${SCRATCH_VOLUME}:/var/lib/postgresql/data" \
-    -v "${CONF}:/etc/pgbackrest/pgbackrest.conf:ro" \
+    -v "${CONF}:${CONTAINER_CONF}:ro" \
     "$IMAGE" \
-    pgbackrest --config=/etc/pgbackrest/pgbackrest.conf \
+    pgbackrest --config="$CONTAINER_CONF" \
       --stanza="$STANZA" --pg1-path=/var/lib/postgresql/data "${restore_args[@]}" restore
   echo "[restore] scratch restore ok $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   cat <<NEXT
@@ -262,19 +267,19 @@ archiving disabled so the restored timeline cannot write into the live
 repository, then verify the recovery point.
 
 $(print_credential_load)
-  $CLI run -d --name ibex-pitr-scratch --network $NETWORK ${run_args[*]} \\
+  ${CLI[*]} run -d --name ibex-pitr-scratch --network $NETWORK ${run_args[*]} \\
     -v $SCRATCH_VOLUME:/var/lib/postgresql/data \\
-    -v $CONF:/etc/pgbackrest/pgbackrest.conf:ro \\
+    -v $CONF:$CONTAINER_CONF:ro \\
     $IMAGE postgres -c archive_mode=off
 
-  $CLI exec ibex-pitr-scratch psql -U ibex -d ibex \\
+  ${CLI[*]} exec ibex-pitr-scratch psql -U ibex -d ibex \\
     -c 'SELECT pg_is_in_recovery(), pg_last_xact_replay_timestamp()'
 NEXT
   exit 0
 fi
 
 echo "[restore] stopping Postgres before restore"
-if command -v "$CLI" >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]] \
+if command -v "${CLI[0]}" >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]] \
   && compose -f "$COMPOSE_FILE" stop postgres 2>/dev/null; then
   stopped=true
   stopped_via_compose=true
@@ -311,7 +316,7 @@ fi
 # and promotes (PITR, --target-action=promote).
 verify_destructive_restore_compose() {
   local cid in_recovery=""
-  if ! "$CLI" run --rm --entrypoint sh -v "${COMPOSE_VOLUME}:${TARGET}:ro" "$IMAGE" \
+  if ! "${CLI[@]}" run --rm --entrypoint sh -v "${COMPOSE_VOLUME}:${TARGET}:ro" "$IMAGE" \
     -c "test -f ${TARGET}/PG_VERSION"; then
     echo "[restore] FAILED: ${TARGET}/PG_VERSION is missing on volume ${COMPOSE_VOLUME}; the restore did not produce a data directory" >&2
     return 1
@@ -330,7 +335,7 @@ verify_destructive_restore_compose() {
   for _ in $(seq 1 120); do
     # POSTGRES_USER is the superuser created by the image; the container has it
     # in its environment, so the query never needs a value from this script.
-    in_recovery="$("$CLI" exec "$cid" sh -c 'psql -U "$POSTGRES_USER" -d postgres -tAc "select pg_is_in_recovery()"' 2>/dev/null | tr -d '[:space:]' || true)"
+    in_recovery="$("${CLI[@]}" exec "$cid" sh -c 'psql -U "$POSTGRES_USER" -d postgres -tAc "select pg_is_in_recovery()"' 2>/dev/null | tr -d '[:space:]' || true)"
     if [[ "$in_recovery" == "f" ]]; then
       break
     fi
@@ -338,11 +343,18 @@ verify_destructive_restore_compose() {
   done
   if [[ "$in_recovery" != "f" ]]; then
     echo "[restore] FAILED: pg_is_in_recovery() is '${in_recovery:-no answer}' after 120s; the cluster did not leave recovery" >&2
-    echo "[restore] inspect the server log with: $CLI logs $cid" >&2
+    echo "[restore] inspect the server log with: ${CLI[*]} logs $cid" >&2
     return 1
   fi
   echo "[restore] recovery state verified: pg_is_in_recovery()=false"
   return 0
+}
+
+# canonical_dir resolves a directory to an absolute, symlink-free path so the
+# connected server's data_directory can be compared with TARGET.
+canonical_dir() {
+  local dir="$1"
+  ( cd "$dir" 2>/dev/null && pwd -P ) || printf '%s\n' "$dir"
 }
 
 # verify_destructive_restore_host is the same proof for a host data directory:
@@ -350,8 +362,16 @@ verify_destructive_restore_compose() {
 # success), then the cluster is started and pg_is_in_recovery() is required to
 # be false. A missing pg_ctl or psql fails closed: an unverified restore is not
 # reported as ok.
+#
+# psql must target the restored server explicitly. `pg_ctl -D "$TARGET" start`
+# starts whatever cluster owns $TARGET, which may listen on a non-default port;
+# a bare `psql` would use the default socket/port and can reach a different
+# cluster, reporting its recovery state. The port and socket directory are read
+# from the restored postmaster's own postmaster.pid, and the server's
+# data_directory is compared with $TARGET before the result is accepted.
 verify_destructive_restore_host() {
-  local in_recovery=""
+  local in_recovery="" pidfile pg_port pg_socket actual_data_dir
+  local -a psql_target=()
   if [[ ! -f "$TARGET/PG_VERSION" ]]; then
     echo "[restore] FAILED: $TARGET/PG_VERSION is missing; the restore did not produce a data directory" >&2
     return 1
@@ -361,12 +381,38 @@ verify_destructive_restore_host() {
     echo "[restore] FAILED: pg_ctl is not available, so the restored cluster cannot be started and pg_is_in_recovery() cannot be proven" >&2
     return 1
   fi
+  if ! command -v psql >/dev/null 2>&1; then
+    echo "[restore] FAILED: psql is not available, so the restored cluster cannot be queried" >&2
+    return 1
+  fi
   if ! pg_ctl -D "$TARGET" -w -t 120 start >/dev/null; then
     echo "[restore] FAILED: pg_ctl could not start the restored cluster at $TARGET" >&2
     return 1
   fi
+  pidfile="$TARGET/postmaster.pid"
+  if [[ ! -f "$pidfile" ]]; then
+    echo "[restore] FAILED: $pidfile is missing after pg_ctl start; cannot identify the restored server" >&2
+    return 1
+  fi
+  pg_port="$(sed -n '4p' "$pidfile" | tr -d '[:space:]')"
+  pg_socket="$(sed -n '5p' "$pidfile" | tr -d '\r')"
+  if [[ -z "$pg_port" ]]; then
+    echo "[restore] FAILED: could not read the port from $pidfile" >&2
+    return 1
+  fi
+  # A relative socket directory is relative to the data directory.
+  if [[ -n "$pg_socket" && "$pg_socket" != /* ]]; then
+    pg_socket="$TARGET/$pg_socket"
+  fi
+  psql_target=(-p "$pg_port")
+  if [[ -n "$pg_socket" ]]; then
+    psql_target+=(-h "$pg_socket")
+  else
+    # TCP-only cluster: connect to this host on the port it actually bound.
+    psql_target+=(-h 127.0.0.1)
+  fi
   for _ in $(seq 1 120); do
-    in_recovery="$(psql -d postgres -tAc 'select pg_is_in_recovery()' 2>/dev/null | tr -d '[:space:]' || true)"
+    in_recovery="$(psql "${psql_target[@]}" -d postgres -tAc 'select pg_is_in_recovery()' 2>/dev/null | tr -d '[:space:]' || true)"
     if [[ "$in_recovery" == "f" ]]; then
       break
     fi
@@ -376,7 +422,15 @@ verify_destructive_restore_host() {
     echo "[restore] FAILED: pg_is_in_recovery() is '${in_recovery:-no answer}' after 120s; the cluster did not leave recovery" >&2
     return 1
   fi
-  echo "[restore] recovery state verified: pg_is_in_recovery()=false"
+  # A port and socket identify a server, not necessarily the restored one:
+  # another cluster could own the same port if the restored one failed to bind.
+  # Compare the server's data_directory with TARGET before accepting the result.
+  actual_data_dir="$(psql "${psql_target[@]}" -d postgres -tAc 'show data_directory' 2>/dev/null | tr -d '\r' || true)"
+  if [[ -z "$actual_data_dir" || "$(canonical_dir "$actual_data_dir")" != "$(canonical_dir "$TARGET")" ]]; then
+    echo "[restore] FAILED: connected server data_directory='${actual_data_dir:-no answer}' does not match TARGET=$TARGET" >&2
+    return 1
+  fi
+  echo "[restore] recovery state verified: pg_is_in_recovery()=false (data_directory=$actual_data_dir)"
   return 0
 }
 
@@ -386,12 +440,12 @@ if [[ "$stopped_via_compose" == "true" && -n "$COMPOSE_VOLUME" ]]; then
   # network.
   NETWORK="$(resolve_compose_network "$COMPOSE_FILE")"
   echo "[restore] running pgbackrest in compose network=$NETWORK image=$IMAGE"
-  "$CLI" run --rm "${run_args[@]}" \
+  "${CLI[@]}" run --rm "${run_args[@]}" \
     --network "$NETWORK" \
     -v "${COMPOSE_VOLUME}:${TARGET}" \
-    -v "${CONF}:/etc/pgbackrest/pgbackrest.conf:ro" \
+    -v "${CONF}:${CONTAINER_CONF}:ro" \
     "$IMAGE" \
-    pgbackrest --config=/etc/pgbackrest/pgbackrest.conf \
+    pgbackrest --config="$CONTAINER_CONF" \
       --stanza="$STANZA" --pg1-path="$TARGET" "${destructive_restore_args[@]}" restore
   verify_destructive_restore_compose
 else

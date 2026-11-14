@@ -54,7 +54,10 @@ fi
 PG_RPO_SEC=$((5 * 60))
 # The target is operator-configurable (O03): the report computes rto_pass
 # against this value, not against a constant a fast run always clears.
-PG_RTO_SEC="${IBEX_RTO_TARGET_SEC:-$((30 * 60))}"
+# 1800 is the 30-minute target written as a literal rather than `$((30 * 60))`:
+# Sonar's shell analyzer reads the `*` in the arithmetic expansion as a glob
+# (shell:S6573) and cannot be silenced with NOSONAR on this construct.
+PG_RTO_SEC="${IBEX_RTO_TARGET_SEC:-1800}"
 case "$PG_RTO_SEC" in
   '' | *[!0-9]* | 0) echo "[drill] ERROR: IBEX_RTO_TARGET_SEC must be a positive integer (got '$PG_RTO_SEC')" >&2; exit 2 ;;
   *) : ;;
@@ -308,6 +311,14 @@ fi
 
 PG_RESTORE_START=$(date +%s)
 PG_USED_PGBACKREST=false
+# The pgBackRest restore writes through Compose (a named volume) only when no
+# host data directory is supplied. With PGBACKREST_PGDATA set it restores through
+# pg_ctl into that host directory, and the Compose PG_VERSION probe below would
+# then inspect a different cluster and fail a successful host restore.
+PG_RESTORE_USED_COMPOSE=false
+if [[ -z "${PGBACKREST_PGDATA:-}" ]]; then
+  PG_RESTORE_USED_COMPOSE=true
+fi
 if [[ -z "$PG_RUNTIME" ]] \
   && command -v pgbackrest >/dev/null 2>&1 \
   && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
@@ -367,7 +378,8 @@ if [[ "$PG_USED_PGBACKREST" == "true" ]]; then
   # and the server has left recovery. Check PG_VERSION first: a server started
   # over an empty PGDATA runs initdb, so a liveness check alone would report a
   # fresh cluster as a successful restore.
-  if command -v docker >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]]; then
+  if [[ "$PG_RESTORE_USED_COMPOSE" == "true" ]] \
+    && command -v docker >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]]; then
     if ! docker compose -f "$COMPOSE_FILE" exec -T postgres \
       sh -c 'test -f "${PGDATA:-/var/lib/postgresql/data}/PG_VERSION"' 2>/dev/null; then
       echo "[drill] ERROR: restored data directory has no PG_VERSION — the restore did not produce a cluster" >&2

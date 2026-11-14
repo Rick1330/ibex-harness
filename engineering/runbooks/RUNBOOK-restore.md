@@ -144,6 +144,15 @@ Do not run a later step if an earlier one fails, and do not skip to the restore.
    if [[ "$PGBACKREST_CONF" != /* ]]; then
      echo "PGBACKREST_CONF must be an absolute path: $PGBACKREST_CONF" >&2
    else
+     # The generated config carries no S3 credentials, so all three values the
+     # restore forwards by name must be loaded from the protected .env here too.
+     # Nothing below prints a value or puts one on a command line.
+     ENV_FILE="${IBEX_V1_ENV:-infra/compose/v1-single-node/.env}"
+     ibex_env_value() { python3 infra/scripts/lib/dotenv.py "$1" < "$ENV_FILE"; }
+     PGBACKREST_REPO1_CIPHER_PASS="$(ibex_env_value PGBACKREST_REPO1_CIPHER_PASS)"
+     PGBACKREST_REPO1_S3_KEY="$(ibex_env_value IBEX_OBJECTSTORE_ACCESS_KEY)"
+     PGBACKREST_REPO1_S3_KEY_SECRET="$(ibex_env_value IBEX_OBJECTSTORE_SECRET_KEY)"
+     export PGBACKREST_REPO1_CIPHER_PASS PGBACKREST_REPO1_S3_KEY PGBACKREST_REPO1_S3_KEY_SECRET
      COMPOSE_FILE=infra/compose/v1-single-node/compose.yml
      CID="$(docker compose -f "$COMPOSE_FILE" ps -q minio 2>/dev/null || true)"
      if [[ -z "$CID" ]]; then
@@ -154,11 +163,19 @@ Do not run a later step if an earlier one fails, and do not skip to the restore.
        --network "$NETWORK" \
        -v "${PGBACKREST_CONF}:/etc/pgbackrest/pgbackrest.conf:ro" \
        -e PGBACKREST_REPO1_CIPHER_PASS \
+       -e PGBACKREST_REPO1_S3_KEY \
+       -e PGBACKREST_REPO1_S3_KEY_SECRET \
        "${PGBACKREST_IMAGE:-pgbackrest/pgbackrest:2.53}" \
        pgbackrest --config=/etc/pgbackrest/pgbackrest.conf \
          --stanza="$PGBACKREST_STANZA" info
    fi
    ```
+
+   The stanza config intentionally carries no credentials (see
+   `engineering/DEPLOYMENT.md`), so `-e PGBACKREST_REPO1_CIPHER_PASS` alone is not
+   enough: the container cannot authenticate to S3 without the key pair. The
+   three names above are the same three the restore script forwards
+   (`pgbackrest-restore.sh`:193-205).
 
    **Stop condition.** If the guard prints `PGBACKREST_CONF must be an absolute
    path`, the network lookup finds no container or no network, the container

@@ -57,11 +57,33 @@ esac
 
 EXEC_CONTAINER="${PGBACKREST_EXEC_CONTAINER:-}"
 CONTAINER_CONF="${PGBACKREST_CONTAINER_CONF:-/etc/pgbackrest/pgbackrest.conf}"
-CLI=""
+CLI=()
 if [[ -n "$EXEC_CONTAINER" ]]; then
-  CLI="$(container_cli)"
-  if ! "$CLI" exec --user postgres "$EXEC_CONTAINER" pgbackrest version >/dev/null 2>&1; then
+  # The engine may be multi-word (`sudo -n podman` for a rootful store), so it
+  # is split into an argv array and every call expands the array.
+  read -r -a CLI <<<"$(container_cli)"
+  if ! "${CLI[@]}" exec --user postgres "$EXEC_CONTAINER" pgbackrest version >/dev/null 2>&1; then
     echo "[backup] $EXEC_CONTAINER has no usable pgbackrest; refusing to run" >&2
+    exit 1
+  fi
+  # The backup execs into the running container, so it reads the config the
+  # container already has, not $CONF. Verify the two are the same before running:
+  # otherwise a backup can report success against repository A while a later
+  # restore mounts $CONF and reads repository B. Configs carry no secrets
+  # (credentials are environment-only), so comparing them is safe and nothing is
+  # printed.
+  container_conf_text="$("${CLI[@]}" exec --user postgres "$EXEC_CONTAINER" cat "$CONTAINER_CONF" 2>/dev/null || true)"
+  if [[ -z "$container_conf_text" || "$container_conf_text" != "$(cat "$CONF")" ]]; then
+    cat >&2 <<EOF
+[backup] refusing to run: the selected config and the container's config differ.
+  selected:  $CONF
+  container: $EXEC_CONTAINER:$CONTAINER_CONF
+The backup execs into the container, which reads the config it was started with.
+Mount the selected file at $CONTAINER_CONF in the container (the v1 profile
+mounts ../../backup/pgbackrest at /etc/pgbackrest), or unset PGBACKREST_CONF so
+the default file is used. Reporting a backup against a repository the restore
+will not read is not allowed.
+EOF
     exit 1
   fi
 elif ! command -v pgbackrest >/dev/null 2>&1; then
@@ -75,7 +97,7 @@ fi
 # on a command line.
 run_pgbackrest() {
   if [[ -n "$EXEC_CONTAINER" ]]; then
-    "$CLI" exec --user postgres "$EXEC_CONTAINER" \
+    "${CLI[@]}" exec --user postgres "$EXEC_CONTAINER" \
       pgbackrest --config="$CONTAINER_CONF" --stanza="$STANZA" "$@"
   else
     pgbackrest --config="$CONF" --stanza="$STANZA" "$@"
@@ -105,12 +127,23 @@ fi
 
 # The freshness metric must not be written for a dry run: a check is not a
 # backup.
+# The textfile collector reads this directory. A non-root operator whose profile
+# has not created it falls back to a home-directory path, and a metric written
+# there is invisible to the collector: warn loudly with the exact path to point
+# the collector at instead of letting the operator believe the alert is wired.
+COLLECTOR_STATE_DIR=/var/lib/ibex/backup
 STATE_DIR="${IBEX_BACKUP_STATE_DIR:-}"
 if [[ -z "$STATE_DIR" ]]; then
-  if [[ "$(id -u)" -eq 0 || -d /var/lib/ibex/backup ]]; then
-    STATE_DIR=/var/lib/ibex/backup
+  if [[ "$(id -u)" -eq 0 || -d "$COLLECTOR_STATE_DIR" ]]; then
+    STATE_DIR="$COLLECTOR_STATE_DIR"
   else
     STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/ibex/backup"
+    cat >&2 <<EOF
+[backup] WARNING: backup freshness will NOT reach the textfile collector.
+[backup] WARNING: writing $STATE_DIR, but the collector reads $COLLECTOR_STATE_DIR.
+[backup] WARNING: point the collector at $STATE_DIR, or set
+[backup] WARNING: IBEX_BACKUP_STATE_DIR=$COLLECTOR_STATE_DIR and make it writable.
+EOF
   fi
 fi
 mkdir -p "$STATE_DIR"

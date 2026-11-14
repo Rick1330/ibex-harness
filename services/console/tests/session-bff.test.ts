@@ -4,11 +4,13 @@ import { Socket } from "node:net"
 import { createEvent, type H3Event } from "h3"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import bootstrapHandler from "../server/api/operator/session/bootstrap.get"
 import loginHandler from "../server/api/operator/session/login.post"
 import logoutHandler from "../server/api/operator/session/logout.post"
 import {
   OperatorLoginRedirect,
   OperatorUpstreamError,
+  appendSessionDeletionCookies,
   callOperatorSession,
   fetchOperatorJson,
   toHttpError,
@@ -227,16 +229,138 @@ describe("BFF 401 page-load handling", () => {
     )
   })
 
-  it("keeps the fail-closed 401 for a data fetch", async () => {
-    const { event, res } = fakeEvent({ headers: { accept: "application/json" } })
-    stubFetch(() => upstream({ error: { code: "INVALID_SESSION", message: "Session required" } }, { status: 401 }))
-
-    await expect(fetchOperatorJson(event, "overview", (value) => value)).rejects.toMatchObject({
-      status: 401,
-      code: "INVALID_SESSION",
+  it("redirects a data fetch to /login without refreshing when there is no refresh cookie", async () => {
+    // Fail closed: no data and no invented payload. With nothing to rotate, the
+    // API must not be asked to refresh, and the operator is sent to sign in.
+    const { event, res } = fakeEvent({
+      url: "/api/operator/overview",
+      headers: { accept: "application/json", cookie: "ibex_session=expired" },
     })
-    expect(res.statusCode).toBe(200)
-    expect(res.getHeader("location")).toBeUndefined()
+    const fetchMock = stubFetch(() =>
+      upstream({ error: { code: "INVALID_SESSION", message: "Session required" } }, { status: 401 }),
+    )
+
+    await expect(fetchOperatorJson(event, "overview", (value) => value)).rejects.toBeInstanceOf(
+      OperatorLoginRedirect,
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(res.statusCode).toBe(302)
+    expect(headerValue(res.getHeader("location"))).toBe(
+      `/login?next=${encodeURIComponent("/api/operator/overview")}`,
+    )
+  })
+})
+
+describe("BFF refresh-and-retry", () => {
+  it("refreshes an expired access cookie once and retries the read", async () => {
+    const { event } = fakeEvent({
+      url: "/api/operator/overview",
+      headers: {
+        accept: "application/json",
+        cookie: "ibex_session=expired; ibex_refresh=refresh-token; ibex_csrf=csrf-value",
+      },
+    })
+    const calls: Array<{ path: string; cookie: string; csrf: string }> = []
+    stubFetch((target, init) => {
+      const headers = new Headers(init.headers)
+      calls.push({
+        path: target.pathname,
+        cookie: headers.get("cookie") ?? "",
+        csrf: headers.get("x-csrf-token") ?? "",
+      })
+      if (target.pathname === "/v1/operator/session/refresh") {
+        return upstream(
+          { status: "ok", org_id: "org-1" },
+          { setCookie: ["ibex_session=fresh-access; Path=/; HttpOnly; Secure; SameSite=Lax"] },
+        )
+      }
+      return headers.get("cookie")?.includes("fresh-access")
+        ? upstream({ org_id: "org-1", ok: true })
+        : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 })
+    })
+
+    const result = await fetchOperatorJson(event, "overview", (value) => value)
+
+    expect(result).toEqual({ org_id: "org-1", ok: true })
+    expect(calls.map((call) => call.path)).toEqual([
+      "/v1/operator/overview",
+      "/v1/operator/session/refresh",
+      "/v1/operator/overview",
+    ])
+    // The retry carries the cookie the API just issued, not the expired one.
+    expect(calls[2]!.cookie).toBe("ibex_session=fresh-access")
+    // The server-side refresh presents the browser's CSRF cookie as the header.
+    expect(calls[1]!.csrf).toBe("csrf-value")
+  })
+
+  it("redirects to /login when the refresh is refused", async () => {
+    const { event, res } = fakeEvent({
+      url: "/api/operator/overview?tab=1",
+      headers: { accept: "application/json", cookie: "ibex_session=expired; ibex_refresh=stale" },
+    })
+    const fetchMock = stubFetch((target) =>
+      target.pathname === "/v1/operator/session/refresh"
+        ? upstream({ error: { code: "INVALID_TOKEN", message: "invalid refresh token" } }, { status: 401 })
+        : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 }),
+    )
+
+    await expect(fetchOperatorJson(event, "overview", (value) => value)).rejects.toBeInstanceOf(
+      OperatorLoginRedirect,
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(res.statusCode).toBe(302)
+    expect(headerValue(res.getHeader("location"))).toBe(
+      `/login?next=${encodeURIComponent("/api/operator/overview?tab=1")}`,
+    )
+  })
+
+  it("stops after one retry when the refreshed session is still rejected", async () => {
+    // A second 401 must not trigger a second refresh: the retry flag is the
+    // recursion guard, and the read still fails closed with a login redirect.
+    const { event, res } = fakeEvent({
+      headers: { accept: "application/json", cookie: "ibex_session=expired; ibex_refresh=refresh-token" },
+    })
+    const fetchMock = stubFetch((target) =>
+      target.pathname === "/v1/operator/session/refresh"
+        ? upstream(
+            { status: "ok" },
+            { setCookie: ["ibex_session=fresh-access; Path=/; HttpOnly; Secure; SameSite=Lax"] },
+          )
+        : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 }),
+    )
+
+    await expect(fetchOperatorJson(event, "overview", (value) => value)).rejects.toBeInstanceOf(
+      OperatorLoginRedirect,
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(res.statusCode).toBe(302)
+  })
+})
+
+describe("session bootstrap", () => {
+  it("returns the configured CSRF cookie name and this browser's token", () => {
+    // The logout page must not hard-code `ibex_csrf`: a deployment that renames
+    // the cookie would otherwise send no X-CSRF-Token and never revoke.
+    vi.stubEnv("IBEX_OPERATOR_CSRF_COOKIE_NAME", "acme_csrf")
+    const { event } = fakeEvent({ headers: { cookie: "acme_csrf=csrf-value" } })
+
+    expect(bootstrapHandler(event)).toEqual({
+      csrf_cookie_name: "acme_csrf",
+      csrf_token: "csrf-value",
+    })
+  })
+
+  it("returns a null token when the browser has no CSRF cookie", () => {
+    vi.stubEnv("IBEX_OPERATOR_CSRF_COOKIE_NAME", "acme_csrf")
+    const { event } = fakeEvent({ headers: { cookie: "ibex_csrf=csrf-value" } })
+
+    expect(bootstrapHandler(event)).toEqual({
+      csrf_cookie_name: "acme_csrf",
+      csrf_token: null,
+    })
   })
 })
 
@@ -358,5 +482,65 @@ describe("logout cookie deletion", () => {
     expect(refresh).toContain("HttpOnly")
     // The CSRF cookie is read by the client, so it must not be HttpOnly.
     expect(csrf).not.toContain("HttpOnly")
+  })
+
+  it("uses the configured Domain so a domain-scoped cookie is actually removed", () => {
+    // The API issues its cookies with `DASHBOARD_COOKIE_DOMAIN`. A host-only
+    // deletion would not match them, and a valid session would survive logout.
+    vi.stubEnv("DASHBOARD_COOKIE_DOMAIN", ".example.com")
+    const { event, res } = eventWithBody({ url: "/api/operator/session/logout" })
+
+    appendSessionDeletionCookies(event)
+
+    const cookies = setCookieList(res)
+    expect(cookies).toHaveLength(3)
+    for (const cookie of cookies) {
+      expect(cookie).toContain("Max-Age=0")
+      expect(cookie).toContain("Domain=.example.com")
+    }
+  })
+
+  it("stays host-only when no Domain is configured", () => {
+    const { event, res } = eventWithBody({ url: "/api/operator/session/logout" })
+
+    appendSessionDeletionCookies(event)
+
+    const cookies = setCookieList(res)
+    expect(cookies).toHaveLength(3)
+    for (const cookie of cookies) {
+      expect(cookie).not.toContain("Domain=")
+    }
+  })
+
+  it("ignores a malformed Domain instead of writing it into a header", () => {
+    // A configured value must never inject a second attribute or header.
+    vi.stubEnv("DASHBOARD_COOKIE_DOMAIN", ".example.com; HttpOnly")
+    const { event, res } = eventWithBody({ url: "/api/operator/session/logout" })
+
+    appendSessionDeletionCookies(event)
+
+    for (const cookie of setCookieList(res)) {
+      expect(cookie).not.toContain("Domain=")
+    }
+  })
+})
+
+describe("cleartext API origin", () => {
+  it("refuses to forward a PAT when no cookie is present", async () => {
+    // Login has no cookie yet, so a cookie-only guard sent the PAT in
+    // plaintext over http://. The credential, not the cookie, is the trigger.
+    vi.stubEnv("IBEX_OPERATOR_API_ORIGIN", "http://operator-api.internal:8010")
+    const body = JSON.stringify({ pat: "ibex_pat_123456789" })
+    const { event } = eventWithBody({
+      body,
+      headers: { "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) },
+    })
+    const fetchMock = stubFetch(() => upstream({ status: "ok" }))
+
+    await expect(loginHandler(event)).rejects.toMatchObject({
+      statusCode: 503,
+      data: { error: { code: "API_ORIGIN_INSECURE" } },
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
