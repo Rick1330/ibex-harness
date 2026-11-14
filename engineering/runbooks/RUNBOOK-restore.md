@@ -32,7 +32,7 @@ chosen backup → restore**. The restore command appears only in
 
    ```bash
    # Docker bind-mount sources must be absolute (pgbackrest-restore.sh:693). A
-   # relative value here fails after PostgreSQL is already stopped (:520-525).
+   # relative value here fails after PostgreSQL is already stopped (:528-533).
    export PGBACKREST_CONF="${PGBACKREST_CONF:-$(realpath infra/backup/pgbackrest/pgbackrest.conf)}"
    export PGBACKREST_STANZA="${PGBACKREST_STANZA:-ibex-main}"
    if [[ "$PGBACKREST_CONF" != /* ]]; then
@@ -54,8 +54,8 @@ chosen backup → restore**. The restore command appears only in
    same shape.
 
    **Why absolute.** `pgbackrest-restore.sh` stops PostgreSQL first
-   (`:520-525`), then bind-mounts the config into the restore container as
-   `-v "${CONF}:/etc/pgbackrest/pgbackrest.conf:ro"` (`:685`). Docker requires an
+   (`:528-533`), then bind-mounts the config into the restore container as
+   `-v "${CONF}:/etc/pgbackrest/pgbackrest.conf:ro"` (`:693`). Docker requires an
    absolute bind-mount source; a relative `PGBACKREST_CONF` is resolved against
    an unknown host directory and the mount fails with the database already down,
    turning a recoverable incident into an outage. The wrapper's own default is
@@ -222,14 +222,14 @@ Do not run a later step if an earlier one fails, and do not skip to the restore.
    `0600` `.env`, and then runs `pgbackrest-restore.sh`
    (`infra/scripts/dev-tool.sh`:607-610,710-714; `Makefile`:238-239). The script
    stops Postgres (`pgbackrest-restore.sh`:528-533), resolves the live volume from
-   Compose metadata (`:527-530`), and runs `pgbackrest restore` inside the compose
-   network with `--delta` (`:682-689`). `--delta` is not optional: pgBackRest
+   Compose metadata (`:535-541`), and runs `pgbackrest restore` inside the compose
+   network with `--delta` (`:685-696`). `--delta` is not optional: pgBackRest
    refuses a non-empty `pg1-path` and the live data directory is non-empty by
    definition, so without it the command would abort after Postgres is already
    stopped (`:197-205`). The script then proves the restore before reporting it:
-   `PG_VERSION` exists on the volume (`:558-563`), Postgres starts (`:565-568`),
-   and `pg_is_in_recovery()` is false (`:574-588`). It prints
-   `[restore] ok <timestamp>` only after that proof (`:694`) and **leaves the
+   `PG_VERSION` exists on the volume (`:566-571`), Postgres starts (`:573`),
+   and `pg_is_in_recovery()` is false (`:582-595`). It prints
+   `[restore] ok <timestamp>` only after that proof (`:702`) and **leaves the
    cluster running and verified**.
 
    **Stop condition.** If the restore command on your line differs from the
@@ -260,7 +260,7 @@ the live data directory (`pgbackrest-restore.sh`:11-13,477-510;
 target you intend to use in an incident, and the only way to prove a timestamp
 without destroying the running database. The scratch copy is left **stopped**: the
 script prints the command that starts it with `archive_mode=off`, so the restored
-timeline cannot write into the live repository (`:486-500`).
+timeline cannot write into the live repository (`:501-504`).
 
 **Credentials never go on a command line.** `make v1-restore` and `make v1-pitr`
 export `PGBACKREST_REPO1_CIPHER_PASS`, `PGBACKREST_REPO1_S3_KEY` and
@@ -277,7 +277,7 @@ failing if any value is missing or altered
 (`pgbackrest-restore.sh`:422-437,524-526), so a delivery failure leaves the
 database running. A direct invocation with `COMPOSE_FILE` pointing at the v1
 profile and nothing exported loads the same three values from the profile `.env`
-itself (`:257-296`). Read the values from the file; do
+itself (`:265-295`). Read the values from the file; do
 not paste a credential into a shell command, where a process listing would
 expose it.
 
@@ -348,7 +348,7 @@ expose it.
 - The full restore transcript, including the `[restore] ok` line and, for a
   point-in-time restore, the `[restore] point-in-time target=…` line
   (`infra/scripts/platform/pgbackrest-restore.sh`:189,702) and the
-  `[restore] recovery state verified: pg_is_in_recovery()=false` line (`:588`).
+  `[restore] recovery state verified: pg_is_in_recovery()=false` line (`:596`).
 - `restore-drill-report.json` and `transcript.txt` from the drill
   (`infra/scripts/platform/restore-drill.sh`:9-10), with `rto_pass`,
   `rpo_pass` and the fixture row count.
