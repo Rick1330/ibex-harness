@@ -4,7 +4,7 @@
 after data loss or corruption. The restore is **destructive**: it stops
 PostgreSQL, reconciles the live data directory with `--delta`, starts the cluster
 and proves it left recovery before printing `ok`
-(`infra/scripts/platform/pgbackrest-restore.sh`:520-525,556-590,694). Treat it as a
+(`infra/scripts/platform/pgbackrest-restore.sh`:528-533,556-590,702). Treat it as a
 declared incident with an incident note, not a routine maintenance command.
 
 ## Symptoms
@@ -31,7 +31,7 @@ chosen backup → restore**. The restore command appears only in
    with the stanza the restore reads:
 
    ```bash
-   # Docker bind-mount sources must be absolute (pgbackrest-restore.sh:685). A
+   # Docker bind-mount sources must be absolute (pgbackrest-restore.sh:693). A
    # relative value here fails after PostgreSQL is already stopped (:520-525).
    export PGBACKREST_CONF="${PGBACKREST_CONF:-$(realpath infra/backup/pgbackrest/pgbackrest.conf)}"
    export PGBACKREST_STANZA="${PGBACKREST_STANZA:-ibex-main}"
@@ -109,7 +109,7 @@ chosen backup → restore**. The restore command appears only in
    over PostgreSQL.
 3. Confirm the compose volume resolves. The restore stops Postgres through
    Compose and resolves the named volume from Compose metadata, failing closed
-   if it cannot (`pgbackrest-restore.sh`:73-123,520-525).
+   if it cannot (`pgbackrest-restore.sh`:73-123,528-533).
 
 ## First response
 
@@ -134,7 +134,7 @@ Do not run a later step if an earlier one fails, and do not skip to the restore.
    (`infra/backup/pgbackrest/pgbackrest.conf.example`:9) resolves only on the
    Compose network, so a host-side `pgbackrest info` fails on name resolution for
    a reason that is not the repository's state. This mirrors the restore
-   invocation (`pgbackrest-restore.sh`:682-689) — same image, network,
+   invocation (`pgbackrest-restore.sh`:685-696) — same image, network,
    config mount, `--config` and `--stanza` — but mounts no data volume: `info`
    renders the stanza and its `db (current)` section from the repository's
    `backup.info`, not from `PGDATA`, and not mounting the volume means this check
@@ -221,7 +221,7 @@ Do not run a later step if an earlier one fails, and do not skip to the restore.
    real pgBackRest config, exports the repository credentials from the profile's
    `0600` `.env`, and then runs `pgbackrest-restore.sh`
    (`infra/scripts/dev-tool.sh`:607-610,710-714; `Makefile`:238-239). The script
-   stops Postgres (`pgbackrest-restore.sh`:520-525), resolves the live volume from
+   stops Postgres (`pgbackrest-restore.sh`:528-533), resolves the live volume from
    Compose metadata (`:527-530`), and runs `pgbackrest restore` inside the compose
    network with `--delta` (`:682-689`). `--delta` is not optional: pgBackRest
    refuses a non-empty `pg1-path` and the live data directory is non-empty by
@@ -235,7 +235,7 @@ Do not run a later step if an earlier one fails, and do not skip to the restore.
    **Stop condition.** If the restore command on your line differs from the
    values verified in steps 1 and 3, **do not run it**; a relative config path
    fails inside Docker after PostgreSQL is already stopped
-   (`pgbackrest-restore.sh`:520-525,685).
+   (`pgbackrest-restore.sh`:528-533,693).
 
 **Point-in-time restore is destructive and supported.** `make v1-pitr
 TARGET=2026-11-14T03:00:00Z` restores to that moment. `dev-tool.sh v1 pitr`
@@ -254,7 +254,7 @@ running and verified.
 restores beside the live cluster into a separate volume and stops nothing: the
 script takes the scratch branch, restores without `--delta` because that volume is
 empty, prints the start command for the restored copy, and exits without mounting
-the live data directory (`pgbackrest-restore.sh`:11-13,469-502;
+the live data directory (`pgbackrest-restore.sh`:11-13,477-510;
 `Makefile`:241-242). Create the volume first (`docker volume create <name>` or
 `podman volume create <name>`). This is the recommended first rehearsal for any
 target you intend to use in an incident, and the only way to prove a timestamp
@@ -274,7 +274,7 @@ engine (`IBEX_PODMAN_SUDO=1` makes the engine `sudo -n podman`) sudo's
 container empty — after Postgres has already been stopped. The script also proves
 delivery *before* that point by starting a probe container the same way and
 failing if any value is missing or altered
-(`pgbackrest-restore.sh`:400-429,516-518), so a delivery failure leaves the
+(`pgbackrest-restore.sh`:422-437,524-526), so a delivery failure leaves the
 database running. A direct invocation with `COMPOSE_FILE` pointing at the v1
 profile and nothing exported loads the same three values from the profile `.env`
 itself (`:257-296`). Read the values from the file; do
@@ -286,7 +286,7 @@ expose it.
 1. **PostgreSQL is already running and verified; leave the rest of the profile
    down.** Both destructive paths stop Postgres, restore, start it, and require
    `pg_is_in_recovery()=false` before printing `ok`
-   (`pgbackrest-restore.sh`:520-525,556-590,694). They do **not** stop the
+   (`pgbackrest-restore.sh`:528-533,556-590,702). They do **not** stop the
    application services, which is why [First response](#first-response) step 2
    stops them before the restore starts. Confirm with `make v1-ps`
    (`Makefile`:226-227) that `postgres` is running and no application service is.
@@ -347,7 +347,7 @@ expose it.
   backup label/set.
 - The full restore transcript, including the `[restore] ok` line and, for a
   point-in-time restore, the `[restore] point-in-time target=…` line
-  (`infra/scripts/platform/pgbackrest-restore.sh`:189,694) and the
+  (`infra/scripts/platform/pgbackrest-restore.sh`:189,702) and the
   `[restore] recovery state verified: pg_is_in_recovery()=false` line (`:588`).
 - `restore-drill-report.json` and `transcript.txt` from the drill
   (`infra/scripts/platform/restore-drill.sh`:9-10), with `rto_pass`,
