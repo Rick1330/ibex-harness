@@ -41,3 +41,38 @@ export function operatorFailureDetail(error: unknown): string {
       return "The operator API did not return a verified snapshot."
   }
 }
+
+type OperatorMessageBody = {
+  message?: unknown
+  error?: { message?: unknown }
+}
+
+type OperatorMessageLike = {
+  data?: OperatorMessageBody & { data?: OperatorMessageBody }
+} | null
+
+function asMessage(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null
+}
+
+/**
+ * The human message from a BFF error response, or null when there is none.
+ *
+ * `$fetch` puts the parsed response body in `error.data`. Nitro serialises an
+ * `h3` error as `{ statusCode, statusMessage, data: { error: { message } } }`,
+ * so the stable envelope sits one level deeper than a raw body:
+ * `error.data.data.error.message`. Reading only `error.data.error.message`
+ * always misses, which is why the login page showed its generic fallback for
+ * every rejection. Both shapes are read here.
+ */
+export function operatorErrorMessage(error: unknown): string | null {
+  const body = (error as OperatorMessageLike)?.data
+  // The stable envelope first; the h3 body fields are fallbacks for a route
+  // that throws without `data`.
+  return (
+    asMessage(body?.data?.error?.message) ??
+    asMessage(body?.error?.message) ??
+    asMessage(body?.data?.message) ??
+    asMessage(body?.message)
+  )
+}

@@ -196,10 +196,17 @@ writes to object storage.
 
 **Config and credentials are separate.** `make v1-secrets` writes `infra/backup/pgbackrest/pgbackrest.conf` (mode `0644`,
 no secrets) and adds `IBEX_OBJECTSTORE_ACCESS_KEY`, `IBEX_OBJECTSTORE_SECRET_KEY` and `PGBACKREST_REPO1_CIPHER_PASS` to
-the `0600` `.env`. The config is bind-mounted read-only into the postgres container, which runs as uid 999, so it must be
-world-readable and must therefore carry no secret; Compose passes the three credentials as `PGBACKREST_REPO1_S3_KEY`,
-`PGBACKREST_REPO1_S3_KEY_SECRET` and `PGBACKREST_REPO1_CIPHER_PASS` in the container environment. The generated config is
-a build artifact, not source: regenerate it with `make v1-secrets` and keep it out of version control.
+the `0600` `.env`. The directory containing the config is bind-mounted read-only at `/etc/pgbackrest` in the postgres
+container, which runs as uid 999: mounting the directory rather than the single file means a regenerated config (the
+generator replaces the file with `mv -f`) is visible to a running container instead of leaving it pinned to the old inode.
+The config must be world-readable and must therefore carry no secret; Compose passes the three credentials as
+`PGBACKREST_REPO1_S3_KEY`, `PGBACKREST_REPO1_S3_KEY_SECRET` and `PGBACKREST_REPO1_CIPHER_PASS` in the container
+environment. The generated config is a build artifact, not source: regenerate it with `make v1-secrets` and keep it out of
+version control. A custom `PGBACKREST_CONF` is mounted by the restore at the in-container path; the backup path execs into
+the running container, so it refuses a config that does not match the container's copy rather than reporting a backup
+against a repository the restore will not read. `--force` preserves `PGBACKREST_REPO1_CIPHER_PASS`; rotating it is the
+explicit `--rotate-pgbackrest-cipher` operation, and it is refused while a value exists because the old passphrase is the
+only key to the existing backups.
 
 **Stanza initialisation.** `stanza-create` is idempotent. `make v1-up` runs it soft after the health wait, so a repository
 outage prints a loud warning and leaves the profile serving instead of blocking startup; `make v1-backup-init` is the
@@ -236,8 +243,11 @@ would expose it.
 **Scheduling.** There is no looping backup service in the profile: a restart-looping scheduler inside Compose is a second
 scheduler with its own failure mode and no host-level visibility. Schedule `make v1-backup` from the host instead — a
 systemd timer or a cron entry — and monitor `pg_stat_archiver.failed_count` plus the freshness file the script writes
-(`ibex-last-backup.txt` and `ibex_backup_metrics.prom`, under `${XDG_STATE_HOME:-$HOME/.local/state}/ibex/backup` for a
-non-root operator).
+(`ibex-last-backup.txt` and `ibex_backup_metrics.prom`). The textfile collector reads `/var/lib/ibex/backup`; a non-root
+operator whose profile has not created that directory gets a loud warning naming the fallback path
+(`${XDG_STATE_HOME:-$HOME/.local/state}/ibex/backup`) and must either point the collector there or set
+`IBEX_BACKUP_STATE_DIR=/var/lib/ibex/backup` and make it writable. A metric written where the collector does not read is
+invisible, so the warning is part of the contract rather than advice.
 
 **Proving PITR without touching live data.** `SCRATCH_VOLUME` restores beside the running cluster and is the recommended
 first rehearsal for any target an operator intends to use in an incident: create the volume first

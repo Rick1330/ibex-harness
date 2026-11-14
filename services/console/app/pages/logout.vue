@@ -5,13 +5,27 @@ import { useRouter } from "vue-router"
 definePageMeta({ layout: false })
 useHead({ title: "Signing out · IBEX Console" })
 
+type SessionBootstrap = {
+  csrf_cookie_name?: string
+  csrf_token?: string | null
+}
+
 const router = useRouter()
-const csrf = useCookie("ibex_csrf")
 const message = ref("Signing out…")
 
 onMounted(async () => {
   const headers: Record<string, string> = {}
-  if (csrf.value) headers["X-CSRF-Token"] = csrf.value
+  try {
+    // The CSRF cookie name is deployment-configurable, so the BFF resolves the
+    // double-submit token from this browser's own cookie. The page never
+    // assumes a cookie name.
+    const bootstrap = await $fetch<SessionBootstrap>("/api/operator/session/bootstrap")
+    if (bootstrap?.csrf_token) headers["X-CSRF-Token"] = bootstrap.csrf_token
+  } catch {
+    // Without the token the API rejects the revocation before its handler runs.
+    // The BFF's unconditional deletions still clear this browser's cookies, so
+    // an unreachable bootstrap must not strand the operator on a protected page.
+  }
 
   try {
     // The API revokes the session family and clears the cookies. The BFF relays

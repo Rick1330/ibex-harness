@@ -170,6 +170,32 @@ function csrfCookieName(): string {
   return process.env.IBEX_OPERATOR_CSRF_COOKIE_NAME?.trim() || DEFAULT_CSRF_COOKIE
 }
 
+/**
+ * Domain the API issues its session cookies for, when the deployment sets one.
+ *
+ * The BFF relays the API's `Set-Cookie` headers verbatim on login, so a cookie
+ * issued with `Domain=.example.com` is not removed by a host-only deletion. The
+ * local deletions must carry the same attribute. A value that is not a bare
+ * host suffix is ignored rather than written into a header.
+ */
+function cookieDomain(): string {
+  const raw = process.env.DASHBOARD_COOKIE_DOMAIN?.trim() ?? ""
+  return /^\.?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$/.test(raw) ? raw : ""
+}
+
+/**
+ * Session wiring the browser needs before it holds a session: the configured
+ * CSRF cookie name and this browser's own double-submit token. Neither is a
+ * secret — the CSRF cookie is deliberately readable by same-origin JavaScript.
+ */
+export function sessionBootstrap(event: H3Event): {
+  csrf_cookie_name: string
+  csrf_token: string | null
+} {
+  const name = csrfCookieName()
+  return { csrf_cookie_name: name, csrf_token: getCookie(event, name) ?? null }
+}
+
 export function sessionCookie(event: H3Event): { name: string; header: string } {
   const name = accessCookieName(event)
   const value = getCookie(event, name)
@@ -294,19 +320,43 @@ export async function readJsonBodyCapped(
   }
 }
 
+type ReadOptions = {
+  suffix?: string
+  query?: URLSearchParams
+  signal?: AbortSignal
+}
+
+/**
+ * Read one operator resource.
+ *
+ * A 401 is answered once with a server-side refresh-and-retry: the access cookie
+ * expires long before the refresh cookie, and without this every read failed
+ * even though the session was still recoverable. `path` is always an operator
+ * read (session routes are not `OperatorPath`s), so a 401 here can never
+ * refresh the refresh route itself. The retry is single-shot by construction:
+ * `fetchOperatorJsonAttempt` only refreshes while `rotatedAccess` is null.
+ */
 export async function fetchOperatorJson<T>(
   event: H3Event,
   path: OperatorPath,
   parse: (value: unknown) => T,
-  options: {
-    suffix?: string
-    query?: URLSearchParams
-    signal?: AbortSignal
-  } = {},
+  options: ReadOptions = {},
+): Promise<T> {
+  return fetchOperatorJsonAttempt(event, path, parse, options, null)
+}
+
+async function fetchOperatorJsonAttempt<T>(
+  event: H3Event,
+  path: OperatorPath,
+  parse: (value: unknown) => T,
+  options: ReadOptions,
+  rotatedAccess: string | null,
 ): Promise<T> {
   const target = operatorTarget(event, path, options.suffix, options.query)
-  const cookie = sessionCookie(event)
-  if (hasCookie(cookie.header) && target.protocol !== "https:") {
+  const cookieHeader = rotatedAccess
+    ? `${accessCookieName(event)}=${rotatedAccess}`
+    : sessionCookie(event).header
+  if (hasCookie(cookieHeader) && target.protocol !== "https:") {
     throw new OperatorUpstreamError(
       503,
       "API_ORIGIN_INSECURE",
@@ -315,7 +365,7 @@ export async function fetchOperatorJson<T>(
   }
 
   const headers = new Headers({ Accept: "application/json" })
-  if (cookie.header) headers.set("Cookie", cookie.header)
+  if (cookieHeader) headers.set("Cookie", cookieHeader)
 
   let response: Response
   try {
@@ -335,11 +385,19 @@ export async function fetchOperatorJson<T>(
 
   const body: unknown = await response.json().catch(() => null)
   if (!response.ok) {
-    // A document request (a real browser navigation) that reaches a BFF route
-    // with an expired session is sent to the login page instead of a raw JSON
-    // error. Server-render data fetches strip `Accept`, so they keep the
-    // fail-closed 401 below and the page renders its normal auth-error state.
-    if (response.status === 401 && isDocumentRequest(event)) {
+    // Recover an expired access cookie once, then retry this exact read with the
+    // freshly issued value. The retry never refreshes again, so a second 401
+    // falls through to the login redirect instead of looping.
+    if (response.status === 401 && rotatedAccess === null) {
+      const rotated = await rotateAccessCookie(event)
+      if (rotated) {
+        return fetchOperatorJsonAttempt(event, path, parse, options, rotated)
+      }
+    }
+    // Fail closed: no data, and the operator is sent to sign in. A document
+    // request and a server-render data fetch both land here; the response
+    // carries the redirect instead of a partial or fabricated payload.
+    if (response.status === 401) {
       const location = loginLocation(event)
       sendRedirect(event, location, 302)
       throw new OperatorLoginRedirect(location)
@@ -365,8 +423,8 @@ export async function fetchOperatorJson<T>(
 }
 
 /**
- * Signals that `fetchOperatorJson` already wrote a redirect response for a
- * document load. `toHttpError` must not try to write a second response.
+ * Signals that `fetchOperatorJson` already wrote a redirect response.
+ * `toHttpError` must not try to write a second response.
  */
 export class OperatorLoginRedirect extends Error {
   readonly location: string
@@ -376,11 +434,6 @@ export class OperatorLoginRedirect extends Error {
     this.name = "OperatorLoginRedirect"
     this.location = location
   }
-}
-
-/** A browser navigation, not a server-render or XHR data fetch. */
-function isDocumentRequest(event: H3Event): boolean {
-  return (getHeader(event, "accept") ?? "").toLowerCase().includes("text/html")
 }
 
 export function loginLocation(event: H3Event): string {
@@ -401,10 +454,25 @@ function setCookieHeaders(response: Response): string[] {
  * flags (HttpOnly, Secure, SameSite, Domain, Max-Age) are the API's decision and
  * are never rewritten here.
  */
-function relaySessionCookies(event: H3Event, response: Response): void {
-  for (const cookie of setCookieHeaders(response)) {
+function relaySessionCookies(event: H3Event, response: Response): string[] {
+  const cookies = setCookieHeaders(response)
+  for (const cookie of cookies) {
     appendResponseHeader(event, "set-cookie", cookie)
   }
+  return cookies
+}
+
+/** The value of `name` in the first matching `Set-Cookie` header, or null. */
+function cookieValueFromSetCookie(cookies: string[], name: string): string | null {
+  for (const cookie of cookies) {
+    const pair = cookie.split(";", 1)[0] ?? ""
+    const separator = pair.indexOf("=")
+    if (separator < 0) continue
+    if (pair.slice(0, separator).trim() !== name) continue
+    const value = pair.slice(separator + 1).trim()
+    if (value) return value
+  }
+  return null
 }
 
 /**
@@ -422,8 +490,10 @@ export function appendSessionDeletionCookies(event: H3Event): void {
     { name: refreshCookieName(), httpOnly: true },
     { name: csrfCookieName(), httpOnly: false },
   ]
+  const domain = cookieDomain()
+  const domainFlag = domain ? `; Domain=${domain}` : ""
   for (const { name, httpOnly } of deletions) {
-    const flags = `Path=/; Max-Age=0; Secure; SameSite=Lax${httpOnly ? "; HttpOnly" : ""}`
+    const flags = `Path=/; Max-Age=0; Secure; SameSite=Lax${domainFlag}${httpOnly ? "; HttpOnly" : ""}`
     appendResponseHeader(event, "set-cookie", `${name}=; ${flags}`)
   }
 }
@@ -448,21 +518,39 @@ export async function callOperatorSession(
   action: OperatorSessionAction,
   body?: { pat: string },
 ): Promise<Record<string, unknown>> {
+  return (await performSessionAction(event, action, body)).payload
+}
+
+type SessionOutcome = {
+  payload: Record<string, unknown>
+  setCookies: string[]
+}
+
+async function performSessionAction(
+  event: H3Event,
+  action: OperatorSessionAction,
+  body?: { pat: string },
+  options: { csrfFromCookie?: boolean } = {},
+): Promise<SessionOutcome> {
   const target = new URL(SESSION_PATHS[action], configuredOrigin(event))
   const headers = new Headers({ Accept: "application/json" })
 
   const cookie = sessionCookieHeader(event)
-  // Match the read path: never send session cookies to a cleartext origin.
-  if (cookie && target.protocol !== "https:") {
+  // A session cookie *or* a PAT must never cross a cleartext hop. The PAT guard
+  // is independent of cookies on purpose: login has no cookie yet, so a
+  // cookie-only guard would send the token in plaintext over `http://`.
+  if ((cookie || body) && target.protocol !== "https:") {
     throw new OperatorUpstreamError(
       503,
       "API_ORIGIN_INSECURE",
-      "Operator session cookies require an HTTPS API origin",
+      "Operator API credentials require an HTTPS origin",
     )
   }
   if (cookie) headers.set("Cookie", cookie)
 
-  const csrf = getHeader(event, "x-csrf-token")
+  const csrf =
+    getHeader(event, "x-csrf-token") ??
+    (options.csrfFromCookie ? getCookie(event, csrfCookieName()) : undefined)
   if (csrf) headers.set("X-CSRF-Token", csrf)
 
   // The API's CSRF middleware checks Origin (Referer fallback) outside
@@ -498,7 +586,7 @@ export async function callOperatorSession(
 
   // Relay before the status check: logout clears cookies even when it reports
   // an invalid session, so the browser must still receive the deletions.
-  relaySessionCookies(event, response)
+  const setCookies = relaySessionCookies(event, response)
 
   const parsed: unknown = await response.json().catch(() => null)
   if (!response.ok) {
@@ -510,7 +598,30 @@ export async function callOperatorSession(
       apiError.success ? (apiError.data.error.request_id ?? null) : null,
     )
   }
-  return sanitizeSessionPayload(parsed)
+  return { payload: sanitizeSessionPayload(parsed), setCookies }
+}
+
+/**
+ * Rotate the access cookie once, server-side, and return the newly issued value.
+ *
+ * Returns null when there is no refresh cookie to present or the API refuses to
+ * rotate. The rotated `Set-Cookie` headers are relayed to this response; the
+ * caller retries the original read with the returned value because the incoming
+ * request still carries the expired cookie.
+ */
+async function rotateAccessCookie(event: H3Event): Promise<string | null> {
+  if (!getCookie(event, refreshCookieName())) return null
+  try {
+    const { setCookies } = await performSessionAction(event, "refresh", undefined, {
+      // The API enforces CSRF double-submit on refresh. The browser's CSRF
+      // cookie arrived with this request; reuse it as the header so a
+      // server-side rotation carries the same proof the page would send.
+      csrfFromCookie: true,
+    })
+    return cookieValueFromSetCookie(setCookies, accessCookieName(event))
+  } catch {
+    return null
+  }
 }
 
 function loginErrorMessage(statusCode: number): string {

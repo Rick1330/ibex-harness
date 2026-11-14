@@ -263,12 +263,13 @@ v1_pg_exec() {
 }
 
 v1_is_uuid() {
+  local value="$1"
   python3 -c 'import sys, uuid
 try:
     uuid.UUID(sys.argv[1])
 except (ValueError, AttributeError):
     sys.exit(1)
-' "$1" 2>/dev/null
+' "$value" 2>/dev/null
 }
 
 # v1_smoke_org_id resolves the bootstrap organization id. IBEX_V1_ORG_ID wins so
@@ -579,23 +580,23 @@ EOF
   printf '%s\n' "$conf"
 }
 
-# v1_container_cli prints the single engine binary the platform scripts can
-# exec. A rootful podman store needs `sudo -n podman`, which is two words and
-# cannot be passed as one CLI; refuse it here instead of failing mid-backup.
+# v1_container_cli prints the engine invocation the platform scripts can exec.
+# IBEX_CONTAINER_CLI wins when set; otherwise the selected engine is returned as
+# given, including the multi-word `sudo -n podman` a rootful store needs. The
+# platform scripts split the value into an argv array, so a multi-word engine is
+# passed through consistently instead of being rejected here (that rejection made
+# a rootful profile unable to arm archiving at all).
 v1_container_cli() {
-  local engine
+  if [[ -n "${IBEX_CONTAINER_CLI:-}" ]]; then
+    printf '%s\n' "$IBEX_CONTAINER_CLI"
+    return 0
+  fi
   case "$(runtime)" in
     docker)
       printf 'docker\n'
       return 0 ;;
   esac
-  engine="$(podman_engine)"
-  if [[ "$engine" == *" "* ]]; then
-    echo "v1 backup/restore need the rootless podman store: $engine is multi-word" >&2
-    echo "run them as the store owner, or set IBEX_CONTAINER_CLI explicitly" >&2
-    return 1
-  fi
-  printf '%s\n' "$engine"
+  podman_engine
 }
 
 # v1_backup_env exports the repository credentials the restore container needs.
@@ -626,10 +627,10 @@ v1_backup_init() {
   # has already built and started every service by the time this arm runs, and
   # its documented behaviour is that a failed arm is printed as a warning; a
   # `return 1` here would make a healthy profile exit non-zero at the last step.
-  # That is exactly what happened when podman_engine() returned the multi-word
-  # `sudo -n podman`: v1_container_cli refuses it, and the refusal landed after
-  # the soft branch had already been skipped. Strict `make v1-backup-init` still
-  # fails loudly through the same guards.
+  # The config guard can legitimately fail here (a missing repository config).
+  # The engine guard accepts the multi-word `sudo -n podman` a rootful store
+  # needs, so a healthy rootful profile is no longer turned into a warning.
+  # Strict `make v1-backup-init` still fails loudly through the same guards.
   if ! v1_pgbackrest_conf >/dev/null; then
     if (( soft )); then
       echo "WARNING: pgBackRest config missing or refused; PITR is NOT armed." >&2

@@ -11,12 +11,7 @@
 # The pgBackRest package is pinned to the exact PGDG build Debian bookworm ships;
 # the PGDG repository is already configured by the upstream postgres image, so no
 # extra apt source is added here.
-# Sonar docker:S6471 ("image might run as root") is suppressed below with evidence:
-# the upstream postgres entrypoint uses root only to chown PGDATA, then execs the
-# server as uid 999. Verified on the built image: /proc/1/status is
-# `Name: postgres`, `Uid: 999`, and PGDATA is postgres:postgres. Removing root
-# from the entrypoint would break the first-boot chown of the data volume.
-FROM pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b  # NOSONAR docker:S6471
+FROM pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
 
 # One layer for both installs: --no-install-recommends keeps the runtime image
 # from pulling in documentation and build tooling, and the apt lists are removed
@@ -40,3 +35,11 @@ RUN apt-get update \
 
 # The stanza config is mounted at /etc/pgbackrest/pgbackrest.conf (read-only) by
 # the compose file. Do not bake a config into the image: it carries credentials.
+#
+# Run as the postgres user rather than as root. The upstream entrypoint uses root
+# only to chown PGDATA on first boot; that chown is done instead by the
+# `postgres-volume-init` one-shot in the compose file, which is the only place
+# that needs root. Starting the server as uid 999 directly means the long-running
+# container never holds root, and the restore and backup one-shots that share
+# this image write into the data volume as the same uid that owns it.
+USER postgres

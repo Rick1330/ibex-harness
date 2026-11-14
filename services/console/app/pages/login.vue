@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue"
 import { useRoute, useRouter } from "vue-router"
+import { operatorErrorMessage } from "@/lib/operator-error"
 import { safeLoginNext } from "@/lib/navigation"
 
 definePageMeta({ layout: false })
@@ -14,13 +15,6 @@ const submitting = ref(false)
 const errorMessage = ref<string | null>(null)
 
 const nextTarget = safeLoginNext(route.query.next)
-
-function messageFrom(error: unknown): string {
-  const data = (error as { data?: { error?: { message?: string } } } | null)?.data
-  const message = data?.error?.message
-  if (typeof message === "string" && message.length > 0) return message
-  return "Sign-in failed. Try again."
-}
 
 async function submit(): Promise<void> {
   if (submitting.value) return
@@ -43,7 +37,7 @@ async function submit(): Promise<void> {
     await router.replace(nextTarget)
   } catch (error) {
     // The BFF returns a stable message for 401/403; never echo the token.
-    errorMessage.value = messageFrom(error)
+    errorMessage.value = operatorErrorMessage(error) ?? "Sign-in failed. Try again."
   } finally {
     submitting.value = false
   }

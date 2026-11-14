@@ -441,8 +441,17 @@ test("sidebar shows the core lifecycle and hides the platform tier by default", 
   await waitForHydration(page)
 
   const sidebar = page.locator(".console-sidebar")
+  // The D01 change renders the `Preview` chip inside the link, so the marker is
+  // part of the accessible name for exactly the two preview surfaces. The unit
+  // test asserts the navigation set; this asserts the marker actually renders.
+  const previewMarked = new Set(["Policies", "Settings"])
   for (const label of ["Overview", "Agents", "Sessions", "Memories", "Evidence", "Directives", "Policies", "Explore", "Platform", "Settings"]) {
-    await expect(sidebar.getByRole("link", { name: label, exact: true })).toBeVisible()
+    const name = previewMarked.has(label) ? `${label} Preview` : label
+    await expect(sidebar.getByRole("link", { name, exact: true })).toBeVisible()
+  }
+  // An unmarked name would mean the chip stopped rendering inside the link.
+  for (const label of previewMarked) {
+    await expect(sidebar.getByRole("link", { name: label, exact: true })).toHaveCount(0)
   }
   await expect(sidebar.getByRole("link", { name: "Incidents", exact: true })).toBeHidden()
   await expect(sidebar.getByText("Platform tier", { exact: true })).toBeVisible()
