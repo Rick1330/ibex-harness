@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 from apierror_py import INSUFFICIENT_PERMISSIONS, NOT_FOUND
-from authclient.permissions import MEMORY_READ
+from authclient.permissions import MEMORY_READ, OPERATOR_METADATA_READ, READ_ONLY
 
 from app.auth.client import ValidateResult
 from app.rate_limit_publish import RecordingRateLimitConfigPublisher
@@ -146,5 +146,38 @@ def test_router_uses_settings_defaults() -> None:
         _mock_service("get_rate_limits", org_id),
     ):
         client.app.state.api.settings = None
+        resp = client.get(_rate_limits_url(org_id), headers=bearer_headers())
+    assert resp.status_code == 200
+
+
+def _result(org_id: UUID, permissions: int) -> ValidateResult:
+    return ValidateResult(
+        org_id=org_id,
+        permissions=permissions,
+        user_id=str(uuid4()),
+    )
+
+
+def test_get_rate_limits_denies_viewer_bitmap() -> None:
+    org_id = uuid4()
+    with managed_org_client(
+        ManagedClientOpts(org_id=org_id, result=_result(org_id, READ_ONLY))
+    ) as (client, _res, _pub):
+        resp = client.get(_rate_limits_url(org_id), headers=bearer_headers())
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == INSUFFICIENT_PERMISSIONS
+
+
+def test_get_rate_limits_with_operator_metadata_read() -> None:
+    org_id = uuid4()
+    with (
+        managed_org_client(
+            ManagedClientOpts(
+                org_id=org_id,
+                result=_result(org_id, OPERATOR_METADATA_READ),
+            )
+        ) as (client, _res, _pub),
+        _mock_service("get_rate_limits", org_id),
+    ):
         resp = client.get(_rate_limits_url(org_id), headers=bearer_headers())
     assert resp.status_code == 200

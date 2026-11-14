@@ -5,11 +5,12 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
+from authclient.permissions import LEGAL_HOLD_MANAGE
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.client import ValidateResult
-from app.authz import RequireLegalHoldManage, assert_path_org
+from app.authz import RequireLegalHoldManage, assert_path_org, assert_permission
 from app.deps import operator_org_session, org_session, require_token
 from app.schemas.legal_holds import LegalHoldCreate, LegalHoldResponse
 from app.services import legal_holds as hold_service
@@ -35,6 +36,7 @@ async def list_holds(
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> list[LegalHoldResponse]:
     assert_path_org(token.org_id, org_id)
+    assert_permission(token.permissions, LEGAL_HOLD_MANAGE)
     return await hold_service.list_active_holds(session, org_id)
 
 

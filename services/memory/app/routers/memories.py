@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-import logging
 import time
+from dataclasses import dataclass
 from typing import Annotated, Any
 from uuid import UUID
 
+from authclient.permissions import MEMORY_DELETE
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
+from ibex_idempotency import IDEMPOTENCY_CONTRACT, fingerprint_request
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.auth.client import ValidateResult
 from app.cache.hot_keys import HOT_CACHE_CAPACITY
 from app.deps import (
     CreateMemoryContext,
@@ -25,20 +28,13 @@ from app.deps import (
     get_memory_cache_writer,
     get_search_memory_context,
     get_session_factory,
-    require_memory_write,
+    require_token,
 )
-from app.exceptions import (
-    DuplicateMemoryError,
-    EmbeddingServiceError,
-    LegalHoldActiveError,
-    MemoryNotFoundError,
-    MemoryOrganizationUnavailableError,
-    StaleLifecycleError,
-    ValidationError,
-)
+from app.exceptions import EmbeddingServiceError, MemoryNotFoundError, ValidationError
 from app.feedback.models import ApplyFeedbackCommand, FeedbackKind
 from app.feedback.persist import require_agent_id
-from app.lifecycle import ForgetMemory, forget_memory_session
+from app.lifecycle import ForgetMemory
+from app.permissions import has_permission
 from app.read.lineage import DEFAULT_LINEAGE_DEPTH, MAX_LINEAGE_DEPTH, LineageQuery
 from app.read.models import HotMemoryQuery
 from app.routers.memory_lineage_support import lineage_response_from_result
@@ -56,12 +52,14 @@ from app.routers.memory_write_support import (
     CreatedResponseContext,
     Principal,
     begin_idempotency,
+    create_memory_outcome,
+    ensure_write_agent_authorized,
     finalize_created_response,
     finalize_quarantine_response,
-    http_error_for_write,
-    http_internal_error_for_write,
+    forget_memory_with_error_mapping,
+    invalidate_forgotten_memory,
     memory_command_from_request,
-    release_idempotency,
+    require_agent_scope,
 )
 from app.schemas.feedback import (
     FeedbackErrorEnvelope,
@@ -77,10 +75,6 @@ from app.schemas.memories import (
     ForgetMemoryResponse,
 )
 from app.schemas.search import SearchMemoriesRequest, SearchMemoriesResponse
-
-logger = logging.getLogger(__name__)
-from ibex_idempotency import IDEMPOTENCY_CONTRACT, fingerprint_request
-
 from app.write.models import WriteOutcomeKind
 
 router = APIRouter(prefix="/v1/memories", tags=["memories"])
@@ -88,7 +82,51 @@ router = APIRouter(prefix="/v1/memories", tags=["memories"])
 CREATE_MEMORY_PATH = "/v1/memories"
 
 
-@router.post("", status_code=201, summary="Create a memory")
+def require_memory_delete(
+    token: Annotated[ValidateResult, Depends(require_token)],
+) -> ValidateResult:
+    """Require ``memory:delete``; forgetting is destructive, not a write."""
+    if not has_permission(token.permissions, MEMORY_DELETE):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "INSUFFICIENT_PERMISSIONS",
+                "message": "Permission required: memory:delete",
+            },
+        )
+    return token
+
+
+@dataclass(frozen=True, slots=True)
+class ForgetMemoryContext:
+    """Authenticated scope and dependencies for the forget route."""
+
+    token: ValidateResult
+    session_factory: Any
+    cache_writer: Any
+
+
+def get_forget_memory_context(
+    token: Annotated[ValidateResult, Depends(require_memory_delete)],
+    session_factory: Annotated[Any, Depends(get_session_factory)],
+    cache_writer: Annotated[Any, Depends(get_memory_cache_writer)],
+) -> ForgetMemoryContext:
+    return ForgetMemoryContext(
+        token=token,
+        session_factory=session_factory,
+        cache_writer=cache_writer,
+    )
+
+
+@router.post(
+    "",
+    status_code=201,
+    summary="Create a memory",
+    responses={
+        403: {"description": "Agent-scoped token and a different agent_id"},
+        404: {"description": "Agent not found in the caller's organization"},
+    },
+)
 async def create_memory(
     request: CreateMemoryRequest,
     response: Response,
@@ -97,11 +135,15 @@ async def create_memory(
     """Create one memory inside the validated token's organization.
 
     The tenant is taken from the validated token, never from the request body, so
-    a caller cannot choose the org it writes to. A request carrying an idempotency
-    key replays the stored response; a keyed write whose slot cannot be claimed or
+    a caller cannot choose the org it writes to. An agent-scoped token may only
+    write for its own agent; an org-scoped token may write for any agent in its
+    org, and the composite ``(agent_id, org_id)`` foreign key turns an unknown
+    agent into a 404 instead of a 500. A request carrying an idempotency key
+    replays the stored response; a keyed write whose slot cannot be claimed or
     finalized fails with 503 rather than a false 201/202, and a failed write
     releases the slot.
     """
+    ensure_write_agent_authorized(ctx.token, request.agent_id)
     start = time.perf_counter()
     idem = await begin_idempotency(
         ledger=ctx.idempotency_ledger,
@@ -118,27 +160,7 @@ async def create_memory(
         return idem
 
     command = memory_command_from_request(request, ctx.token.org_id)
-    try:
-        outcome = await ctx.orchestrator.create(command)
-    except (
-        DuplicateMemoryError,
-        ValidationError,
-        EmbeddingServiceError,
-        StaleLifecycleError,
-        MemoryOrganizationUnavailableError,
-    ) as exc:
-        await release_idempotency(idem)
-        raise http_error_for_write(exc) from exc
-    except Exception as exc:
-        await release_idempotency(idem)
-        logger.error(
-            "memory write failed org_id=%s agent_id=%s error_class=%s",
-            ctx.token.org_id,
-            command.agent_id,
-            type(exc).__name__,
-        )
-        raise http_internal_error_for_write() from exc
-
+    outcome = await create_memory_outcome(ctx.orchestrator, command, idem, ctx.token.org_id)
     elapsed_ms = int((time.perf_counter() - start) * 1000)
     if outcome.kind == WriteOutcomeKind.QUARANTINED:
         return await finalize_quarantine_response(outcome=outcome, idem=idem, response=response)
@@ -158,7 +180,7 @@ async def create_memory(
     summary="Forget a memory",
     responses={
         401: {"description": "Authentication required"},
-        403: {"description": "Agent-scoped token and memory:write permission required"},
+        403: {"description": "Agent-scoped token and memory:delete permission required"},
         404: {"description": "Memory not found in caller scope"},
         409: {"description": "Expected lifecycle revision is stale"},
         422: {"description": "Invalid memory UUID or expected_revision body"},
@@ -168,60 +190,29 @@ async def create_memory(
 async def forget_memory(
     memory_id: UUID,
     request: ForgetMemoryRequest,
-    token: Annotated[Any, Depends(require_memory_write)],
-    session_factory: Annotated[Any, Depends(get_session_factory)],
-    cache_writer: Annotated[Any, Depends(get_memory_cache_writer)],
+    ctx: Annotated[ForgetMemoryContext, Depends(get_forget_memory_context)],
 ) -> ForgetMemoryResponse:
-    """Tombstone a memory in the authenticated token's org and agent scope."""
-    try:
-        if token.agent_id is None:
-            raise HTTPException(
-                status_code=403,
-                detail={"code": "AGENT_SCOPE_REQUIRED", "message": "Agent-scoped token required"},
-            )
-        agent_id = token.agent_id
-        async with session_factory() as session, session.begin():
-            revision = await forget_memory_session(
-                session,
-                ForgetMemory(
-                    org_id=token.org_id,
-                    agent_id=agent_id,
-                    memory_id=memory_id,
-                    expected_revision=request.expected_revision,
-                ),
-            )
-    except (
-        MemoryNotFoundError,
-        StaleLifecycleError,
-        MemoryOrganizationUnavailableError,
-        LegalHoldActiveError,
-    ) as exc:
-        if isinstance(exc, MemoryNotFoundError):
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "NOT_FOUND", "message": "Memory not found"},
-            ) from exc
-        raise HTTPException(
-            status_code=409,
-            detail={"code": exc.code, "message": exc.message},
-        ) from exc
-    except SQLAlchemyError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "DATABASE_UNAVAILABLE", "message": "Database unavailable"},
-        ) from exc
-    if cache_writer is not None:
-        try:
-            await cache_writer.forget_memory(
-                org_id=token.org_id, agent_id=agent_id, memory_id=memory_id
-            )
-        except Exception:
-            logger.warning(  # NOSONAR pythonsecurity:S5145 - UUID hex is hex-only, not free text
-                "memory cache invalidation failed after committed forget org_id=%s memory_id=%s",
-                token.org_id.hex,
-                memory_id.hex,
-                exc_info=True,
-            )
+    """Tombstone a memory in the authenticated token's org and agent scope.
+
+    Forget is destructive (erasure, not a visibility toggle), so it requires
+    ``memory:delete`` rather than the write permission that creates memories.
+    """
+    agent_id = require_agent_scope(ctx.token)
+    revision = await forget_memory_with_error_mapping(
+        session_factory=ctx.session_factory,
+        command=ForgetMemory(
+            org_id=ctx.token.org_id,
+            agent_id=agent_id,
+            memory_id=memory_id,
+            expected_revision=request.expected_revision,
+        ),
+    )
+    await invalidate_forgotten_memory(
+        ctx.cache_writer,
+        org_id=ctx.token.org_id,
+        agent_id=agent_id,
+        memory_id=memory_id,
+    )
     return ForgetMemoryResponse(
         data=ForgetMemoryData(memory_id=memory_id, revision=revision, tombstoned=True)
     )

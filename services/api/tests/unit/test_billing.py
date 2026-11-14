@@ -9,8 +9,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from apierror_py import INSUFFICIENT_PERMISSIONS
+from authclient.permissions import BILLING_READ, READ_ONLY
 from pydantic import ValidationError
 
+from app.auth.client import ValidateResult
 from app.budget_publish import NoopBudgetPublisher, RecordingBudgetPublisher
 from app.pagination import CursorPage, PaginationMeta
 from app.routers.billing import _budget_publisher_from_request
@@ -20,6 +23,7 @@ from app.schemas.billing import (
     RateCardResponse,
     RateCardVersionResponse,
     UsageQueryRequest,
+    UsageQueryResponse,
 )
 from tests.unit.org_user_test_support import (
     ManagedClientOpts,
@@ -246,3 +250,102 @@ def test_usage_query_fails_closed_without_clickhouse() -> None:
 def test_schema_rejects_inverted_time_windows(factory: Any, kwargs: dict) -> None:
     with pytest.raises(ValidationError):
         factory(**kwargs)
+
+
+def _result(org_id, permissions: int) -> ValidateResult:
+    return ValidateResult(
+        org_id=org_id,
+        permissions=permissions,
+        user_id=str(uuid4()),
+    )
+
+
+def _usage_payload() -> dict[str, Any]:
+    end = _now()
+    return {
+        "shape": "org_time_aggregate",
+        "start": (end - timedelta(hours=1)).isoformat(),
+        "end": end.isoformat(),
+        "limit": 100,
+    }
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix", "payload"),
+    [
+        ("get", "/rate-cards", None),
+        ("get", "/budget-periods", None),
+        ("post", "/usage/query", _usage_payload()),
+    ],
+)
+def test_billing_read_routes_deny_viewer_bitmap(
+    method: str, suffix: str, payload: dict | None
+) -> None:
+    org_id = uuid4()
+    with managed_org_client(
+        ManagedClientOpts(org_id=org_id, result=_result(org_id, READ_ONLY))
+    ) as (client, _res, _pub):
+        kwargs: dict[str, Any] = {"headers": bearer_headers()}
+        if payload is not None:
+            kwargs["json"] = payload
+        resp = getattr(client, method)(
+            f"/v1/organizations/{org_id}{suffix}", **kwargs
+        )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == INSUFFICIENT_PERMISSIONS
+
+
+@pytest.mark.parametrize(
+    ("suffix", "patch_target", "mock"),
+    [
+        (
+            "/rate-cards",
+            "app.services.billing.list_rate_cards",
+            lambda org_id: _page(_card(org_id)),
+        ),
+        (
+            "/budget-periods",
+            "app.services.billing.list_budget_periods",
+            lambda org_id: _page(_period(org_id)),
+        ),
+    ],
+)
+def test_billing_read_with_billing_read_permission(
+    suffix: str, patch_target: str, mock: Any
+) -> None:
+    org_id = uuid4()
+    with (
+        managed_org_client(
+            ManagedClientOpts(org_id=org_id, result=_result(org_id, BILLING_READ))
+        ) as (client, _res, _pub),
+        patch(patch_target, new=AsyncMock(return_value=mock(org_id))),
+    ):
+        resp = client.get(
+            f"/v1/organizations/{org_id}{suffix}", headers=bearer_headers()
+        )
+    assert resp.status_code == 200
+
+
+def test_usage_query_with_billing_read_permission() -> None:
+    org_id = uuid4()
+    response = UsageQueryResponse(
+        shape="org_time_aggregate",
+        org_id=org_id,
+        rows=[],
+    )
+    with (
+        managed_org_client(
+            ManagedClientOpts(org_id=org_id, result=_result(org_id, BILLING_READ))
+        ) as (client, _res, _pub),
+        patch(
+            "app.services.usage_query.execute_usage_query",
+            new=AsyncMock(return_value=response),
+        ),
+    ):
+        resp = client.post(
+            f"/v1/organizations/{org_id}/usage/query",
+            headers=bearer_headers(),
+            json=_usage_payload(),
+        )
+    assert resp.status_code == 200
+    assert resp.json()["org_id"] == str(org_id)

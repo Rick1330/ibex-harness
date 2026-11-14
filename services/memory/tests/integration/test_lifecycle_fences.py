@@ -25,6 +25,7 @@ from app.lifecycle import (
 )
 from app.pipeline.context import WriteContext
 from app.pipeline.write import WritePipeline
+from app.routers.memories import ForgetMemoryContext
 from app.routers.memory_write_support import erased_create_prepare
 from app.schemas.memories import ForgetMemoryRequest
 from app.vectorstore.base import SearchMode, SearchRequest, UpsertRequest
@@ -137,12 +138,11 @@ async def test_forget_http_scope_revision_and_tombstone_vector_fence(
     from app.routers.memories import forget_memory
 
     token = SimpleNamespace(org_id=org_id, agent_id=agent_id)
+    ctx = ForgetMemoryContext(token=token, session_factory=session_factory, cache_writer=None)
     response = await forget_memory(
         memory_id,
         ForgetMemoryRequest(expected_revision=1),
-        token,
-        session_factory,
-        None,
+        ctx,
     )
     assert response.data.memory_id == memory_id
     assert response.data.revision == 2
@@ -152,9 +152,7 @@ async def test_forget_http_scope_revision_and_tombstone_vector_fence(
         await forget_memory(
             memory_id,
             ForgetMemoryRequest(expected_revision=1),
-            token,
-            session_factory,
-            None,
+            ctx,
         )
     assert stale.value.status_code == 409
 
@@ -425,12 +423,11 @@ async def test_forget_erases_content_and_child_labels(
         session_factory, org_id=org_id, memory_id=memory_id
     )
     token = SimpleNamespace(org_id=org_id, agent_id=agent_id)
+    ctx = ForgetMemoryContext(token=token, session_factory=session_factory, cache_writer=None)
     await forget_memory(
         memory_id,
         ForgetMemoryRequest(expected_revision=revision),
-        token,
-        session_factory,
-        None,
+        ctx,
     )
 
     await lifecycle_erasure_support.assert_erased(session_factory, fixture)

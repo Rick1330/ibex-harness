@@ -9,10 +9,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.client import ValidateResult
-from app.authz import RequireOrgSettings, assert_path_org
+from app.authz import RequireBillingRead, RequireOrgSettings, assert_path_org
 from app.budget_publish import BudgetPublisher, NoopBudgetPublisher
-from app.deps import org_session, require_token
+from app.deps import org_session
 from app.pagination import CursorPage, ListQuery
 from app.schemas.billing import (
     BudgetPeriodCreate,
@@ -56,7 +55,7 @@ def _billing_ctx(
 def _billing_read_ctx(
     request: Request,
     org_id: UUID,
-    token: Annotated[ValidateResult, Depends(require_token)],
+    token: RequireBillingRead,
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> BillingRouteCtx:
     return _billing_ctx(request, org_id, token.org_id, session)

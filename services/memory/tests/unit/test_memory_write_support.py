@@ -20,6 +20,7 @@ from ibex_idempotency import (
     LedgerValidationError,
 )
 
+from app.auth.client import ValidateResult
 from app.erased_response import ERASED_MARKER_BODY, is_erased_marker
 from app.exceptions import DuplicateMemoryError, StaleLifecycleError, ValidationError
 from app.routers.memory_write_support import (
@@ -28,11 +29,18 @@ from app.routers.memory_write_support import (
     begin_idempotency,
     commit_idempotency,
     commit_idempotency_fail_closed,
+    ensure_write_agent_authorized,
     erased_create_prepare,
+    http_error_for_unknown_agent,
     http_error_for_write,
+    is_unknown_agent_violation,
     release_idempotency,
 )
-from tests.unit.memory_test_support import active_idempotency_handle
+from tests.unit.memory_test_support import (
+    AgentFkViolationOpts,
+    active_idempotency_handle,
+    agent_fk_violation_integrity_error,
+)
 
 
 def _owned() -> ClaimOutcome:
@@ -271,3 +279,73 @@ def test_parse_idempotency_key_rejects_too_long() -> None:
     with pytest.raises(HTTPException) as exc:
         parse_idempotency_key("k" * 300)
     assert exc.value.status_code == 400
+
+
+def test_ensure_write_agent_authorized_allows_org_scoped_token() -> None:
+    agent_id = uuid4()
+    token = ValidateResult(org_id=uuid4(), permissions=0, agent_id=None)
+    ensure_write_agent_authorized(token, agent_id)
+
+
+def test_ensure_write_agent_authorized_allows_matching_agent() -> None:
+    agent_id = uuid4()
+    token = ValidateResult(org_id=uuid4(), permissions=0, agent_id=agent_id)
+    ensure_write_agent_authorized(token, agent_id)
+
+
+def test_ensure_write_agent_authorized_rejects_mismatch() -> None:
+    token = ValidateResult(org_id=uuid4(), permissions=0, agent_id=uuid4())
+    with pytest.raises(HTTPException) as exc:
+        ensure_write_agent_authorized(token, uuid4())
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "AGENT_NOT_AUTHORIZED"
+
+
+def test_is_unknown_agent_violation_matches_agent_fk() -> None:
+    exc = agent_fk_violation_integrity_error()
+    assert is_unknown_agent_violation(exc) is True
+
+
+def test_is_unknown_agent_violation_falls_back_to_the_message() -> None:
+    # Some drivers omit constraint_name; the message still names the constraint.
+    exc = agent_fk_violation_integrity_error(
+        AgentFkViolationOpts(constraint_name="", pgcode="23503", sqlstate=None)
+    )
+    assert is_unknown_agent_violation(exc) is True
+
+
+def test_is_unknown_agent_violation_ignores_other_fk() -> None:
+    exc = agent_fk_violation_integrity_error(
+        AgentFkViolationOpts(constraint_name="memories_session_org_fk")
+    )
+    assert is_unknown_agent_violation(exc) is False
+
+
+def test_is_unknown_agent_violation_ignores_wrong_sqlstate() -> None:
+    exc = agent_fk_violation_integrity_error(AgentFkViolationOpts(sqlstate="23505"))
+    assert is_unknown_agent_violation(exc) is False
+
+
+def test_is_unknown_agent_violation_ignores_non_integrity_error() -> None:
+    assert is_unknown_agent_violation(RuntimeError("boom")) is False
+
+
+def test_is_unknown_agent_violation_without_an_orig() -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    exc = IntegrityError("insert", {}, Exception("fk"))
+    exc.orig = None
+    assert is_unknown_agent_violation(exc) is False
+
+
+def test_is_unknown_agent_violation_unrelated_message_is_false() -> None:
+    exc = agent_fk_violation_integrity_error(
+        AgentFkViolationOpts(constraint_name="", message="some foreign key violation")
+    )
+    assert is_unknown_agent_violation(exc) is False
+
+
+def test_http_error_for_unknown_agent_is_404() -> None:
+    exc = http_error_for_unknown_agent()
+    assert exc.status_code == 404
+    assert exc.detail == {"code": "NOT_FOUND", "message": "Agent not found"}

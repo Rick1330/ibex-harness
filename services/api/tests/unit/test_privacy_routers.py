@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
 from apierror_py import INSUFFICIENT_PERMISSIONS
+from authclient.permissions import (
+    LEGAL_HOLD_MANAGE,
+    OPERATOR_METADATA_READ,
+    READ_ONLY,
+)
 
 from app.auth.client import ValidateResult
 from app.errors import ApiError
@@ -19,12 +24,25 @@ from app.schemas.capture_policies import (
     CapturePolicyResponse,
 )
 from app.schemas.legal_holds import LegalHoldCreate, LegalHoldResponse
+from tests.unit.org_user_test_support import (
+    ManagedClientOpts,
+    bearer_headers,
+    managed_org_client,
+)
 
 _TS = datetime(2026, 9, 16, 12, 0, 0, tzinfo=UTC)
 
 
-def _token(org_id, *, user_id=None) -> ValidateResult:
-    return ValidateResult(org_id=org_id, permissions=0, user_id=user_id)
+def _token(org_id, *, user_id=None, permissions: int = 0) -> ValidateResult:
+    return ValidateResult(org_id=org_id, permissions=permissions, user_id=user_id)
+
+
+def _client_result(org_id: UUID, permissions: int) -> ValidateResult:
+    return ValidateResult(
+        org_id=org_id,
+        permissions=permissions,
+        user_id=str(uuid4()),
+    )
 
 
 def _hold_resp(org: UUID, *, user: UUID, cleared: bool = False) -> LegalHoldResponse:
@@ -47,7 +65,9 @@ async def test_list_holds_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         holds_router.hold_service, "list_active_holds", AsyncMock(return_value=expected)
     )
-    out = await holds_router.list_holds(org, _token(org), AsyncMock())
+    out = await holds_router.list_holds(
+        org, _token(org, permissions=LEGAL_HOLD_MANAGE), AsyncMock()
+    )
     assert out == expected
 
 
@@ -168,3 +188,69 @@ def test_make_ctx_asserts_org() -> None:
     other = uuid4()
     with pytest.raises(ApiError):
         capture_router._make_ctx(org, other, session)
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    ["/legal-holds", "/capture-policies", "/capture-policies/resolved"],
+)
+def test_org_read_routes_deny_viewer_bitmap(suffix: str) -> None:
+    org = uuid4()
+    with managed_org_client(
+        ManagedClientOpts(org_id=org, result=_client_result(org, READ_ONLY))
+    ) as (client, _res, _pub):
+        resp = client.get(
+            f"/v1/organizations/{org}{suffix}", headers=bearer_headers()
+        )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == INSUFFICIENT_PERMISSIONS
+
+
+def test_list_holds_with_legal_hold_manage() -> None:
+    org = uuid4()
+    with (
+        managed_org_client(
+            ManagedClientOpts(
+                org_id=org,
+                result=_client_result(org, LEGAL_HOLD_MANAGE),
+            )
+        ) as (client, _res, _pub),
+        patch(
+            "app.services.legal_holds.list_active_holds",
+            new=AsyncMock(return_value=[]),
+        ),
+    ):
+        resp = client.get(
+            f"/v1/organizations/{org}/legal-holds", headers=bearer_headers()
+        )
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.parametrize(
+    ("suffix", "service", "value"),
+    [
+        ("/capture-policies", "list_policies", []),
+        ("/capture-policies/resolved", "resolve_mode", "full"),
+    ],
+)
+def test_capture_policy_reads_with_operator_metadata_read(
+    suffix: str, service: str, value: object
+) -> None:
+    org = uuid4()
+    with (
+        managed_org_client(
+            ManagedClientOpts(
+                org_id=org,
+                result=_client_result(org, OPERATOR_METADATA_READ),
+            )
+        ) as (client, _res, _pub),
+        patch(
+            f"app.services.capture_policies.{service}",
+            new=AsyncMock(return_value=value),
+        ),
+    ):
+        resp = client.get(
+            f"/v1/organizations/{org}{suffix}", headers=bearer_headers()
+        )
+    assert resp.status_code == 200

@@ -6,8 +6,9 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
+import pytest
 from apierror_py import INSUFFICIENT_PERMISSIONS, NOT_FOUND
-from authclient.permissions import MEMORY_READ
+from authclient.permissions import MEMORY_READ, OPERATOR_METADATA_READ, READ_ONLY
 
 from app.auth.client import ValidateResult
 from app.model_policy_publish import RecordingModelPolicyPublisher
@@ -230,3 +231,49 @@ def _foreign_call(client, method: str, base: str, policy_id: UUID):
             f"{base}/{policy_id}", headers=headers, json={"allowed": False}
         )
     return client.delete(f"{base}/{policy_id}", headers=headers)
+
+
+def _result(org_id: UUID, permissions: int) -> ValidateResult:
+    return ValidateResult(
+        org_id=org_id,
+        permissions=permissions,
+        user_id=str(uuid4()),
+    )
+
+
+@pytest.mark.parametrize("single", [False, True])
+def test_read_model_policies_deny_viewer_bitmap(single: bool) -> None:
+    org_id = uuid4()
+    policy_id = uuid4()
+    path = f"{_base(org_id)}/{policy_id}" if single else _base(org_id)
+    with managed_org_client(
+        ManagedClientOpts(org_id=org_id, result=_result(org_id, READ_ONLY))
+    ) as (client, _res, _pub):
+        resp = client.get(path, headers=bearer_headers())
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == INSUFFICIENT_PERMISSIONS
+
+
+@pytest.mark.parametrize("single", [False, True])
+def test_read_model_policies_with_operator_metadata_read(single: bool) -> None:
+    org_id = uuid4()
+    policy_id = uuid4()
+    if single:
+        target = "get_policy"
+        value = _policy(org_id, id=policy_id)
+        path = f"{_base(org_id)}/{policy_id}"
+    else:
+        target = "list_policies"
+        value = _page(org_id)
+        path = _base(org_id)
+    with (
+        managed_org_client(
+            ManagedClientOpts(
+                org_id=org_id,
+                result=_result(org_id, OPERATOR_METADATA_READ),
+            )
+        ) as (client, _res, _pub),
+        _mock_svc(target, value),
+    ):
+        resp = client.get(path, headers=bearer_headers())
+    assert resp.status_code == 200
