@@ -2,7 +2,7 @@
 
 **Title:** Every gap still standing between the tree and an honest `v1.0.0`, classified into four stages with the evidence that closes each stage.
 **Base:** `main` at `55a62bc4` (2026-11-13).
-**Status:** Discovery record, updated by the 2026-11-13 stage-1 pass and the stage-2 recovery pass. It classifies; the stage-1 pass closed 20 stage-1 rows, recorded in §3.1, and the stage-2 pass closed 13 stage-2 rows, recorded in §4.1, leaving two rows only partially closed (R05, W6.3) in §4.2 with their residual stated. Rows the stage-2 pass could not close keep their blocker and residual in the §4 table. No ledger row changes value and no review date moves. The original record was this file plus one link line in [`34-readiness-audit-addendum-2026-11-13.md`](34-readiness-audit-addendum-2026-11-13.md) §5; the two passes also land the code, workflow, and documentation changes their rows name.
+**Status:** Discovery record, updated by the 2026-11-13 stage-1 pass, the stage-2 recovery pass, and the 2026-11-14 stage-3 tenancy pass. It classifies; the stage-1 pass closed 20 stage-1 rows, recorded in §3.1, the stage-2 pass closed 13 stage-2 rows, recorded in §4.1, leaving two rows only partially closed (R05, W6.3) in §4.2 with their residual stated, and the stage-3 pass closed 6 stage-3 rows, recorded in §5.1, leaving 34 in §5.2 with their blockers. Rows a pass could not close keep their blocker and residual. No ledger row changes value and no review date moves. The original record was this file plus one link line in [`34-readiness-audit-addendum-2026-11-13.md`](34-readiness-audit-addendum-2026-11-13.md) §5; the passes also land the code, workflow, and documentation changes their rows name. The stage-3 rows that change authorization or tenant-isolation posture are separated into a decision record, [`36-tenancy-posture-decisions-2026-11-14.md`](36-tenancy-posture-decisions-2026-11-14.md), so each can be approved or rejected on its own.
 
 ## 1. Purpose and method
 
@@ -158,18 +158,18 @@ Rows no gate item names: none — all 25 are evidenced above.
 | R05 | Post-restore erasure is proven for **PostgreSQL only**. The restore-replay test seeds a sentinel, runs the forget path, restores, and asserts the tombstone, the erased ledger payload and the deletion receipt survive while the sentinel is gone — but it does **not** assert ClickHouse or object-storage absence, which the exit gate requires | `infra/migrations/postgres/restore_replay_integration_test.go`:1-30,124-139,567-581; §4 exit gate item 2 | code | sweep 3 |
 | W6.3 | Context-assembly and memory-retrieval **SLIs** and absence alerts are recorded (`infra/monitoring/prometheus/rules/ibex-slo.yml`:293-370) with promtool unit tests (`infra/monitoring/prometheus/rules/test/unit/ibex-slo-context-memory.test.yml`); the **SLOs** are not: the burn thresholds await ratification and no synthetic burn test fires yet, which exit-gate item 7 requires | `ibex-slo.yml`:293-370; §4 exit gate item 7 | owner decision | sweep 3 |
 
-## 5. Stage 3 — Scope the tenant claim (isolation, authorization, erasure) — 38 rows
+## 5. Stage 3 — Scope the tenant claim (isolation, authorization, erasure) — 40 rows (6 closed; 34 remaining)
 
 **Goal.** The tenancy and authorization the product claims are the ones actually enforced, and erasure is complete across every store.
 
-**Why this stage / order.** It is the highest-severity residual: a cross-tenant read is unrecoverable, and it is the claim the addendum's own security sweep found least supported (one static token spanning four RPC classes, an auth-only read surface, and erasure that stops at PostgreSQL). It needs stage 1 first because the claim must be stated before it can be either enforced or narrowed — the alternative outcome of this stage is a *smaller* claim, and that choice is only legible once the claim set is coherent. It needs stage 2 only at the tag, because a restore must not resurrect deleted rows.
+**Why this stage / order.** It is the highest-severity residual: a cross-tenant read is unrecoverable, and it is the claim the addendum's own security sweep found least supported (one static token spanning four RPC classes, an auth-only read surface, and erasure that stops at PostgreSQL). It needs stage 1 first because the claim must be stated before it can be either enforced or narrowed — the alternative outcome of this stage is a *smaller* claim, and that choice is only legible once the claim set is coherent. It needs stage 2 only at the tag, because a restore must not resurrect deleted rows. The 2026-11-14 stage-3 pass closed the authorization half of the read surface — six rows in §5.1 — and left every row that changes isolation or authorization *posture* open, with its decision written out in [`36-tenancy-posture-decisions-2026-11-14.md`](36-tenancy-posture-decisions-2026-11-14.md).
 
 **Entry condition.** Stage 1 exit gate met for the registry and claim set (P0-14, R01, R03, GAP-001); an owner answer on the P0-06 posture and on the multi-tenant claim question (§9 item 5).
 
 **Exit gate.** The stage exits when every row in the table below is closed *and* the evidence below exists.
 
 1. The cross-tenant negative suite is green **with the service-account bypass unavailable**: at route level, in a two-tenant browser journey, and on the proxy/chat path (P0-06, P0-21, P2-07, GAP-005).
-2. Every sensitive read is permission-gated: no route in the four S03 routers, the legal-holds read, or billing read is authentication-only (P1-12, P1-13, S03), and body/array bounds are enforced (P2-08, P2-09).
+2. Every sensitive read is permission-gated: no route in the four S03 routers, the legal-holds read, or billing read is authentication-only (P1-12, P1-13, S03), and body/array bounds are enforced (P2-08, P2-09). **Closed for the authorization half in this pass:** P1-12, P1-13, S03, P2-08 and the two newly identified gates S12/S13 are in §5.1. P2-09, the whole-body cap, remains open in §5.2.
 3. A forget erases content, child rows, embeddings, caches, object-store copies, analytics rows, failed-task rows and the idempotency record, and a failed cache invalidation is retried or receipted (S09, S10, P1-24, P1-21, GAP-005).
 4. Each service connects under its own least-privilege role and RLS is actually in force — the org GUC alone is not enough (P0-06, S08, GAP-002).
 5. A sentinel/grep test proves no secret is reachable from a process listing, an exported span or a log, and no service token spans unrelated authorities (S01, S04, S05, S06, S07, S11, P1-16). The `PrincipalContext` is signed, or the context-assembly claim records it unsigned in the same change (D6).
@@ -180,14 +180,27 @@ Rows no gate item names: none — all 25 are evidenced above.
 
 Rows no gate item names — S02, P1-14, P2-15, GAP-006, GAP-007, GAP-009 — are closed by the closure rule alone: a merged change with its recorded evidence, not a new run. S02 is **decision-bound as well**: the step-up policy question under **Decisions needed** must be answered before any code change can land, so it cannot close on code alone.
 
-**Decisions needed.** The P0-06 posture: move every service DSN to its capability login, or narrow the tenancy claim. Whether multi-tenant operation is a v1 claim at all (§9 item 5). The S04 split: separate tokens for session issue/validate/revoke and step-up consumption, and org-bound issuance. Whether org deletion requires step-up (S02). Seed policy for a deployed install (P2-13). Whether `PrincipalContext` is signed before a 1.0 claim cites the context-assembly row, or the row records it unsigned (D6).
+**Decisions needed.** The P0-06 posture: move every service DSN to its capability login, or narrow the tenancy claim. Whether multi-tenant operation is a v1 claim at all (§9 item 5). The S04 split: separate tokens for session issue/validate/revoke and step-up consumption, and org-bound issuance. Whether org deletion requires step-up (S02). Seed policy for a deployed install (P2-13). Whether `PrincipalContext` is signed before a 1.0 claim cites the context-assembly row, or the row records it unsigned (D6). Each posture-changing question is written out with its evidence, blast radius and proof requirement in [`36-tenancy-posture-decisions-2026-11-14.md`](36-tenancy-posture-decisions-2026-11-14.md) (D-S1…D-S9).
+
+### 5.1 Closed in this change (6 rows)
+
+Each row is closed by a change that exists in this tree; per the stage closure rule the row closes when that change merges. None is a claim that a hosted run exists, and none promotes a ledger status.
+
+| ID | What the tree now shows |
+|---|---|
+| P1-12 | `BILLING_READ` is enforced on the billing read path, which covers rate-card and budget-period reads (`services/api/app/routers/billing.py`:12,58), and asserted directly on the usage query (`services/api/app/routers/usage_query.py`:34). The dependency and assertion helpers are `services/api/app/authz.py`:117-136 and :154-157. Covered by `services/api/tests/unit/test_billing.py` and `services/api/tests/unit/test_authz.py` |
+| P1-13 | `GET …/legal-holds` now asserts `LEGAL_HOLD_MANAGE` on the bearer token before the read (`services/api/app/routers/legal_holds.py`:39), matching the mutation path's permission; the mutation keeps its step-up wrapper. Covered by `services/api/tests/unit/test_privacy_routers.py` |
+| S03 | The four metadata reads require `OPERATOR_METADATA_READ` instead of authentication alone: capture policies (`services/api/app/routers/capture_policies.py`:37), model policies (`services/api/app/routers/model_policies.py`:54), rate limits (`services/api/app/routers/rate_limits.py`:74), through `RequireOperatorMetadataRead` (`services/api/app/authz.py`:341-344). Covered by `test_model_policies.py`, `test_rate_limits.py` and `test_privacy_routers.py` |
+| P2-08 | Memory create checks a body `agent_id` against an agent-scoped token and rejects a mismatch with 403 `AGENT_NOT_AUTHORIZED` before any write (`services/memory/app/routers/memory_write_support.py`:412-432; call site `services/memory/app/routers/memories.py`:146), and maps the composite `memories_agent_org_fk` foreign-key violation to 404 `NOT_FOUND` instead of 500 (`services/memory/app/routers/memory_write_support.py`:436-475), so an unknown agent and a foreign-tenant agent are the same response. Covered by `services/memory/tests/unit/test_memory_write_support.py` and `test_memories_router_unit.py` |
+| S12 | Token management now requires `TOKEN_CREATE` to list, create and read, and `TOKEN_REVOKE` to revoke (`services/api/app/routers/tokens.py`:61,70,79,88), behind a `RequireTokenManage` entry gate that admits either bit (`services/api/app/authz.py`:161-165); a revoke-only token cannot create. The gap carried **no register ID**; it is added here as S12 so the arithmetic stays explicit. Covered by `services/api/tests/unit/test_tokens_router.py` |
+| S13 | Forget now requires `MEMORY_DELETE` rather than the write permission that creates memories (`services/memory/app/routers/memories.py`:85-99,190-217; `services/memory/app/routers/memory_write_support.py`:515-538 — the destructive erasure is not a visibility toggle). The gap carried **no register ID**; it is added here as S13. Covered by `services/memory/tests/unit/test_memories_router_unit.py` |
+
+### 5.2 Remaining (34 rows)
 
 | ID | Gap | Evidence | Blocker | Source |
 |---|---|---|---|---|
 | P0-06 | No service DSN is on its capability login; RLS enforced only on paths that already pin | 34:115; 31:41 | owner decision | 27:61 |
 | P0-21 | Route-level operator negatives green; no two-tenant browser journey, no proxy/chat negative | 34:116; 31:56 | product | 27:86 |
-| P1-12 | `BILLING_READ` is defined but unenforced; no reference under `services/api/app` | 34:117; `packages/authclient/src/authclient/permissions.py`:20 | product | 27:103 |
-| P1-13 | `GET .../legal-holds` is authentication-only while the mutation requires the permission | 34:118 | product | 27:104 |
 | P1-14 | `mcp-memory` returns `allowed_hosts=[]` with DNS-rebinding protection on | 34:119 | infrastructure | 27:105 |
 | P1-15 | Auth gRPC server TLS exists outside `development` but no negative test asserts it | `services/auth/cmd/auth/main.go`:396,424-437 | code | 27:106 |
 | P1-16 | OTLP export is cleartext unconditionally | 27:107 | code | 27:107 |
@@ -199,7 +212,6 @@ Rows no gate item names — S02, P1-14, P2-15, GAP-006, GAP-007, GAP-009 — are
 | P1-24 | Object-store copies are not proven purged; no bucket lifecycle rule | 27:114 | code | 27:114 |
 | P2-06 | `JWT_KEYSET_GRACE_SECONDS` is read by no code; rotation has no runbook | 27:153 | code | 27:153 |
 | P2-07 | Console BFF has no two-tenant browser evidence | 27:154 | code | 27:154 |
-| P2-08 | Memory create takes `agent_id` from the body; the FK surfaces as a 500 | 27:155 | code | 27:155 |
 | P2-09 | No whole-body size cap on API/memory/MCP | 27:156 | code | 27:156 |
 | P2-13 | Seed on a deployed install can create an active owner-role credential | 27:160 | owner decision | 27:160 |
 | P2-14 | Two irreversible migration families; the release note does not name them | 27:161 | product | 27:161 |
@@ -211,15 +223,14 @@ Rows no gate item names — S02, P1-14, P2-15, GAP-006, GAP-007, GAP-009 — are
 | GAP-007 | Typed lifecycle/provenance/checkpoint and revision ledger missing | 18:13 | code | 18:13 |
 | GAP-009 | MCP/operator boundaries and audit status mixed | 18:15 | code | 18:15 |
 | S01 | Worker `POST /internal/extraction/enqueue` takes `org_id` from the body behind one static token | `services/worker/app/enqueue_http.py`:70-81,141 | code | sweep 2 |
-| S02 | Org deletion needs no step-up; `ORG_SETTINGS_WRITE` is outside the step-up mask | `services/api/app/authz.py`:105-110; `packages/authclient/src/authclient/permissions.py`:63-74 | owner decision | sweep 2 |
-| S03 | Capture-policy, model-policy and rate-limit reads are authentication-only; usage query does not require `BILLING_READ` | `services/api/app/routers/capture_policies.py`:38; `model_policies.py`:55; `rate_limits.py`:75; `usage_query.py`:30-32 | code | sweep 2 |
+| S02 | Org deletion needs no step-up; `ORG_SETTINGS_WRITE` is outside the step-up mask | `services/api/app/authz.py`:107-111; `services/api/app/routers/organizations.py`:68-71; `packages/authclient/src/authclient/permissions.py`:63-74 | owner decision | sweep 2 |
 | S04 | One shared service token admits session issue/validate/revoke and step-up consumption; issuance is not org-bound | `services/auth/internal/grpc/authz.go`:28-33,62-90 | owner decision | sweep 2 |
 | S05 | Context calls memory with one static PAT bound to one org | `services/context/app/clients/memory.py`:117 | code | sweep 2 |
 | S06 | The Redis password is passed on the container argv | `infra/compose/v1-single-node/compose.yml`:45,49 | credential | sweep 2 |
 | S07 | The API holds `auth_service_token`, `jwt_hmac_secret` and `dashboard_csrf_secret` as plain `str` | `services/api/app/config.py`:44,111,145 | credential | sweep 2 |
-| S08 | The Go stores set the org GUC but never `SET LOCAL ROLE`, so RLS stays inert | `packages/idempotency/ledger.go`:113; `packages/evidenceoutbox/store.go`:243; `packages/directive/store.go`:80 | code | sweep 2 |
+| S08 | The stores that set only the org GUC never pin a role, and every service still connects on the owner DSN, so RLS stays inert on those paths | `packages/idempotency/ledger.go`:113; `packages/evidenceoutbox/store.go`:243; `packages/directive/store.go`:80 | code | sweep 2 |
 | S09 | A forget leaves S3 capture archives, ClickHouse events and evidence rows readable | `services/memory/app/lifecycle.py`:145-177 (PostgreSQL child rows only; no S3/ClickHouse path) | code | sweep 2 |
-| S10 | Post-commit cache invalidation failure on forget is logged, not retried | `services/memory/app/routers/memories.py`:215-221 | code | sweep 2 |
+| S10 | Post-commit cache invalidation failure on forget is logged, not retried | `services/memory/app/routers/memory_write_support.py`:541-560 | code | sweep 2 |
 | S11 | MCP servers default `IBEX_ENV=development`, relaxing transport trust if unset | `services/mcp-memory/app/main.py`:79; `services/mcp-memory/app/config.py`:31-33 | code | sweep 2 |
 | D6 | `PrincipalContext` is unsigned; the context-assembly claim row cites this limitation | `00-status-and-evidence.md`:72; 34 §1 P1-34 | owner decision | sweep 1 |
 
@@ -317,12 +328,14 @@ P2: `P2-12` `P2-20` `P2-21` (3).
 GAP: `GAP-011` (1).
 NEW: `O01`–`O08` (8), `W6.3` (1), `W4.6` (1), `R05` (1), `D4` (1), `D11` (1) — 13.
 
-**Stage 3 (38 rows).**
+**Stage 3 (40 rows: 6 closed, 34 remaining).**
+Remaining: `P0-06` `P0-21`; `P1-14` `P1-15` `P1-16` `P1-17` `P1-18` `P1-21` `P1-22` `P1-23` `P1-24`; `P2-06` `P2-07` `P2-09` `P2-13` `P2-14` `P2-15` `P2-22`; `GAP-002` `GAP-005` `GAP-006` `GAP-007` `GAP-009`; `S01` `S02` `S04` `S05` `S06` `S07` `S08` `S09` `S10` `S11`; `D6` (34).
+Closed in §5.1: `P1-12` `P1-13` `S03` `P2-08` (4 rows that existed at `55a62bc4`) plus `S12` `S13` (2 rows added by this pass, both closed by the same change) — 6.
 P0: `P0-06` `P0-21` (2).
-P1: `P1-12` `P1-13` `P1-14` `P1-15` `P1-16` `P1-17` `P1-18` `P1-21` `P1-22` `P1-23` `P1-24` (11).
-P2: `P2-06` `P2-07` `P2-08` `P2-09` `P2-13` `P2-14` `P2-15` `P2-22` (8).
+P1: `P1-14` `P1-15` `P1-16` `P1-17` `P1-18` `P1-21` `P1-22` `P1-23` `P1-24` (9).
+P2: `P2-06` `P2-07` `P2-09` `P2-13` `P2-14` `P2-15` `P2-22` (7).
 GAP: `GAP-002` `GAP-005` `GAP-006` `GAP-007` `GAP-009` (5).
-NEW: `S01`–`S11` (11), `D6` (1) — 12.
+NEW: `S01` `S02` `S04`–`S11` (10), `D6` (1) — 11. The other three NEW rows, `S03` `S12` `S13`, are closed in §5.1.
 
 **Stage 4 (32 rows).**
 P0: `P0-04` `P0-05` `P0-15` `P0-20` `P0-22` (5).
@@ -343,14 +356,16 @@ Ledger: `D1` `G9` (2).
 
 **Closed in the 2026-11-13 stage-2 pass (13 rows).** `O01` `O02` `O03` `O05` `O06` `O07` `O08`; `P1-06` `P1-48` `P1-49` `P2-20` `P2-21`; `W4.6`. Each has its own row and evidence in §4.1; none of these 13 is re-listed in the §4.2 table. `O04` is **partially** closed (documentation half) and stays in §4.2 with the broker decision named. `R05` and `W6.3` are **partially** closed and also stay in §4.2: `R05`'s replay test covers PostgreSQL but not ClickHouse or object storage, and `W6.3` records SLIs but not ratified SLOs.
 
+**Closed in the 2026-11-14 stage-3 pass (6 rows).** `P1-12` `P1-13` `S03` `P2-08`, plus the two rows this pass adds and closes, `S12` and `S13`. Each has its own row and evidence in §5.1; none is re-listed in §5.2. Nothing else in stage 3 closed: every row that changes isolation or authorization posture stays open with its blocker, and its decision is written out in [`36-tenancy-posture-decisions-2026-11-14.md`](36-tenancy-posture-decisions-2026-11-14.md). The brief for this pass listed a subset of the open rows; `P1-15` and `D6` are not in that subset but were open before it and are still open — neither is closed here, because `P1-15` has no negative test and `D6` is an owner decision.
+
 **Arithmetic.**
 
 - **P0: 22 = 11 in stages + 11 closed.** 11 = S1 0 + S2 4 + S3 2 + S4 5; closed = 8 since the audit + `P0-12` `P0-13` `P0-14`.
-- **P1: 51 issued = 30 in stages + 8 not in v1 + 13 closed.** 30 = S1 3 + S2 1 + S3 11 + S4 15; closed = 4 since the audit + `P1-01` `P1-02` `P1-03` `P1-43` `P1-44` `P1-45` + the stage-2 closures `P1-06` `P1-48` `P1-49`. `P1-19` was never issued: the audit runs `P1-01`…`P1-18` then `P1-20`, so the numbering skips and the set of issued rows is 51, all placed.
-- **P2: 25 = 16 in stages + 2 not in v1 + 7 closed.** 16 = S1 0 + S2 1 + S3 8 + S4 7; closed = `P2-03` `P2-04` `P2-10` `P2-11` `P2-23` + the stage-2 closures `P2-20` `P2-21`.
+- **P1: 51 issued = 28 in stages + 8 not in v1 + 15 closed.** 28 = S1 3 + S2 1 + S3 9 + S4 15; closed = 4 since the audit + `P1-01` `P1-02` `P1-03` `P1-43` `P1-44` `P1-45` + the stage-2 closures `P1-06` `P1-48` `P1-49` + the stage-3 closures `P1-12` `P1-13`. `P1-19` was never issued: the audit runs `P1-01`…`P1-18` then `P1-20`, so the numbering skips and the set of issued rows is 51, all placed.
+- **P2: 25 = 15 in stages + 2 not in v1 + 8 closed.** 15 = S1 0 + S2 1 + S3 7 + S4 7; closed = `P2-03` `P2-04` `P2-10` `P2-11` `P2-23` + the stage-2 closures `P2-20` `P2-21` + the stage-3 closure `P2-08`.
 - **GAP: 12 IDs = 11 rows + 1 alias.** 8 stage rows (S1 1 + S2 1 + S3 5 + S4 1) + 3 in §7 = 11; `GAP-003` aliases `P0-14` for routes, gRPC methods and MCP tools, with event contracts recorded out of scope on that row, and adds no row.
-- **NEW and ledger rows: 38 = 22 in stages + 2 in §7 + 14 closed.** 22 = S1 1 + S2 5 + S3 12 + S4 4; §7 holds `D1` and `G9`; closed = `G01` `G02` `G03` `R01` `R03` `R04` + the stage-2 closures `O01` `O02` `O03` `O05` `O06` `O07` `O08` `W4.6`. `R05` and `W6.3` stay in the 5 open stage-2 rows because they are only partially closed.
-- **Staged rows still open: 87 = S1 5 + S2 12 + S3 38 + S4 32.** 120 original staged rows minus the 20 closed in the stage-1 pass and the 13 closed in the stage-2 pass.
+- **NEW and ledger rows: 40 = 22 in stages + 2 in §7 + 16 closed.** 22 = S1 1 + S2 5 + S3 12 + S4 4; §7 holds `D1` and `G9`; closed = `G01` `G02` `G03` `R01` `R03` `R04` + the stage-2 closures `O01` `O02` `O03` `O05` `O06` `O07` `O08` `W4.6` + the stage-3 closures `S12` `S13`. `R05` and `W6.3` stay in the 5 open stage-2 rows because they are only partially closed. The count is 40 rather than 38 because S12 and S13 are new rows, and both are closed, so they add to the total and to the closed set without changing the 22 open placements.
+- **Staged rows still open: 83 = S1 5 + S2 12 + S3 34 + S4 32.** 122 original staged rows (120 at `55a62bc4`, plus the two S12/S13 rows this pass adds) minus the 20 closed in the stage-1 pass, the 13 in the stage-2 pass and the 6 in the stage-3 pass.
 - **W-waves: 38 items, each mapped once.** 38 = W0 3 + W4 6 + W5 5 + W6 4 + W7 5 + W8 6 + W9 4 + W10 5.
 
 **W-wave → stage map.** Every item in `31-v1-release-plan-2026-11-09.md` §4, accounted for once:
@@ -397,6 +412,8 @@ Ledger: `D1` `G9` (2).
 12. **`P1-02` is restated exactly as the plan records it (`31`:133).** The descriptors are committed records (`services/mcp-memory/mcp_tools.json`, `services/mcp-operator/mcp_tools.json`) checked in CI at `infra/scripts/mcp-memory-test-ci.sh`:19 and `infra/scripts/mcp-operator-test-ci.sh`:25. The residual is record-to-live-surface only: no previous-commit diff and no deprecation record per schema change.
 13. **`GAP-003` is not a second defect, and its `event` half is recorded out of scope.** The register's wording (`18-gap-register.md`:9) is "route/proto/event/MCP". Routes, gRPC methods and MCP tools are `P0-14`, which is closed over exactly those three surfaces (§3.1). Event contracts are **not** a shipped surface: `engineering/architecture-v2/contracts/` holds no event schema or registry, the only event endpoint is the registered REST route `operator.events.stream.v1` (`contracts/rest-route-registry.json`:173-178), and the two event-shaped shapes (`evidence-envelope.v1`, `evidence-relay-sink.v1`) are accepted shapes whose runtime is provisional and whose relay is default-off (`03-contract-registry.md`:145-146). The audit's `P0-14` never claimed them (`27-v1-readiness-audit.md`:74 names 75 REST routes, 3 gRPC services and 8 MCP tools). The exclusion is therefore recorded on the `P0-14` row and here; `GAP-003` stays an alias for the three covered surfaces and adds no row to any count.
 14. **`P2-24` is decision-bound, not stage-1 work.** The guard is `infra/scripts/platform/check-helm-digest-placeholders.sh`; whether it is wired or retired depends on D-B (`31`:188), so it sits in §7 rather than in the stage-1 table.
+15. **Two stage-3 rows have no register ID and are added by this pass, not discovered in the audit.** The audit's `P1-12`/`P1-13`/`S03` finding covered *read* authorization; the token-management surface (`services/api/app/routers/tokens.py`) and the forget route (`services/memory/app/routers/memories.py`) were also authorization-only or under-gated and were not separately numbered. They are recorded as `S12` and `S13` so the closure arithmetic names them instead of folding them into a neighbour; stage 3 moves from 38 to 40 rows and the totals are restated in the arithmetic above, not silently inflated.
+16. **`P0-22` stays in stage 4.** It appears among the tenancy rows a reader might expect in stage 3, but its acceptance is a run against the shipped profile (`31`:57), which only the stage-4 smoke path exercises; §2 states that placement and the 2026-11-14 pass does not move it. It remains open with its infrastructure blocker.
 
 ## 9. Open questions
 
@@ -406,5 +423,5 @@ These change the staging itself, not just a row's blocker. Each needs an owner a
 2. **D-C — Console 1.0 is login + mutations, or login + declared read-only.** This decides whether P0-05, P1-40 and much of stage 4 are in scope or replaced by a one-page scope statement. It changes stage 4's size by roughly a week and changes what "done" means.
 3. **D-D — off-host repository and the signed RPO/RTO numbers.** Stage 2's exit gate is defined in terms of a *signed* target; without D-D the drill can be measured but not passed. Silent default: S3/MinIO if available, RPO ≤ 5 min, RTO ≤ 60 min, both drill-measured.
 4. **P0-06 posture — move the DSNs, or narrow the claim.** Either every service connects on its capability login and RLS is in force, or v1 does not claim multi-tenant isolation at the database. This is the largest single fork in stage 3: the first is engineering work across six services plus fixtures, the second is a claims change that shrinks the product.
-5. **Is multi-tenant a v1 claim at all?** If the answer is no — one tenant per install, stated — then P0-06, P0-21, P1-12/13, S01, S04 and S05 lose their v1 urgency and stage 3 becomes a small claim edit. If yes, stage 3 is the longest block in this document. The question is not answered anywhere in the record; it is currently implied by the ledger's isolation wording, not decided.
+5. **Is multi-tenant a v1 claim at all?** If the answer is no — one tenant per install, stated — then P0-06, P0-21, S01, S04 and S05 lose their v1 urgency and stage 3 becomes a small claim edit; P1-12 and P1-13 are already enforced, but the claim they support is the same question. If yes, stage 3 is the longest block in this document. The question is not answered anywhere in the record; it is currently implied by the ledger's isolation wording, not decided.
 6. **R04/D03 sequencing.** Whether the reproducibility checker's unrecorded-run warning becomes a failure before or after stage 4 records the runs. Turning it on today fails on all 81; leaving it a warning keeps stage 4's provenance gate as the only place it becomes an error.

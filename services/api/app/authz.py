@@ -8,6 +8,7 @@ from uuid import UUID
 
 from apierror_py import INSUFFICIENT_PERMISSIONS, NOT_FOUND, SERVICE_DEGRADED
 from authclient.permissions import (
+    BILLING_READ,
     LEGAL_HOLD_MANAGE,
     OPERATOR_DELETE,
     OPERATOR_EXPORT,
@@ -16,6 +17,8 @@ from authclient.permissions import (
     OPERATOR_REPLAY,
     ORG_SETTINGS_WRITE,
     SECRET_USE,
+    TOKEN_CREATE,
+    TOKEN_REVOKE,
     USER_MANAGE,
     has_permission,
     requires_step_up,
@@ -108,6 +111,56 @@ RequireOrgSettings = Annotated[
 RequireOwnerOrgSettings = Annotated[
     ValidateResult,
     Depends(require_roles(OwnerRoles, required_permission=ORG_SETTINGS_WRITE)),
+]
+
+
+def assert_permission(bitmap: int, required: int) -> None:
+    """Raise 403 unless the bitmap carries the required permission bit."""
+    if not has_permission(bitmap, required):
+        raise ApiError(
+            code=INSUFFICIENT_PERMISSIONS,
+            message=INSUFFICIENT_PERMISSIONS_MSG,
+        )
+
+
+def require_permission(required: int) -> Callable[..., ValidateResult]:
+    """Require one permission bit on a bearer token without a role gate."""
+
+    def _dep(
+        token: Annotated[ValidateResult, Depends(require_token)],
+    ) -> ValidateResult:
+        assert_permission(token.permissions, required)
+        return token
+
+    return _dep
+
+
+def require_any_permission(*required: int) -> Callable[..., ValidateResult]:
+    """Require at least one of the given permission bits on a bearer token."""
+
+    def _dep(
+        token: Annotated[ValidateResult, Depends(require_token)],
+    ) -> ValidateResult:
+        if not any(has_permission(token.permissions, bit) for bit in required):
+            raise ApiError(
+                code=INSUFFICIENT_PERMISSIONS,
+                message=INSUFFICIENT_PERMISSIONS_MSG,
+            )
+        return token
+
+    return _dep
+
+
+RequireBillingRead = Annotated[
+    ValidateResult,
+    Depends(require_permission(BILLING_READ)),
+]
+# Token-management entry gate: either management bit admits the request; the
+# route enforces the operation-specific bit (TOKEN_CREATE vs TOKEN_REVOKE) so a
+# revoke-only token keeps working for delete and cannot create.
+RequireTokenManage = Annotated[
+    ValidateResult,
+    Depends(require_any_permission(TOKEN_CREATE, TOKEN_REVOKE)),
 ]
 
 

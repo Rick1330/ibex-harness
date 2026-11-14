@@ -6,11 +6,13 @@ from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
+from authclient.permissions import TOKEN_CREATE, TOKEN_REVOKE
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.client import ValidateResult, parse_authorization_header
-from app.deps import org_session, require_token
+from app.auth.client import parse_authorization_header
+from app.authz import RequireTokenManage, assert_permission
+from app.deps import org_session
 from app.pagination import CursorPage, ListQuery
 from app.schemas.tokens import TokenCreateRequest, TokenCreateResponse, TokenResponse
 from app.services import tokens as token_service
@@ -40,7 +42,7 @@ class _TokenCtx:
 
 def _token_ctx(
     request: Request,
-    token: Annotated[ValidateResult, Depends(require_token)],
+    token: RequireTokenManage,
     access_token: Annotated[str, Depends(_bearer_token)],
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> _TokenCtx:
@@ -56,6 +58,7 @@ async def list_tokens(
     ctx: Annotated[_TokenCtx, Depends(_token_ctx)],
     query: Annotated[ListQuery, Depends(_list_query)],
 ) -> CursorPage[TokenResponse]:
+    assert_permission(ctx.access.token.permissions, TOKEN_CREATE)
     return await token_service.list_tokens(ctx.access, query)
 
 
@@ -64,6 +67,7 @@ async def create_token(
     body: TokenCreateRequest,
     ctx: Annotated[_TokenCtx, Depends(_token_ctx)],
 ) -> TokenCreateResponse:
+    assert_permission(ctx.access.token.permissions, TOKEN_CREATE)
     return await token_service.create_token(ctx.session, ctx.access, body)
 
 
@@ -72,6 +76,7 @@ async def get_token(
     token_id: UUID,
     ctx: Annotated[_TokenCtx, Depends(_token_ctx)],
 ) -> TokenResponse:
+    assert_permission(ctx.access.token.permissions, TOKEN_CREATE)
     return await token_service.get_token(ctx.access, token_id)
 
 
@@ -80,5 +85,6 @@ async def delete_token(
     token_id: UUID,
     ctx: Annotated[_TokenCtx, Depends(_token_ctx)],
 ) -> Response:
+    assert_permission(ctx.access.token.permissions, TOKEN_REVOKE)
     await token_service.revoke_token(ctx.access, token_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

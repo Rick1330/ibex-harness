@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
+from authclient.permissions import BILLING_READ
 from fastapi import APIRouter, Depends, Request
 
 from app.auth.client import ValidateResult
-from app.authz import assert_path_org
+from app.authz import assert_path_org, assert_permission
 from app.deps import require_token
 from app.schemas.billing import UsageQueryRequest, UsageQueryResponse
 from app.services import usage_query as usage_query_service
@@ -30,6 +31,7 @@ async def query_usage(
     token: Annotated[ValidateResult, Depends(require_token)],
 ) -> UsageQueryResponse:
     assert_path_org(token.org_id, org_id)
+    assert_permission(token.permissions, BILLING_READ)
     settings = _settings(request)
     redis_url = getattr(settings, "redis_url", None) if settings else None
     ch_url = getattr(settings, "clickhouse_http_url", None) if settings else None

@@ -295,3 +295,53 @@ def test_assert_operator_permission_kill_switches() -> None:
         with pytest.raises(ApiError) as exc:
             assert_operator_permission(settings, perm, perm)
         assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+
+def test_assert_permission_denies_missing_bit() -> None:
+    from authclient.permissions import TOKEN_CREATE
+
+    from app.authz import assert_permission
+
+    with pytest.raises(ApiError) as exc:
+        assert_permission(0, TOKEN_CREATE)
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+    assert_permission(TOKEN_CREATE, TOKEN_CREATE)
+
+
+def test_require_permission_dependency() -> None:
+    from authclient.permissions import BILLING_READ
+
+    from app.authz import require_permission
+
+    dep = require_permission(BILLING_READ)
+    denied = ValidateResult(org_id=uuid4(), permissions=0, user_id=str(uuid4()))
+    with pytest.raises(ApiError) as exc:
+        dep(token=denied)
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+    allowed = ValidateResult(
+        org_id=uuid4(), permissions=BILLING_READ, user_id=str(uuid4())
+    )
+    assert dep(token=allowed) is allowed
+
+
+def test_require_any_permission_dependency() -> None:
+    from authclient.permissions import TOKEN_CREATE, TOKEN_REVOKE
+
+    from app.authz import require_any_permission
+
+    dep = require_any_permission(TOKEN_CREATE, TOKEN_REVOKE)
+    denied = ValidateResult(org_id=uuid4(), permissions=0, user_id=str(uuid4()))
+    with pytest.raises(ApiError) as exc:
+        dep(token=denied)
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+    create_only = ValidateResult(
+        org_id=uuid4(), permissions=TOKEN_CREATE, user_id=str(uuid4())
+    )
+    assert dep(token=create_only) is create_only
+
+    revoke_only = ValidateResult(
+        org_id=uuid4(), permissions=TOKEN_REVOKE, user_id=str(uuid4())
+    )
+    assert dep(token=revoke_only) is revoke_only

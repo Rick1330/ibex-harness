@@ -121,6 +121,17 @@ class LabelViolationOpts:
     message: str = 'duplicate key value violates unique constraint "memory_labels_pkey"'
 
 
+@dataclass(frozen=True, slots=True)
+class AgentFkViolationOpts:
+    sqlstate: str | None = "23503"
+    pgcode: str | None = None
+    constraint_name: str = "memories_agent_org_fk"
+    message: str = (
+        'insert or update on table "memories" violates foreign key constraint '
+        '"memories_agent_org_fk"'
+    )
+
+
 def mock_session_returning_row(row: SimpleNamespace) -> AsyncMock:
     session = AsyncMock()
     result = MagicMock()
@@ -129,19 +140,37 @@ def mock_session_returning_row(row: SimpleNamespace) -> AsyncMock:
     return session
 
 
+def _integrity_error(
+    *,
+    message: str,
+    sqlstate: str | None = None,
+    pgcode: str | None = None,
+    constraint_name: str = "",
+) -> IntegrityError:
+    """Build an IntegrityError whose ``orig`` carries driver-style attributes."""
+    exc = IntegrityError("insert", {}, Exception("dup"))
+    orig = MagicMock()
+    orig.sqlstate = sqlstate
+    orig.pgcode = pgcode
+    orig.constraint_name = constraint_name
+    orig.diag = None
+    orig.detail = ""
+    orig.__str__ = lambda self: message
+    exc.orig = orig
+    return exc
+
+
 def hash_violation_integrity_error(
     opts: HashViolationOpts | None = None,
 ) -> IntegrityError:
     cfg = opts or HashViolationOpts()
-    exc = IntegrityError("insert", {}, Exception("dup"))
-    orig = MagicMock()
-    orig.sqlstate = cfg.sqlstate
-    orig.pgcode = cfg.pgcode
-    orig.constraint_name = cfg.constraint_name
-    orig.diag = None
-    orig.detail = cfg.detail
-    orig.__str__ = lambda self: cfg.message
-    exc.orig = orig
+    exc = _integrity_error(
+        message=cfg.message,
+        sqlstate=cfg.sqlstate,
+        pgcode=cfg.pgcode,
+        constraint_name=cfg.constraint_name,
+    )
+    exc.orig.detail = cfg.detail
     return exc
 
 
@@ -149,9 +178,17 @@ def label_violation_integrity_error(
     opts: LabelViolationOpts | None = None,
 ) -> IntegrityError:
     cfg = opts or LabelViolationOpts()
-    exc = IntegrityError("insert", {}, Exception("dup"))
-    orig = MagicMock()
-    orig.constraint_name = cfg.constraint_name
-    orig.__str__ = lambda self: cfg.message
-    exc.orig = orig
-    return exc
+    return _integrity_error(message=cfg.message, constraint_name=cfg.constraint_name)
+
+
+def agent_fk_violation_integrity_error(
+    opts: AgentFkViolationOpts | None = None,
+) -> IntegrityError:
+    """IntegrityError shaped like a memories -> agents composite-FK violation."""
+    cfg = opts or AgentFkViolationOpts()
+    return _integrity_error(
+        message=cfg.message,
+        sqlstate=cfg.sqlstate,
+        pgcode=cfg.pgcode,
+        constraint_name=cfg.constraint_name,
+    )

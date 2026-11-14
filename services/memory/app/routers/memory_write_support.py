@@ -16,6 +16,7 @@ import logging
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, Response
@@ -32,16 +33,21 @@ from ibex_idempotency import (
     PostgresIdempotencyLedger,
 )
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.client import ValidateResult
 from app.erased_response import ERASED_MARKER_BODY, is_erased_marker
 from app.exceptions import (
+    ConflictError,
     DuplicateMemoryError,
     EmbeddingServiceError,
+    MemoryNotFoundError,
     MemoryOrganizationUnavailableError,
     StaleLifecycleError,
     ValidationError,
 )
+from app.lifecycle import ForgetMemory, forget_memory_session
 from app.schemas.limits import MAX_IDEMPOTENCY_KEY_LENGTH
 from app.schemas.memories import (
     CreateMemoryMeta,
@@ -401,6 +407,156 @@ def http_internal_error_for_write() -> HTTPException:
         status_code=500,
         detail={"code": "INTERNAL_ERROR", "message": "Memory write failed"},
     )
+
+
+def ensure_write_agent_authorized(token: ValidateResult, body_agent_id: UUID) -> None:
+    """Reject an agent-scoped token that writes for a different agent.
+
+    An org-scoped token (``agent_id is None``) may act for any agent in its
+    organization, and the composite ``(agent_id, org_id)`` foreign key is the
+    backstop there. An agent-scoped token is bound to exactly one agent, so a
+    body ``agent_id`` that differs is a 403 before any write is attempted —
+    otherwise the token could write memories for a sibling agent in the same
+    organization.
+    """
+    if token.agent_id is not None and token.agent_id != body_agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "AGENT_NOT_AUTHORIZED",
+                "message": "Token is not authorized for the requested agent",
+            },
+        )
+
+
+_UNKNOWN_AGENT_CONSTRAINT = "memories_agent_org_fk"
+_FOREIGN_KEY_VIOLATION = "23503"
+
+
+def is_unknown_agent_violation(exc: BaseException) -> bool:
+    """True when a memories insert failed the composite (agent_id, org_id) FK.
+
+    ``memories_agent_org_fk`` is the only constraint that rejects an agent id
+    absent from the caller's organization. Mapping it to a 404 keeps "unknown
+    agent" from becoming a 500, and the same 404 covers an agent owned by
+    another tenant, so the response does not leak existence across orgs.
+    """
+    if not isinstance(exc, IntegrityError):
+        return False
+    orig = getattr(exc, "orig", None)
+    if orig is None:
+        return False
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate != _FOREIGN_KEY_VIOLATION:
+        return False
+    diag = getattr(orig, "diag", None)
+    constraint = getattr(orig, "constraint_name", None) or (
+        getattr(diag, "constraint_name", None) if diag is not None else None
+    )
+    if constraint:
+        return constraint == _UNKNOWN_AGENT_CONSTRAINT
+    return _UNKNOWN_AGENT_CONSTRAINT in f"{orig!s} {exc!s}"
+
+
+def http_error_for_unknown_agent() -> HTTPException:
+    """404 for an agent id the caller's organization cannot resolve."""
+    return HTTPException(
+        status_code=404,
+        detail={"code": "NOT_FOUND", "message": "Agent not found"},
+    )
+
+
+def require_agent_scope(token: ValidateResult) -> UUID:
+    """Return the token's agent id, or 403 when the token is org-scoped."""
+    if token.agent_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "AGENT_SCOPE_REQUIRED", "message": "Agent-scoped token required"},
+        )
+    return token.agent_id
+
+
+async def create_memory_outcome(
+    orchestrator: Any,
+    command: CreateMemoryCommand,
+    idem: IdempotencyHandle,
+    org_id: UUID,
+) -> WriteOutcome:
+    """Run the write and map every failure to its stable HTTP envelope.
+
+    The domain errors keep their specific status; an unknown agent is the
+    composite-FK 404; anything else is a logged 500. The idempotency slot is
+    released on every failure path so a retry can re-claim it.
+    """
+    try:
+        return await orchestrator.create(command)
+    except (
+        DuplicateMemoryError,
+        ValidationError,
+        EmbeddingServiceError,
+        StaleLifecycleError,
+        MemoryOrganizationUnavailableError,
+    ) as exc:
+        await release_idempotency(idem)
+        raise http_error_for_write(exc) from exc
+    except Exception as exc:
+        await release_idempotency(idem)
+        if is_unknown_agent_violation(exc):
+            raise http_error_for_unknown_agent() from exc
+        logger.exception(
+            "memory write failed org_id=%s agent_id=%s error_class=%s",
+            org_id,
+            command.agent_id,
+            type(exc).__name__,
+        )
+        raise http_internal_error_for_write() from exc
+
+
+async def forget_memory_with_error_mapping(
+    *,
+    session_factory: Any,
+    command: ForgetMemory,
+) -> int:
+    """Tombstone a memory, mapping lifecycle and database failures to HTTP."""
+    try:
+        async with session_factory() as session, session.begin():
+            return await forget_memory_session(session, command)
+    except MemoryNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "Memory not found"},
+        ) from exc
+    except ConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "DATABASE_UNAVAILABLE", "message": "Database unavailable"},
+        ) from exc
+
+
+async def invalidate_forgotten_memory(
+    cache_writer: Any,
+    *,
+    org_id: UUID,
+    agent_id: UUID,
+    memory_id: UUID,
+) -> None:
+    """Best-effort cache invalidation after a committed forget."""
+    if cache_writer is None:
+        return
+    try:
+        await cache_writer.forget_memory(org_id=org_id, agent_id=agent_id, memory_id=memory_id)
+    except Exception:
+        logger.warning(  # NOSONAR pythonsecurity:S5145 - UUID hex is hex-only, not free text
+            "memory cache invalidation failed after committed forget org_id=%s memory_id=%s",
+            org_id.hex,
+            memory_id.hex,
+            exc_info=True,
+        )
 
 
 def memory_command_from_request(
