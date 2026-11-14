@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto"
+
 import type { H3Event } from "h3"
 import {
   appendResponseHeader,
   createError,
   getCookie,
   getHeader,
+  getMethod,
   getRequestURL,
   sendRedirect,
   setResponseHeader,
@@ -387,20 +390,31 @@ async function fetchOperatorJsonAttempt<T>(
   if (!response.ok) {
     // Recover an expired access cookie once, then retry this exact read with the
     // freshly issued value. The retry never refreshes again, so a second 401
-    // falls through to the login redirect instead of looping.
+    // falls through to the unauthenticated branch instead of looping.
     if (response.status === 401 && rotatedAccess === null) {
       const rotated = await rotateAccessCookie(event)
       if (rotated) {
         return fetchOperatorJsonAttempt(event, path, parse, options, rotated)
       }
     }
-    // Fail closed: no data, and the operator is sent to sign in. A document
-    // request and a server-render data fetch both land here; the response
-    // carries the redirect instead of a partial or fabricated payload.
+    // Fail closed: no data and no invented payload. Only a browser document
+    // navigation may be redirected, because a followed redirect would hand the
+    // login page back to the caller as a 200 body and `useAsyncData` would store
+    // that HTML as operator data. Every other caller gets a 401 so
+    // `isOperatorAuthError` can render the sign-in state.
     if (response.status === 401) {
-      const location = loginLocation(event)
-      sendRedirect(event, location, 302)
-      throw new OperatorLoginRedirect(location)
+      if (isDocumentRequest(event)) {
+        const location = loginLocation(event)
+        sendRedirect(event, location, 302)
+        throw new OperatorLoginRedirect(location)
+      }
+      const parsed = ApiErrorSchema.safeParse(body)
+      throw new OperatorUpstreamError(
+        401,
+        parsed.success ? parsed.data.error.code : "UNAUTHENTICATED",
+        parsed.success ? parsed.data.error.message : "Operator session required",
+        parsed.success ? (parsed.data.error.request_id ?? null) : null,
+      )
     }
     const parsed = ApiErrorSchema.safeParse(body)
     throw new OperatorUpstreamError(
@@ -440,6 +454,22 @@ export function loginLocation(event: H3Event): string {
   const url = getRequestURL(event)
   const next = `${url.pathname}${url.search}`
   return `${LOGIN_PATH}?next=${encodeURIComponent(next)}`
+}
+
+/**
+ * Whether the caller is a browser navigating to a document.
+ *
+ * Only a `GET` that explicitly accepts HTML is redirected. An SSR data read
+ * cannot be mistaken for one: Nitro's `event.fetch`/`event.$fetch` forwards the
+ * outer request headers through h3's `getProxyRequestHeaders`, which drops
+ * `accept`, so an internal sub-request arrives here without an HTML `Accept`.
+ * That is what keeps a server-rendered data fetch on the 401 path while a real
+ * page navigation still gets the redirect.
+ */
+function isDocumentRequest(event: H3Event): boolean {
+  if (getMethod(event) !== "GET") return false
+  const accept = (getHeader(event, "accept") ?? "").toLowerCase()
+  return accept.includes("text/html")
 }
 
 function setCookieHeaders(response: Response): string[] {
@@ -530,7 +560,7 @@ async function performSessionAction(
   event: H3Event,
   action: OperatorSessionAction,
   body?: { pat: string },
-  options: { csrfFromCookie?: boolean } = {},
+  options: { csrfFromCookie?: boolean; synthesizeOrigin?: boolean } = {},
 ): Promise<SessionOutcome> {
   const target = new URL(SESSION_PATHS[action], configuredOrigin(event))
   const headers = new Headers({ Accept: "application/json" })
@@ -554,11 +584,22 @@ async function performSessionAction(
   if (csrf) headers.set("X-CSRF-Token", csrf)
 
   // The API's CSRF middleware checks Origin (Referer fallback) outside
-  // development. Forward the browser's own origin; never synthesize one.
+  // development, and it checks origin *before* the CSRF token. Forward the
+  // browser's own origin when it sent one. A server-side refresh is the one
+  // exception: it is driven by a GET that normally carries neither header, so
+  // without an Origin the API answers 403 and a valid session is sent to login.
+  // Supply this Console's own request origin for that call only. The API
+  // validates the value against its CORS_ORIGINS allow-list
+  // (`services/api/app/middleware/csrf.py::_origin_allowed`), so a forged Host
+  // that yields a different origin is rejected upstream. The cookie/header
+  // double-submit proof is unchanged.
   const origin = getHeader(event, "origin")
   if (origin) headers.set("Origin", origin)
   const referer = getHeader(event, "referer")
   if (referer) headers.set("Referer", referer)
+  if (!origin && !referer && options.synthesizeOrigin) {
+    headers.set("Origin", getRequestURL(event, { xForwardedHost: true }).origin)
+  }
 
   let payload: string | undefined
   if (body) {
@@ -602,12 +643,32 @@ async function performSessionAction(
 }
 
 /**
+ * In-flight rotations, keyed by a hash of the refresh cookie value.
+ *
+ * An expiring access cookie makes several parallel reads 401 at once. The API
+ * accepts a refresh token once, so without sharing the rotation every loser is
+ * treated as an invalid session and the browser is sent to login during an
+ * ordinary page load. The map holds the shared promise only while it is in
+ * flight; an entry deletes itself when it settles, and the size cap keeps a
+ * pathological burst from growing the map without bound. The key is hashed so
+ * the raw refresh token is not retained as a map key.
+ */
+const ROTATIONS_IN_FLIGHT = new Map<string, Promise<string | null>>()
+const MAX_ROTATIONS_IN_FLIGHT = 256
+
+function rotationKey(refreshToken: string): string {
+  return createHash("sha256").update(refreshToken).digest("hex")
+}
+
+/**
  * Rotate the access cookie once, server-side, and return the newly issued value.
  *
  * Returns null when there is no refresh cookie to present or the API refuses to
  * rotate. The rotated `Set-Cookie` headers are relayed to this response; the
  * caller retries the original read with the returned value because the incoming
- * request still carries the expired cookie.
+ * request still carries the expired cookie. Concurrent callers that present the
+ * same refresh cookie share one in-flight rotation, so the API's single-use
+ * refresh token is not replayed by a second caller.
  *
  * The refresh is a direct `fetch` to the upstream API through
  * `performSessionAction`, which relays `Set-Cookie` to *this* event. Do not
@@ -619,13 +680,40 @@ async function performSessionAction(
  * response headers itself.
  */
 async function rotateAccessCookie(event: H3Event): Promise<string | null> {
-  if (!getCookie(event, refreshCookieName())) return null
+  const refreshToken = getCookie(event, refreshCookieName())
+  if (!refreshToken) return null
+
+  const key = rotationKey(refreshToken)
+  const shared = ROTATIONS_IN_FLIGHT.get(key)
+  if (shared) return shared
+
+  if (ROTATIONS_IN_FLIGHT.size >= MAX_ROTATIONS_IN_FLIGHT) {
+    // Bound the map, not the rotation: drop the oldest in-flight entry. Its
+    // waiters still hold the promise; a new caller starts its own rotation
+    // instead of the map growing without limit.
+    const oldest = ROTATIONS_IN_FLIGHT.keys().next().value
+    if (oldest !== undefined) ROTATIONS_IN_FLIGHT.delete(oldest)
+  }
+
+  const rotation = performRefresh(event)
+  ROTATIONS_IN_FLIGHT.set(key, rotation)
+  try {
+    return await rotation
+  } finally {
+    if (ROTATIONS_IN_FLIGHT.get(key) === rotation) ROTATIONS_IN_FLIGHT.delete(key)
+  }
+}
+
+async function performRefresh(event: H3Event): Promise<string | null> {
   try {
     const { setCookies } = await performSessionAction(event, "refresh", undefined, {
       // The API enforces CSRF double-submit on refresh. The browser's CSRF
       // cookie arrived with this request; reuse it as the header so a
       // server-side rotation carries the same proof the page would send.
       csrfFromCookie: true,
+      // A read is a GET, so it usually carries no Origin/Referer. Supply the
+      // Console's own origin so the API's origin check can pass.
+      synthesizeOrigin: true,
     })
     return cookieValueFromSetCookie(setCookies, accessCookieName(event))
   } catch {

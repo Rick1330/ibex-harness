@@ -14,6 +14,7 @@
 #   IBEX_V1_ENV_FILE=/tmp/x/.env
 #   IBEX_V1_SECRETS_DIR=/tmp/x/secrets
 #   IBEX_V1_CERTS_DIR=/tmp/x/certs
+#   IBEX_V1_PGBACKREST_CONF=/tmp/x/pgbackrest.conf
 #
 # Idempotent: existing non-empty secret values and valid keypairs are kept.
 # --force rewrites .env from infra/compose/v1-single-node/.env.example and regenerates every
@@ -26,6 +27,12 @@
 # so regenerating it would orphan every existing backup. A rotation is requested
 # explicitly with --rotate-pgbackrest-cipher, which refuses while a value exists
 # unless IBEX_PGBACKREST_ALLOW_CIPHER_ROTATION=1 is set.
+#
+# An unreadable .env is a hard error, not an empty value: reading it as empty
+# would generate a new passphrase and orphan every existing backup. The
+# replacement .env is staged in a temporary file with the retained passphrase
+# already written, then renamed into place, so an interruption between the two
+# cannot leave .env without the only copy of the key.
 #
 # The container copies in the secrets directory are mode 0444 so uid 10001 can
 # read them. The directory itself is 0700; that is the access boundary. Canonical
@@ -44,6 +51,9 @@ CERTS_DIR="${IBEX_V1_CERTS_DIR:-$ROOT_DIR/infra/compose/v1-single-node/certs}"
 BOOTSTRAP_DIR="$ROOT_DIR/infra/compose/v1-single-node/bootstrap"
 EXAMPLE_ENV="$ROOT_DIR/infra/compose/v1-single-node/.env.example"
 TLS_SCRIPT="$ROOT_DIR/infra/scripts/gen-v1-tls.sh"
+# The stanza config is generated output, not a secret. The override exists so
+# the regression tests never rewrite the file a running profile mounts.
+PGBACKREST_CONF_DEST="${IBEX_V1_PGBACKREST_CONF:-$ROOT_DIR/infra/backup/pgbackrest/pgbackrest.conf}"
 
 usage() {
   cat <<'EOF'
@@ -114,10 +124,13 @@ env_value() {
   python3 "$ROOT_DIR/infra/scripts/lib/dotenv.py" "$key" <"$ENV_FILE"
 }
 
-env_set() {
-  local key="$1" value="$2" tmp
-  tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
-  KEY="$key" VALUE="$value" python3 - "$ENV_FILE" >"$tmp" <<'PY'
+# env_set_file writes one key into an arbitrary env file through a temporary
+# file in the same directory and an atomic rename. A failure removes the partial
+# write and leaves the target untouched.
+env_set_file() {
+  local path="$1" key="$2" value="$3" tmp
+  tmp="$(mktemp "${path}.tmp.XXXXXX")"
+  if ! KEY="$key" VALUE="$value" python3 - "$path" >"$tmp" <<'PY'
 import os
 import re
 import sys
@@ -145,26 +158,57 @@ if not found:
     out.append(f"{key}={value}")
 sys.stdout.write("\n".join(out) + "\n")
 PY
+  then
+    rm -f "$tmp"
+    return 1
+  fi
   chmod 0600 "$tmp"
-  mv "$tmp" "$ENV_FILE"
+  mv -f "$tmp" "$path"
 }
 
+env_set() {
+  env_set_file "$ENV_FILE" "$1" "$2"
+}
+
+# ensure_env_file creates .env from the template when it is absent, and under
+# --force replaces it with a fresh template.
+#
+# The replacement is staged beside the original and renamed into place only once
+# it is complete. The retained repository passphrase is written into the staged
+# file *before* the rename: it is the only key to every object in the backup
+# repository, so an interruption between "template written" and "passphrase
+# written" must not be able to leave .env holding no copy of it. Any staging
+# failure removes the temporary file and exits with the original untouched.
 ensure_env_file() {
-  local env_dir
+  local env_dir tmp
   env_dir="$(dirname "$ENV_FILE")"
   mkdir -p "$env_dir"
   # Do not chmod the env directory: the default is the repository root, and
   # narrowing it would break the working tree. The file itself is 0600.
 
-  if [[ ! -f "$ENV_FILE" ]]; then
-    cp "$EXAMPLE_ENV" "$ENV_FILE"
+  if [[ -f "$ENV_FILE" && "$FORCE" -eq 0 ]]; then
     chmod 0600 "$ENV_FILE"
-  elif [[ "$FORCE" -eq 1 ]]; then
-    cp "$EXAMPLE_ENV" "$ENV_FILE"
-    chmod 0600 "$ENV_FILE"
-    echo "gen-v1-secrets.sh: --force rewrote $ENV_FILE from the template" >&2
-  else
-    chmod 0600 "$ENV_FILE"
+    return 0
+  fi
+
+  tmp="$(mktemp "${ENV_FILE}.new.XXXXXX")"
+  chmod 0600 "$tmp"
+  if ! cp "$EXAMPLE_ENV" "$tmp"; then
+    rm -f "$tmp"
+    echo "gen-v1-secrets.sh: could not stage a replacement .env; $ENV_FILE is unchanged" >&2
+    exit 1
+  fi
+  if [[ -n "$PREVIOUS_CIPHER_PASS" ]]; then
+    if ! env_set_file "$tmp" PGBACKREST_REPO1_CIPHER_PASS "$PREVIOUS_CIPHER_PASS"; then
+      rm -f "$tmp"
+      echo "gen-v1-secrets.sh: could not carry PGBACKREST_REPO1_CIPHER_PASS into the staged .env; $ENV_FILE is unchanged" >&2
+      exit 1
+    fi
+  fi
+  mv -f "$tmp" "$ENV_FILE"
+  chmod 0600 "$ENV_FILE"
+  if [[ "$FORCE" -eq 1 ]]; then
+    echo "gen-v1-secrets.sh: --force rewrote $ENV_FILE from the template (repository passphrase preserved)" >&2
   fi
 }
 
@@ -289,7 +333,7 @@ install_secret_copy() {
 # It is rewritten on every run so the endpoint, bucket, and cluster user cannot
 # drift from .env.
 write_pgbackrest_conf() {
-  local dest="$ROOT_DIR/infra/backup/pgbackrest/pgbackrest.conf"
+  local dest="$PGBACKREST_CONF_DEST"
   local endpoint bucket user tmp
   endpoint="$(env_value IBEX_OBJECTSTORE_ENDPOINT)"
   endpoint="${endpoint:-http://objectstore:9000}"
@@ -389,9 +433,27 @@ echo
 # passphrase. Capture it first: it is the only key to every object in the
 # repository, so losing it makes existing backups unreadable. --force reuses it;
 # only --rotate-pgbackrest-cipher replaces it.
+#
+# A failed read is not an absent value. `|| true` used to turn an unreadable
+# .env into an empty passphrase, after which --force rewrote the file and the
+# generator produced a new key: every existing backup silently orphaned. An
+# unreadable file therefore aborts here, before ensure_env_file can replace it.
 PREVIOUS_CIPHER_PASS=""
-if [[ -f "$ENV_FILE" ]]; then
-  PREVIOUS_CIPHER_PASS="$(env_value PGBACKREST_REPO1_CIPHER_PASS || true)"
+if [[ -e "$ENV_FILE" || -L "$ENV_FILE" ]]; then
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "gen-v1-secrets.sh: $ENV_FILE exists but is not a regular file; refusing to continue" >&2
+    exit 1
+  fi
+  if ! PREVIOUS_CIPHER_PASS="$(env_value PGBACKREST_REPO1_CIPHER_PASS)"; then
+    cat >&2 <<EOF
+gen-v1-secrets.sh: cannot read $ENV_FILE.
+PGBACKREST_REPO1_CIPHER_PASS may be set there, and it is the only key to every
+object in the backup repository. Refusing to continue: generating a new
+passphrase would leave the repository intact but unreadable, and rewriting .env
+would discard the old one. Fix the ownership/permissions on the file and rerun.
+EOF
+    exit 1
+  fi
 fi
 if (( ROTATE_CIPHER )) && [[ -n "$PREVIOUS_CIPHER_PASS" ]] \
   && [[ "${IBEX_PGBACKREST_ALLOW_CIPHER_ROTATION:-0}" != "1" ]]; then

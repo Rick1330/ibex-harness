@@ -33,6 +33,7 @@ function fakeEvent(
 ): FakeEvent {
   const req = new IncomingMessage(new Socket())
   req.url = init.url ?? "/"
+  req.method = "GET"
   req.headers = { host: "console.example", ...init.headers }
   const res = new ServerResponse(req)
   return { event: createEvent(req, res), req, res }
@@ -83,6 +84,20 @@ function stubFetch(handler: (target: URL, init: RequestInit) => Response | Promi
   )
   vi.stubGlobal("fetch", fetchMock)
   return fetchMock
+}
+
+/** Map a `fetchOperatorJson` rejection the way a BFF route does. */
+async function mappedHttpError(run: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await run()
+  } catch (error) {
+    try {
+      toHttpError(error)
+    } catch (mapped) {
+      return mapped
+    }
+  }
+  return undefined
 }
 
 beforeEach(() => {
@@ -229,9 +244,11 @@ describe("BFF 401 page-load handling", () => {
     )
   })
 
-  it("redirects a data fetch to /login without refreshing when there is no refresh cookie", async () => {
+  it("returns 401 to a data fetch without refreshing when there is no refresh cookie", async () => {
     // Fail closed: no data and no invented payload. With nothing to rotate, the
-    // API must not be asked to refresh, and the operator is sent to sign in.
+    // API must not be asked to refresh. A data caller gets 401 rather than a
+    // redirect, because a followed redirect would hand it the login page as a
+    // 200 body and `useAsyncData` would store that HTML as operator data.
     const { event, res } = fakeEvent({
       url: "/api/operator/overview",
       headers: { accept: "application/json", cookie: "ibex_session=expired" },
@@ -240,15 +257,64 @@ describe("BFF 401 page-load handling", () => {
       upstream({ error: { code: "INVALID_SESSION", message: "Session required" } }, { status: 401 }),
     )
 
-    await expect(fetchOperatorJson(event, "overview", (value) => value)).rejects.toBeInstanceOf(
-      OperatorLoginRedirect,
-    )
+    let httpError: unknown
+    try {
+      await fetchOperatorJson(event, "overview", (value) => value)
+    } catch (error) {
+      try {
+        toHttpError(error)
+      } catch (mapped) {
+        httpError = mapped
+      }
+    }
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(res.statusCode).toBe(302)
-    expect(headerValue(res.getHeader("location"))).toBe(
-      `/login?next=${encodeURIComponent("/api/operator/overview")}`,
+    expect(httpError).toMatchObject({
+      statusCode: 401,
+      data: { error: { code: "INVALID_SESSION" } },
+    })
+    // No redirect was written: the caller decides how to show the sign-in state.
+    expect(res.getHeader("location")).toBeUndefined()
+  })
+
+  it("returns 401 to an internal data read that carries no Accept header", async () => {
+    // Nitro's `event.fetch` does not forward the outer document's Accept (h3
+    // drops it in `getProxyRequestHeaders`), so an SSR data read arrives with no
+    // Accept at all. It must not be mistaken for a document navigation.
+    const { event, res } = fakeEvent({
+      url: "/api/operator/overview",
+      headers: { cookie: "ibex_session=expired" },
+    })
+    stubFetch(() =>
+      upstream({ error: { code: "INVALID_SESSION", message: "Session required" } }, { status: 401 }),
     )
+
+    const httpError = await mappedHttpError(() =>
+      fetchOperatorJson(event, "overview", (value) => value),
+    )
+
+    expect(httpError).toMatchObject({ statusCode: 401 })
+    expect(res.getHeader("location")).toBeUndefined()
+  })
+
+  it("returns 401 to a non-GET request even when it accepts HTML", async () => {
+    // Only a GET document navigation is redirected; a POST that accepts HTML is
+    // still a data caller and must see the status, not a followed login page.
+    const { event, res } = fakeEvent({
+      url: "/api/operator/overview",
+      headers: { accept: "text/html", cookie: "ibex_session=expired" },
+    })
+    event.node.req.method = "POST"
+    stubFetch(() =>
+      upstream({ error: { code: "INVALID_SESSION", message: "Session required" } }, { status: 401 }),
+    )
+
+    const httpError = await mappedHttpError(() =>
+      fetchOperatorJson(event, "overview", (value) => value),
+    )
+
+    expect(httpError).toMatchObject({ statusCode: 401 })
+    expect(res.getHeader("location")).toBeUndefined()
   })
 })
 
@@ -294,7 +360,150 @@ describe("BFF refresh-and-retry", () => {
     expect(calls[1]!.csrf).toBe("csrf-value")
   })
 
-  it("redirects to /login when the refresh is refused", async () => {
+  it("supplies the Console's own origin when a server-side refresh has no Origin or Referer", async () => {
+    // A data read is a GET, so it normally carries neither header. Without an
+    // Origin the API's CSRF middleware answers 403 origin_failed before it looks
+    // at the CSRF token, and the retry never happens.
+    const { event } = fakeEvent({
+      url: "/api/operator/overview",
+      headers: {
+        accept: "application/json",
+        cookie: "ibex_session=expired; ibex_refresh=refresh-token; ibex_csrf=csrf-value",
+        "x-forwarded-proto": "https",
+      },
+    })
+    let refreshOrigin = ""
+    stubFetch((target, init) => {
+      const headers = new Headers(init.headers)
+      if (target.pathname === "/v1/operator/session/refresh") {
+        refreshOrigin = headers.get("origin") ?? ""
+        return upstream(
+          { status: "ok", org_id: "org-1" },
+          { setCookie: ["ibex_session=fresh-access; Path=/; HttpOnly; Secure; SameSite=Lax"] },
+        )
+      }
+      return headers.get("cookie")?.includes("fresh-access")
+        ? upstream({ org_id: "org-1", ok: true })
+        : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 })
+    })
+
+    await fetchOperatorJson(event, "overview", (value) => value)
+
+    // Derived from the request URL behind the edge, not hard-coded.
+    expect(refreshOrigin).toBe("https://console.example")
+  })
+
+  it("forwards an existing Origin unchanged on the server-side refresh", async () => {
+    // The request origin here is http://console.example, so a synthesized value
+    // would be visibly different from the Origin the browser actually sent.
+    const { event } = fakeEvent({
+      url: "/api/operator/overview",
+      headers: {
+        accept: "application/json",
+        cookie: "ibex_session=expired; ibex_refresh=refresh-token; ibex_csrf=csrf-value",
+        origin: "https://console.example",
+      },
+    })
+    let refreshOrigin = ""
+    stubFetch((target, init) => {
+      const headers = new Headers(init.headers)
+      if (target.pathname === "/v1/operator/session/refresh") {
+        refreshOrigin = headers.get("origin") ?? ""
+        return upstream(
+          { status: "ok", org_id: "org-1" },
+          { setCookie: ["ibex_session=fresh-access; Path=/; HttpOnly; Secure; SameSite=Lax"] },
+        )
+      }
+      return headers.get("cookie")?.includes("fresh-access")
+        ? upstream({ org_id: "org-1", ok: true })
+        : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 })
+    })
+
+    await fetchOperatorJson(event, "overview", (value) => value)
+
+    expect(refreshOrigin).toBe("https://console.example")
+  })
+
+  it("shares one refresh across concurrent reads instead of replaying the refresh token", async () => {
+    const { event } = fakeEvent({
+      url: "/api/operator/overview",
+      headers: {
+        accept: "application/json",
+        cookie: "ibex_session=expired; ibex_refresh=single-flight-token; ibex_csrf=csrf-value",
+      },
+    })
+    let refreshCalls = 0
+    stubFetch((target, init) => {
+      const headers = new Headers(init.headers)
+      if (target.pathname === "/v1/operator/session/refresh") {
+        refreshCalls += 1
+        // The API accepts a refresh token once. Model that so the test fails if
+        // the rotation is not shared: a second call is refused, not honoured.
+        if (refreshCalls > 1) {
+          return upstream(
+            { error: { code: "INVALID_TOKEN", message: "invalid refresh token" } },
+            { status: 401 },
+          )
+        }
+        return upstream(
+          { status: "ok", org_id: "org-1" },
+          { setCookie: ["ibex_session=fresh-access; Path=/; HttpOnly; Secure; SameSite=Lax"] },
+        )
+      }
+      return headers.get("cookie")?.includes("fresh-access")
+        ? upstream({ org_id: "org-1", ok: true })
+        : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 })
+    })
+
+    const results = await Promise.all([
+      fetchOperatorJson(event, "overview", (value) => value),
+      fetchOperatorJson(event, "overview", (value) => value),
+      fetchOperatorJson(event, "overview", (value) => value),
+    ])
+
+    // Three parallel 401s, one rotation. A second refresh would replay the
+    // single-use token, be refused, and log the operator out mid page load.
+    expect(refreshCalls).toBe(1)
+    expect(results).toEqual([
+      { org_id: "org-1", ok: true },
+      { org_id: "org-1", ok: true },
+      { org_id: "org-1", ok: true },
+    ])
+  })
+
+  it("fails every concurrent waiter when the shared rotation is refused", async () => {
+    const { event } = fakeEvent({
+      url: "/api/operator/overview",
+      headers: {
+        accept: "application/json",
+        cookie: "ibex_session=expired; ibex_refresh=shared-failure-token; ibex_csrf=csrf-value",
+      },
+    })
+    let refreshCalls = 0
+    stubFetch((target) => {
+      if (target.pathname === "/v1/operator/session/refresh") {
+        refreshCalls += 1
+        return upstream({ error: { code: "INVALID_TOKEN", message: "invalid refresh token" } }, { status: 401 })
+      }
+      return upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 })
+    })
+
+    const outcomes = await Promise.allSettled([
+      fetchOperatorJson(event, "overview", (value) => value),
+      fetchOperatorJson(event, "overview", (value) => value),
+      fetchOperatorJson(event, "overview", (value) => value),
+    ])
+
+    expect(refreshCalls).toBe(1)
+    for (const outcome of outcomes) {
+      expect(outcome.status).toBe("rejected")
+      if (outcome.status === "rejected") {
+        expect(outcome.reason).toMatchObject({ status: 401, code: "INVALID_SESSION" })
+      }
+    }
+  })
+
+  it("returns 401 to a data request when the refresh is refused", async () => {
     const { event, res } = fakeEvent({
       url: "/api/operator/overview?tab=1",
       headers: { accept: "application/json", cookie: "ibex_session=expired; ibex_refresh=stale" },
@@ -305,15 +514,13 @@ describe("BFF refresh-and-retry", () => {
         : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 }),
     )
 
-    await expect(fetchOperatorJson(event, "overview", (value) => value)).rejects.toBeInstanceOf(
-      OperatorLoginRedirect,
-    )
+    await expect(fetchOperatorJson(event, "overview", (value) => value)).rejects.toMatchObject({
+      status: 401,
+      code: "INVALID_SESSION",
+    })
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(res.statusCode).toBe(302)
-    expect(headerValue(res.getHeader("location"))).toBe(
-      `/login?next=${encodeURIComponent("/api/operator/overview?tab=1")}`,
-    )
+    expect(res.getHeader("location")).toBeUndefined()
   })
 
   it("relays the rotated cookies to the event it renders during a server-side refresh", async () => {
@@ -398,7 +605,7 @@ describe("BFF refresh-and-retry", () => {
 
   it("writes no Set-Cookie header when the refresh returns none", async () => {
     // An unconditional append would emit an empty header. With no rotated
-    // access value the read must still fail closed with a login redirect.
+    // access value the read must still fail closed with a 401.
     const { event, res } = fakeEvent({
       url: "/api/operator/overview",
       headers: { accept: "application/json", cookie: "ibex_session=expired; ibex_refresh=refresh-token" },
@@ -409,9 +616,10 @@ describe("BFF refresh-and-retry", () => {
         : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 }),
     )
 
-    await expect(fetchOperatorJson(event, "overview", (value) => value)).rejects.toBeInstanceOf(
-      OperatorLoginRedirect,
-    )
+    await expect(fetchOperatorJson(event, "overview", (value) => value)).rejects.toMatchObject({
+      status: 401,
+      code: "INVALID_SESSION",
+    })
 
     expect(res.getHeader("set-cookie")).toBeUndefined()
     expect(setCookieList(res)).toHaveLength(0)
@@ -419,7 +627,7 @@ describe("BFF refresh-and-retry", () => {
 
   it("stops after one retry when the refreshed session is still rejected", async () => {
     // A second 401 must not trigger a second refresh: the retry flag is the
-    // recursion guard, and the read still fails closed with a login redirect.
+    // recursion guard, and the data read still fails closed with a 401.
     const { event, res } = fakeEvent({
       headers: { accept: "application/json", cookie: "ibex_session=expired; ibex_refresh=refresh-token" },
     })
@@ -432,12 +640,13 @@ describe("BFF refresh-and-retry", () => {
         : upstream({ error: { code: "INVALID_SESSION", message: "expired" } }, { status: 401 }),
     )
 
-    await expect(fetchOperatorJson(event, "overview", (value) => value)).rejects.toBeInstanceOf(
-      OperatorLoginRedirect,
-    )
+    await expect(fetchOperatorJson(event, "overview", (value) => value)).rejects.toMatchObject({
+      status: 401,
+      code: "INVALID_SESSION",
+    })
 
     expect(fetchMock).toHaveBeenCalledTimes(3)
-    expect(res.statusCode).toBe(302)
+    expect(res.getHeader("location")).toBeUndefined()
   })
 })
 

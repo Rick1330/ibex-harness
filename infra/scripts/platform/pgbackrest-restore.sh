@@ -11,6 +11,12 @@
 # PGBACKREST_RESTORE_SCRATCH_VOLUME restores into a separate named volume and
 # leaves the live cluster running. That is the drill path: it is the only way to
 # prove a time target without destroying the running database.
+#
+# Repository credentials reach the restore container through a 0600 environment
+# file passed with --env-file, never through `-e VAR` and never on a command
+# line. With a rootful engine (`sudo -n podman`, IBEX_PODMAN_SUDO=1) sudo's
+# env_reset drops the exported values before the engine starts, so a name-only
+# `-e` arrives empty and the restore fails after Postgres is already stopped.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -151,7 +157,10 @@ STANZA="${PGBACKREST_STANZA:-ibex-main}"
 CONTAINER_CONF="${PGBACKREST_CONTAINER_CONF:-/etc/pgbackrest/pgbackrest.conf}"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT/infra/compose/dev/docker-compose.yml}"
 TARGET="${PGBACKREST_PGDATA:-}"
-IMAGE="${PGBACKREST_IMAGE:-pgbackrest/pgbackrest:2.53}"
+# Default to the image the profile actually builds. The upstream
+# `pgbackrest/pgbackrest` namespace no longer publishes version tags, so a
+# default pointing there fails at pull time on a direct script invocation.
+IMAGE="${PGBACKREST_IMAGE:-ibex-v1-postgres:local}"
 RESTORE_USER="${PGBACKREST_RESTORE_USER:-}"
 SCRATCH_VOLUME="${PGBACKREST_RESTORE_SCRATCH_VOLUME:-}"
 RESTORE_TARGET="${PGBACKREST_RESTORE_TARGET:-}"
@@ -197,6 +206,16 @@ destructive_restore_args=("${restore_args[@]}" --delta)
 
 # pgBackRest reads the repository credentials from the environment; never put
 # them on a command line.
+#
+# `--env-file` rather than `-e VAR`. A name-only `-e VAR` makes the engine
+# import the value from *its own* environment, and with IBEX_PODMAN_SUDO=1 that
+# environment is the one sudo built under its default env_reset: the exported
+# values are gone, the import yields nothing, and the restore container starts
+# without credentials. The failure appeared only after Postgres had been
+# stopped. --env-file is read by the engine process itself, so delivery depends
+# on neither sudo's environment nor the invoking shell. The file is created by
+# mktemp at 0600 and removed by the EXIT trap; no value is printed and no value
+# is placed on a command line.
 run_args=()
 cred_vars=()
 if [[ -n "$RESTORE_USER" ]]; then
@@ -204,16 +223,92 @@ if [[ -n "$RESTORE_USER" ]]; then
 fi
 for var in PGBACKREST_REPO1_CIPHER_PASS PGBACKREST_REPO1_S3_KEY PGBACKREST_REPO1_S3_KEY_SECRET; do
   if [[ -n "${!var:-}" ]]; then
-    run_args+=(-e "$var")
     cred_vars+=("$var")
   fi
 done
 
+CRED_ENV_FILE=""
+cleanup_cred_env_file() {
+  if [[ -n "$CRED_ENV_FILE" ]]; then
+    rm -f -- "$CRED_ENV_FILE"
+    CRED_ENV_FILE=""
+  fi
+}
+trap cleanup_cred_env_file EXIT
+
+# write_credential_env_file renders one KEY=value line per credential into a
+# 0600 file. A value the format cannot carry is refused by name rather than
+# written and silently mangled: the engines trim surrounding whitespace when
+# they parse --env-file, and a newline would start a second entry.
+write_credential_env_file() {
+  local var value
+  (( ${#cred_vars[@]} )) || return 0
+  CRED_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/ibex-pgbackrest-credentials.XXXXXX")"
+  chmod 0600 "$CRED_ENV_FILE"
+  for var in "${cred_vars[@]}"; do
+    value="${!var}"
+    if [[ -z "$value" ]]; then
+      echo "[restore] refusing: $var is empty" >&2
+      return 1
+    fi
+    if [[ "$value" =~ ^[[:space:]]|[[:space:]]$ || "$value" == *$'\n'* ]]; then
+      echo "[restore] refusing: $var has leading or trailing whitespace, or contains a newline, which --env-file cannot carry; fix the value in the profile .env" >&2
+      return 1
+    fi
+    printf '%s=%s\n' "$var" "$value" >>"$CRED_ENV_FILE"
+  done
+  chmod 0600 "$CRED_ENV_FILE"
+  return 0
+}
+
+cred_file_args=()
+if ! write_credential_env_file; then
+  echo "[restore] FAILED: could not prepare the repository credentials; nothing has been stopped" >&2
+  exit 1
+fi
+if [[ -n "$CRED_ENV_FILE" ]]; then
+  cred_file_args+=(--env-file "$CRED_ENV_FILE")
+fi
+
+# display_cred_args is what a *printed* command carries. The temporary file is
+# gone by the time the operator pastes the command, so the printed form keeps
+# `-e VAR`: the values have to come from the operator's own shell.
+display_cred_args=()
+for var in "${cred_vars[@]}"; do
+  display_cred_args+=(-e "$var")
+done
+
+# probe_credential_delivery starts a throwaway container exactly the way the
+# restore starts one and requires every credential to be non-empty inside it.
+# It runs before Postgres is stopped, so a delivery failure leaves the database
+# running instead of leaving a stopped cluster and no restore.
+probe_credential_delivery() {
+  local image="$1" var script=""
+  (( ${#cred_vars[@]} )) || return 0
+  for var in "${cred_vars[@]}"; do
+    script+="test -n \"\${${var}:-}\" || { echo 'missing ${var}' >&2; exit 1; }; "
+  done
+  if ! "${CLI[@]}" run --rm "${run_args[@]}" "${cred_file_args[@]}" --entrypoint sh "$image" -c "$script" >/dev/null; then
+    echo "[restore] FAILED: the container engine did not deliver the repository credentials (${cred_vars[*]}) to a probe container started like the restore. Nothing has been stopped; Postgres is still running." >&2
+    return 1
+  fi
+  echo "[restore] credential delivery verified: ${cred_vars[*]} arrive in a container"
+  return 0
+}
+
 # print_credential_load prints the loading step that belongs above the printed
-# start command. `-e VAR` forwards the value the *operator's* shell holds, and
-# the environment that ran this script does not survive into that shell: a bare
-# shell forwards an empty value and recovery then dies with
+# start command. That command forwards the credentials by name (`-e VAR`), which
+# reads the value from the *operator's* shell: the environment that ran this
+# script does not survive into that shell, and a bare shell forwards an empty
+# value, so recovery then dies with
 # "archive-get command requires option: repo1-cipher-pass".
+#
+# The script's own container runs do not use `-e` (see the credential block
+# above); the printed form keeps it because a printed `--env-file` would name a
+# file that no longer exists. If the engine is `sudo -n podman`, sudo resets the
+# environment: write the values to a 0600 file and pass it with --env-file, or
+# start the cluster without them — it runs with archive_mode=off and needs no
+# repository access.
 #
 # The values are read from the profile .env (mode 0600) with the repository's
 # Compose-dotenv reader, which reproduces what `make v1-restore` and
@@ -252,7 +347,7 @@ if [[ -n "$SCRATCH_VOLUME" ]]; then
   fi
   NETWORK="$(resolve_compose_network "$COMPOSE_FILE")"
   echo "[restore] scratch restore volume=$SCRATCH_VOLUME network=$NETWORK image=$IMAGE"
-  "${CLI[@]}" run --rm "${run_args[@]}" \
+  "${CLI[@]}" run --rm "${run_args[@]}" "${cred_file_args[@]}" \
     --network "$NETWORK" \
     -v "${SCRATCH_VOLUME}:/var/lib/postgresql/data" \
     -v "${CONF}:${CONTAINER_CONF}:ro" \
@@ -267,7 +362,7 @@ archiving disabled so the restored timeline cannot write into the live
 repository, then verify the recovery point.
 
 $(print_credential_load)
-  ${CLI[*]} run -d --name ibex-pitr-scratch --network $NETWORK ${run_args[*]} \\
+  ${CLI[*]} run -d --name ibex-pitr-scratch --network $NETWORK ${run_args[*]} ${display_cred_args[*]} \\
     -v $SCRATCH_VOLUME:/var/lib/postgresql/data \\
     -v $CONF:$CONTAINER_CONF:ro \\
     $IMAGE postgres -c archive_mode=off
@@ -276,6 +371,22 @@ $(print_credential_load)
     -c 'SELECT pg_is_in_recovery(), pg_last_xact_replay_timestamp()'
 NEXT
   exit 0
+fi
+
+# compose_restore_available predicts the destructive branch below: the restore
+# runs in a container only when Compose can see a postgres service to stop.
+compose_restore_available() {
+  command -v "${CLI[0]}" >/dev/null 2>&1 || return 1
+  [[ -f "$COMPOSE_FILE" ]] || return 1
+  [[ -n "$(compose -f "$COMPOSE_FILE" ps -q postgres 2>/dev/null || true)" ]]
+}
+
+# Prove credential delivery *before* the first destructive action. This is the
+# check that the `-e VAR` form could not make: under a rootful engine the
+# container came up with empty values and the restore died after Postgres was
+# stopped.
+if compose_restore_available; then
+  probe_credential_delivery "$IMAGE" || exit 1
 fi
 
 echo "[restore] stopping Postgres before restore"
@@ -440,7 +551,7 @@ if [[ "$stopped_via_compose" == "true" && -n "$COMPOSE_VOLUME" ]]; then
   # network.
   NETWORK="$(resolve_compose_network "$COMPOSE_FILE")"
   echo "[restore] running pgbackrest in compose network=$NETWORK image=$IMAGE"
-  "${CLI[@]}" run --rm "${run_args[@]}" \
+  "${CLI[@]}" run --rm "${run_args[@]}" "${cred_file_args[@]}" \
     --network "$NETWORK" \
     -v "${COMPOSE_VOLUME}:${TARGET}" \
     -v "${CONF}:${CONTAINER_CONF}:ro" \
