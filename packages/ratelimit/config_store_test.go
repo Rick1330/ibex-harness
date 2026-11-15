@@ -319,3 +319,28 @@ func TestConfigStore_LoadAll_CommitError(t *testing.T) {
 		commitErr: sql.ErrTxDone,
 	})
 }
+
+// TestConfigStore_LoadAll_IssuesNoTenantRolePin is the negative control for the
+// pin. LoadAll reads ibex_core.rate_limit_overrides_snapshot, a definer whose
+// cross-tenant reach comes from its owner; assuming ibex_app first would drop
+// that reach and silently return an empty poll. sqlmock runs in ordered mode, so
+// a SET LOCAL ROLE here is an unexpected ExecContext: it fails LoadAll, and this
+// test names that regression instead of leaving it to a row-count assertion.
+func TestConfigStore_LoadAll_IssuesNoTenantRolePin(t *testing.T) {
+	t.Parallel()
+	store, mock := newMockConfigStore(t)
+	org := uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`rate_limit_overrides_snapshot`).
+		WillReturnRows(overrideRows().AddRow(org.String(), nil, int64(111)))
+	mock.ExpectCommit()
+
+	all, err := store.LoadAll(context.Background())
+	if err != nil {
+		t.Fatalf("LoadAll issued a statement it must not (a SET LOCAL ROLE is an unexpected ExecContext): %v", err)
+	}
+	requireOrgOverride(t, all[org], 111)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

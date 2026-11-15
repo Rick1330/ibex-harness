@@ -141,7 +141,7 @@ export const capabilities: Capability[] = [
   {
     name: 'v1-single-node profile',
     status: 'IMPLEMENTED',
-    detail: 'One Compose project starts every required service behind an edge TLS terminator with one published port, digest-pinned dependencies, and a safe one-time identity bootstrap. Three one-shot gates run in order: migrate, provision, then bootstrap. Every DSN still points at the owner login, so no service runs as a capability login. Evidenced by a local start on one host; hosted/HA operation, multi-user auth, a measured p99 SLO, cross-tenant acceptance, and a recovery drill remain open.',
+    detail: 'One Compose project starts every required service behind an edge TLS terminator with one published port, digest-pinned dependencies, and a safe one-time identity bootstrap. Three one-shot gates run in order: migrate, provision, then bootstrap. Every application service connects on its capability login and every long-running service refuses to start on the owner or a superuser — ibex_bootstrap, ibex_auth, ibex_runtime (proxy, api, memory) and ibex_worker; only migrate and provision use the owner credential. Live-proven on 2026-11-15: all 13 health-checked containers healthy, no application connection is ibex, an unpinned cross-tenant read on ibex_runtime raises 42501, and a route-level cross-tenant request returns 403. That is a live cross-tenant read plus the integration suites, not a full acceptance suite. Hosted/HA operation, multi-user auth, a measured p99 SLO, a two-tenant browser journey, and a recovery drill remain open.',
     href: '/docs/deployment/v1-single-node',
   },
   {

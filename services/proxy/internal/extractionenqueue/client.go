@@ -1,13 +1,29 @@
 // Package extractionenqueue is a fail-open HTTP client for worker extraction enqueue.
+//
+// Every request carries a signed tenant claim (ClaimHeader) alongside the static
+// bearer, so the worker can prove which tenant the proxy authenticated instead of
+// trusting the org_id in the body. The client stays fail-open: an enqueue failure,
+// including a claim-signing failure, is returned as an error for metrics and
+// logging only and never fails the caller's request.
+//
+// Known limit: the signing key is the same secret as the bearer, so a leaked
+// bearer can still forge a claim. The claim's value is that the tenant is no
+// longer an unsigned body field and is bound to the agent, session, and a short
+// expiry. A separate claim secret would make it a second factor; that is a config
+// change, not a contract change.
 package extractionenqueue
 
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,7 +34,89 @@ const (
 	// DefaultTimeout bounds the internal enqueue HTTP call.
 	DefaultTimeout = 2 * time.Second
 	enqueuePath    = "/internal/extraction/enqueue"
+
+	// ClaimHeader carries the tenant claim that binds the body to the tenant the
+	// proxy already authenticated (S01). The static bearer stays transport auth;
+	// the claim is what authorizes *which* tenant the worker acts for.
+	ClaimHeader = "x-ibex-claim"
+
+	// ClaimTTL bounds how long a minted claim is accepted by the worker.
+	ClaimTTL = 60 * time.Second
+
+	claimVersion = "v1"
 )
+
+// Claim is the tenant binding for one enqueue request. It is signed with the
+// shared enqueue secret, so the worker can reject a body that names a different
+// org, agent, or session than the one the proxy validated.
+type Claim struct {
+	OrgID     uuid.UUID
+	AgentID   uuid.UUID
+	SessionID uuid.UUID
+	// JTI identifies this claim. It is not stored by the worker: replay is
+	// bounded by ClaimTTL, and a replayed claim can only re-assert the same
+	// (org, agent, session) tuple, which the worker already dedupes by
+	// Idempotency-Key.
+	JTI       string
+	ExpiresAt time.Time
+}
+
+// NewClaim builds a claim for req, valid for ClaimTTL from now. JTI is unique per
+// call; the signing itself is a pure function of the claim, so the same claim
+// always produces the same header value.
+func NewClaim(req Request, now time.Time) Claim {
+	return Claim{
+		OrgID:     req.OrgID,
+		AgentID:   req.AgentID,
+		SessionID: req.SessionID,
+		JTI:       uuid.NewString(),
+		ExpiresAt: now.Add(ClaimTTL).UTC().Truncate(time.Second),
+	}
+}
+
+// signingString is the canonical string the MAC covers. The worker rebuilds this
+// exact shape, so any change here is a cross-language contract change.
+//
+//	v1:<org_id>:<agent_id>:<session_id>:<jti>:<exp_unix_seconds>
+func (c Claim) signingString() string {
+	return strings.Join([]string{
+		claimVersion,
+		c.OrgID.String(),
+		c.AgentID.String(),
+		c.SessionID.String(),
+		c.JTI,
+		strconv.FormatInt(c.ExpiresAt.Unix(), 10),
+	}, ":")
+}
+
+// Sign returns the x-ibex-claim header value: the signing string plus the
+// lowercase hex HMAC-SHA256 of that string under secret.
+func (c Claim) Sign(secret string) (string, error) {
+	if secret == "" {
+		return "", fmt.Errorf("extractionenqueue: claim secret required")
+	}
+	if c.JTI == "" {
+		return "", fmt.Errorf("extractionenqueue: claim jti required")
+	}
+	if !c.hasIDs() {
+		return "", fmt.Errorf("extractionenqueue: claim ids required")
+	}
+	payload := c.signingString()
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(payload))
+	return payload + ":" + hex.EncodeToString(mac.Sum(nil)), nil
+}
+
+// hasIDs reports whether the claim names a tenant, an agent, and a session. A
+// claim missing any of them cannot be scoped by the worker, so Sign refuses it.
+func (c Claim) hasIDs() bool {
+	for _, id := range [...]uuid.UUID{c.OrgID, c.AgentID, c.SessionID} {
+		if id == uuid.Nil {
+			return false
+		}
+	}
+	return true
+}
 
 // Turn mirrors the worker TurnPayload JSON shape.
 type Turn struct {
@@ -91,11 +189,15 @@ func (c *Client) newEnqueueHTTPRequest(ctx context.Context, req Request) (*http.
 	if err != nil {
 		return nil, err
 	}
+	claim, err := NewClaim(req, time.Now()).Sign(c.token)
+	if err != nil {
+		return nil, err
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+enqueuePath, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("extractionenqueue: request: %w", err)
 	}
-	setEnqueueHeaders(httpReq, c.token, req.SessionID)
+	setEnqueueHeaders(httpReq, c.token, req.SessionID, claim)
 	return httpReq, nil
 }
 
@@ -117,9 +219,10 @@ func marshalEnqueue(req Request) ([]byte, error) {
 	return body, nil
 }
 
-func setEnqueueHeaders(httpReq *http.Request, token string, sessionID uuid.UUID) {
+func setEnqueueHeaders(httpReq *http.Request, token string, sessionID uuid.UUID, claim string) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set(ClaimHeader, claim)
 	if sessionID == uuid.Nil {
 		return
 	}

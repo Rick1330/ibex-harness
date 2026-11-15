@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -21,16 +20,10 @@ from app.config import Settings
 from app.db import create_engine, create_session_factory
 from app.main import ApiRuntimeOverrides, create_app
 from app.revocation_publish import RecordingOrgSuspendPublisher
+from tests.integration.conftest import capability_runtime_dsn, require_dsn
 
 pytestmark = pytest.mark.integration
 _AUTH = {"Authorization": "Bearer tok"}
-
-
-def _require_dsn() -> str:
-    dsn = os.environ.get("IBEX_API_DATABASE_URL") or os.environ.get("IBEX_MEMORY_DATABASE_URL")
-    if not dsn:
-        pytest.skip("IBEX_API_DATABASE_URL not set")
-    return dsn
 
 
 async def _sa(factory: async_sessionmaker[AsyncSession], sql: str, params: dict) -> None:
@@ -41,7 +34,7 @@ async def _sa(factory: async_sessionmaker[AsyncSession], sql: str, params: dict)
 
 @pytest.fixture
 async def factory() -> async_sessionmaker[AsyncSession]:
-    settings = Settings(database_url=_require_dsn())
+    settings = Settings(database_url=require_dsn())
     engine = create_engine(settings)
     fac = create_session_factory(engine)
     try:
@@ -52,7 +45,9 @@ async def factory() -> async_sessionmaker[AsyncSession]:
 
 def _client(org_id: UUID, user_id: str) -> TestClient:
     settings = Settings(
-        database_url=_require_dsn(),
+        # The app under test boots on the capability login; `factory` above
+        # keeps the owner DSN for seeding and assertions.
+        database_url=capability_runtime_dsn(),
         environment="development",
         operator_feature_enabled=True,
     )

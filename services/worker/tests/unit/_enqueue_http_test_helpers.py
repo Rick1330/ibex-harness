@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import threading
+import time
 from types import SimpleNamespace
+from typing import TypedDict, Unpack
 from uuid import uuid4
 
 from pydantic import SecretStr
@@ -11,6 +15,24 @@ from starlette.testclient import TestClient
 
 from app.enqueue_http import create_enqueue_app, reset_enqueue_http_for_tests
 from app.idempotency_ledger import ClaimOutcome, ClaimToken
+
+_CLAIM_SECRET = "sekrit"
+_AUTO = object()
+
+
+class _RequestOptions(TypedDict, total=False):
+    """Keyword knobs shared by the enqueue request builders.
+
+    Kept as one options mapping so a test says only what it changes, and the
+    builders keep a short argument list. ``raw`` is accepted by the header
+    builder and ignored there, so a caller can forward the same mapping to both.
+    """
+
+    key: str | None
+    token: str
+    raw: bool
+    claim: object
+    exp: int | None
 
 
 class _Ledger:
@@ -109,13 +131,60 @@ def _valid_body(**overrides: object) -> dict:
     return body
 
 
-def _post_enqueue(
-    client: TestClient, body: dict | bytes, *, token: str = "sekrit", raw: bool = False
-):
+def _claim_header(
+    body: dict,
+    *,
+    secret: str = _CLAIM_SECRET,
+    exp: int | str | None = None,
+    jti: str = "jti-test",
+) -> str:
+    """Mint the ``x-ibex-claim`` value the proxy would send for ``body``."""
+    expires = str(int(time.time()) + 60 if exp is None else exp)
+    payload = ":".join(
+        [
+            "v1",
+            str(body["org_id"]),
+            str(body["agent_id"]),
+            str(body["session_id"]),
+            jti,
+            expires,
+        ]
+    )
+    mac = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}:{mac}"
+
+
+def _enqueue_headers(
+    body: dict | None = None,
+    **options: Unpack[_RequestOptions],
+) -> dict:
+    """Build request headers, minting a claim for ``body`` unless one is given."""
+    token = options.get("token", "sekrit")
+    key = options.get("key")
+    claim = options.get("claim", _AUTO)
+    exp = options.get("exp")
     headers = {"Authorization": f"Bearer {token}"}
     if isinstance(body, dict) and "session_id" in body:
-        headers["Idempotency-Key"] = str(body["session_id"])
-    if raw:
+        headers["Idempotency-Key"] = str(key if key is not None else body["session_id"])
+    if claim is _AUTO:
+        if isinstance(body, dict) and {"org_id", "agent_id", "session_id"} <= set(body):
+            headers["x-ibex-claim"] = _claim_header(body, exp=exp)
+    elif isinstance(claim, str):
+        headers["x-ibex-claim"] = claim
+    return headers
+
+
+def _post_enqueue(
+    client: TestClient,
+    body: dict | bytes,
+    **options: Unpack[_RequestOptions],
+):
+    token = options.get("token", "sekrit")
+    if isinstance(body, dict):
+        headers = _enqueue_headers(body, **options)
+    else:
+        headers = {"Authorization": f"Bearer {token}"}
+    if options.get("raw", False):
         headers["Content-Type"] = "application/json"
         return client.post("/internal/extraction/enqueue", headers=headers, content=body)
     return client.post("/internal/extraction/enqueue", headers=headers, json=body)

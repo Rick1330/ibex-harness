@@ -37,7 +37,8 @@ type envConfig struct {
 	JWTAccessTTLRaw        string            `env:"JWT_ACCESS_TOKEN_TTL"`
 	JWTRefreshTTLRaw       string            `env:"JWT_REFRESH_TOKEN_TTL"`
 	JWTStepUpTTLRaw        string            `env:"JWT_STEP_UP_TOKEN_TTL"`
-	AuthServiceToken       ibexconfig.Secret `env:"IBEX_AUTH_SERVICE_TOKEN" secret:"true"`
+	AuthLifecycleToken     ibexconfig.Secret `env:"IBEX_AUTH_LIFECYCLE_TOKEN" secret:"true"`
+	AuthIssueToken         ibexconfig.Secret `env:"IBEX_AUTH_ISSUE_TOKEN" secret:"true"`
 	PolicySigningKeyPEM    ibexconfig.Secret `env:"IBEX_AUTH_POLICY_SIGNING_KEY_PEM" secret:"true"`
 	PolicySigningKeyFile   string            `env:"IBEX_AUTH_POLICY_SIGNING_KEY_FILE" secret:"true"`
 	PolicySigningKeyID     string            `env:"IBEX_AUTH_POLICY_SIGNING_KEY_ID" envDefault:"v1"`
@@ -101,7 +102,8 @@ func baseAuthConfig(envCfg envConfig, level slog.Level) (Config, error) {
 		JWTPrivateKeyPEM:       envCfg.JWTPrivateKeyPEM.String(),
 		JWTIssuer:              strings.TrimSpace(envCfg.JWTIssuer),
 		JWTAudience:            strings.TrimSpace(envCfg.JWTAudience),
-		AuthServiceToken:       strings.TrimSpace(envCfg.AuthServiceToken.String()),
+		AuthLifecycleToken:     strings.TrimSpace(envCfg.AuthLifecycleToken.String()),
+		AuthIssueToken:         strings.TrimSpace(envCfg.AuthIssueToken.String()),
 		PolicySigningKeyPEM:    strings.TrimSpace(envCfg.PolicySigningKeyPEM.String()),
 		PolicySigningKeyID:     credentialKeyID(envCfg.PolicySigningKeyID),
 		PolicyEpoch:            envCfg.PolicyEpoch,

@@ -130,6 +130,10 @@ func TestUnit_InitAuthRuntime_TelemetryFailureCleansUp(t *testing.T) {
 	res := &bootstrapResources{}
 	defer res.cleanup()
 
+	// The telemetry failure is the subject here, not the login assertion, which
+	// would otherwise need a reachable database to reach the same point.
+	stubAuthLoginVerification(t)
+
 	_, err := initAuthRuntime(cfg, log, res)
 
 	if err == nil {

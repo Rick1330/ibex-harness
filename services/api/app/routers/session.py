@@ -321,7 +321,7 @@ async def _login_via_auth(
         pair = await issue_operator_session(
             AuthRPC(
                 settings.auth_grpc_addr,
-                settings.auth_service_token or "",
+                settings.auth_lifecycle_token or "",
                 max(settings.auth_timeout_ms / 1000.0, 0.2),
                 settings.auth_grpc_ca_file or "",
             ),
@@ -398,8 +398,11 @@ async def _refresh_pair_from_auth(settings: Settings, refresh_token: str):
         return await refresh_operator_session(
             AuthRPC(
                 settings.auth_grpc_addr,
-                settings.auth_service_token or "",
+                settings.auth_lifecycle_token or "",
                 ca_file=settings.auth_grpc_ca_file or "",
+                # Issuance is the one lifecycle-adjacent call the split puts
+                # behind its own credential (finding S04).
+                issue_token=settings.auth_issue_token or "",
             ),
             refresh_token=refresh_token,
         )
@@ -534,7 +537,7 @@ async def _revoke_logout_session(settings: Settings, proofs: _LogoutProofs) -> R
         await revoke_operator_session(
             AuthRPC(
                 settings.auth_grpc_addr,
-                settings.auth_service_token or "",
+                settings.auth_lifecycle_token or "",
                 max(settings.auth_timeout_ms / 1000.0, 0.2),
                 settings.auth_grpc_ca_file or "",
             ),
@@ -631,7 +634,7 @@ async def _me_auth(raw: str, settings: Settings) -> dict[str, object]:
         claims = await validate_operator_session(
             AuthRPC(
                 settings.auth_grpc_addr,
-                settings.auth_service_token or "",
+                settings.auth_lifecycle_token or "",
                 max(settings.auth_timeout_ms / 1000.0, 0.2),
                 settings.auth_grpc_ca_file or "",
             ),

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cache
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -17,10 +20,25 @@ from app.config import Settings
 from app.db import create_engine, create_session_factory
 from app.vectorstore.pgvector_store import PgVectorStore
 
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from infra.testing.pgcapability import (
+    RUNTIME_LOGIN,
+    capability_dsn,
+    provision_capability_logins,
+)
+
+
+def _owner_dsn_from_env() -> str | None:
+    """The owner DSN the test uses to seed and assert (never the app)."""
+    return os.getenv("IBEX_MEMORY_DATABASE_URL") or os.getenv("POSTGRES_TEST_DSN")
+
 
 def _async_dsn_from_env() -> str | None:
     """Pass through DSN; create_engine translates sslmode via connect_args."""
-    raw = os.getenv("IBEX_MEMORY_DATABASE_URL") or os.getenv("POSTGRES_TEST_DSN")
+    raw = _owner_dsn_from_env()
     if not raw:
         return None
     if raw.startswith("postgres://"):
@@ -28,6 +46,27 @@ def _async_dsn_from_env() -> str | None:
     if raw.startswith("postgresql://") and "+asyncpg" not in raw.split("://", 1)[0]:
         return "postgresql+asyncpg://" + raw[len("postgresql://") :]
     return raw
+
+
+@cache
+def _provisioned_runtime_dsn(owner_dsn: str) -> str:
+    try:
+        provision_capability_logins(owner_dsn, _REPO_ROOT)
+    except RuntimeError as exc:
+        pytest.fail(str(exc))
+    return capability_dsn(owner_dsn, RUNTIME_LOGIN)
+
+
+def _capability_runtime_dsn() -> str:
+    """DSN for the app under test: ``ibex_runtime``, never the owner.
+
+    The app asserts this login at startup. Seeding and assertions keep using
+    the owner DSN from :func:`_owner_dsn_from_env`.
+    """
+    owner = _owner_dsn_from_env()
+    if not owner:
+        pytest.skip("IBEX_MEMORY_DATABASE_URL / POSTGRES_TEST_DSN not set")
+    return _provisioned_runtime_dsn(owner)
 
 
 @pytest.fixture(scope="module")
@@ -63,8 +102,15 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 @pytest.fixture
-def settings(memory_database_url: str) -> Settings:
-    return Settings(database_url=memory_database_url)
+def settings() -> Settings:
+    """Configuration for the app under test: the ``ibex_runtime`` login.
+
+    ``create_app(settings=...)`` opens its own engine and asserts this login at
+    startup. The harness ``engine``/``session_factory``/``store`` stay on the
+    owner DSN for seeding and assertions; the production code they exercise
+    pins ``ibex_app`` per transaction, so RLS is enforced either way.
+    """
+    return Settings(database_url=_capability_runtime_dsn())
 
 
 @pytest.fixture

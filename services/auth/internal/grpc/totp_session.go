@@ -155,6 +155,9 @@ func (s *Server) ValidateOperatorSession(ctx context.Context, req *authv1.Valida
 	if err != nil {
 		return nil, mapSessionValidationErr(err)
 	}
+	if err := assertExpectedOrg(ctx, claims.OrgID); err != nil {
+		return nil, err
+	}
 	return &authv1.ValidateOperatorSessionResponse{Subject: claims.Subject, OrgId: claims.OrgID, Permissions: claims.Permissions, SessionId: claims.SessionID, Jti: claims.JTI}, nil
 }
 
@@ -169,6 +172,9 @@ func (s *Server) RevokeOperatorSession(ctx context.Context, req *authv1.RevokeOp
 	claims, accessJTI, err := verifyRevokeSessionProofs(issuer, req)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, err.Error())
+	}
+	if err := assertExpectedOrg(ctx, claims.OrgID); err != nil {
+		return nil, err
 	}
 	if err := issuer.RevokeSession(ctx, claims.SessionID, claims.FamilyID, accessJTI); err != nil {
 		return nil, status.Error(codes.Unavailable, "session revocation unavailable")
@@ -258,11 +264,38 @@ func (s *Server) ConsumeStepUp(ctx context.Context, req *authv1.ConsumeStepUpReq
 	if !ok {
 		return nil, status.Error(codes.FailedPrecondition, errMsgLifecycleNotReady)
 	}
-	claims, err := issuer.ConsumeStepUp(ctx, sessionjwt.RawToken(req.GetStepUpToken()), sessionjwt.StepUpExpectations{Subject: req.GetExpectedSubject(), OrgID: req.GetExpectedOrgId(), SessionID: req.GetExpectedSessionId(), Action: req.GetExpectedAction(), RequiredPermission: req.GetRequiredPermission()})
+	expect, err := stepUpExpectations(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	claims, err := issuer.ConsumeStepUp(ctx, sessionjwt.RawToken(req.GetStepUpToken()), expect)
 	if err != nil {
 		return nil, mapSessionValidationErr(err)
 	}
 	return &authv1.ConsumeStepUpResponse{Subject: claims.Subject, OrgId: claims.OrgID, SessionId: claims.SessionID, Action: claims.Action, Permissions: claims.Permissions}, nil
+}
+
+// stepUpExpectations binds the proof to the org the caller asserted.
+//
+// The assertion is compared inside ConsumeStepUp, before the proof is
+// consumed, so a call naming the wrong org cannot burn another org's proof.
+// When the request also names an org, the two must agree: a caller that
+// contradicts itself is refused rather than resolved to one of the two.
+func stepUpExpectations(ctx context.Context, req *authv1.ConsumeStepUpRequest) (sessionjwt.StepUpExpectations, error) {
+	expectedOrgID := req.GetExpectedOrgId()
+	if asserted, ok := ExpectedOrgFromContext(ctx); ok {
+		if expectedOrgID != "" && expectedOrgID != asserted {
+			return sessionjwt.StepUpExpectations{}, status.Error(codes.PermissionDenied, errMsgForbidden)
+		}
+		expectedOrgID = asserted
+	}
+	return sessionjwt.StepUpExpectations{
+		Subject:            req.GetExpectedSubject(),
+		OrgID:              expectedOrgID,
+		SessionID:          req.GetExpectedSessionId(),
+		Action:             req.GetExpectedAction(),
+		RequiredPermission: req.GetRequiredPermission(),
+	}, nil
 }
 
 func mapSessionValidationErr(err error) error {

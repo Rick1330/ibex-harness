@@ -24,6 +24,7 @@ func TestReconcileRun_VerifiesDurableOutboxProof(t *testing.T) {
 	in := RunInput{OrgID: orgID, AgentID: &agentID, SessionID: &sessionID, RequestID: "req-reconcile", TraceID: "aabbccddeeff00112233445566778899"}
 	payload := validRelayPayload()
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`SELECT set_config`).WithArgs(orgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT id, agent_id::text, session_id::text, trace_id`).WithArgs(orgID, in.RequestID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "session_id", "trace_id"}).
@@ -62,6 +63,7 @@ func TestReconcileRun_SQLFailurePaths(t *testing.T) {
 		{name: "begin", setup: func(m sqlmock.Sqlmock, _ RunInput) { m.ExpectBegin().WillReturnError(sql.ErrConnDone) }},
 		{name: "rls", setup: func(m sqlmock.Sqlmock, in RunInput) {
 			m.ExpectBegin()
+			m.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
 			m.ExpectExec(`SELECT set_config`).WithArgs(in.OrgID.String()).WillReturnError(sql.ErrConnDone)
 			m.ExpectRollback()
 		}},
@@ -123,6 +125,7 @@ func TestReconcileRun_SQLFailurePaths(t *testing.T) {
 
 func expectReconcilePrefix(m sqlmock.Sqlmock, in RunInput) {
 	m.ExpectBegin()
+	m.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
 	m.ExpectExec(`SELECT set_config`).WithArgs(in.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 }
 

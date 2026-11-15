@@ -31,8 +31,10 @@ def _wait_for_failure(result: AsyncResult, timeout: float = 30.0) -> None:
     assert result.failed(), f"expected FAILURE, got {result.state!r}: {result.result!r}"
 
 
-async def _fetch_failed_task_row(settings: Settings, task_id: str) -> tuple[str, int, str | None]:
-    engine = create_engine(settings)
+async def _fetch_failed_task_row(postgres_dsn: str, task_id: str) -> tuple[str, int, str | None]:
+    # ``failed_tasks`` is owner-readable only: SELECT is revoked from ibex_app
+    # and ibex_worker holds no grant, so the assertion uses the owner DSN.
+    engine = create_engine(Settings(database_url=postgres_dsn))
     try:
         factory = create_session_factory(engine)
         async with session_unpinned(factory) as session:
@@ -56,7 +58,7 @@ async def _fetch_failed_task_row(settings: Settings, task_id: str) -> tuple[str,
 @pytest.mark.usefixtures("truncate_failed_tasks")
 def test_dead_letter_persisted_after_retries_exhausted(
     eager_celery_app: Celery,
-    integration_settings: Settings,
+    postgres_dsn: str,
 ) -> None:
     baseline = dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL)
     task = eager_celery_app.tasks[TASK_MAINTENANCE_ALWAYS_FAIL]
@@ -65,7 +67,7 @@ def test_dead_letter_persisted_after_retries_exhausted(
     assert dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL) == baseline + 1
 
     task_name, retry_count, traceback_prefix = asyncio.run(
-        _fetch_failed_task_row(integration_settings, result.id)
+        _fetch_failed_task_row(postgres_dsn, result.id)
     )
     assert task_name == TASK_MAINTENANCE_ALWAYS_FAIL
     assert retry_count == 3

@@ -163,7 +163,7 @@ def _error_handler(request: httpx.Request) -> httpx.Response:
 
 async def _assert_hot_raises(base: str, http: httpx.AsyncClient) -> None:
     mem = MemoryHttpClient(MemoryHttpConfig(base_url=base, token="t"), client=http)
-    req = HotMemoriesRequest(agent_id=uuid4(), timeout_seconds=0.05)
+    req = HotMemoriesRequest(org_id=uuid4(), agent_id=uuid4(), timeout_seconds=0.05)
     with pytest.raises(MemoryHttpError):
         await mem.get_hot_memories(req)
 

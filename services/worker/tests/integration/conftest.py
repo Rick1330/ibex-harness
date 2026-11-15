@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import os
-import shutil
 import socket
-import subprocess
+import sys
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
-from urllib.parse import quote, urlparse, urlsplit, urlunsplit
+from urllib.parse import urlparse
 
 import pytest
 import pytest_asyncio
@@ -23,6 +22,16 @@ from app.celery_app import create_celery_app
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory
 from app.observability import reset_observability_for_tests
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from infra.testing.pgcapability import (
+    WORKER_LOGIN,
+    capability_dsn,
+    provision_capability_logins,
+)
 
 _REDIS_BASE = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 _QUEUE_DB = int(os.environ.get("REDIS_DB_QUEUE", "1"))
@@ -149,28 +158,6 @@ async def worker_factory(
         await engine.dispose()
 
 
-# Capability-login secrets. These must match infra/testing/testcreds/creds.go:
-# the roles and their verifiers are cluster-global, so the Go integration
-# packages and this Python suite have to provision the same values.
-_CAPABILITY_PASSWORDS = {
-    "IBEX_RUNTIME_DB_PASSWORD": "capability-test-only-runtime",
-    "IBEX_WORKER_DB_PASSWORD": "capability-test-only-worker",
-    "IBEX_BOOTSTRAP_DB_PASSWORD": "capability-test-only-bootstrap",
-    "IBEX_AUTH_DB_PASSWORD": "capability-test-only-auth",
-}
-_WORKER_LOGIN = "ibex_worker"
-
-
-def _capability_dsn(postgres_dsn: str, role: str) -> str:
-    """Return ``postgres_dsn`` with the userinfo replaced by a capability login."""
-    parts = urlsplit(postgres_dsn)
-    host = parts.hostname or "127.0.0.1"
-    port = f":{parts.port}" if parts.port else ""
-    password = quote(_CAPABILITY_PASSWORDS["IBEX_WORKER_DB_PASSWORD"], safe="")
-    netloc = f"{role}:{password}@{host}{port}"
-    return urlunsplit(parts._replace(netloc=netloc))
-
-
 @pytest.fixture(scope="session")
 def capability_worker_dsn(postgres_dsn: str) -> str:
     """Provision and return a DSN that logs in as ``ibex_worker``.
@@ -180,29 +167,11 @@ def capability_worker_dsn(postgres_dsn: str) -> str:
     the provisioning command first. ``migrate provision`` is the Go CLI for the
     same routine the Go integration packages call.
     """
-    repo_root = Path(__file__).resolve().parents[4]
-    go = shutil.which("go")
-    if go is None:
-        pytest.fail(
-            "go is required to provision the ibex_worker capability login "
-            "(migrate provision); install Go or run the Go migration tests first"
-        )
-    env = dict(os.environ)
-    env["POSTGRES_DSN"] = postgres_dsn
-    env.update(_CAPABILITY_PASSWORDS)
     try:
-        subprocess.run(
-            [go, "run", "./infra/migrations/postgres/cmd/migrate", "-command", "provision"],
-            cwd=repo_root,
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-    except subprocess.CalledProcessError as exc:  # pragma: no cover - env failure path
-        pytest.fail(f"migrate provision failed: {exc.stderr.strip() or exc.stdout.strip()}")
-    return _capability_dsn(postgres_dsn, _WORKER_LOGIN)
+        provision_capability_logins(postgres_dsn, _REPO_ROOT)
+    except RuntimeError as exc:
+        pytest.fail(str(exc))
+    return capability_dsn(postgres_dsn, WORKER_LOGIN)
 
 
 def _free_tcp_port() -> int:
@@ -212,17 +181,35 @@ def _free_tcp_port() -> int:
 
 
 @pytest.fixture
-def integration_settings(require_redis: str, require_postgres: str) -> Iterator[Settings]:
+def integration_settings(
+    require_redis: str,
+    require_postgres: str,
+    capability_worker_dsn: str,
+) -> Iterator[Settings]:
+    """Settings for the worker under test: the ``ibex_worker`` login.
+
+    ``_on_worker_process_init`` asserts this login and fails the process on the
+    owner, so the app under test boots on ``capability_worker_dsn``. The test
+    itself keeps ``postgres_dsn`` (the owner) for seeding, assertions, and
+    destructive helpers such as ``TRUNCATE``.
+    """
     get_settings.cache_clear()
     reset_observability_for_tests()
+    previous_dsn = os.environ.get("POSTGRES_DSN")
     os.environ["REDIS_URL"] = require_redis
-    os.environ["POSTGRES_DSN"] = require_postgres
     os.environ["POSTGRES_TEST_DSN"] = require_postgres
+    os.environ["POSTGRES_DSN"] = capability_worker_dsn
     os.environ["IBEX_WORKER_METRICS_PORT"] = str(_free_tcp_port())
     settings = get_settings()
-    yield settings
-    get_settings.cache_clear()
-    reset_observability_for_tests()
+    try:
+        yield settings
+    finally:
+        if previous_dsn is None:
+            os.environ.pop("POSTGRES_DSN", None)
+        else:
+            os.environ["POSTGRES_DSN"] = previous_dsn
+        get_settings.cache_clear()
+        reset_observability_for_tests()
 
 
 @pytest.fixture
@@ -274,11 +261,15 @@ def worker(celery_app: Celery) -> Iterator[object]:
 
 
 @pytest.fixture
-async def truncate_failed_tasks(integration_settings: Settings) -> None:
-    if not integration_settings.database_url:
-        pytest.skip("database_url not configured")
+async def truncate_failed_tasks(postgres_dsn: str) -> None:
+    """Truncate the dead-letter table as the owner.
+
+    ``ibex_worker`` holds no grant on ``ibex_core.failed_tasks`` (and its
+    ``SELECT`` is revoked from ``ibex_app``), so the destructive helper must use
+    the owner DSN, not the app-under-test settings.
+    """
     _assert_destructive_postgres_opt_in()
-    engine = create_engine(integration_settings)
+    engine = create_engine(Settings(database_url=postgres_dsn))
     async with engine.begin() as conn:
         await conn.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text

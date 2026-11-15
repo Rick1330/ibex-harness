@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import grpc
 from authclient.channel import AuthCAError, open_auth_channel
@@ -27,6 +29,8 @@ _ISSUE_METHOD = "/ibex.auth.v1.AuthService/IssueOperatorSession"
 _VALIDATE_METHOD = "/ibex.auth.v1.AuthService/ValidateOperatorSession"
 _REVOKE_METHOD = "/ibex.auth.v1.AuthService/RevokeOperatorSession"
 _CONSUME_STEP_UP_METHOD = "/ibex.auth.v1.AuthService/ConsumeStepUp"
+_SERVICE_TOKEN_HEADER = "x-ibex-service-token"
+_EXPECTED_ORG_HEADER = "x-ibex-expected-org"
 
 # Re-export for unit tests that previously imported private helpers.
 _decode_string_field = decode_string_field
@@ -49,12 +53,20 @@ class ValidatedSession:
 
 @dataclass(frozen=True, slots=True)
 class AuthRPC:
-    """Shared Auth gRPC target, service credential, timeout, and optional CA bundle."""
+    """Shared Auth gRPC target, credentials, timeout, and optional CA bundle.
+
+    The two credentials are separate because they carry different authority in
+    AuthService: ``lifecycle_token`` authenticates validate, revoke and
+    consume-step-up; ``issue_token`` authenticates issuance. Neither is valid
+    for the other's methods, and a lifecycle call must also name the org it is
+    acting for (see ``_call_lifecycle``).
+    """
 
     auth_grpc_addr: str
-    service_token: str = ""
+    lifecycle_token: str = ""
     timeout_seconds: float = 5.0
     ca_file: str = ""
+    issue_token: str = field(default="", kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +88,19 @@ class ConsumeStepUpParams:
     permission: int = 0
 
 
+# gRPC metadata is an ordered sequence of (key, value) string pairs.
+_Metadata = tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _UnaryCall:
+    """One unary AuthService call: the method, its encoded request, its metadata."""
+
+    method: str
+    payload: bytes
+    metadata: _Metadata
+
+
 @asynccontextmanager
 async def _auth_channel(rpc: AuthRPC) -> AsyncIterator[grpc.aio.Channel]:
     """Open the Auth channel, mapping a CA load failure to AuthUnavailableError.
@@ -92,29 +117,109 @@ async def _auth_channel(rpc: AuthRPC) -> AsyncIterator[grpc.aio.Channel]:
         yield opened
 
 
-async def _call_lifecycle(rpc: AuthRPC, *, method: str, payload: bytes) -> bytes:
+def _identity(payload: bytes) -> bytes:
+    """Pass protobuf bytes through unchanged; the codec owns encoding."""
+    return payload
+
+
+async def _unary_bytes(
+    channel: grpc.aio.Channel, call: _UnaryCall, *, timeout_seconds: float
+) -> bytes:
+    """Await one unary call on an open channel, bounded by the call timeout."""
+    stub = channel.unary_unary(
+        call.method,
+        request_serializer=_identity,
+        response_deserializer=_identity,
+    )
+    return await asyncio.wait_for(
+        stub(call.payload, metadata=call.metadata),
+        timeout=timeout_seconds,
+    )
+
+
+async def _unary_with_channel(
+    rpc: AuthRPC, call: _UnaryCall, *, timeout_message: str
+) -> bytes:
+    """Open the channel, await the call, and map a timeout to AuthUnavailableError."""
     try:
         async with _auth_channel(rpc) as channel:
-            stub = channel.unary_unary(
-                method, request_serializer=lambda b: b, response_deserializer=lambda b: b
-            )
-            return await asyncio.wait_for(
-                stub(payload, metadata=(("x-ibex-service-token", rpc.service_token),)),
-                timeout=rpc.timeout_seconds,
-            )
+            return await _unary_bytes(channel, call, timeout_seconds=rpc.timeout_seconds)
     except TimeoutError as exc:
-        raise AuthUnavailableError("auth lifecycle timeout") from exc
+        raise AuthUnavailableError(timeout_message) from exc
+
+
+def _lifecycle_metadata(rpc: AuthRPC, expected_org: str) -> _Metadata:
+    """Name the org the lifecycle call acts for; refuse a call that names none."""
+    if not expected_org:
+        raise AuthFailedError("missing expected org")
+    return (
+        (_SERVICE_TOKEN_HEADER, rpc.lifecycle_token),
+        (_EXPECTED_ORG_HEADER, expected_org),
+    )
+
+
+def _map_lifecycle_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:
+    """Map a lifecycle RPC failure: a refused proof is a failed session, else unavailable."""
+    if exc.code() in (grpc.StatusCode.UNAUTHENTICATED, grpc.StatusCode.PERMISSION_DENIED):
+        return AuthFailedError("invalid session")
+    return AuthUnavailableError("auth lifecycle unavailable")
+
+
+async def _call_lifecycle(
+    rpc: AuthRPC, *, method: str, payload: bytes, expected_org: str
+) -> bytes:
+    """Call an org-scoped lifecycle method with the credential and org assertion.
+
+    AuthService refuses the call when the asserted org differs from the org in
+    the proof it verifies, and refuses it outright when no org is asserted.
+    Neither value is an authorization decision taken here: the assertion is the
+    API's own reading of the session it is acting on, and AuthService compares
+    it to the claims it verified.
+    """
+    call = _UnaryCall(
+        method=method,
+        payload=payload,
+        metadata=_lifecycle_metadata(rpc, expected_org),
+    )
+    try:
+        return await _unary_with_channel(rpc, call, timeout_message="auth lifecycle timeout")
     except grpc.aio.AioRpcError as exc:
-        if exc.code() in (grpc.StatusCode.UNAUTHENTICATED, grpc.StatusCode.PERMISSION_DENIED):
-            raise AuthFailedError("invalid session") from exc
-        raise AuthUnavailableError("auth lifecycle unavailable") from exc
+        raise _map_lifecycle_error(exc) from exc
+
+
+def _token_payload(token: str) -> dict[str, object]:
+    """Decode an unverified session token payload, failing closed when unreadable."""
+    try:
+        payload_b64 = token.split(".")[1]
+        padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+    except (IndexError, ValueError) as exc:
+        raise AuthFailedError("unreadable session token") from exc
+    return payload if isinstance(payload, dict) else {}
+
+
+def _session_org_claim(token: str) -> str:
+    """Return the ``org_id`` claim from an unverified session token payload.
+
+    Only the payload is read: AuthService verifies the signature and compares
+    this value with the org it finds in the verified claims, so a forged token
+    is refused there, not here. Raising ``AuthFailedError`` on an unreadable
+    token is a fail-closed shortcut, not a validation step.
+    """
+    org_id = str(_token_payload(token).get("org_id") or "")
+    if not org_id:
+        raise AuthFailedError("session token carries no org")
+    return org_id
 
 
 async def validate_operator_session(
     rpc: AuthRPC, *, access_token: str
 ) -> ValidatedSession:
     raw = await _call_lifecycle(
-        rpc, method=_VALIDATE_METHOD, payload=encode_string_fields({1: access_token})
+        rpc,
+        method=_VALIDATE_METHOD,
+        payload=encode_string_fields({1: access_token}),
+        expected_org=_session_org_claim(access_token),
     )
     return _parse_validated_session(raw)
 
@@ -154,6 +259,10 @@ async def revoke_operator_session(rpc: AuthRPC, params: RevokeSessionParams) -> 
                 5: params.refresh_token,
             }
         ),
+        # The org of the proof being revoked. When both proofs are present the
+        # access token names the org and AuthService compares it with the claims
+        # of whichever proof it verified, so a mixed-org pair is refused.
+        expected_org=_session_org_claim(params.access_token or params.refresh_token),
     )
 
 
@@ -169,7 +278,14 @@ async def consume_step_up(rpc: AuthRPC, params: ConsumeStepUpParams) -> None:
     )
     if params.permission:
         payload += b"\x30" + encode_varint(params.permission)
-    await _call_lifecycle(rpc, method=_CONSUME_STEP_UP_METHOD, payload=payload)
+    # The org of the operator session that is asking for the action, not the org
+    # of the proof: AuthService refuses before consuming when they differ.
+    await _call_lifecycle(
+        rpc,
+        method=_CONSUME_STEP_UP_METHOD,
+        payload=payload,
+        expected_org=params.org_id,
+    )
 
 
 def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:
@@ -179,6 +295,14 @@ def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailab
         return AuthFailedError("invalid refresh token")
     logger.warning("auth refresh rpc failed code=%s", exc.code())
     return AuthUnavailableError("auth refresh failed")
+
+
+def _map_issue_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:
+    """Map an issuance failure, reporting an unconfigured issuer as unavailable."""
+    mapped = _map_rpc_error(exc)
+    if exc.code() == grpc.StatusCode.FAILED_PRECONDITION:
+        return AuthUnavailableError("auth session issuer unavailable")
+    return mapped
 
 
 def _parse_refreshed_session(raw: bytes) -> RefreshedSession:
@@ -194,49 +318,31 @@ def _parse_refreshed_session(raw: bytes) -> RefreshedSession:
 
 async def issue_operator_session(rpc: AuthRPC, *, pat: str) -> RefreshedSession:
     """Issue an Auth-owned session pair for a validated PAT caller."""
+    call = _UnaryCall(
+        method=_ISSUE_METHOD,
+        payload=b"",
+        # Login authenticates as the PAT. Sending a service credential too would
+        # take the auth interceptor's service path and leave the caller context
+        # unset. Refresh (below) is the service path, and presents the issue
+        # credential.
+        metadata=(("authorization", f"Bearer {pat}"),),
+    )
     try:
-        async with _auth_channel(rpc) as channel:
-            stub = channel.unary_unary(
-                _ISSUE_METHOD,
-                request_serializer=lambda b: b,
-                response_deserializer=lambda b: b,
-            )
-            raw = await asyncio.wait_for(
-                stub(
-                    b"",
-                    # Login authenticates as the PAT. Sending the service token
-                    # too would take the auth interceptor's service path and
-                    # leave the caller context unset. Refresh (below) is the
-                    # service-token path.
-                    metadata=(("authorization", f"Bearer {pat}"),),
-                ),
-                timeout=rpc.timeout_seconds,
-            )
-    except TimeoutError as exc:
-        raise AuthUnavailableError("auth session issue timeout") from exc
+        raw = await _unary_with_channel(rpc, call, timeout_message="auth session issue timeout")
     except grpc.aio.AioRpcError as exc:
-        mapped = _map_rpc_error(exc)
-        if exc.code() == grpc.StatusCode.FAILED_PRECONDITION:
-            mapped = AuthUnavailableError("auth session issuer unavailable")
-        raise mapped from exc
+        raise _map_issue_error(exc) from exc
     return _parse_refreshed_session(raw)
 
 
 async def _call_issue_operator_session(rpc: AuthRPC, *, refresh_token: str) -> bytes:
-    payload = encode_issue_with_refresh(refresh_token)
     try:
-        async with _auth_channel(rpc) as channel:
-            stub = channel.unary_unary(
-                _ISSUE_METHOD,
-                request_serializer=lambda b: b,
-                response_deserializer=lambda b: b,
-            )
-            return await asyncio.wait_for(
-                stub(payload, metadata=(("x-ibex-service-token", rpc.service_token),)),
-                timeout=rpc.timeout_seconds,
-            )
-    except TimeoutError as exc:
-        raise AuthUnavailableError("auth refresh timeout") from exc
+        payload = encode_issue_with_refresh(refresh_token)
+        call = _UnaryCall(
+            method=_ISSUE_METHOD,
+            payload=payload,
+            metadata=((_SERVICE_TOKEN_HEADER, rpc.issue_token),),
+        )
+        return await _unary_with_channel(rpc, call, timeout_message="auth refresh timeout")
     except grpc.aio.AioRpcError as exc:
         raise _map_rpc_error(exc) from exc
     except AuthCodecError as exc:

@@ -1,9 +1,11 @@
 """Unit tests for the session helpers that pin the tenant role.
 
-Two helpers do the same job for different callers: ``session_with_org`` for the
-memory read/write paths and ``tenant_ledger_session`` for the idempotency
-ledger. Both must clear an inherited service-account bypass, pin ``ibex_app``
-and set the org GUC; a session that already set the bypass must not keep it.
+Three helpers do the same job for different callers: ``session_with_org`` for
+the memory read/write paths, ``tenant_ledger_session`` for the idempotency
+ledger, and ``probe_ledger_session`` for its capability probe. The first two
+clear an inherited service-account bypass, pin ``ibex_app`` and set the org GUC;
+the probe pins ``ibex_app`` and sets no org because it reads the catalog rather
+than a tenant row. A session that already set the bypass must not keep it.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from uuid import uuid4
 import pytest
 
 from app.db import session_with_org
-from app.ledger_scope import tenant_ledger_session, tenant_scope
+from app.ledger_scope import probe_ledger_session, probe_scope, tenant_ledger_session, tenant_scope
 
 
 class _FakeTransaction:
@@ -130,4 +132,46 @@ async def test_tenant_ledger_session_rolls_back_when_pinning_fails() -> None:
     factory = _factory_for(session)
     with pytest.raises(RuntimeError, match="database unavailable"):
         await _open_ledger(factory)
+    assert session.rolled_back
+
+
+@pytest.mark.asyncio
+async def test_probe_ledger_session_pins_the_role_without_an_org() -> None:
+    """The capability probe pins ibex_app and sets no org GUC.
+
+    ``PostgresIdempotencyLedger.ping`` asks the catalog whether ``current_user``
+    holds the ledger grants. Under the NOINHERIT ``ibex_runtime`` login an
+    unpinned probe measures the login, which holds no table grant, and reports
+    the ledger as not ready forever.
+    """
+    session = _FakeSession()
+
+    async with probe_ledger_session(_factory_for(session)) as opened:
+        assert opened is session
+
+    joined = " ".join(session.statements)
+    assert "SET LOCAL ROLE ibex_app" in joined
+    assert "app.current_org_id" not in joined
+
+
+@pytest.mark.asyncio
+async def test_probe_scope_opens_the_pinned_probe_session() -> None:
+    """The scope handed to the ledger adapter opens the probe session."""
+    session = _FakeSession()
+    scope = probe_scope(_factory_for(session))
+
+    async with scope() as opened:
+        assert opened is session
+
+    assert any("SET LOCAL ROLE ibex_app" in statement for statement in session.statements)
+
+
+@pytest.mark.asyncio
+async def test_probe_ledger_session_rolls_back_when_pinning_fails() -> None:
+    """A failing pin rolls the probe transaction back and propagates."""
+    session = _FailingSession()
+    factory = _factory_for(session)
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        async with probe_ledger_session(factory):
+            pass
     assert session.rolled_back

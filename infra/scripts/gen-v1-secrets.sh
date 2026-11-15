@@ -521,7 +521,14 @@ set_secret IBEX_WORKER_DB_PASSWORD "$(gen_hex)"
 set_secret IBEX_BOOTSTRAP_DB_PASSWORD "$(gen_hex)"
 set_secret REDIS_PASSWORD "$(gen_hex)"
 set_secret IBEX_CREDENTIALS_MASTER_KEY "$(openssl rand -base64 32 | tr -d '\n')"
-set_secret IBEX_AUTH_SERVICE_TOKEN "$(gen_hex)"
+# The API-to-AuthService credential is split by authority (finding S04). The
+# lifecycle token validates, revokes, and consumes step-up proofs and must name
+# the org it acts for; the issue token mints sessions and nothing else. They are
+# two values because one secret holding both authorities made every one of those
+# calls org-blind. Both are required: a deployment that sets only one fails to
+# start rather than running with half the authority.
+set_secret IBEX_AUTH_LIFECYCLE_TOKEN "$(gen_hex)"
+set_secret IBEX_AUTH_ISSUE_TOKEN "$(gen_hex)"
 set_secret IBEX_CONTEXT_GRPC_SERVICE_TOKEN "$(gen_hex)"
 set_secret IBEX_MEMORY_API_TOKEN "$(gen_pat)"
 set_secret IBEX_EMBEDDING_API_TOKEN "$(gen_hex)"

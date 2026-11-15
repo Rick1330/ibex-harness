@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/pgtenant"
 	"github.com/google/uuid"
 )
 
@@ -110,7 +111,7 @@ func (l *PostgresLedger) Claim(ctx context.Context, p Principal, key, requestHas
 		return ClaimOutcome{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, p.OrgID.String()); err != nil {
+	if err = pgtenant.PinOrg(ctx, tx, p.OrgID); err != nil {
 		return ClaimOutcome{}, err
 	}
 	leaseArg := fmt.Sprintf("%f seconds", l.lease.Seconds())
@@ -226,7 +227,7 @@ func (l *PostgresLedger) withClaimTx(ctx context.Context, claim ClaimToken, fn f
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, claim.Principal.OrgID.String()); err != nil {
+	if err := pgtenant.PinOrg(ctx, tx, claim.Principal.OrgID); err != nil {
 		return err
 	}
 	if err := fn(tx); err != nil {

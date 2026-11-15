@@ -8,7 +8,6 @@ soft-delete the user when revoke cannot complete.
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from uuid import UUID, uuid4
@@ -25,15 +24,9 @@ from app.config import Settings
 from app.db import create_engine, create_session_factory
 from app.main import ApiRuntimeOverrides, create_app
 from app.revocation_publish import RecordingOrgSuspendPublisher
+from tests.integration.conftest import capability_runtime_dsn, require_dsn
 
 pytestmark = pytest.mark.integration
-
-
-def _require_dsn() -> str:
-    dsn = os.environ.get("IBEX_API_DATABASE_URL") or os.environ.get("IBEX_MEMORY_DATABASE_URL")
-    if not dsn:
-        pytest.skip("IBEX_API_DATABASE_URL not set")
-    return dsn
 
 
 async def _sa(factory: async_sessionmaker[AsyncSession], sql: str, params: dict) -> None:
@@ -51,7 +44,7 @@ async def _scalar(factory: async_sessionmaker[AsyncSession], sql: str, params: d
 
 @pytest.fixture
 async def factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    settings = Settings(database_url=_require_dsn())
+    settings = Settings(database_url=require_dsn())
     engine = create_engine(settings)
     fac = create_session_factory(engine)
     try:
@@ -122,7 +115,7 @@ async def _cleanup_org(factory: async_sessionmaker[AsyncSession], org_id: UUID) 
 def _delete_member_with_dead_auth(seeded: _SeededOrg) -> int:
     revoker = GRPCTokenRevoker("127.0.0.1:1", timeout_seconds=0.2)
     app = create_app(
-        settings=Settings(database_url=_require_dsn()),
+        settings=Settings(database_url=capability_runtime_dsn()),
         validator=StaticTokenValidator(
             {
                 "tok": ValidateResult(

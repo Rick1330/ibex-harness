@@ -101,7 +101,7 @@ async def _validate_remote_session(raw: str, settings: Settings) -> ValidatedSes
         return await validate_operator_session(
             AuthRPC(
                 settings.auth_grpc_addr,
-                settings.auth_service_token or "",
+                settings.auth_lifecycle_token or "",
                 max(settings.auth_timeout_ms / 1000.0, 0.2),
                 settings.auth_grpc_ca_file or "",
             ),

@@ -41,10 +41,19 @@ class Settings(BaseSettings):
         "unset keeps the trust-gated plaintext dial",
     )
     auth_timeout_ms: int = Field(default=50, ge=1)
-    auth_service_token: str | None = Field(
+    auth_lifecycle_token: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("IBEX_AUTH_SERVICE_TOKEN", "IBEX_API_AUTH_SERVICE_TOKEN"),
-        description="Dedicated API-to-AuthService lifecycle credential",
+        validation_alias=AliasChoices(
+            "IBEX_AUTH_LIFECYCLE_TOKEN", "IBEX_API_AUTH_LIFECYCLE_TOKEN"
+        ),
+        description="Dedicated API-to-AuthService credential for validate, revoke and "
+        "consume-step-up. It cannot issue sessions (finding S04).",
+    )
+    auth_issue_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("IBEX_AUTH_ISSUE_TOKEN", "IBEX_API_AUTH_ISSUE_TOKEN"),
+        description="Dedicated API-to-AuthService credential for IssueOperatorSession. "
+        "It cannot validate, revoke, or consume a step-up proof (finding S04).",
     )
 
     redis_url: str | None = Field(
@@ -358,9 +367,9 @@ def _read_pem_file(path: str, env_name: str) -> str:
 def _validate_auth_ca_boundary(settings: Settings) -> None:
     """Outside development the AuthService TLS CA is mandatory (ADR-0097 §4).
 
-    The API sends bearer tokens and the service token on this hop; a plaintext
-    fallback in a protected profile would expose them. Development keeps the
-    existing trust-gated plaintext path for a host-run AuthService.
+    The API sends bearer tokens and a service credential on this hop; a
+    plaintext fallback in a protected profile would expose them. Development
+    keeps the existing trust-gated plaintext path for a host-run AuthService.
     """
     if settings.environment == "development":
         return
@@ -390,8 +399,12 @@ def _reject_hmac_outside_development(settings: Settings) -> None:
 def _require_non_dev_operator_material(settings: Settings) -> None:
     required = (
         (
-            settings.auth_service_token,
-            "IBEX_AUTH_SERVICE_TOKEN is required outside development when operator sessions are enabled",
+            settings.auth_lifecycle_token,
+            "IBEX_AUTH_LIFECYCLE_TOKEN is required outside development when operator sessions are enabled",
+        ),
+        (
+            settings.auth_issue_token,
+            "IBEX_AUTH_ISSUE_TOKEN is required outside development when operator sessions are enabled",
         ),
         (
             settings.operator_cursor_secret,

@@ -51,6 +51,7 @@ from app.clients.memory import (
     MemoryHitPayload,
     MemoryHttpClient,
     MemoryHttpError,
+    MemoryHttpForbidden,
     MemoryHttpTimeout,
     SearchMemoriesRequest,
 )
@@ -63,6 +64,12 @@ SourceName = Literal["directive", "hot", "cold"]
 
 # Branch detail for a hit whose tenant disagrees with the verified principal.
 MEMORY_TENANT_MISMATCH: str = "memory_tenant_mismatch"
+
+# Branch detail for a memory read the memory service itself refused (HTTP 403):
+# the org the assembly sent does not match the token's org, or the token lacks
+# memory:read. Either way the branch produced no usable answer, and reporting it
+# as an error is what turns silent under-retrieval into a visible one.
+MEMORY_FORBIDDEN: str = "memory_forbidden"
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +255,7 @@ class ParallelRetriever:
         if name == "hot":
             return self._memory.get_hot_memories(
                 HotMemoriesRequest(
+                    org_id=request.org_id,
                     agent_id=request.agent_id,
                     timeout_seconds=timeout_s,
                     limit=request.hot_limit,
@@ -256,6 +264,7 @@ class ParallelRetriever:
             )
         return self._memory.search_memories(
             SearchMemoriesRequest(
+                org_id=request.org_id,
                 agent_id=request.agent_id,
                 query=request.query,
                 timeout_seconds=timeout_s,
@@ -285,6 +294,17 @@ class ParallelRetriever:
             hits = await asyncio.wait_for(fetch(timeout_s), timeout=timeout_s)
         except TimeoutError:
             return _timeout_memories(name, started, f"{name}_timeout")
+        except MemoryHttpForbidden as exc:
+            # Memory refused the call for this org: the assembly would otherwise
+            # look successful with zero hits, which is the under-retrieval this
+            # detail exists to expose. Log the branch and status only — no
+            # org id, no token, no content.
+            logger.warning(
+                "context_memory_forbidden source=%s status=%s",
+                name,
+                exc.status_code,
+            )
+            return _error_memories(name, started, MEMORY_FORBIDDEN)
         except MemoryHttpError as exc:
             # A memory HTTP timeout carries no status code but is still a timeout
             # outcome, not an error, so it keeps its own detail and its own shape.

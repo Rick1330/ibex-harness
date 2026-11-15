@@ -28,7 +28,7 @@ supplied before promotion.
 
 | Profile | What works | What is missing |
 | --- | --- | --- |
-| `v1-single-node` (supported) | One Compose project: edge TLS, all required services, three one-shot gates (`migrate`, `provision`, `bootstrap`), recorded readiness | Hosted/HA operation, multi-user auth, measured p99 SLO, cross-tenant acceptance, recovery drill, the DSN cutover onto the capability logins |
+| `v1-single-node` (supported) | One Compose project: edge TLS, all required services, three one-shot gates (`migrate`, `provision`, `bootstrap`), recorded readiness, and every application service connecting on its capability login | Hosted/HA operation, multi-user auth, measured p99 SLO, a two-tenant browser journey, recovery drill |
 | Local (development) | Compose data stores; host-run Go/Python services | Nothing claimed beyond local evidence |
 | Staging (Kubernetes) | Helm overlays render; external Secrets expected | Real digests, data-plane provisioning, migration execution, deployment workflow |
 | Production (Kubernetes) | Chart scaffolding exists | Deployable defaults, data-plane templates, recovery evidence, SLO proof |

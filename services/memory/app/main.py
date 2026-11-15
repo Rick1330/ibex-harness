@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app import probes
 from app.auth.client import GRPCTokenValidator, TokenValidator
+from app.capability_login import assert_capability_login
 from app.clients.embedding import EmbeddingClient
 from app.clients.rerank import RerankClient, RerankClientConfig
 from app.config import Settings, get_settings
@@ -24,7 +25,7 @@ from app.errors import unhandled_error_handler
 from app.feedback.service import MemoryFeedbackService
 from app.http_metrics import HTTPMetricsMiddleware
 from app.http_validation import request_validation_error_handler
-from app.ledger_scope import tenant_scope
+from app.ledger_scope import probe_scope, tenant_scope
 from app.pii.service import PiiService
 from app.probes import probe_router
 from app.read.hot_cache import MemoryHotCacheReader
@@ -111,6 +112,68 @@ def create_app(
 
 
 @asynccontextmanager
+async def _not_ready_lifespan(auth: TokenValidator) -> AsyncGenerator[None, None]:
+    """Yield the not-ready app, releasing the exporter and the gRPC channel on exit.
+
+    The not-ready path never reaches ``_shutdown_memory``, so it flushes here; the
+    gRPC channel and the exporter must be released on every exit shape, including
+    a consumer exception thrown into this generator.
+    """
+    try:
+        yield
+    finally:
+        # ADR-0019 §8: flush the exporter before dependency teardown, and
+        # before anything that can raise — a close failure must not swallow
+        # the flush.
+        #
+        # The flush is nested so a raising exporter (timeout, collector
+        # down) cannot skip the close and leak the gRPC channel. If both
+        # fail, the close error propagates with the flush error chained as
+        # its __context__: the caller sees the later failure, and the
+        # flush fault stays in the traceback instead of being discarded.
+        try:
+            shutdown_tracing()
+        finally:
+            await auth.aclose()
+
+
+@dataclass(frozen=True, slots=True)
+class _CoreResources:
+    """The engine-backed resources every request path is built on."""
+
+    engine: AsyncEngine
+    session_factory: async_sessionmaker[AsyncSession]
+    store: PgVectorStore
+    pii: PiiService
+
+
+def _build_core_resources(cfg: Settings, state: MemoryAppState) -> _CoreResources:
+    """Build the engine, store, PII service, and the pinned idempotency ledger."""
+    engine = create_engine(cfg)
+    session_factory = create_session_factory(engine)
+    store = PgVectorStore(session_factory, cfg)
+    pii = PiiService(cfg)
+    state.engine = engine
+    state.session_factory = session_factory
+    state.store = store
+    state.pii = pii
+    state.idempotency_ledger = PostgresIdempotencyLedger(
+        session_factory,
+        session_scope=tenant_scope(session_factory),
+        # The probe must measure ibex_app, the identity the ledger writes as.
+        # ibex_runtime is NOINHERIT and holds no table grant itself, so an
+        # unpinned probe would report the ledger as not ready forever.
+        probe_scope=probe_scope(session_factory),
+    )
+    return _CoreResources(
+        engine=engine,
+        session_factory=session_factory,
+        store=store,
+        pii=pii,
+    )
+
+
+@asynccontextmanager
 async def _memory_service_lifespan(
     state: MemoryAppState,
     cfg: Settings,
@@ -136,39 +199,11 @@ async def _memory_service_lifespan(
         state.ready = False
         state.ready_error = "IBEX_MEMORY_DATABASE_URL not set"
         logger.error("memory not ready: %s", state.ready_error)
-        # The not-ready path never reaches _shutdown_memory, so flush here; the
-        # gRPC channel and the exporter must be released on every exit shape,
-        # including a consumer exception thrown into this generator.
-        try:
+        async with _not_ready_lifespan(auth):
             yield
-        finally:
-            # ADR-0019 §8: flush the exporter before dependency teardown, and
-            # before anything that can raise — a close failure must not swallow
-            # the flush.
-            #
-            # The flush is nested so a raising exporter (timeout, collector
-            # down) cannot skip the close and leak the gRPC channel. If both
-            # fail, the close error propagates with the flush error chained as
-            # its __context__: the caller sees the later failure, and the
-            # flush fault stays in the traceback instead of being discarded.
-            try:
-                shutdown_tracing()
-            finally:
-                await auth.aclose()
         return
 
-    engine = create_engine(cfg)
-    session_factory = create_session_factory(engine)
-    store = PgVectorStore(session_factory, cfg)
-    pii = PiiService(cfg)
-    state.engine = engine
-    state.session_factory = session_factory
-    state.store = store
-    state.pii = pii
-    state.idempotency_ledger = PostgresIdempotencyLedger(
-        session_factory, session_scope=tenant_scope(session_factory)
-    )
-
+    core = _build_core_resources(cfg, state)
     redis = _configure_redis(cfg, state)
     embedding_holder: dict[str, EmbeddingClient | None] = {"client": None}
     embed_callable = _build_embed(cfg, embedding_holder)
@@ -178,22 +213,28 @@ async def _memory_service_lifespan(
         _WriteReadBootstrap(
             state=state,
             cfg=cfg,
-            session_factory=session_factory,
-            store=store,
-            pii=pii,
+            session_factory=core.session_factory,
+            store=core.store,
+            pii=core.pii,
             redis=redis,
             embed_callable=embed_callable,
         )
     )
-    await _refresh_readiness(state, auth=auth, engine=engine)
+    await _refresh_readiness(state, auth=auth, engine=core.engine)
 
     try:
+        if state.ready:
+            # A wrong login starts silently and re-enables the RLS bypass the
+            # tenancy guarantee rests on, so it fails startup rather than the
+            # first request. Gated on readiness: an unreachable database stays
+            # a not-ready state, not a crash loop.
+            await assert_capability_login(core.engine)
         yield
     finally:
         await _shutdown_memory(
             state,
             auth=auth,
-            engine=engine,
+            engine=core.engine,
             embedding_holder=embedding_holder,
         )
 

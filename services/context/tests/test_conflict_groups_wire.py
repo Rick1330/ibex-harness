@@ -152,7 +152,9 @@ async def test_client_raises_on_a_non_list_field() -> None:
     try:
         with pytest.raises(MemoryHttpError, match="conflict_groups"):
             await client.search_memories(
-                SearchMemoriesRequest(agent_id=AGENT, query="sky", timeout_seconds=0.1)
+                SearchMemoriesRequest(
+                    org_id=ORG, agent_id=AGENT, query="sky", timeout_seconds=0.1
+                )
             )
     finally:
         await client._client.aclose()  # type: ignore[attr-defined]

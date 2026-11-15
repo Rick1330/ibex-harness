@@ -265,7 +265,7 @@ services:
     restart: "no"
     environment:
       IBEX_ENV: ${IBEX_ENV:-staging}
-      POSTGRES_DSN: postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
+      POSTGRES_DSN: postgres://ibex_bootstrap:${IBEX_BOOTSTRAP_DB_PASSWORD:?IBEX_BOOTSTRAP_DB_PASSWORD is required; run make v1-secrets}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
       IBEX_BOOTSTRAP_ORG_NAME: ${IBEX_BOOTSTRAP_ORG_NAME:-IBEX Harness}
       IBEX_BOOTSTRAP_ORG_SLUG: ${IBEX_BOOTSTRAP_ORG_SLUG:-ibex}
       IBEX_BOOTSTRAP_USER_EMAIL: ${IBEX_BOOTSTRAP_USER_EMAIL:-owner@ibex.local}
@@ -303,10 +303,11 @@ services:
       IBEX_ENV: ${IBEX_ENV:-staging}
       IBEX_PORT: "8081"
       IBEX_GRPC_PORT: "9091"
-      POSTGRES_DSN: postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
+      POSTGRES_DSN: postgres://ibex_auth:${IBEX_AUTH_DB_PASSWORD:?IBEX_AUTH_DB_PASSWORD is required; run make v1-secrets}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       IBEX_CREDENTIALS_MASTER_KEY: ${IBEX_CREDENTIALS_MASTER_KEY:?IBEX_CREDENTIALS_MASTER_KEY is required; run make v1-secrets}
-      IBEX_AUTH_SERVICE_TOKEN: ${IBEX_AUTH_SERVICE_TOKEN:?IBEX_AUTH_SERVICE_TOKEN is required; run make v1-secrets}
+      IBEX_AUTH_LIFECYCLE_TOKEN: ${IBEX_AUTH_LIFECYCLE_TOKEN:?IBEX_AUTH_LIFECYCLE_TOKEN is required; run make v1-secrets}
+      IBEX_AUTH_ISSUE_TOKEN: ${IBEX_AUTH_ISSUE_TOKEN:?IBEX_AUTH_ISSUE_TOKEN is required; run make v1-secrets}
       JWT_ISSUER: ibex-harness
       JWT_AUDIENCE: ibex-dashboard
       JWT_PRIVATE_KEY_FILE: /run/secrets/jwt_private.pem
@@ -345,7 +346,7 @@ services:
     environment:
       IBEX_ENV: ${IBEX_ENV:-staging}
       IBEX_PORT: "8080"
-      POSTGRES_DSN: postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
+      POSTGRES_DSN: postgres://ibex_runtime:${IBEX_RUNTIME_DB_PASSWORD:?IBEX_RUNTIME_DB_PASSWORD is required; run make v1-secrets}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       IBEX_AUTH_GRPC_ADDR: auth:9091
       IBEX_AUTH_GRPC_CA_FILE: /run/secrets/ca.crt
@@ -401,10 +402,11 @@ services:
       IBEX_ENV: ${IBEX_ENV:-staging}
       IBEX_API_HOST: 127.0.0.1
       IBEX_API_PORT: "8010"
-      IBEX_API_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}
+      IBEX_API_DATABASE_URL: postgresql+asyncpg://ibex_runtime:${IBEX_RUNTIME_DB_PASSWORD:?IBEX_RUNTIME_DB_PASSWORD is required; run make v1-secrets}@postgres:5432/${POSTGRES_DB:-ibex}
       IBEX_AUTH_GRPC_ADDR: auth:9091
       IBEX_AUTH_GRPC_CA_FILE: /run/secrets/ca.crt
-      IBEX_AUTH_SERVICE_TOKEN: ${IBEX_AUTH_SERVICE_TOKEN:?IBEX_AUTH_SERVICE_TOKEN is required; run make v1-secrets}
+      IBEX_AUTH_LIFECYCLE_TOKEN: ${IBEX_AUTH_LIFECYCLE_TOKEN:?IBEX_AUTH_LIFECYCLE_TOKEN is required; run make v1-secrets}
+      IBEX_AUTH_ISSUE_TOKEN: ${IBEX_AUTH_ISSUE_TOKEN:?IBEX_AUTH_ISSUE_TOKEN is required; run make v1-secrets}
       IBEX_API_AUTH_TIMEOUT_MS: "2000"
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       # Organization deletion is enqueued through the worker's broker DB.
@@ -447,7 +449,7 @@ services:
       IBEX_ENV: ${IBEX_ENV:-staging}
       IBEX_MEMORY_HOST: 0.0.0.0
       IBEX_MEMORY_PORT: "8005"
-      IBEX_MEMORY_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}
+      IBEX_MEMORY_DATABASE_URL: postgresql+asyncpg://ibex_runtime:${IBEX_RUNTIME_DB_PASSWORD:?IBEX_RUNTIME_DB_PASSWORD is required; run make v1-secrets}@postgres:5432/${POSTGRES_DB:-ibex}
       IBEX_AUTH_GRPC_ADDR: auth:9091
       IBEX_AUTH_GRPC_CA_FILE: /run/secrets/ca.crt
       IBEX_MEMORY_AUTH_TIMEOUT_MS: "2000"
@@ -543,7 +545,7 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       REDIS_DB_QUEUE: "1"
       REDIS_DB_RESULTS: "3"
-      POSTGRES_DSN: postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
+      POSTGRES_DSN: postgres://ibex_worker:${IBEX_WORKER_DB_PASSWORD:?IBEX_WORKER_DB_PASSWORD is required; run make v1-secrets}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
       IBEX_WORKER_METRICS_PORT: "8006"
       IBEX_WORKER_ENQUEUE_PORT: "8007"
       IBEX_WORKER_ENQUEUE_HOST: 0.0.0.0

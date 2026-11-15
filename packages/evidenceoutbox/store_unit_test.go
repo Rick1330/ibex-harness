@@ -305,6 +305,7 @@ func TestUnit_PersistRun_HappyPathMinimal(t *testing.T) {
 	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	digest := "sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT r\.id, r\.request_id`).WithArgs(org, "req-1").WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO ibex_core.evidence_runs`).
@@ -357,6 +358,7 @@ func TestUnit_PersistRun_WithChildren(t *testing.T) {
 	rank := 1
 	sim := 0.9
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT r\.id, r\.request_id`).WithArgs(org, "req-2").WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO ibex_core.evidence_runs`).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -413,6 +415,7 @@ func TestUnit_PersistRun_ReplaysExistingDurableRun(t *testing.T) {
 	runID := uuid.New()
 	outboxID := uuid.New()
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT r\.id, r\.request_id`).WithArgs(org, "req-replay").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "request_id", "outbox_ids"}).
@@ -447,9 +450,18 @@ func TestUnit_PersistRun_TxnSetupFails(t *testing.T) {
 			},
 		},
 		{
+			name: "tenant role",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnError(context.Canceled)
+				mock.ExpectRollback()
+			},
+		},
+		{
 			name: "rls",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
+				mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
 				mock.ExpectExec(`SELECT set_config`).WillReturnError(context.Canceled)
 				mock.ExpectRollback()
 			},

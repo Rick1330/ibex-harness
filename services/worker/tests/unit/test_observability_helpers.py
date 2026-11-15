@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.config import Settings
+from app.db import CapabilityLoginError
 from app.observability import (
     DeadLetterPayload,
     _format_traceback,
@@ -139,10 +142,64 @@ def test_on_worker_process_init_starts_tracing_and_database(
     with (
         patch("app.observability.init_tracing") as init_tracing,
         patch("app.observability._init_database") as init_db,
+        patch("app.observability._assert_database_login") as assert_login,
     ):
         _on_worker_process_init()
     init_tracing.assert_called_once()
     init_db.assert_called_once()
+    assert_login.assert_called_once()
+
+
+class _OwnerLoginConnection:
+    """Connection double reporting the owner login as a superuser."""
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def execute(self, _statement: object) -> object:
+        result = MagicMock()
+        result.one.return_value = ("ibex", "ibex", True, True)
+        return result
+
+
+class _OwnerLoginEngine:
+    """Engine double whose pool connects as the RLS-bypassing owner."""
+
+    def connect(self) -> _OwnerLoginConnection:
+        return _OwnerLoginConnection()
+
+    async def dispose(self) -> None:
+        return None
+
+
+def test_worker_process_init_fails_on_the_owner_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker pool opened on the owner login must not finish process init."""
+    from app import observability
+
+    reset_observability_for_tests()
+    monkeypatch.setattr("app.observability.init_tracing", lambda: None)
+    monkeypatch.setattr(
+        "app.observability.create_engine", lambda _settings: _OwnerLoginEngine()
+    )
+    monkeypatch.setattr("app.observability.create_session_factory", lambda _engine: object())
+    monkeypatch.setattr(
+        "app.observability.get_settings",
+        lambda: Settings(database_url="postgresql://ibex:ibex@127.0.0.1:5432/ibex"),
+    )
+    try:
+        with pytest.raises(CapabilityLoginError, match="the owner login"):
+            _on_worker_process_init()
+    finally:
+        loop = observability._worker_loop
+        reset_observability_for_tests()
+        if loop is not None:
+            loop.close()
+        asyncio.set_event_loop(None)
 
 
 def test_on_worker_ready_starts_metrics_only(monkeypatch: pytest.MonkeyPatch) -> None:

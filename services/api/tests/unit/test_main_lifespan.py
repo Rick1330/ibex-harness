@@ -10,7 +10,21 @@ from sqlalchemy.exc import OperationalError
 
 from app.auth.client import StaticTokenValidator
 from app.config import Settings
+from app.db import CapabilityLoginError
 from app.main import create_app
+
+
+def _login_result(
+    current: str,
+    session: str,
+    *,
+    current_super: bool = False,
+    session_super: bool = False,
+) -> MagicMock:
+    """Result double whose ``.one()`` is the capability-login probe row."""
+    result = MagicMock()
+    result.one.return_value = (current, session, current_super, session_super)
+    return result
 
 
 def test_create_app_without_database_url_not_ready() -> None:
@@ -33,7 +47,7 @@ def test_create_app_full_lifespan_mocked() -> None:
     mock_engine = MagicMock()
     mock_engine.dispose = AsyncMock()
     mock_conn = MagicMock()
-    mock_conn.execute = AsyncMock()
+    mock_conn.execute = AsyncMock(return_value=_login_result("ibex_runtime", "ibex_runtime"))
     mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
     mock_conn.__aexit__ = AsyncMock(return_value=None)
     mock_engine.connect = MagicMock(return_value=mock_conn)
@@ -104,6 +118,35 @@ def test_create_app_postgres_unreachable_not_ready() -> None:
             assert app.state.api.ready is False
             assert app.state.api.ready_error == "database not reachable"
             assert client.get("/ready").status_code == 503
+
+
+def test_create_app_owner_login_fails_startup() -> None:
+    """A reachable database on the owner login must not start the service."""
+    settings = Settings(
+        database_url="postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex",
+    )
+    validator = StaticTokenValidator({}, available=True)
+
+    mock_conn = MagicMock()
+    mock_conn.execute = AsyncMock(
+        return_value=_login_result("ibex", "ibex", current_super=True, session_super=True)
+    )
+    mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_conn.__aexit__ = AsyncMock(return_value=None)
+    mock_engine = MagicMock()
+    mock_engine.connect = MagicMock(return_value=mock_conn)
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch("app.main.create_engine", return_value=mock_engine),
+        patch("app.main.create_session_factory", return_value=MagicMock()),
+    ):
+        app = create_app(settings=settings, validator=validator)
+        with (
+            pytest.raises(CapabilityLoginError, match="the owner login"),
+            TestClient(app),
+        ):
+            pass
 
 
 def _recording_auth_client(captured: dict[str, object], role: str) -> type:
