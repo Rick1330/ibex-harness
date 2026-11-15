@@ -116,25 +116,26 @@ func TestServiceTokenSplit_OrgScopedCallRequiresOrgAssertion(t *testing.T) {
 
 	ic := AuthzUnaryInterceptorWithServiceTokens(noPATValidator(t), splitServiceTokens())
 	cases := []struct {
-		name string
-		ctx  context.Context
+		name  string
+		pairs []string
 	}{
-		{name: "absent", ctx: metadataContext(serviceTokenMetadataKey, testLifecycleToken)},
-		{name: "empty", ctx: metadataContext(serviceTokenMetadataKey, testLifecycleToken, expectedOrgMetadataKey, " ")},
+		{name: "absent", pairs: []string{serviceTokenMetadataKey, testLifecycleToken}},
+		{name: "empty", pairs: []string{serviceTokenMetadataKey, testLifecycleToken, expectedOrgMetadataKey, " "}},
 		{
 			name: "duplicated",
-			ctx: metadataContext(
+			pairs: []string{
 				serviceTokenMetadataKey, testLifecycleToken,
 				expectedOrgMetadataKey, testOrgID,
 				expectedOrgMetadataKey, testOtherOrgID,
-			),
+			},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			ctx := metadataContext(tc.pairs...)
 			for _, method := range orgScopedMethods {
-				called, err := runInterceptor(ic, tc.ctx, method)
+				called, err := runInterceptor(ic, ctx, method)
 				if status.Code(err) != codes.PermissionDenied {
 					t.Fatalf("%s: code: got %v want PermissionDenied", method, status.Code(err))
 				}

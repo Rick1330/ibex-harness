@@ -12,6 +12,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+# shellcheck source=lib/pgcapability.sh
+source "$ROOT_DIR/infra/scripts/lib/pgcapability.sh"
 
 AUTH_HTTP="${IBEX_AUTH_HTTP:-http://127.0.0.1:18081}"
 AUTH_GRPC_PORT="${IBEX_GRPC_PORT:-19091}"
@@ -335,7 +337,13 @@ start_stack() {
   memory_port="$(echo "$MEMORY_ADDR" | sed -E "$PORT_FROM_URL_SED")"
 
   echo "e2e-phase3-memory: starting auth on :${auth_http_port}/:${AUTH_GRPC_PORT}..."
+  # AuthService asserts the `ibex_auth` capability login at startup and refuses
+  # the RLS-bypassing owner `ibex`, so it gets its own DSN.
+  local auth_database_url
+  auth_database_url="$(capability_dsn "${POSTGRES_DSN}" "$IBEX_AUTH_LOGIN")" \
+    || fail "cannot derive the ibex_auth DSN from POSTGRES_DSN"
   IBEX_PORT="$auth_http_port" IBEX_GRPC_PORT="$AUTH_GRPC_PORT" OTEL_SERVICE_NAME=ibex-auth \
+    POSTGRES_DSN="$auth_database_url" \
     go run ./services/auth/cmd/auth >"$LOG_DIR/auth.log" 2>&1 &
   PIDS+=("$!")
   wait_http "auth" "$AUTH_HTTP/health"
@@ -372,7 +380,13 @@ start_stack() {
   wait_http "embedder" "$EMBEDDER_ADDR/health"
 
   echo "e2e-phase3-memory: starting memory on :${memory_port}..."
-  export IBEX_MEMORY_DATABASE_URL="${POSTGRES_DSN}"
+  # The app under test connects on the ibex_runtime capability login: memory
+  # asserts its login at startup and refuses the RLS-bypassing owner `ibex`.
+  # The seed/assert helpers below stay on the owner DSN on purpose, so this is a
+  # local for the child process and not an export.
+  local memory_database_url
+  memory_database_url="$(capability_dsn "${POSTGRES_DSN}" "$IBEX_RUNTIME_LOGIN")" \
+    || fail "cannot derive the ibex_runtime DSN from POSTGRES_DSN"
   export IBEX_MEMORY_REDIS_URL="${REDIS_URL}"
   export IBEX_AUTH_GRPC_ADDR="127.0.0.1:${AUTH_GRPC_PORT}"
   export IBEX_MEMORY_AUTH_TIMEOUT_MS="${IBEX_MEMORY_AUTH_TIMEOUT_MS:-2000}"
@@ -385,7 +399,8 @@ start_stack() {
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
-    exec uvicorn app.main:app --host 127.0.0.1 --port "$memory_port"
+    exec env IBEX_MEMORY_DATABASE_URL="$memory_database_url" \
+      uvicorn app.main:app --host 127.0.0.1 --port "$memory_port"
   ) >"$LOG_DIR/memory.log" 2>&1 &
   PIDS+=("$!")
   wait_http "$SERVICE_MEMORY" "$MEMORY_ADDR/health" 180
@@ -400,6 +415,9 @@ if [[ "$MANAGE" == "1" ]]; then
   export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6380/0}"
   postgres_preflight
   bash "$ROOT_DIR/infra/scripts/db-seed.sh" >/dev/null
+  # Migration 000064 creates the capability roles locked (no verifier, CONNECTION
+  # LIMIT 0), so memory cannot log in until they are provisioned. Idempotent.
+  provision_capability_logins "${POSTGRES_DSN}"
   bash "$ROOT_DIR/infra/scripts/memory-uv-sync.sh" >/dev/null
   start_stack
 else

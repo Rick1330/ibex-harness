@@ -1,8 +1,18 @@
 name: ibex-memory-context
 
 # Supported local bundle profile: memory + context without the LLM proxy.
-# AuthService, memory, embedder, PostgreSQL with pgvector, and migrations.
+# AuthService, memory, embedder, PostgreSQL with pgvector, migrations, and the
+# capability-login provision one-shot.
 # See infra/compose/bundles/README.md for limits and non-claims.
+#
+# Every application service connects as its capability login, never the owner
+# `ibex`: auth uses `ibex_auth`, memory uses `ibex_runtime`. Both binaries assert
+# this at startup and refuse the owner, so the one-shot `provision` service sets
+# the capability passwords and lifts CONNECTION LIMIT 0 before either starts.
+# The passwords below are fixed test values for this throwaway bundle database;
+# they are deliberately not the owner credential and are pairwise distinct,
+# which is what provision enforces. A deployment profile generates them instead
+# (see infra/compose/v1-single-node/gen-v1-secrets.sh).
 
 services:
   postgres:
@@ -43,6 +53,32 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # One-shot capability-login provisioning. The migrations create the capability
+  # roles with CONNECTION LIMIT 0, so nothing can log in as them until this sets
+  # each SCRAM verifier and lifts the limit. It runs after `migrate` because the
+  # roles must already exist, and every service that logs in as a capability
+  # login waits for it to complete. `seed` stays on the owner login on purpose:
+  # it is a privileged test fixture loader, not an application service.
+  provision:
+    build:
+      context: ../../..
+      dockerfile: infra/migrations/Dockerfile
+    environment:
+      # provision derives the owner credential from this DSN and refuses any
+      # capability secret that equals it.
+      POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@postgres:5432/ibex?sslmode=disable
+      # Fixed test credentials for the bundle database. All four are required by
+      # provision even where the service is absent from this profile.
+      IBEX_AUTH_DB_PASSWORD: bundle-test-auth
+      IBEX_RUNTIME_DB_PASSWORD: bundle-test-runtime
+      IBEX_WORKER_DB_PASSWORD: bundle-test-worker
+      IBEX_BOOTSTRAP_DB_PASSWORD: bundle-test-bootstrap
+    command: ["provision"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
   auth:
     build:
       context: ../../..
@@ -51,9 +87,9 @@ services:
       IBEX_ENV: development
       IBEX_PORT: "8081"
       IBEX_GRPC_PORT: "9091"
-      POSTGRES_DSN: postgres://ibex:ibex@postgres:5432/ibex?sslmode=disable
+      POSTGRES_DSN: postgres://ibex_auth:bundle-test-auth@postgres:5432/ibex?sslmode=disable
     depends_on:
-      migrate:
+      provision:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8081/health >/dev/null"]
@@ -87,7 +123,7 @@ services:
       IBEX_ENV: development
       IBEX_MEMORY_HOST: 0.0.0.0
       IBEX_MEMORY_PORT: "8005"
-      IBEX_MEMORY_DATABASE_URL: postgresql+asyncpg://ibex:ibex@postgres:5432/ibex
+      IBEX_MEMORY_DATABASE_URL: postgresql+asyncpg://ibex_runtime:bundle-test-runtime@postgres:5432/ibex
       IBEX_AUTH_GRPC_ADDR: auth:9091
       IBEX_MEMORY_AUTH_TIMEOUT_MS: "2000"
       IBEX_MEMORY_EMBEDDING_BASE_URL: http://embedder:8004
@@ -110,6 +146,8 @@ services:
       embedder:
         condition: service_healthy
       seed:
+        condition: service_completed_successfully
+      provision:
         condition: service_completed_successfully
     ports:
       - "127.0.0.1:18005:8005"

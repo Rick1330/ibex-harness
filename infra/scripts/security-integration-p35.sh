@@ -7,6 +7,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 unset VIRTUAL_ENV
 cd "$ROOT"
+# shellcheck source=lib/pgcapability.sh
+source "$ROOT/infra/scripts/lib/pgcapability.sh"
 
 CANONICAL_DSN="${POSTGRES_DSN:-${POSTGRES_TEST_DSN:-${IBEX_MEMORY_DATABASE_URL:-}}}"
 if [[ -z "${CANONICAL_DSN}" ]]; then
@@ -255,6 +257,14 @@ SQL
 start_stack() {
   mkdir -p "$LOG_DIR"
   unset CLICKHOUSE_DSN || true
+  # The apps under test connect on capability logins (auth: ibex_auth, memory:
+  # ibex_runtime): each asserts its login at startup and refuses the
+  # RLS-bypassing owner `ibex`. Seeding below stays on the owner DSN on purpose.
+  local auth_database_url memory_database_url
+  auth_database_url="$(capability_dsn "${POSTGRES_DSN}" "$IBEX_AUTH_LOGIN")" \
+    || fail "cannot derive the ibex_auth DSN from POSTGRES_DSN"
+  memory_database_url="$(capability_dsn "${POSTGRES_DSN}" "$IBEX_RUNTIME_LOGIN")" \
+    || fail "cannot derive the ibex_runtime DSN from POSTGRES_DSN"
   unset OTEL_EXPORTER_OTLP_ENDPOINT || true
 
   local auth_bin
@@ -263,7 +273,9 @@ start_stack() {
   go build -o "$auth_bin" ./services/auth/cmd/auth
 
   echo "security-p35: starting auth on :${AUTH_HTTP_PORT}/:${AUTH_GRPC_PORT}..."
+  # AuthService asserts `ibex_auth` at startup and refuses the owner login.
   IBEX_PORT="$AUTH_HTTP_PORT" IBEX_GRPC_PORT="$AUTH_GRPC_PORT" OTEL_SERVICE_NAME=ibex-auth \
+    POSTGRES_DSN="$auth_database_url" \
     "$auth_bin" >"$LOG_DIR/auth.log" 2>&1 &
   PIDS+=("$!")
   wait_http "auth" "http://127.0.0.1:${AUTH_HTTP_PORT}/health"
@@ -313,7 +325,7 @@ start_stack() {
       IBEX_MEMORY_AUTH_TIMEOUT_MS="${IBEX_MEMORY_AUTH_TIMEOUT_MS:-2000}" \
       IBEX_MEMORY_EMBEDDING_BASE_URL="http://127.0.0.1:${EMBEDDER_PORT}" \
       IBEX_EMBEDDING_API_TOKEN="$EMBED_TOKEN" \
-      IBEX_MEMORY_DATABASE_URL="${POSTGRES_DSN}" \
+      IBEX_MEMORY_DATABASE_URL="${memory_database_url}" \
       IBEX_MEMORY_REDIS_URL="${REDIS_URL}" \
       uvicorn app.main:app --host 127.0.0.1 --port "$MEMORY_PORT"
   ) >"$LOG_DIR/memory.log" 2>&1 &
@@ -366,6 +378,9 @@ run_iso_tests() {
 }
 
 bash "$ROOT/infra/scripts/db-migrate.sh" up
+# Migration 000064 creates the capability roles locked (no verifier, CONNECTION
+# LIMIT 0). Provision before any service starts, or memory cannot log in at all.
+provision_capability_logins "${CANONICAL_DSN}"
 seed_stack
 start_stack
 run_iso_tests

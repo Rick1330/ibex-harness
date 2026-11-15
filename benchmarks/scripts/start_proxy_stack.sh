@@ -3,8 +3,25 @@ set -euo pipefail
 
 BENCH_PROXY_PORT="${BENCH_PROXY_PORT:-18082}"
 AUTH_GRPC_PORT="${AUTH_GRPC_PORT:-9091}"
+# Owner DSN: migrations, the dev seed, and the capability-login provision step.
+# No application process uses it. AuthService and the proxy each connect as
+# their own capability login (see capability_dsn below).
 POSTGRES_DSN="${POSTGRES_DSN:-postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable}"
 REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/0}"
+
+# Capability logins. Both binaries assert at startup that they are NOT connected
+# as the owner `ibex` and are connected as their compiled-in capability login
+# (`ibex_auth`, `ibex_runtime`), because the owner is the RLS-bypassing migration
+# role. These are fixed test credentials for a throwaway benchmark database, not
+# production secrets: the database is local to the benchmark run and is recreated
+# for each run. Override with the same variable names when the database was
+# provisioned with different values.
+IBEX_AUTH_DB_PASSWORD="${IBEX_AUTH_DB_PASSWORD:-bench-test-auth}"
+IBEX_RUNTIME_DB_PASSWORD="${IBEX_RUNTIME_DB_PASSWORD:-bench-test-runtime}"
+IBEX_WORKER_DB_PASSWORD="${IBEX_WORKER_DB_PASSWORD:-bench-test-worker}"
+IBEX_BOOTSTRAP_DB_PASSWORD="${IBEX_BOOTSTRAP_DB_PASSWORD:-bench-test-bootstrap}"
+export IBEX_AUTH_DB_PASSWORD IBEX_RUNTIME_DB_PASSWORD \
+  IBEX_WORKER_DB_PASSWORD IBEX_BOOTSTRAP_DB_PASSWORD
 
 export IBEX_ENV=development
 export IBEX_LOG_LEVEL=ERROR
@@ -27,6 +44,32 @@ normalize_psql_dsn() {
   dsn="${dsn//postgresql+asyncpg:/postgres:}"
   dsn="${dsn//postgresql:/postgres:}"
   echo "$dsn"
+}
+
+# capability_dsn rewrites the owner DSN's userinfo to a capability login and keeps
+# the host, port, database, and query parameters, so the capability logins reach
+# the same server the migration and the seed used. Passwords here are fixed
+# alphanumeric test values, so no percent-encoding is needed.
+capability_dsn() {
+  local login="$1"
+  local password="$2"
+  if [[ "$POSTGRES_DSN" =~ ^postgres(ql)?(\+asyncpg)?://[^@/]*@(.+)$ ]]; then
+    printf 'postgres://%s:%s@%s' "$login" "$password" "${BASH_REMATCH[3]}"
+    return 0
+  fi
+  echo "start_proxy_stack: cannot derive the $login DSN from POSTGRES_DSN; it must be a URL DSN that carries userinfo" >&2
+  return 1
+}
+
+# provision_capability_logins sets each capability role's SCRAM verifier and
+# lifts its CONNECTION LIMIT 0. The migrations create those roles locked, so
+# without this every capability login is refused before the assertion above is
+# even reached. It needs the migrations applied (the roles must exist) and is
+# idempotent: re-running rewrites the same verifiers.
+provision_capability_logins() {
+  echo "provisioning capability logins (ibex_auth, ibex_runtime, ibex_worker, ibex_bootstrap)..."
+  POSTGRES_MIGRATE_DSN="$POSTGRES_DSN" \
+    go run ./infra/migrations/postgres/cmd/migrate -command provision
 }
 
 run_psql_query() {
@@ -68,6 +111,8 @@ else
   verify_bench_seed
 fi
 
+provision_capability_logins
+
 write_env_kv() {
   local key="$1"
   local val="$2"
@@ -90,7 +135,15 @@ write_env_kv "IBEX_LLM_MODE" "$IBEX_LLM_MODE" "$BENCH_PROXY_ENV_FILE"
 printf '%s\n' "$BENCH_PROXY_ENV_FILE" >"$ROOT_DIR/benchmarks/output/bench-proxy.env.path"
 export BENCH_PROXY_ENV_FILE
 
-go run ./services/auth/cmd/auth >/tmp/bench-auth.log 2>&1 &
+# Resolve both capability DSNs before backgrounding anything: a malformed
+# POSTGRES_DSN must stop the script here, not inside a detached process whose
+# only symptom is a dead readiness probe.
+AUTH_POSTGRES_DSN="$(capability_dsn ibex_auth "$IBEX_AUTH_DB_PASSWORD")"
+PROXY_POSTGRES_DSN="$(capability_dsn ibex_runtime "$IBEX_RUNTIME_DB_PASSWORD")"
+
+echo "auth connecting as ibex_auth"
+POSTGRES_DSN="$AUTH_POSTGRES_DSN" \
+  go run ./services/auth/cmd/auth >/tmp/bench-auth.log 2>&1 &
 echo $! >/tmp/bench-auth.pid
 
 export IBEX_PORT="${BENCH_PROXY_PORT}"
@@ -103,7 +156,9 @@ export IBEX_AUTH_VALIDATE_TIMEOUT="${IBEX_AUTH_VALIDATE_TIMEOUT:-5s}"
 export IBEX_RATE_LIMIT_DEFAULT_RPM="${IBEX_RATE_LIMIT_DEFAULT_RPM:-1000000}"
 export REDIS_URL
 
-go run ./services/proxy/cmd/proxy >/tmp/bench-proxy.log 2>&1 &
+echo "proxy connecting as ibex_runtime"
+POSTGRES_DSN="$PROXY_POSTGRES_DSN" \
+  go run ./services/proxy/cmd/proxy >/tmp/bench-proxy.log 2>&1 &
 echo $! >/tmp/bench-proxy.pid
 
 echo "starting auth and proxy (go run compile may take ~20-40s on CI)..."

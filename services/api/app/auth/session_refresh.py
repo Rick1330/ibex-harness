@@ -29,7 +29,7 @@ _ISSUE_METHOD = "/ibex.auth.v1.AuthService/IssueOperatorSession"
 _VALIDATE_METHOD = "/ibex.auth.v1.AuthService/ValidateOperatorSession"
 _REVOKE_METHOD = "/ibex.auth.v1.AuthService/RevokeOperatorSession"
 _CONSUME_STEP_UP_METHOD = "/ibex.auth.v1.AuthService/ConsumeStepUp"
-_SERVICE_TOKEN_HEADER = "x-ibex-service-token"
+_SERVICE_TOKEN_HEADER = "x-ibex-service-token"  # nosec B105 — HTTP metadata key name, not a credential
 _EXPECTED_ORG_HEADER = "x-ibex-expected-org"
 
 # Re-export for unit tests that previously imported private helpers.

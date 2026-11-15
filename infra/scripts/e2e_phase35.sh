@@ -15,6 +15,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Avoid a caller-activated venv steering uv sync/pip into the wrong project.
 unset VIRTUAL_ENV
 cd "$ROOT_DIR"
+# shellcheck source=lib/pgcapability.sh
+source "$ROOT_DIR/infra/scripts/lib/pgcapability.sh"
 
 PROXY_ADDR="${IBEX_PROXY_ADDR:-http://127.0.0.1:18080}"
 AUTH_HTTP="${IBEX_AUTH_HTTP:-http://127.0.0.1:18081}"
@@ -257,6 +259,19 @@ start_stack() {
   unset CLICKHOUSE_DSN || true
   unset OTEL_EXPORTER_OTLP_ENDPOINT || true
 
+  # Application processes connect on capability logins, never the owner `ibex`:
+  # memory and the proxy assert `ibex_runtime`, the worker asserts `ibex_worker`,
+  # and each refuses to boot on the RLS-bypassing owner. Seeding and assertions
+  # below stay on the owner POSTGRES_DSN on purpose.
+  local auth_database_url memory_database_url worker_database_url proxy_database_url
+  auth_database_url="$(capability_dsn "${POSTGRES_DSN}" "$IBEX_AUTH_LOGIN")" \
+    || fail "cannot derive the ibex_auth DSN from POSTGRES_DSN"
+  memory_database_url="$(capability_dsn "${POSTGRES_DSN}" "$IBEX_RUNTIME_LOGIN")" \
+    || fail "cannot derive the ibex_runtime DSN from POSTGRES_DSN"
+  worker_database_url="$(capability_dsn "${POSTGRES_DSN}" "$IBEX_WORKER_LOGIN")" \
+    || fail "cannot derive the ibex_worker DSN from POSTGRES_DSN"
+  proxy_database_url="$memory_database_url"
+
   local proxy_port auth_http_port embedder_port memory_port mcp_port
   proxy_port="$(echo "$PROXY_ADDR" | sed -E "$PORT_FROM_URL_SED")"
   auth_http_port="$(echo "$AUTH_HTTP" | sed -E "$PORT_FROM_URL_SED")"
@@ -275,7 +290,10 @@ start_stack() {
   go build -o "$proxy_bin" ./services/proxy/cmd/proxy
 
   echo "e2e-phase35: starting auth on :${auth_http_port}/:${AUTH_GRPC_PORT}..."
+  # AuthService asserts the `ibex_auth` capability login at startup and refuses
+  # the RLS-bypassing owner `ibex`, so it gets its own DSN.
   IBEX_PORT="$auth_http_port" IBEX_GRPC_PORT="$AUTH_GRPC_PORT" OTEL_SERVICE_NAME=ibex-auth \
+    POSTGRES_DSN="$auth_database_url" \
     "$auth_bin" >"$LOG_DIR/auth.log" 2>&1 &
   PIDS+=("$!")
   wait_http "auth" "$AUTH_HTTP/health"
@@ -327,7 +345,7 @@ start_stack() {
       IBEX_MEMORY_AUTH_TIMEOUT_MS="${IBEX_MEMORY_AUTH_TIMEOUT_MS:-2000}" \
       IBEX_MEMORY_EMBEDDING_BASE_URL="$EMBEDDER_ADDR" \
       IBEX_EMBEDDING_API_TOKEN="$EMBED_TOKEN" \
-      IBEX_MEMORY_DATABASE_URL="${POSTGRES_DSN}" \
+      IBEX_MEMORY_DATABASE_URL="${memory_database_url}" \
       IBEX_MEMORY_REDIS_URL="${REDIS_URL}" \
       uvicorn app.main:app --host 127.0.0.1 --port "$memory_port"
   ) >"$LOG_DIR/memory.log" 2>&1 &
@@ -378,7 +396,7 @@ start_stack() {
       REDIS_URL="$REDIS_URL" \
       REDIS_DB_QUEUE=1 \
       REDIS_DB_RESULTS=3 \
-      POSTGRES_DSN="$POSTGRES_DSN" \
+      POSTGRES_DSN="$worker_database_url" \
       IBEX_WORKER_METRICS_PORT="$WORKER_METRICS_PORT" \
       IBEX_WORKER_ENQUEUE_PORT="$WORKER_ENQUEUE_PORT" \
       IBEX_WORKER_ENQUEUE_HOST=127.0.0.1 \
@@ -432,7 +450,7 @@ start_stack() {
   # Prefix env on the command (no subshell exports) for Codacy SC2030/SC2031.
   IBEX_PORT="$proxy_port" \
     IBEX_AUTH_GRPC_ADDR="127.0.0.1:${AUTH_GRPC_PORT}" \
-    POSTGRES_DSN="$POSTGRES_DSN" \
+    POSTGRES_DSN="$proxy_database_url" \
     REDIS_URL="$REDIS_URL" \
     IBEX_LLM_MODE=mock \
     IBEX_AUTH_VALIDATE_TIMEOUT="${IBEX_AUTH_VALIDATE_TIMEOUT:-2s}" \
@@ -487,6 +505,9 @@ if [[ "$MANAGE" == "1" ]]; then
   postgres_preflight
   bash "$ROOT_DIR/infra/scripts/db-seed.sh" >/dev/null
   seed_org_b
+  # Migration 000064 creates the capability roles locked (no verifier, CONNECTION
+  # LIMIT 0), so no service can log in until they are provisioned. Idempotent.
+  provision_capability_logins "${POSTGRES_DSN}"
   bash "$ROOT_DIR/infra/scripts/memory-uv-sync.sh" >/dev/null
   bash "$ROOT_DIR/infra/scripts/embedder-uv-sync.sh" >/dev/null
   bash "$ROOT_DIR/infra/scripts/worker-uv-sync.sh" >/dev/null
