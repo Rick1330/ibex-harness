@@ -10,10 +10,16 @@ groups:
           summary: "Worker task dead-lettered after max retries"
           description: "Task {{ $labels.task_name }} dead-lettered. Check ibex_core.failed_tasks."
       - alert: IBEXWorkerMemoryErasureFailed
-        expr: ibex_worker_memory_erasure_total{state="failed"} > 0
+        # A *new*-failure notification, not an unresolved-state gauge. The
+        # underlying metric is a monotonic counter, so `> 0` would page forever
+        # after one terminal failure even once the erasure was repaired and
+        # replayed. A bounded `increase()` window returns to zero when no new
+        # terminal failure occurs inside it; the annotation says so, and the
+        # runbook path is the outbox query below.
+        expr: increase(ibex_worker_memory_erasure_total{state="failed"}[1h]) > 0
         for: 1m
         labels:
           severity: page
         annotations:
-          summary: "Memory erasure reached terminal failed state"
-          description: "A memory forget reached erasure_deadline with a store unproven, so that memory's external copies are still there and will not be retried. Inspect ibex_core.memory_lifecycle_outbox WHERE erasure_state = 'failed' and the matching ibex_core.erasure_store_receipts rows; the counter stays non-zero until an operator clears the cause."
+          summary: "A memory erasure reached terminal failed state in the last hour"
+          description: "A memory forget reached erasure_deadline with a store unproven, so that memory's external copies may still be there and will not be retried. This is a new-failure notification over the last hour, not a live count: it clears when the window passes even if the row is still failed, so also inspect ibex_core.memory_lifecycle_outbox WHERE erasure_state = 'failed' and the matching ibex_core.erasure_store_receipts rows before closing the incident."

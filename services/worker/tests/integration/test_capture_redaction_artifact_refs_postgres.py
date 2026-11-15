@@ -81,6 +81,20 @@ class _Archiver:
             )
         )
 
+    async def run_without_event(
+        self, *, org_id: UUID, payload: dict[str, object], uri: str
+    ) -> dict[str, str]:
+        """Archive a payload that carries no event id (a permitted job shape)."""
+        self.monkeypatch.setattr(
+            capture_redaction, "_put_archive_blob", lambda *_args, **_kwargs: uri
+        )
+        self.monkeypatch.setattr(
+            capture_redaction, "get_settings", lambda: Settings(database_url=self.dsn)
+        )
+        return await capture_redaction._run(
+            _CaptureJob(org_id=str(org_id), payload=payload)
+        )
+
 
 @pytest.fixture
 def archiver(
@@ -231,6 +245,34 @@ async def test_archive_records_one_ref_per_store_for_a_memory_id(
     assert (
         await _archived_to(archiver.owner, org_id=case.org_id, event_id=case.event_id)
         == case.archive_uri
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_archive_without_an_event_records_the_object_ref(
+    archiver: _Archiver,
+) -> None:
+    """A full capture with a memory id but no event id must still be findable.
+
+    The event id is required only for the session-event reference; the object
+    reference is written from the upload itself.
+    """
+    org_id = uuid4()
+    await seed_org(archiver.owner, org_id)
+    await seed_capture_policy(
+        archiver.owner, CapturePolicySeed(org_id=org_id, mode="full")
+    )
+    memory_id = uuid4()
+    uri = f"s3://ibex-sessions/{org_id}/capture/full/{uuid4()}.json"
+
+    out = await archiver.run_without_event(
+        org_id=org_id, payload={"memory_id": str(memory_id)}, uri=uri
+    )
+
+    assert out == {"status": "archived", "mode": "full", "event_id": ""}
+    assert (
+        await _artifact_refs(archiver.owner, org_id=org_id, memory_id=memory_id)
+        == [("objectstore", uri, None)]
     )
 
 

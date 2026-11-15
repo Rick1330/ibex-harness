@@ -266,7 +266,10 @@ async def test_objectstore_ref_naming_another_tenant_fails_and_deletes_nothing(
     out = await harness.run(ch_dsn=harness.env.ch_dsn)
 
     assert out["claimed"] == 1, out
-    assert out["partial"] == 1, out
+    # A cross-tenant locator is a permanent validation failure: it cannot become
+    # valid on the next sweep, so the row is terminally failed rather than partial.
+    assert out["failed"] == 1, out
+    assert out["partial"] == 0, out
     receipts = await harness.receipts(
         org_id=target.org_id, memory_id=target.memory_id
     )
@@ -280,3 +283,5 @@ async def test_objectstore_ref_naming_another_tenant_fails_and_deletes_nothing(
     assert deleted == [], "no key was deleted for the rejected locator"
     assert cross_uri in present, "the other tenant's object is untouched"
     assert harness.clickhouse_count(other) == 1
+    # No second attempt: the terminal failed row is no longer claimable.
+    assert (await harness.run(ch_dsn=harness.env.ch_dsn))["claimed"] == 0

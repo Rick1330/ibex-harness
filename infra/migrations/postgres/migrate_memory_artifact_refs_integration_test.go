@@ -259,20 +259,18 @@ func requireNoForeignKey(t *testing.T, ctx context.Context, db *sql.DB, table st
 	}
 }
 
-// requireTenantGrants pins the write verbs each identity holds. SELECT and
-// INSERT are the archiver's and the saga's working set. DELETE is not: a ref is
-// the only address of an external copy and a receipt is the proof a store was
-// cleared, so a tenant identity able to delete either can turn every store into
-// `not_applicable` or erase the evidence of an erasure in one statement.
-// `ibex_service` keeps DELETE for operator-driven cleanup.
+// requireTenantGrants pins the write verbs each identity holds after 000075.
+// `memory_artifact_refs` is the archiver's provenance table: ibex_app keeps
+// SELECT and INSERT, and ibex_erasure reads the worklist. A receipt is the proof
+// a store was cleared, so after 000075 ibex_app holds SELECT only; ibex_erasure
+// writes it, and `ibex_service` keeps DELETE for operator-driven cleanup. Neither
+// tenant identity may delete either table.
 func requireTenantGrants(t *testing.T, ctx context.Context, db *sql.DB, table string) {
 	t.Helper()
 	for _, role := range []string{"ibex_app", "ibex_service"} {
-		for _, privilege := range []string{"SELECT", "INSERT"} {
-			requireTablePrivilege(t, ctx, db, privilegeCheck{
-				role: role, table: table, privilege: privilege, want: true,
-			})
-		}
+		requireTablePrivilege(t, ctx, db, privilegeCheck{
+			role: role, table: table, privilege: "SELECT", want: true,
+		})
 	}
 	requireTablePrivilege(t, ctx, db, privilegeCheck{
 		role: "ibex_service", table: table, privilege: "DELETE", want: true,
@@ -280,6 +278,27 @@ func requireTenantGrants(t *testing.T, ctx context.Context, db *sql.DB, table st
 	requireTablePrivilege(t, ctx, db, privilegeCheck{
 		role: "ibex_app", table: table, privilege: "DELETE", want: false,
 	})
+	if table == "memory_artifact_refs" {
+		requireTablePrivilege(t, ctx, db, privilegeCheck{
+			role: "ibex_app", table: table, privilege: "INSERT", want: true,
+		})
+		requireTablePrivilege(t, ctx, db, privilegeCheck{
+			role: "ibex_erasure", table: table, privilege: "SELECT", want: true,
+		})
+		return
+	}
+	// erasure_store_receipts: the tenant identity reads, the erasure identity
+	// proves.
+	for _, privilege := range []string{"INSERT", "UPDATE"} {
+		requireTablePrivilege(t, ctx, db, privilegeCheck{
+			role: "ibex_app", table: table, privilege: privilege, want: false,
+		})
+	}
+	for _, privilege := range []string{"SELECT", "INSERT", "UPDATE"} {
+		requireTablePrivilege(t, ctx, db, privilegeCheck{
+			role: "ibex_erasure", table: table, privilege: privilege, want: true,
+		})
+	}
 }
 
 func requireTablePrivilege(t *testing.T, ctx context.Context, db *sql.DB, check privilegeCheck) {

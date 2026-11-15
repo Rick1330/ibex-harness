@@ -73,6 +73,7 @@ func resetSchemaConn(ctx context.Context, db *sql.DB) error {
 		{"ibex_purge", "DROP ROLE IF EXISTS ibex_purge"},
 		{"ibex_runtime", "DROP ROLE IF EXISTS ibex_runtime"},
 		{"ibex_worker", "DROP ROLE IF EXISTS ibex_worker"},
+		{"ibex_erasure", "DROP ROLE IF EXISTS ibex_erasure"},
 		{"ibex_bootstrap", "DROP ROLE IF EXISTS ibex_bootstrap"},
 		{"ibex_auth", "DROP ROLE IF EXISTS ibex_auth"},
 		{"ibex_app", "DROP ROLE IF EXISTS ibex_app"},

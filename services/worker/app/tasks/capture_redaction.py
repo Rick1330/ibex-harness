@@ -28,11 +28,12 @@ CAPTURE_ARCHIVE_WITHOUT_MEMORY_ID = Counter(
     "Archived capture events that carried no memory id, so no artifact ref was recorded",
 )
 
-# One object-store ref and one session-event ref per memory id, written with the
-# ``archived_to`` update. The session id is read from the event row the caller
-# just updated, so the ref carries the session without a second round trip. The
-# memory-id list is bound as JSON text and expanded server-side: asyncpg cannot
-# bind a bare array literal without an explicit cast, and this keeps the
+# One object-store ref and one session-event ref per memory id, written in the
+# same transaction as the capture write. Each half is conditional: the object
+# reference is recorded only after a successful upload, and the session-event
+# reference is recorded whenever the event exists even when S3 is unconfigured.
+# The memory-id list is bound as JSON text and expanded server-side: asyncpg
+# cannot bind a bare array literal without an explicit cast, and this keeps the
 # statement static (no SQL built from values).
 _ARTIFACT_REF_INSERT_SQL = """
 INSERT INTO ibex_core.memory_artifact_refs
@@ -41,22 +42,29 @@ SELECT CAST(:org_id AS uuid),
        ref.memory_id,
        ref.store,
        ref.locator,
-       (
-           SELECT e.session_id
-             FROM ibex_core.session_events e
-            WHERE e.id = CAST(:event_id AS bigint)
-              AND e.org_id = CAST(:org_id AS uuid)
-       )
+       CASE
+           WHEN ref.event_id IS NULL THEN NULL
+           ELSE (
+               SELECT e.session_id
+                 FROM ibex_core.session_events e
+                WHERE e.id = ref.event_id
+                  AND e.org_id = CAST(:org_id AS uuid)
+           )
+       END
   FROM (
         SELECT CAST(elem.value AS uuid) AS memory_id,
                'objectstore' AS store,
-               CAST(:uri AS text) AS locator
+               CAST(:uri AS text) AS locator,
+               CAST(:event_id AS bigint) AS event_id
           FROM jsonb_array_elements_text(CAST(:memory_ids AS jsonb)) AS elem(value)
+         WHERE CAST(:uri AS text) IS NOT NULL
         UNION ALL
         SELECT CAST(elem.value AS uuid),
                'session_event',
-               CAST(:event_id_text AS text)
+               CAST(:event_id_text AS text),
+               CAST(:event_id AS bigint)
           FROM jsonb_array_elements_text(CAST(:memory_ids AS jsonb)) AS elem(value)
+         WHERE CAST(:event_id AS bigint) IS NOT NULL
        ) AS ref
 ON CONFLICT DO NOTHING
 """
@@ -74,12 +82,17 @@ class _CaptureJob:
 
 @dataclass(frozen=True, slots=True)
 class _ArtifactRefs:
-    """Where one archived capture lives, and the memories it belongs to."""
+    """Where one archived capture lives, and the memories it belongs to.
+
+    ``event_id`` and ``uri`` are independently optional: a redacted capture with
+    no S3 write still records its session-event address, and a full capture with
+    no event id still records its object address.
+    """
 
     org_id: str
-    event_id: int
-    uri: str
     memory_ids: tuple[str, ...]
+    event_id: int | None = None
+    uri: str | None = None
 
 
 @dataclass
@@ -235,10 +248,32 @@ async def resolve_capture_mode(session, *, org_id: str, agent_id: UUID | None) -
 
 
 async def _persist_redacted(ctx: _RedactCtx, filtered: dict[str, Any]) -> None:
+    """Store the redacted payload and record where its copies live."""
     job = ctx.job
     if not job.event_id:
         return
     event_id = _coerce_event_id(job.event_id)
+    memory_ids = await _store_redacted_event(ctx, filtered, event_id)
+    uri = _upload_redacted_archive(ctx, filtered)
+    if uri is None:
+        return
+    refs = _ArtifactRefs(
+        org_id=job.org_id, memory_ids=memory_ids, event_id=event_id, uri=uri
+    )
+    await _link_redacted_archive(ctx, refs, uri)
+
+
+async def _store_redacted_event(
+    ctx: _RedactCtx, filtered: dict[str, Any], event_id: int
+) -> tuple[str, ...]:
+    """Write the redacted payload and the event's own erasure address.
+
+    The session-event link is written with the data update, not with the archive:
+    a capture whose S3 write is skipped (missing endpoint or key) must still have
+    an erasure address for the event that carries the memory. The memory ids are
+    returned so the uploaded object's ref reuses the same set.
+    """
+    job = ctx.job
     await ctx.session.execute(
         text(
             """
@@ -254,37 +289,74 @@ async def _persist_redacted(ctx: _RedactCtx, filtered: dict[str, Any]) -> None:
             "data": json.dumps(filtered),
         },
     )
+    memory_ids = tuple(_memory_ids(filtered))
+    await _record_artifact_refs(
+        ctx.session,
+        _ArtifactRefs(org_id=job.org_id, memory_ids=memory_ids, event_id=event_id),
+    )
+    return memory_ids
+
+
+def _upload_redacted_archive(ctx: _RedactCtx, filtered: dict[str, Any]) -> str | None:
+    """Upload the redacted capture, or None when the object store is unconfigured.
+
+    A missing endpoint or master key is a deployment shape this path tolerates:
+    the event is redacted and carries its erasure address either way, so the run
+    is not a failure. Any other upload error propagates.
+    """
     try:
-        uri = _put_archive_blob(ctx.settings, job, filtered, "redacted")
+        uri = _put_archive_blob(ctx.settings, ctx.job, filtered, "redacted")
     except RuntimeError as exc:
-        if "S3_ENDPOINT" in str(exc) or "MASTER_KEY" in str(exc):
-            return
+        if _object_store_unconfigured(exc):
+            return None
         raise
     ctx.uploaded.append(uri)
+    return uri
+
+
+def _object_store_unconfigured(exc: RuntimeError) -> bool:
+    """Whether an upload error is the documented missing-configuration shape."""
+    return "S3_ENDPOINT" in str(exc) or "MASTER_KEY" in str(exc)
+
+
+async def _link_redacted_archive(
+    ctx: _RedactCtx, refs: _ArtifactRefs, uri: str
+) -> None:
+    """Point the event at the uploaded copy, undoing the upload if that fails."""
     try:
-        await _set_archived_to(ctx.session, job, uri, filtered)
+        if refs.memory_ids:
+            await _record_artifact_refs(ctx.session, refs)
+        await _set_archived_to(ctx.session, ctx.job, uri)
     except Exception:
-        _compensate_upload(uri, job.org_id, ctx.settings)
-        ctx.uploaded.remove(uri)
+        _discard_upload(ctx, uri)
         raise
 
 
 async def _archive_payload(ctx: _RedactCtx, payload: dict[str, Any]) -> None:
     uri = _put_archive_blob(ctx.settings, ctx.job, payload, "full")
     ctx.uploaded.append(uri)
-    if not ctx.job.event_id:
-        return
+    event_id = _coerce_event_id(ctx.job.event_id) if ctx.job.event_id else None
+    memory_ids = tuple(_memory_ids(payload))
     try:
-        await _set_archived_to(ctx.session, ctx.job, uri, payload)
+        # The object reference does not require an event id: a full capture with
+        # a usable memory id is still reachable by erasure without one.
+        await _record_artifact_refs(
+            ctx.session,
+            _ArtifactRefs(
+                org_id=ctx.job.org_id,
+                memory_ids=memory_ids,
+                event_id=event_id,
+                uri=uri,
+            ),
+        )
+        if event_id is not None:
+            await _set_archived_to(ctx.session, ctx.job, uri)
     except Exception:
-        _compensate_upload(uri, ctx.job.org_id, ctx.settings)
-        ctx.uploaded.remove(uri)
+        _discard_upload(ctx, uri)
         raise
 
 
-async def _set_archived_to(
-    session, job: _CaptureJob, uri: str, payload: dict[str, Any] | None
-) -> None:
+async def _set_archived_to(session, job: _CaptureJob, uri: str) -> None:
     event_id = _coerce_event_id(job.event_id)
     result = await session.execute(
         text(
@@ -301,15 +373,6 @@ async def _set_archived_to(
         raise RuntimeError(
             f"session_events archive update matched 0 rows event_id={job.event_id}"
         )
-    await _record_artifact_refs(
-        session,
-        _ArtifactRefs(
-            org_id=job.org_id,
-            event_id=event_id,
-            uri=uri,
-            memory_ids=tuple(_memory_ids(payload)),
-        ),
-    )
 
 
 async def _record_artifact_refs(session: Any, refs: _ArtifactRefs) -> None:
@@ -318,16 +381,20 @@ async def _record_artifact_refs(session: Any, refs: _ArtifactRefs) -> None:
     A memory forget can only erase what it can find. The archive URI and the
     capture event are not derivable from the memory row, so the link is written
     here — the one point where the memory ids, the object URI and the event id
-    are all in hand — and committed with the ``archived_to`` update. A payload
-    with no memory id writes no ref, because a fabricated link would send an
-    erasure to another tenant's object; the event is counted instead so the
-    coverage hole is visible rather than silent.
+    are in hand. Each half is independent: a session-event ref is written with
+    the event even when S3 is unconfigured, and an object ref is written after a
+    successful upload even when the job carries no event id. A payload with no
+    memory id writes no ref, because a fabricated link would send an erasure to
+    another tenant's object; the event is counted instead so the coverage hole is
+    visible rather than silent.
 
     ``ON CONFLICT DO NOTHING`` makes a redelivered event a no-op: the unique key
     is ``(org_id, memory_id, store, locator)``.
     """
     if not refs.memory_ids:
         CAPTURE_ARCHIVE_WITHOUT_MEMORY_ID.inc()
+        return
+    if refs.uri is None and refs.event_id is None:
         return
     await session.execute(text(_ARTIFACT_REF_INSERT_SQL), _artifact_ref_params(refs))
 
@@ -336,7 +403,7 @@ def _artifact_ref_params(refs: _ArtifactRefs) -> dict[str, Any]:
     return {
         "org_id": refs.org_id,
         "event_id": refs.event_id,
-        "event_id_text": str(refs.event_id),
+        "event_id_text": None if refs.event_id is None else str(refs.event_id),
         "uri": refs.uri,
         "memory_ids": json.dumps(list(refs.memory_ids)),
     }
@@ -389,6 +456,12 @@ def _canonical_memory_id(value: Any) -> str | None:
         return str(UUID(str(value)))
     except ValueError:
         return None
+
+
+def _discard_upload(ctx: _RedactCtx, uri: str) -> None:
+    """Delete an upload and drop it from the ledger after a failed persist."""
+    _compensate_upload(uri, ctx.job.org_id, ctx.settings)
+    ctx.uploaded.remove(uri)
 
 
 def _compensate_upload(uri: str, org_id: str, settings: Any) -> None:

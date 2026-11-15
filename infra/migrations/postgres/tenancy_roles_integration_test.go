@@ -31,24 +31,52 @@ func assertOnlyOwnerPrivileged(f *tenancyFixture, ctx context.Context) {
 	}
 }
 
-// assertCapabilityRoleAttributes checks the five capability roles.
+// capabilityRole is the A2 attribute model for one capability role: whether it
+// may log in at all. Every capability role is NOINHERIT and none carries a
+// connection limit, so those invariants stay in the assertions rather than the
+// table.
+type capabilityRole struct {
+	name  string
+	login bool
+}
+
+// capabilityRoleModel is the shape 000064/000075 must produce: four NOINHERIT
+// logins with no connection limit, and two NOLOGIN identities that are only
+// reachable through SET ROLE.
+var capabilityRoleModel = []capabilityRole{
+	{name: "ibex_runtime", login: true},
+	{name: "ibex_worker", login: true},
+	{name: "ibex_bootstrap", login: true},
+	{name: "ibex_auth", login: true},
+	{name: "ibex_purge"},
+	{name: "ibex_erasure"},
+}
+
+// assertCapabilityRoleAttributes checks every capability role against that model.
 func assertCapabilityRoleAttributes(f *tenancyFixture, ctx context.Context) {
 	f.t.Helper()
-	for _, name := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_purge", "ibex_auth"} {
-		flags := f.loadRoleFlags(ctx, role(name))
-		if flags.super || flags.bypass {
-			f.t.Fatalf("%s must not be superuser or BYPASSRLS", name)
+	for _, want := range capabilityRoleModel {
+		spec := role(want.name)
+		assertRoleFlags(f.t, want, f.loadRoleFlags(ctx, spec))
+		if want.login {
+			f.assertConnLimit(ctx, connLimitCheck{spec: spec, want: 0})
 		}
 	}
-	for _, name := range []string{"ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_auth"} {
-		flags := f.loadRoleFlags(ctx, role(name))
-		if !flags.login || flags.inherit {
-			f.t.Fatalf("%s must be a NOINHERIT login", name)
-		}
-		f.assertConnLimit(ctx, connLimitCheck{spec: role(name), want: 0})
+}
+
+// assertRoleFlags checks one role is unprivileged, matches its login model, and
+// never inherits: NOINHERIT is what stops a login from acquiring ibex_app's
+// privileges without an explicit SET ROLE.
+func assertRoleFlags(t *testing.T, want capabilityRole, got roleFlags) {
+	t.Helper()
+	if got.super || got.bypass {
+		t.Fatalf("%s must not be superuser or BYPASSRLS", want.name)
 	}
-	if f.loadRoleFlags(ctx, role("ibex_purge")).login {
-		f.t.Fatal("ibex_purge must remain NOLOGIN")
+	if got.login != want.login {
+		t.Fatalf("%s rolcanlogin = %t, want %t", want.name, got.login, want.login)
+	}
+	if got.inherit {
+		t.Fatalf("%s must be NOINHERIT", want.name)
 	}
 }
 

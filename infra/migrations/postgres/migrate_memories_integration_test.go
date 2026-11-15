@@ -381,13 +381,13 @@ func TestMemoryLifecycleOutbox_RLSLeastPrivilege(t *testing.T) {
 	ctx := context.Background()
 	tenants := seedOutboxTenants(t, ctx, db)
 	requireOutboxVisibility(t, ctx, db, tenants)
-	// 000074 deliberately narrows this: the erasure consumer runs as the tenant
-	// identity, so ibex_app may lease (attempts, locked_until) and settle
-	// (erasure_state, available_at, delivered_at) its own row. What it must not
-	// be able to do is rewrite what the row *is* — forging `erasure_state =
-	// 'complete'` on a live `created` row, or retargeting the memory/org — so the
-	// least-privilege assertion is now column-scoped rather than table-wide.
-	requireAppCanLeaseOutbox(t, ctx, db, tenants.orgA)
+	// 000075 moves the proof write and the settlement to ibex_erasure. ibex_app
+	// may still read its own row, but it must not write the settle columns:
+	// settling `erasure_state = 'complete'` without deleting anything would forge
+	// the erasure. The erasure identity may lease and settle the row, and must
+	// still not be able to rewrite what the row *is*.
+	requireErasureCanLeaseOutbox(t, ctx, db, tenants.orgA)
+	requireAppCannotSettleOutbox(t, ctx, db, tenants.orgA)
 	requireAppCannotForgeOutboxIdentity(t, ctx, db, tenants.orgA)
 }
 

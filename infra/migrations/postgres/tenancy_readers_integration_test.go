@@ -517,25 +517,26 @@ func (f *tenancyFixture) loadCapabilityFlags(ctx context.Context, name string) c
 // capabilityMemberships is the membership half of the model, read from the
 // migrations rather than assumed: 000064 grants ibex_app to the runtime and
 // worker logins and ibex_purge to the worker, 000068 grants ibex_app to the
-// auth login, and ibex_bootstrap is created with no membership at all. The rows
-// are the direct pg_auth_members rows; every capability role is NOINHERIT, so a
-// membership is usable only through SET ROLE.
+// auth login, 000075 grants ibex_erasure to the worker, and ibex_bootstrap is
+// created with no membership at all. The rows are the direct pg_auth_members
+// rows; every capability role is NOINHERIT, so a membership is usable only
+// through SET ROLE.
 func capabilityMemberships() []membershipSpec {
 	return []membershipSpec{
 		{role: "ibex_runtime", want: []string{"ibex_app"}},
-		{role: "ibex_worker", want: []string{"ibex_app", "ibex_purge"}},
+		{role: "ibex_worker", want: []string{"ibex_app", "ibex_erasure", "ibex_purge"}},
 		{role: "ibex_auth", want: []string{"ibex_app"}},
 		{role: "ibex_bootstrap"},
 	}
 }
 
-// serviceMemberDenials is every role 000064 and 000068 explicitly revoke
-// ibex_service from. The migrations do not rely on absence — a future GRANT
-// must not be able to turn a tenant identity into the service identity
+// serviceMemberDenials is every role 000064, 000068 and 000075 explicitly
+// revoke ibex_service from. The migrations do not rely on absence — a future
+// GRANT must not be able to turn a tenant identity into the service identity
 // silently — and this is the assertion that those revocations landed.
 var serviceMemberDenials = []string{
 	"ibex_app", "ibex_runtime", "ibex_worker", "ibex_bootstrap",
-	"ibex_auth", "ibex_purge", "ibex_evidence_relay",
+	"ibex_auth", "ibex_purge", "ibex_erasure", "ibex_evidence_relay",
 }
 
 // TestTenancyCapabilityLoginMemberships asserts each login holds exactly the

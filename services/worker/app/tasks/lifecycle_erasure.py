@@ -54,15 +54,19 @@ mutation carries the org predicate explicitly because ClickHouse has no RLS.
 
 Deadlines: ``lifecycle_erasure_store_timeout_seconds`` (120 s) per store and
 ``lifecycle_erasure_job_timeout_seconds`` (900 s) for the whole row. Both are
-hard stops that become a ``failed`` receipt rather than a longer wait.
+hard stops that become a ``failed`` receipt rather than a longer wait. The Celery
+task limits are derived from the job budget plus settlement headroom, so a legal
+longer budget is not killed by a fixed task limit before its own deadline.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -75,6 +79,7 @@ from app.db import (
     create_engine,
     create_session_factory,
     session_as_app_org,
+    session_as_erasure_org,
     session_as_purge_org,
     session_unpinned,
 )
@@ -106,7 +111,29 @@ _CLAIM_BATCH = 1
 
 _RETRY_BASE_SECONDS = 30
 _RETRY_CAP_SECONDS = 3600
+#: Fraction of the capped delay that is randomized either way. Bounded so a
+#: retry stays inside ``_RETRY_CAP_SECONDS`` while two erasures hitting the same
+#: outage do not wake at the same instant.
+_RETRY_JITTER_FRACTION = 0.25
 _ERROR_MAX_CHARS = 300
+
+#: Headroom over the configured job budget for writing receipts and settling
+#: the outbox row after the last store stage, plus a further grace before the
+#: process is killed. The Celery soft limit must be strictly larger than the
+#: budget the sweep enforces, or a legal configuration is killed mid-settle.
+_ERASURE_SETTLEMENT_HEADROOM_SECONDS = 60.0
+_ERASURE_KILL_GRACE_SECONDS = 60.0
+
+
+class PermanentErasureFailure(RuntimeError):
+    """A locator that cannot succeed on retry.
+
+    An unsupported scheme, a malformed locator, or a key outside the tenant
+    prefix is a property of the stored address, not a transient outage. Retrying
+    it until ``erasure_deadline`` only delays the honest ``failed`` state, so the
+    consumer records the failure and stops scheduling attempts.
+    """
+
 
 ERASURE_OUTCOME = Counter(
     "ibex_worker_memory_erasure_total",
@@ -179,6 +206,7 @@ UPDATE ibex_core.memory_lifecycle_outbox
  WHERE id = CAST(:id AS uuid)
    AND org_id = CAST(:org_id AS uuid)
    AND delivered_at IS NULL
+   AND attempts = CAST(:attempts AS integer)
 """
 
 _RETRY_SQL = """
@@ -189,6 +217,7 @@ UPDATE ibex_core.memory_lifecycle_outbox
  WHERE id = CAST(:id AS uuid)
    AND org_id = CAST(:org_id AS uuid)
    AND delivered_at IS NULL
+   AND attempts = CAST(:attempts AS integer)
 """
 
 _FAIL_SQL = """
@@ -198,6 +227,20 @@ UPDATE ibex_core.memory_lifecycle_outbox
  WHERE id = CAST(:id AS uuid)
    AND org_id = CAST(:org_id AS uuid)
    AND delivered_at IS NULL
+   AND attempts = CAST(:attempts AS integer)
+"""
+
+#: Settlement fence. The row is locked and the attempt this run claimed is
+#: checked before any receipt is written, so a worker whose lease expired cannot
+#: overwrite a newer worker's proof with its own outcome.
+_CLAIM_STILL_HELD_SQL = """
+SELECT id
+  FROM ibex_core.memory_lifecycle_outbox
+ WHERE id = CAST(:id AS uuid)
+   AND org_id = CAST(:org_id AS uuid)
+   AND delivered_at IS NULL
+   AND attempts = CAST(:attempts AS integer)
+ FOR UPDATE
 """
 
 # A row superseded by a newer delivered revision is retired with the newer row's
@@ -220,6 +263,7 @@ UPDATE ibex_core.memory_lifecycle_outbox AS stale
  WHERE stale.id = CAST(:id AS uuid)
    AND stale.org_id = CAST(:org_id AS uuid)
    AND stale.delivered_at IS NULL
+   AND stale.attempts = CAST(:attempts AS integer)
 """
 
 _DELETE_SESSION_EVENT_SQL = """
@@ -274,6 +318,25 @@ class _StoreOutcome:
     status: str
     error: str | None = None
     fresh: bool = True
+    permanent: bool = False
+
+
+def _task_limits(job_timeout_seconds: float) -> tuple[int, int]:
+    """Celery (soft, hard) limits for one erasure job budget.
+
+    Derived rather than fixed: ``lifecycle_erasure_job_timeout_seconds`` is
+    configurable up to 3600 s, so a fixed 900 s soft limit killed a legal 1800 s
+    job before its own deadline. Settlement (receipts and the outbox update)
+    runs after the last store stage, so the soft limit carries headroom for it
+    and the hard limit adds a further grace before the process is killed.
+    """
+    soft = int(job_timeout_seconds + _ERASURE_SETTLEMENT_HEADROOM_SECONDS)
+    return soft, soft + int(_ERASURE_KILL_GRACE_SECONDS)
+
+
+_ERASURE_SOFT_LIMIT, _ERASURE_TIME_LIMIT = _task_limits(
+    get_settings().lifecycle_erasure_job_timeout_seconds
+)
 
 
 @celery_app.task(
@@ -281,15 +344,28 @@ class _StoreOutcome:
     base=IbexTask,
     name=TASK_LIFECYCLE_ERASE_MEMORY,
     queue="maintenance",
-    # Backstop for the job budget the sweep already enforces; a soft limit here
-    # means the deadline arithmetic failed, not that erasure is slow.
-    soft_time_limit=900,
-    time_limit=960,
+    # Derived from the configured job budget plus settlement headroom; a fixed
+    # limit here would kill a legal longer budget before the sweep's own
+    # deadline. ``configure_erasure_task_limits`` re-applies the derivation from
+    # the worker's loaded settings and is the seam the tests drive.
+    soft_time_limit=_ERASURE_SOFT_LIMIT,
+    time_limit=_ERASURE_TIME_LIMIT,
 )
 def erase_memory(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
     """Sweep undelivered memory erasure rows and settle each one."""
     del self, kwargs
     return asyncio.run(_run_sweep())
+
+
+def configure_erasure_task_limits(job_timeout_seconds: float) -> None:
+    """Apply the derived Celery limits to the registered task.
+
+    Called at import with the loaded settings; exposed so a test can prove a
+    non-default job budget is reflected in the registered task's limits.
+    """
+    erase_memory.soft_time_limit, erase_memory.time_limit = _task_limits(
+        job_timeout_seconds
+    )
 
 
 async def _run_sweep(
@@ -361,7 +437,7 @@ async def _erase_row(
         )
         for store in _stores_to_stage(refs)
     ]
-    return await _settle(erasure, outcomes)
+    return await _settle(erasure, outcomes, refs)
 
 
 def _stores_to_stage(refs: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
@@ -378,7 +454,7 @@ def _stores_to_stage(refs: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
 
 async def _retire_if_stale(factory: Any, row: _ClaimedRow) -> bool:
     """Retire the row when a newer revision was already delivered for its memory."""
-    async with session_as_app_org(factory, row.org_id) as session:
+    async with session_as_erasure_org(factory, row.org_id) as session:
         result = await session.execute(
             text(_RETIRE_STALE_SQL),
             {
@@ -386,9 +462,19 @@ async def _retire_if_stale(factory: Any, row: _ClaimedRow) -> bool:
                 "org_id": row.org_id,
                 "memory_id": row.memory_id,
                 "revision": row.revision,
+                "attempts": row.attempts,
             },
         )
         return result.rowcount == 1
+
+
+async def _read_refs(session: Any, row: _ClaimedRow) -> dict[str, tuple[str, ...]]:
+    """Group the memory's artifact locators by store, inside the given session."""
+    params = {"org_id": row.org_id, "memory_id": row.memory_id}
+    grouped: dict[str, list[str]] = {}
+    for store, locator in (await session.execute(text(_REFS_SQL), params)).all():
+        grouped.setdefault(str(store), []).append(str(locator))
+    return {store: tuple(locators) for store, locators in grouped.items()}
 
 
 async def _read_erasure_state(
@@ -396,15 +482,13 @@ async def _read_erasure_state(
 ) -> tuple[dict[str, tuple[str, ...]], dict[str, str]]:
     """Read the memory's artifact locators and any receipts this revision has."""
     params = {"org_id": row.org_id, "memory_id": row.memory_id, "revision": row.revision}
-    grouped: dict[str, list[str]] = {}
     async with session_as_app_org(factory, row.org_id) as session:
-        for store, locator in (await session.execute(text(_REFS_SQL), params)).all():
-            grouped.setdefault(str(store), []).append(str(locator))
+        refs = await _read_refs(session, row)
         existing = {
             str(store): str(status)
             for store, status in (await session.execute(text(_RECEIPTS_SQL), params)).all()
         }
-    return {store: tuple(locators) for store, locators in grouped.items()}, existing
+    return refs, existing
 
 
 def _receipt_already_proves(proven: str | None, locators: tuple[str, ...]) -> bool:
@@ -462,6 +546,16 @@ async def _stage_store(
         )
     except TimeoutError:
         return _failed_outcome(target.store, "store_timeout")
+    except (PermanentErasureFailure, ValueError) as exc:
+        logger.warning(
+            "memory erasure store rejected its locator store=%s org_id=%s memory_id=%s revision=%s",
+            target.store,
+            erasure.row.org_id,
+            erasure.row.memory_id,
+            erasure.row.revision,
+            exc_info=True,
+        )
+        return replace(_failed_outcome(target.store, _error_reason(exc)), permanent=True)
     except Exception as exc:
         logger.warning(
             "memory erasure store failed store=%s org_id=%s memory_id=%s revision=%s",
@@ -546,7 +640,7 @@ def _session_event_id(locator: str) -> int:
     column and to the log. The failure is fixed text for the same reason.
     """
     if not (locator.isascii() and locator.isdigit()):
-        raise RuntimeError("session_event locator is not a row id")
+        raise PermanentErasureFailure("session_event locator is not a row id")
     return int(locator)
 
 
@@ -584,33 +678,160 @@ _STAGE_BY_STORE = {
 }
 
 
-async def _settle(erasure: _Erasure, outcomes: list[_StoreOutcome]) -> str:
-    """Write the receipts and move the outbox row to its next state."""
-    state = _erasure_state(outcomes)
-    async with session_as_app_org(erasure.factory, erasure.row.org_id) as session:
-        for outcome in outcomes:
-            if outcome.fresh:
-                await session.execute(
-                    text(_UPSERT_RECEIPT_SQL), _receipt_params(erasure, outcome)
-                )
-        row_id = {"id": erasure.row.row_id, "org_id": erasure.row.org_id}
-        if state == "complete":
-            await session.execute(text(_COMPLETE_SQL), row_id)
-        elif _deadline_passed(erasure.row):
-            await session.execute(text(_FAIL_SQL), row_id)
-            state = "failed"
-        else:
-            await session.execute(
-                text(_RETRY_SQL),
-                {
-                    **row_id,
-                    "delay_seconds": _backoff_seconds(erasure.row.attempts),
-                },
+async def _settle(
+    erasure: _Erasure,
+    outcomes: list[_StoreOutcome],
+    staged: dict[str, tuple[str, ...]],
+    rng: Callable[[], float] = random.random,
+) -> str:
+    """Fence the claim, re-check the stores, then write receipts and settle.
+
+    Ordering is load-bearing. The outbox row is locked and validated against the
+    attempt this run claimed *before* any receipt is written, so a worker whose
+    lease expired cannot overwrite a newer worker's proof. The refs are then
+    re-read under that lock, so a copy that appeared between the first read and
+    this point cannot be certified by a ``verified`` receipt the run did not earn.
+    """
+    async with session_as_erasure_org(erasure.factory, erasure.row.org_id) as session:
+        if not await _claim_still_held(session, erasure.row):
+            logger.warning(
+                "memory erasure settle skipped: claim superseded row_id=%s org_id=%s "
+                "memory_id=%s revision=%s",
+                erasure.row.row_id,
+                erasure.row.org_id,
+                erasure.row.memory_id,
+                erasure.row.revision,
             )
+            return "retired"
+        checked = await _recheck_outcomes(session, erasure, outcomes, staged)
+        state = _outbox_state(checked, erasure.row)
+        await _apply_outbox_state(session, erasure.row, state, rng)
+        await _upsert_fresh_receipts(session, erasure, checked)
+    _record_outcome_metrics(checked, state)
+    return state
+
+
+def _outbox_state(outcomes: list[_StoreOutcome], row: _ClaimedRow) -> str:
+    """The outbox state these outcomes earn, before any retry is scheduled.
+
+    ``complete`` only when every store is proved. A locator that cannot succeed
+    on retry, or a deadline that has passed, is terminally ``failed`` so the row
+    stops waking; anything else is ``partial`` and retries with backoff.
+    """
+    if _erasure_state(outcomes) == "complete":
+        return "complete"
+    if _has_permanent_failure(outcomes) or _deadline_passed(row):
+        return "failed"
+    return "partial"
+
+
+def _has_permanent_failure(outcomes: list[_StoreOutcome]) -> bool:
+    """Whether any store failed in a way the next sweep cannot fix."""
+    return any(outcome.permanent for outcome in outcomes)
+
+
+async def _upsert_fresh_receipts(
+    session: Any, erasure: _Erasure, outcomes: list[_StoreOutcome]
+) -> None:
+    """Write one receipt per store this run proved; an earlier proof stands."""
+    for outcome in outcomes:
+        if outcome.fresh:
+            await session.execute(
+                text(_UPSERT_RECEIPT_SQL), _receipt_params(erasure, outcome)
+            )
+
+
+def _record_outcome_metrics(outcomes: list[_StoreOutcome], state: str) -> None:
+    """Count the per-store and per-row outcomes of one settled erasure."""
     for outcome in outcomes:
         ERASURE_STORE.labels(store=outcome.store, status=outcome.status).inc()
     ERASURE_OUTCOME.labels(state=state).inc()
-    return state
+
+
+async def _claim_still_held(session: Any, row: _ClaimedRow) -> bool:
+    """Lock the outbox row and confirm it is still the attempt this run claimed."""
+    params = {"id": row.row_id, "org_id": row.org_id, "attempts": row.attempts}
+    result = await session.execute(text(_CLAIM_STILL_HELD_SQL), params)
+    return result.first() is not None
+
+
+async def _recheck_outcomes(
+    session: Any,
+    erasure: _Erasure,
+    outcomes: list[_StoreOutcome],
+    staged: dict[str, tuple[str, ...]],
+) -> list[_StoreOutcome]:
+    """Re-read the refs under the claim fence before any receipt is written."""
+    current = await _read_refs(session, erasure.row)
+    checked: list[_StoreOutcome] = []
+    for outcome in outcomes:
+        checked.append(
+            await _recheck_outcome(
+                erasure,
+                outcome,
+                staged.get(outcome.store, ()),
+                current.get(outcome.store, ()),
+            )
+        )
+    return checked
+
+
+async def _recheck_outcome(
+    erasure: _Erasure,
+    outcome: _StoreOutcome,
+    staged_locators: tuple[str, ...],
+    current_locators: tuple[str, ...],
+) -> _StoreOutcome:
+    """Downgrade a store whose proof no longer covers what is actually there."""
+    if outcome.status not in SATISFIED_RECEIPT_STATUSES:
+        return outcome
+    if current_locators != staged_locators:
+        return _failed_outcome(outcome.store, "artifact refs changed during erasure")
+    if outcome.store != "objectstore":
+        return outcome
+    try:
+        reappeared = await _object_reappeared(erasure, staged_locators)
+    except Exception:
+        logger.warning(
+            "memory erasure object-store re-check failed org_id=%s memory_id=%s revision=%s",
+            erasure.row.org_id,
+            erasure.row.memory_id,
+            erasure.row.revision,
+            exc_info=True,
+        )
+        return _failed_outcome(outcome.store, "object-store re-check failed")
+    if reappeared:
+        return _failed_outcome(outcome.store, "object reappeared after delete")
+    return outcome
+
+
+async def _object_reappeared(erasure: _Erasure, locators: tuple[str, ...]) -> bool:
+    """Whether HEAD now reports any object this run had just proved absent."""
+    for uri in locators:
+        if await asyncio.to_thread(
+            object_exists, uri, org_id=erasure.row.org_id, settings=erasure.settings
+        ):
+            return True
+    return False
+
+
+async def _apply_outbox_state(
+    session: Any, row: _ClaimedRow, state: str, rng: Callable[[], float]
+) -> None:
+    """Move the locked outbox row to its next state."""
+    params: dict[str, Any] = {
+        "id": row.row_id,
+        "org_id": row.org_id,
+        "attempts": row.attempts,
+    }
+    if state == "complete":
+        await session.execute(text(_COMPLETE_SQL), params)
+        return
+    if state == "failed":
+        await session.execute(text(_FAIL_SQL), params)
+        return
+    params["delay_seconds"] = _backoff_seconds(row.attempts, rng)
+    await session.execute(text(_RETRY_SQL), params)
 
 
 def _erasure_state(outcomes: list[_StoreOutcome]) -> str:
@@ -624,10 +845,18 @@ def _deadline_passed(row: _ClaimedRow) -> bool:
     return row.deadline is not None and row.deadline <= datetime.now(tz=UTC)
 
 
-def _backoff_seconds(attempts: int) -> int:
-    """Exponential retry delay, capped so a row is still retried every hour."""
+def _backoff_seconds(attempts: int, rng: Callable[[], float] = random.random) -> int:
+    """Capped exponential retry delay with bounded, injected jitter.
+
+    ``rng`` is a callable returning ``[0, 1)``; the default is
+    ``random.random`` and the tests inject a deterministic source. The jitter
+    stays inside ``_RETRY_CAP_SECONDS`` so two erasures hitting the same outage
+    do not wake at the same instant.
+    """
     exponent = max(attempts - 1, 0)
-    return min(_RETRY_BASE_SECONDS * (2**exponent), _RETRY_CAP_SECONDS)
+    base = min(_RETRY_BASE_SECONDS * (2**exponent), _RETRY_CAP_SECONDS)
+    jitter = _RETRY_JITTER_FRACTION * (2.0 * rng() - 1.0)
+    return max(0, min(_RETRY_CAP_SECONDS, int(base * (1.0 + jitter))))
 
 
 def _receipt_params(erasure: _Erasure, outcome: _StoreOutcome) -> dict[str, Any]:
@@ -651,5 +880,7 @@ __all__ = [
     "ERASURE_STORE",
     "RECEIPT_STORES",
     "SATISFIED_RECEIPT_STATUSES",
+    "PermanentErasureFailure",
+    "configure_erasure_task_limits",
     "erase_memory",
 ]

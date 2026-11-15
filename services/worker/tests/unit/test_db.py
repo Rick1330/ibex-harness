@@ -29,6 +29,7 @@ from app.db import (
     create_session_factory,
     session_as_app,
     session_as_app_org,
+    session_as_erasure_org,
     session_as_purge_org,
     session_unpinned,
 )
@@ -295,6 +296,7 @@ async def test_app_probe_scope_pins_app_without_an_org_guc() -> None:
 _PINNED_SCOPES = [
     pytest.param(session_as_app_org, "ibex_app", id="app"),
     pytest.param(session_as_purge_org, "ibex_purge", id="purge"),
+    pytest.param(session_as_erasure_org, "ibex_erasure", id="erasure"),
 ]
 
 
