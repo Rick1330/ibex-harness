@@ -198,6 +198,7 @@ func requireProvenanceTables(t *testing.T, ctx context.Context, db *sql.DB, want
 func insertArtifactRef(t *testing.T, ctx context.Context, db *sql.DB, seed artifactRefSeed) {
 	t.Helper()
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli - literal statement with $N bind parameters; nothing is concatenated into the SQL.
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO ibex_core.memory_artifact_refs (org_id, memory_id, store, locator)
 			VALUES ($1::uuid, $2::uuid, $3, $4)
