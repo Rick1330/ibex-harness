@@ -370,20 +370,27 @@ func requireSessionEventCount(t *testing.T, ctx context.Context, db *sql.DB, che
 func requireAppCannotForgeOutboxIdentity(t *testing.T, ctx context.Context, db *sql.DB, orgID string) {
 	t.Helper()
 	memoryID := seedPendingOutboxRow(t, ctx, db, orgID)
-	for _, column := range []struct{ name, assignment string }{
-		{"event_type", "event_type = 'forgotten'"},
-		{"org_id", "org_id = gen_random_uuid()"},
-		{"memory_id", "memory_id = gen_random_uuid()"},
-		{"revision", "revision = revision + 1"},
+	// Each statement is a literal: the column under test varies, but the SQL is
+	// never assembled from it, so there is nothing to concatenate into a query.
+	for _, forge := range []struct{ name, statement string }{
+		{"event_type", `UPDATE ibex_core.memory_lifecycle_outbox
+			SET event_type = 'forgotten'
+			WHERE memory_id = $1::uuid AND org_id = $2::uuid`},
+		{"org_id", `UPDATE ibex_core.memory_lifecycle_outbox
+			SET org_id = gen_random_uuid()
+			WHERE memory_id = $1::uuid AND org_id = $2::uuid`},
+		{"memory_id", `UPDATE ibex_core.memory_lifecycle_outbox
+			SET memory_id = gen_random_uuid()
+			WHERE memory_id = $1::uuid AND org_id = $2::uuid`},
+		{"revision", `UPDATE ibex_core.memory_lifecycle_outbox
+			SET revision = revision + 1
+			WHERE memory_id = $1::uuid AND org_id = $2::uuid`},
 	} {
 		err := withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
-			_, execErr := tx.ExecContext(ctx, `
-				UPDATE ibex_core.memory_lifecycle_outbox
-				   SET `+column.assignment+`
-				 WHERE memory_id = $1::uuid AND org_id = $2::uuid`, memoryID, orgID)
+			_, execErr := tx.ExecContext(ctx, forge.statement, memoryID, orgID)
 			return execErr
 		})
-		requireSQLState(t, err, "42501", "ibex_app UPDATE ... SET "+column.name)
+		requireSQLState(t, err, "42501", "ibex_app UPDATE ... SET "+forge.name)
 	}
 }
 
