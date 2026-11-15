@@ -310,12 +310,15 @@ func requireAppCannotSettleOutbox(t *testing.T, ctx context.Context, db *sql.DB,
 func requireErasureCanWriteReceipt(t *testing.T, ctx context.Context, db *sql.DB, orgID string) {
 	t.Helper()
 	memoryID := uuid.NewString()
+	// The key only has to be unique per memory; a UUID avoids assembling one
+	// from the id, which reads as SQL construction to static analysis.
+	key := uuid.NewString()
 	err := withOrgRoleContext(ctx, db, "ibex_erasure", orgID, func(tx *sql.Tx) error {
 		_, execErr := tx.ExecContext(ctx, `
 			INSERT INTO ibex_core.erasure_store_receipts
 				(org_id, memory_id, revision, store, status, idempotency_key)
 			VALUES ($1::uuid, $2::uuid, 2, 'objectstore', 'verified', $3)`,
-			orgID, memoryID, "erasure-"+memoryID)
+			orgID, memoryID, key)
 		return execErr
 	})
 	if err != nil {
@@ -330,12 +333,13 @@ func requireErasureCanWriteReceipt(t *testing.T, ctx context.Context, db *sql.DB
 func requireAppCannotWriteReceipt(t *testing.T, ctx context.Context, db *sql.DB, orgID string) {
 	t.Helper()
 	memoryID := uuid.NewString()
+	key := uuid.NewString()
 	insert := `
 		INSERT INTO ibex_core.erasure_store_receipts
 			(org_id, memory_id, revision, store, status, idempotency_key)
 		VALUES ($1::uuid, $2::uuid, 2, 'objectstore', 'verified', $3)`
 	err := withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
-		_, execErr := tx.ExecContext(ctx, insert, orgID, memoryID, "forged-"+memoryID)
+		_, execErr := tx.ExecContext(ctx, insert, orgID, memoryID, key)
 		return execErr
 	})
 	requireSQLState(t, err, "42501", "ibex_app insert receipt")
