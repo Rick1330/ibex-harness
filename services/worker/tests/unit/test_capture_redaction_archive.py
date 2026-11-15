@@ -82,13 +82,19 @@ async def test_persist_redacted_without_an_event_writes_nothing(
     put.assert_not_called()
 
 
+def _stub_upload(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    """Stub the blob upload and return the archived_to mock the caller asserts on."""
+    monkeypatch.setattr(capture_redaction, "_put_archive_blob", MagicMock(return_value=_URI))
+    set_archived = AsyncMock()
+    monkeypatch.setattr(capture_redaction, "_set_archived_to", set_archived)
+    return set_archived
+
+
 @pytest.mark.asyncio
 async def test_persist_redacted_records_the_blob_it_uploaded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(capture_redaction, "_put_archive_blob", MagicMock(return_value=_URI))
-    set_archived = AsyncMock()
-    monkeypatch.setattr(capture_redaction, "_set_archived_to", set_archived)
+    set_archived = _stub_upload(monkeypatch)
     ctx = _ctx(event_id="9")
 
     await capture_redaction._persist_redacted(ctx, {"meta": 1})
@@ -143,9 +149,7 @@ async def test_persist_redacted_compensates_when_the_ref_update_fails(
 async def test_archive_payload_without_an_event_stops_after_the_upload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(capture_redaction, "_put_archive_blob", MagicMock(return_value=_URI))
-    set_archived = AsyncMock()
-    monkeypatch.setattr(capture_redaction, "_set_archived_to", set_archived)
+    set_archived = _stub_upload(monkeypatch)
     ctx = _ctx()
 
     await capture_redaction._archive_payload(ctx, {"content": "x"})
