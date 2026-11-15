@@ -141,12 +141,88 @@ async def test_persist_redacted_compensates_when_the_ref_update_fails(
 
 
 # ---------------------------------------------------------------------------
+# Provenance without a complete address
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_persist_redacted_without_a_memory_id_skips_the_object_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_archived = _stub_upload(monkeypatch)
+    ctx = _ctx(event_id="9")
+
+    await capture_redaction._persist_redacted(ctx, {"meta": 1})
+
+    assert ctx.uploaded == [_URI]
+    assert ctx.session.execute.await_count == 1
+    set_archived.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_persist_redacted_records_the_object_ref_after_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_archived = _stub_upload(monkeypatch)
+    memory_id = str(uuid4())
+    ctx = _ctx(event_id="9")
+
+    await capture_redaction._persist_redacted(ctx, {"memory_id": memory_id})
+
+    assert ctx.uploaded == [_URI]
+    # data update, session-event ref, then the object ref; archived_to is stubbed
+    assert ctx.session.execute.await_count == 3
+    object_ref = ctx.session.execute.await_args_list[2].args[1]
+    assert object_ref["uri"] == _URI
+    assert json.loads(object_ref["memory_ids"]) == [memory_id]
+    set_archived.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_persist_redacted_records_the_event_ref_when_s3_is_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The handled configuration error must not lose the erasure address."""
+    memory_id = str(uuid4())
+    monkeypatch.setattr(
+        capture_redaction,
+        "_put_archive_blob",
+        MagicMock(side_effect=RuntimeError("S3_ENDPOINT unset")),
+    )
+    ctx = _ctx(event_id="9")
+
+    await capture_redaction._persist_redacted(ctx, {"memory_id": memory_id})
+
+    assert ctx.uploaded == []
+    assert ctx.session.execute.await_count == 2
+    statement, params = ctx.session.execute.await_args_list[1].args
+    assert "memory_artifact_refs" in str(statement)
+    assert params["event_id"] == 9
+    assert params["uri"] is None
+
+
+@pytest.mark.asyncio
+async def test_record_artifact_refs_does_nothing_without_an_address() -> None:
+    session = AsyncMock()
+
+    await capture_redaction._record_artifact_refs(
+        session,
+        capture_redaction._ArtifactRefs(
+            org_id=_ORG,
+            memory_ids=(str(uuid4()),),
+        ),
+    )
+
+    session.execute.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
 # Full archive without an event
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_archive_payload_without_an_event_stops_after_the_upload(
+async def test_archive_payload_without_an_event_skips_the_event_update(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     set_archived = _stub_upload(monkeypatch)
@@ -156,6 +232,26 @@ async def test_archive_payload_without_an_event_stops_after_the_upload(
 
     assert ctx.uploaded == [_URI]
     set_archived.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_archive_payload_without_an_event_records_the_object_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A full capture with a memory id but no event id must still be findable."""
+    _stub_upload(monkeypatch)
+    ctx = _ctx()
+    memory_id = str(uuid4())
+
+    await capture_redaction._archive_payload(ctx, {"memory_id": memory_id})
+
+    assert ctx.uploaded == [_URI]
+    ctx.session.execute.assert_awaited_once()
+    statement, params = ctx.session.execute.await_args_list[0].args
+    assert "memory_artifact_refs" in str(statement)
+    assert params["event_id"] is None
+    assert params["uri"] == _URI
+    assert json.loads(params["memory_ids"]) == [memory_id]
 
 
 # ---------------------------------------------------------------------------
@@ -170,20 +266,39 @@ async def test_set_archived_to_refuses_an_update_that_matched_nothing() -> None:
     job = _CaptureJob(org_id=_ORG, event_id="9")
 
     with pytest.raises(RuntimeError, match="matched 0 rows"):
-        await capture_redaction._set_archived_to(session, job, _URI, {"memory_id": str(uuid4())})
+        await capture_redaction._set_archived_to(session, job, _URI)
 
 
 @pytest.mark.asyncio
-async def test_set_archived_to_records_one_ref_per_memory() -> None:
-    memory_id = str(uuid4())
+async def test_set_archived_to_updates_only_the_event_row() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(return_value=MagicMock(rowcount=1))
     job = _CaptureJob(org_id=_ORG, event_id="9")
 
-    await capture_redaction._set_archived_to(session, job, _URI, {"memory_ids": [memory_id]})
+    await capture_redaction._set_archived_to(session, job, _URI)
 
-    assert session.execute.await_count == 2
-    statement, params = session.execute.await_args_list[1].args
+    assert session.execute.await_count == 1
+    statement, params = session.execute.await_args_list[0].args
+    assert "archived_to" in str(statement)
+    assert params == {"event_id": 9, "org_id": _ORG, "uri": _URI}
+
+
+@pytest.mark.asyncio
+async def test_record_artifact_refs_writes_the_object_and_event_halves() -> None:
+    memory_id = str(uuid4())
+    session = AsyncMock()
+
+    await capture_redaction._record_artifact_refs(
+        session,
+        capture_redaction._ArtifactRefs(
+            org_id=_ORG,
+            memory_ids=(memory_id,),
+            event_id=9,
+            uri=_URI,
+        ),
+    )
+
+    statement, params = session.execute.await_args_list[0].args
     assert "memory_artifact_refs" in str(statement)
     assert params == {
         "org_id": _ORG,
@@ -192,6 +307,48 @@ async def test_set_archived_to_records_one_ref_per_memory() -> None:
         "uri": _URI,
         "memory_ids": json.dumps([memory_id]),
     }
+
+
+@pytest.mark.asyncio
+async def test_record_artifact_refs_records_the_object_without_an_event() -> None:
+    """A full capture with a memory id but no event id is still reachable."""
+    memory_id = str(uuid4())
+    session = AsyncMock()
+
+    await capture_redaction._record_artifact_refs(
+        session,
+        capture_redaction._ArtifactRefs(
+            org_id=_ORG,
+            memory_ids=(memory_id,),
+            event_id=None,
+            uri=_URI,
+        ),
+    )
+
+    _, params = session.execute.await_args_list[0].args
+    assert params["event_id"] is None
+    assert params["event_id_text"] is None
+    assert params["uri"] == _URI
+
+
+@pytest.mark.asyncio
+async def test_record_artifact_refs_records_the_event_without_an_upload() -> None:
+    """A capture whose S3 write is skipped still records its session-event link."""
+    memory_id = str(uuid4())
+    session = AsyncMock()
+
+    await capture_redaction._record_artifact_refs(
+        session,
+        capture_redaction._ArtifactRefs(
+            org_id=_ORG,
+            memory_ids=(memory_id,),
+            event_id=9,
+        ),
+    )
+
+    _, params = session.execute.await_args_list[0].args
+    assert params["uri"] is None
+    assert params["event_id"] == 9
 
 
 # ---------------------------------------------------------------------------

@@ -87,6 +87,7 @@ var roleStatements = map[string]string{
 	"ibex_app":            "SET LOCAL ROLE ibex_app",
 	"ibex_service":        "SET LOCAL ROLE ibex_service",
 	"ibex_purge":          "SET LOCAL ROLE ibex_purge",
+	"ibex_erasure":        "SET LOCAL ROLE ibex_erasure",
 	"ibex_runtime":        "SET LOCAL ROLE ibex_runtime",
 	"ibex_worker":         "SET LOCAL ROLE ibex_worker",
 	"ibex_bootstrap":      "SET LOCAL ROLE ibex_bootstrap",

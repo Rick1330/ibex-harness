@@ -138,9 +138,25 @@ def test_deadline_passed_only_after_the_recorded_deadline() -> None:
 
 
 def test_backoff_doubles_and_caps() -> None:
-    assert [le._backoff_seconds(n) for n in (1, 2, 3)] == [30, 60, 120]
-    assert le._backoff_seconds(0) == 30
-    assert le._backoff_seconds(50) == le._RETRY_CAP_SECONDS
+    # rng=0.5 is the zero-jitter point, so the base delay is exact.
+    def no_jitter() -> float:
+        return 0.5
+
+    assert [le._backoff_seconds(n, no_jitter) for n in (1, 2, 3)] == [30, 60, 120]
+    assert le._backoff_seconds(0, no_jitter) == 30
+    assert le._backoff_seconds(50, no_jitter) == le._RETRY_CAP_SECONDS
+
+
+def test_backoff_jitter_is_bounded_and_stays_inside_the_cap() -> None:
+    """Two erasures hitting one outage must not wake at the same instant."""
+    low = le._backoff_seconds(1, lambda: 0.0)
+    high = le._backoff_seconds(1, lambda: 1.0)
+    assert low < 30 < high
+    assert low >= int(30 * (1 - le._RETRY_JITTER_FRACTION))
+    assert high <= int(30 * (1 + le._RETRY_JITTER_FRACTION))
+    # At the cap the upper half is clamped, but the delay never exceeds it.
+    assert le._backoff_seconds(50, lambda: 1.0) == le._RETRY_CAP_SECONDS
+    assert le._backoff_seconds(50, lambda: 0.0) < le._RETRY_CAP_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +247,38 @@ async def test_store_stage_that_raises_is_failed_never_verified(
     outcome = await _erase(_StoreTarget("objectstore", ("s3://bucket/one.json",)), {})
     assert outcome.status == "failed"
     assert "503" in (outcome.error or "")
+
+
+@pytest.mark.asyncio
+async def test_store_validation_failure_is_classified_permanent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A locator that cannot change cannot succeed on the next sweep."""
+    monkeypatch.setattr(
+        le, "_stage", _stage_that_raises(ValueError("unsupported uri"))
+    )
+    outcome = await _erase(
+        _StoreTarget("objectstore", ("https://example.invalid/archive",)), {}
+    )
+    assert (outcome.status, outcome.permanent) == ("failed", True)
+
+
+@pytest.mark.asyncio
+async def test_store_transport_failure_is_classified_transient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 5xx or an unreachable store is worth retrying; it is not permanent."""
+    monkeypatch.setattr(
+        le, "_stage", _stage_that_raises(RuntimeError("s3 head capture/1.json: 503"))
+    )
+    outcome = await _erase(_StoreTarget("objectstore", ("s3://bucket/one.json",)), {})
+    assert outcome.permanent is False
+
+
+@pytest.mark.asyncio
+async def test_session_event_locator_failure_is_permanent() -> None:
+    with pytest.raises(le.PermanentErasureFailure):
+        le._session_event_id("not-a-row-id")
 
 
 @pytest.mark.asyncio
@@ -463,8 +511,10 @@ def test_task_registration_and_time_limits() -> None:
     from app.task_names import TASK_LIFECYCLE_ERASE_MEMORY
 
     assert le.erase_memory.name == TASK_LIFECYCLE_ERASE_MEMORY
-    assert le.erase_memory.soft_time_limit == 900
-    assert le.erase_memory.time_limit == 960
+    # The decorator applied the derivation from the settings loaded at import.
+    assert le.erase_memory.soft_time_limit == le._ERASURE_SOFT_LIMIT
+    assert le.erase_memory.time_limit == le._ERASURE_TIME_LIMIT
+    assert le._ERASURE_SOFT_LIMIT == le._task_limits(900.0)[0]
     from app.celery_app import create_celery_app
 
     celery = create_celery_app(
@@ -476,6 +526,20 @@ def test_task_registration_and_time_limits() -> None:
     )
     assert route_for_task(celery, TASK_LIFECYCLE_ERASE_MEMORY) == "maintenance"
     assert "lifecycle-erase-memory" in (celery.conf.beat_schedule or {})
+
+
+def test_task_limits_cover_a_non_default_job_budget() -> None:
+    """A legal 1800 s budget must not be killed by a fixed 900 s task limit."""
+    original = (le.erase_memory.soft_time_limit, le.erase_memory.time_limit)
+    try:
+        le.configure_erasure_task_limits(1800.0)
+        assert le.erase_memory.soft_time_limit >= 1800.0
+        assert le.erase_memory.soft_time_limit == int(
+            1800.0 + le._ERASURE_SETTLEMENT_HEADROOM_SECONDS
+        )
+        assert le.erase_memory.time_limit > le.erase_memory.soft_time_limit
+    finally:
+        le.erase_memory.soft_time_limit, le.erase_memory.time_limit = original
 
 
 def test_deadline_defaults_match_the_contract() -> None:

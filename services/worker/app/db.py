@@ -57,6 +57,7 @@ from app.config import Settings
 _PINNED_ROLE_SQL: dict[str, str] = {
     "ibex_app": "SET LOCAL ROLE ibex_app",
     "ibex_purge": "SET LOCAL ROLE ibex_purge",
+    "ibex_erasure": "SET LOCAL ROLE ibex_erasure",
 }
 _SET_ORG_SQL = "SELECT set_config('app.current_org_id', :org_id, true)"
 
@@ -77,6 +78,7 @@ __all__ = [
     "create_session_factory",
     "session_as_app",
     "session_as_app_org",
+    "session_as_erasure_org",
     "session_as_purge_org",
     "session_unpinned",
 ]
@@ -209,6 +211,23 @@ async def session_as_purge_org(
     """Transactional session pinned to ``ibex_purge`` for one tenant."""
     async with _transaction(factory) as session:
         await _pin_role(session, "ibex_purge")
+        await _bind_org(session, org_id)
+        yield session
+
+
+@asynccontextmanager
+async def session_as_erasure_org(
+    factory: async_sessionmaker[AsyncSession],
+    org_id: str,
+) -> AsyncIterator[AsyncSession]:
+    """Transactional session pinned to ``ibex_erasure`` for one tenant.
+
+    The erasure worker's proof-writing identity (000075). The tenant request path
+    is a member of ``ibex_app`` only, so it cannot assume this role, write a
+    ``verified`` receipt, or settle an outbox row.
+    """
+    async with _transaction(factory) as session:
+        await _pin_role(session, "ibex_erasure")
         await _bind_org(session, org_id)
         yield session
 

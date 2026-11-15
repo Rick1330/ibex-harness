@@ -275,13 +275,14 @@ async def test_retire_if_stale_reports_whether_the_row_was_retired(
     monkeypatch: pytest.MonkeyPatch, rowcount: int, retired: bool
 ) -> None:
     session = _FakeSession(_Result(rowcount=rowcount))
-    monkeypatch.setattr(le, "session_as_app_org", _scope(session))
+    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
 
     assert await le._retire_if_stale(object(), _ROW) is retired
     _, params = session.statements[0]
     assert params["org_id"] == _ROW.org_id
     assert params["memory_id"] == _ROW.memory_id
     assert params["revision"] == _ROW.revision
+    assert params["attempts"] == _ROW.attempts
 
 
 @pytest.mark.asyncio
@@ -305,10 +306,14 @@ async def test_read_erasure_state_groups_locators_and_keeps_receipts(
         "session_event": ("7",),
     }
     assert existing == {"objectstore": "verified"}
+    refs_sql, refs_params = session.statements[0]
+    assert "memory_artifact_refs" in refs_sql
+    assert refs_params == {"org_id": _ROW.org_id, "memory_id": _ROW.memory_id}
+    _, receipt_params = session.statements[1]
+    assert receipt_params["revision"] == _ROW.revision
     for _, params in session.statements:
         assert params["org_id"] == _ROW.org_id
         assert params["memory_id"] == _ROW.memory_id
-        assert params["revision"] == _ROW.revision
 
 
 # ---------------------------------------------------------------------------
@@ -382,54 +387,165 @@ async def test_session_event_stage_fails_when_the_row_survives(
 # ---------------------------------------------------------------------------
 
 
+def _held_session(*refs: Any) -> _FakeSession:
+    """A settle session that reports the claim still held, then the given refs."""
+    return _FakeSession(_Result([{"id": _ROW.row_id}]), _Result(list(refs)))
+
+
 @pytest.mark.asyncio
 async def test_settle_upserts_only_fresh_receipts_then_completes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session = _FakeSession()
-    monkeypatch.setattr(le, "session_as_app_org", _scope(session))
+    session = _held_session()
+    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
     outcomes = [
         _StoreOutcome(store="objectstore", status="verified", fresh=False),
         _StoreOutcome(store="session_event", status="not_applicable"),
     ]
 
-    assert await le._settle(_ERASURE, outcomes) == "complete"
+    assert await le._settle(_ERASURE, outcomes, {}) == "complete"
 
-    assert session.verbs() == ["INSERT", "UPDATE"]
-    upsert = session.statements[0][1]
+    # Fence SELECT, refs re-check SELECT, outbox UPDATE, then the one fresh receipt.
+    assert session.verbs() == ["SELECT", "SELECT", "UPDATE", "INSERT"]
+    upsert = session.statements[3][1]
     assert upsert["store"] == "session_event"
     assert upsert["status"] == "not_applicable"
     assert upsert["idempotency_key"].endswith(":session_event")
-    assert "erasure_state = 'complete'" in session.statements[1][0]
-    assert session.statements[1][1] == {"id": _ROW.row_id, "org_id": _ROW.org_id}
+    complete_sql, complete_params = session.statements[2]
+    assert "erasure_state = 'complete'" in complete_sql
+    assert complete_params == {
+        "id": _ROW.row_id,
+        "org_id": _ROW.org_id,
+        "attempts": _ROW.attempts,
+    }
 
 
 @pytest.mark.asyncio
 async def test_settle_retries_with_backoff_while_the_deadline_holds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session = _FakeSession()
-    monkeypatch.setattr(le, "session_as_app_org", _scope(session))
+    session = _held_session()
+    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
     erasure = replace(_ERASURE, row=replace(_ROW, attempts=3))
     outcomes = [_StoreOutcome(store="objectstore", status="failed", error="store_timeout")]
 
-    assert await le._settle(erasure, outcomes) == "partial"
+    assert await le._settle(erasure, outcomes, {}, rng=lambda: 0.5) == "partial"
 
-    sql, params = session.statements[-1]
-    assert "erasure_state = 'partial'" in sql
-    assert params["delay_seconds"] == 120
+    update_sql, update_params = next(
+        (sql, params)
+        for sql, params in session.statements
+        if "erasure_state = 'partial'" in sql
+    )
+    assert update_params["delay_seconds"] == 120
+    assert update_params["attempts"] == 3
+    assert "attempts = CAST(:attempts AS integer)" in update_sql
 
 
 @pytest.mark.asyncio
 async def test_settle_fails_terminally_once_the_deadline_has_passed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session = _FakeSession()
-    monkeypatch.setattr(le, "session_as_app_org", _scope(session))
+    session = _held_session()
+    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
     expired = replace(
         _ERASURE, row=replace(_ROW, deadline=datetime.now(tz=UTC) - timedelta(seconds=1))
     )
 
-    assert await le._settle(expired, [_StoreOutcome("clickhouse", "failed")]) == "failed"
+    assert await le._settle(expired, [_StoreOutcome("clickhouse", "failed")], {}) == "failed"
 
-    assert "erasure_state = 'failed'" in session.statements[-1][0]
+    assert any("erasure_state = 'failed'" in sql for sql, _ in session.statements)
+
+
+@pytest.mark.asyncio
+async def test_settle_stops_retrying_a_permanent_locator_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed or unsupported locator cannot succeed on the next sweep."""
+    session = _held_session()
+    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+    outcomes = [
+        _StoreOutcome(
+            store="objectstore",
+            status="failed",
+            error="ValueError: unsupported uri",
+            permanent=True,
+        )
+    ]
+
+    assert await le._settle(_ERASURE, outcomes, {}) == "failed"
+
+    assert any("erasure_state = 'failed'" in sql for sql, _ in session.statements)
+    assert not any("erasure_state = 'partial'" in sql for sql, _ in session.statements)
+
+
+@pytest.mark.asyncio
+async def test_settle_writes_nothing_when_the_claim_is_superseded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale worker must not overwrite the receipts a newer worker wrote."""
+    session = _FakeSession(_Result([]))
+    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+
+    assert await le._settle(_ERASURE, [_StoreOutcome("objectstore", "verified")], {}) == (
+        "retired"
+    )
+    assert session.verbs() == ["SELECT"]
+
+
+@pytest.mark.asyncio
+async def test_settle_downgrades_a_store_whose_refs_changed_after_the_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copy recorded between the first read and the settle cannot be certified."""
+    session = _held_session(("objectstore", "s3://b/org-1/new.json"))
+    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+    staged = {"objectstore": ("s3://b/org-1/old.json",)}
+
+    assert await le._settle(
+        _ERASURE, [_StoreOutcome("objectstore", "verified")], staged
+    ) == "partial"
+
+    receipt = next(params for sql, params in session.statements if sql.startswith("INSERT"))
+    assert receipt["status"] == "failed"
+    assert "artifact refs changed" in (receipt["error"] or "")
+
+
+@pytest.mark.asyncio
+async def test_settle_downgrades_an_object_that_reappeared_after_the_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A re-archive at the same locator must not hide behind a verified receipt."""
+    session = _held_session(("objectstore", "s3://b/org-1/a.json"))
+    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+    monkeypatch.setattr(le, "object_exists", lambda *_a, **_k: True)
+    staged = {"objectstore": ("s3://b/org-1/a.json",)}
+
+    assert await le._settle(
+        _ERASURE, [_StoreOutcome("objectstore", "verified")], staged
+    ) == "partial"
+
+    receipt = next(params for sql, params in session.statements if sql.startswith("INSERT"))
+    assert receipt["status"] == "failed"
+    assert "reappeared" in (receipt["error"] or "")
+
+
+@pytest.mark.asyncio
+async def test_settle_downgrades_when_the_object_store_recheck_is_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A store that cannot be re-checked is not certified by the earlier HEAD."""
+    session = _held_session(("objectstore", "s3://b/org-1/a.json"))
+    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+
+    def boom(*_args: Any, **_kwargs: Any) -> bool:
+        raise RuntimeError("s3 down")
+
+    monkeypatch.setattr(le, "object_exists", boom)
+    staged = {"objectstore": ("s3://b/org-1/a.json",)}
+
+    assert await le._settle(
+        _ERASURE, [_StoreOutcome("objectstore", "verified")], staged
+    ) == "partial"
+
+    receipt = next(params for sql, params in session.statements if sql.startswith("INSERT"))
+    assert "re-check failed" in (receipt["error"] or "")

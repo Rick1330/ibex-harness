@@ -94,7 +94,8 @@ func TestMemoryLifecycleErasureState_DownRefusesAfterSessionEventReceipt(t *test
 
 // TestMemoryLifecycleErasureState_ConsumerContract asserts the properties the
 // consumer relies on: a default state, a closed domain, the session_event
-// receipt, and the two grants — including that the new DELETE on session_events
+// receipt, and the grants — including that settlement and proof writes belong to
+// ibex_erasure, not to the tenant identity, and that the DELETE on session_events
 // reaches the caller's own tenant only.
 func TestMemoryLifecycleErasureState_ConsumerContract(t *testing.T) {
 	f := newMigrationFixture(t, memoryLifecycleErasureStateVersion)
@@ -103,7 +104,10 @@ func TestMemoryLifecycleErasureState_ConsumerContract(t *testing.T) {
 	tenants := tenantPair{orgA: orgA, orgB: orgB}
 	requireOutboxDefaultState(t, f.ctx, f.db, orgA)
 	requireOutboxRejectsUnknownState(t, f.ctx, f.db, orgA)
-	requireAppCanLeaseOutbox(t, f.ctx, f.db, orgA)
+	requireErasureCanLeaseOutbox(t, f.ctx, f.db, orgA)
+	requireAppCannotSettleOutbox(t, f.ctx, f.db, orgA)
+	requireErasureCanWriteReceipt(t, f.ctx, f.db, orgA)
+	requireAppCannotWriteReceipt(t, f.ctx, f.db, orgA)
 	requireAppCannotForgeOutboxIdentity(t, f.ctx, f.db, orgA)
 	requireAppCannotDeleteSessionEvents(t, f.ctx, f.db, orgA)
 	requirePurgeDeletesOwnTenantEventOnly(t, f.ctx, f.db, tenants)
@@ -252,13 +256,14 @@ func requireOutboxRejectsUnknownState(t *testing.T, ctx context.Context, db *sql
 	requireSQLState(t, insertOutboxWithState(ctx, db, seed), "23514", "unknown erasure_state")
 }
 
-// requireAppCanLeaseOutbox is the grant that makes the consumer possible: as
-// ibex_app with the org GUC it must be able to claim (attempts, locked_until) and
-// settle (erasure_state, delivered_at) its own tenant's row, and nothing else.
-func requireAppCanLeaseOutbox(t *testing.T, ctx context.Context, db *sql.DB, orgID string) {
+// requireErasureCanLeaseOutbox is the grant that makes the consumer possible: as
+// ibex_erasure with the org GUC it must be able to claim (attempts,
+// locked_until) and settle (erasure_state, delivered_at) its own tenant's row,
+// and nothing else.
+func requireErasureCanLeaseOutbox(t *testing.T, ctx context.Context, db *sql.DB, orgID string) {
 	t.Helper()
 	memoryID := seedPendingOutboxRow(t, ctx, db, orgID)
-	err := withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
+	err := withOrgRoleContext(ctx, db, "ibex_erasure", orgID, func(tx *sql.Tx) error {
 		result, execErr := tx.ExecContext(ctx, `
 			UPDATE ibex_core.memory_lifecycle_outbox
 			SET attempts = attempts + 1,
@@ -274,13 +279,76 @@ func requireAppCanLeaseOutbox(t *testing.T, ctx context.Context, db *sql.DB, org
 			return rowsErr
 		}
 		if affected != 1 {
-			t.Fatalf("ibex_app leased %d outbox rows, want 1", affected)
+			t.Fatalf("ibex_erasure leased %d outbox rows, want 1", affected)
 		}
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("ibex_app lease: %v", err)
+		t.Fatalf("ibex_erasure lease: %v", err)
 	}
+}
+
+// requireAppCannotSettleOutbox is the privilege-separation lock: the tenant
+// identity may read its own row but must not write the settlement columns, or it
+// could mark an erasure complete without deleting anything.
+func requireAppCannotSettleOutbox(t *testing.T, ctx context.Context, db *sql.DB, orgID string) {
+	t.Helper()
+	memoryID := seedPendingOutboxRow(t, ctx, db, orgID)
+	err := withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
+		_, execErr := tx.ExecContext(ctx, `
+			UPDATE ibex_core.memory_lifecycle_outbox
+			SET erasure_state = 'complete',
+			    delivered_at = NOW()
+			WHERE memory_id = $1::uuid AND org_id = $2::uuid`, memoryID, orgID)
+		return execErr
+	})
+	requireSQLState(t, err, "42501", "ibex_app settle outbox")
+}
+
+// requireErasureCanWriteReceipt proves the worker identity can write the proof it
+// is responsible for.
+func requireErasureCanWriteReceipt(t *testing.T, ctx context.Context, db *sql.DB, orgID string) {
+	t.Helper()
+	memoryID := uuid.NewString()
+	err := withOrgRoleContext(ctx, db, "ibex_erasure", orgID, func(tx *sql.Tx) error {
+		_, execErr := tx.ExecContext(ctx, `
+			INSERT INTO ibex_core.erasure_store_receipts
+				(org_id, memory_id, revision, store, status, idempotency_key)
+			VALUES ($1::uuid, $2::uuid, 2, 'objectstore', 'verified', $3)`,
+			orgID, memoryID, "erasure-"+memoryID)
+		return execErr
+	})
+	if err != nil {
+		t.Fatalf("ibex_erasure insert receipt: %v", err)
+	}
+}
+
+// requireAppCannotWriteReceipt is the negative half of the receipt fix. The
+// tenant identity may read its own proof but must not insert a verified receipt
+// or turn a failed receipt into a verified one: neither operation requires a
+// store deletion, so either would forge the proof.
+func requireAppCannotWriteReceipt(t *testing.T, ctx context.Context, db *sql.DB, orgID string) {
+	t.Helper()
+	memoryID := uuid.NewString()
+	insert := `
+		INSERT INTO ibex_core.erasure_store_receipts
+			(org_id, memory_id, revision, store, status, idempotency_key)
+		VALUES ($1::uuid, $2::uuid, 2, 'objectstore', 'verified', $3)`
+	err := withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
+		_, execErr := tx.ExecContext(ctx, insert, orgID, memoryID, "forged-"+memoryID)
+		return execErr
+	})
+	requireSQLState(t, err, "42501", "ibex_app insert receipt")
+
+	update := `
+		UPDATE ibex_core.erasure_store_receipts
+		SET status = 'verified', verified_absent_at = NOW()
+		WHERE org_id = $1::uuid AND memory_id = $2::uuid`
+	err = withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
+		_, execErr := tx.ExecContext(ctx, update, orgID, memoryID)
+		return execErr
+	})
+	requireSQLState(t, err, "42501", "ibex_app update receipt")
 }
 
 // requireAppCannotDeleteSessionEvents is the negative half of the F1 fix: the
