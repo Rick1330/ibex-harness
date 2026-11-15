@@ -398,9 +398,182 @@ function endsValue(source, index) {
 const lineOf = (source, index) => source.slice(0, index).split('\n').length
 
 /**
- * Splits `ledger.ts` into the claim values it renders. A field whose value cannot
- * be read, or whose literal is only part of a larger expression, is returned in
- * `unreadable` and fails the check.
+ * The compact row arrays of `ledger.ts`, matched by the annotation that makes them
+ * readable: `const <name>: readonly <RowType>[] = [`. The table states each field
+ * name once, in the labelled tuple `<RowType>`, and holds the values positionally,
+ * so a value's field is the position it sits at. Discovery is by the annotation
+ * rather than by a list of array names, so a row array added later is scanned
+ * without editing this script.
+ */
+const rowArrayDeclaration = /const\s+\w+\s*:\s*readonly\s+(\w+)\[\]\s*=\s*\[/g
+
+/**
+ * The fields of a row that carry a claim, in the order the object form rendered
+ * them. A row array whose tuple labels neither field carries no claim and is
+ * skipped, exactly as a non-claim key is skipped today.
+ */
+const claimFields = ['name', 'detail']
+
+/**
+ * `text` with the characters a regular expression would read as syntax escaped, so
+ * an identifier taken from the source can be matched literally.
+ */
+const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * The text between the bracket that opens at `index` and the one that closes it, or
+ * `null` when it never closes. Quoted text is skipped whole, so a bracket inside a
+ * string cannot move the depth.
+ */
+function readBracketed(source, index) {
+  let depth = 0
+  let cursor = index
+  while (cursor < source.length) {
+    const literal = literalQuotes.has(source[cursor]) ? readLiteral(source, cursor) : null
+    if (literal !== null) {
+      cursor = literal.end
+      continue
+    }
+    if (source[cursor] === '[') depth += 1
+    if (source[cursor] === ']') {
+      depth -= 1
+      if (depth === 0) return source.slice(index + 1, cursor)
+    }
+    cursor += 1
+  }
+  return null
+}
+
+/**
+ * The label of every element in the labelled tuple type `typeName`, or `null` when
+ * the source does not declare that type as a readonly tuple of labelled elements.
+ * The element list is read to its matching bracket rather than to the first `]`,
+ * because an element type may index another type (`Gap['priority']`) and end a flat
+ * match early: the truncated list would then hide the claim fields it lost and let
+ * a row array be skipped instead of reported.
+ */
+function tupleLabels(source, typeName) {
+  const declaration = new RegExp(`type\\s+${escapeRegExp(typeName)}\\s*=\\s*readonly\\s*\\[`).exec(source)
+  if (declaration === null) return null
+  const elements = readBracketed(source, declaration.index + declaration[0].length - 1)
+  if (elements === null) return null
+  const labels = elements.split(',').map(element => element.split(':')[0].trim())
+  return labels.every(label => /^[A-Za-z_$][\w$]*$/.test(label)) ? labels : null
+}
+
+/**
+ * The index of every claim field in the labelled tuple `typeName`. `null` means the
+ * tuple cannot be read, so the rows cannot be; `[]` means the tuple labels no claim
+ * field.
+ */
+function claimFieldIndices(source, typeName) {
+  const labels = tupleLabels(source, typeName)
+  if (labels === null) return null
+  return claimFields.map(field => labels.indexOf(field)).filter(index => index !== -1)
+}
+
+/**
+ * Whether `char` is whitespace a row may be formatted across.
+ */
+const isWhitespace = char => char === ' ' || char === '\t' || char === '\n' || char === '\r'
+
+/**
+ * The index of the first character from `index` that is neither whitespace nor part
+ * of a comment. A row array is scanned through its own trivia, so a comment between
+ * two rows, or inside one, is not read as a value.
+ */
+function skipTrivia(source, index) {
+  let cursor = index
+  while (cursor < source.length) {
+    if (isWhitespace(source[cursor])) {
+      cursor += 1
+      continue
+    }
+    if (source.startsWith('//', cursor)) {
+      const end = source.indexOf('\n', cursor)
+      cursor = end === -1 ? source.length : end + 1
+      continue
+    }
+    if (source.startsWith('/*', cursor)) {
+      const end = source.indexOf('*/', cursor + 2)
+      cursor = end === -1 ? source.length : end + 2
+      continue
+    }
+    return cursor
+  }
+  return cursor
+}
+
+/**
+ * The static values of the row that opens at `index`, or `null` when an element is
+ * not a literal this checker can read. Every element must be a literal: a row that
+ * builds a value at runtime is uninspectable, not a row to skip.
+ */
+function readRow(source, index) {
+  const values = []
+  let cursor = skipTrivia(source, index + 1)
+  while (cursor < source.length && source[cursor] !== ']') {
+    const literal = readLiteral(source, cursor)
+    if (literal === null) return null
+    values.push(literal.value)
+    cursor = skipTrivia(source, literal.end)
+    if (source[cursor] === ',') cursor = skipTrivia(source, cursor + 1)
+    else if (source[cursor] !== ']') return null
+  }
+  return source[cursor] === ']' ? { values, end: cursor + 1 } : null
+}
+
+/**
+ * The claim values of every row from `start`, one entry per claim field at the line
+ * its row starts on. A row that is not a literal list, or that is too short for the
+ * fields its type labels, stops the scan and is reported: once a row is misread the
+ * rest of the array cannot be trusted either.
+ */
+function scanRows(source, start, indices) {
+  const texts = []
+  let cursor = start
+  while (cursor < source.length) {
+    cursor = skipTrivia(source, cursor)
+    if (cursor >= source.length || source[cursor] === ']') return { texts, unreadable: [] }
+    const line = lineOf(source, cursor)
+    const row = source[cursor] === '[' ? readRow(source, cursor) : null
+    if (row === null || indices.some(index => index >= row.values.length)) {
+      return { texts, unreadable: [{ line, text: expressionOnLine(source, cursor) }] }
+    }
+    for (const index of indices) texts.push({ line, text: row.values[index] })
+    cursor = row.end
+    if (source[cursor] === ',') cursor += 1
+  }
+  return { texts, unreadable: [] }
+}
+
+/**
+ * The claim values of every compact row array in `ledger.ts`. A row array whose
+ * tuple labels cannot be read is returned in `unreadable` and fails the check, so a
+ * rename or a reformat that hides a claim is reported rather than skipped.
+ */
+function rowClaimTexts(source) {
+  const texts = []
+  const unreadable = []
+  for (const declaration of source.matchAll(rowArrayDeclaration)) {
+    const indices = claimFieldIndices(source, declaration[1])
+    if (indices === null) {
+      unreadable.push({ line: lineOf(source, declaration.index), text: declaration[0] })
+      continue
+    }
+    if (indices.length === 0) continue
+    const rows = scanRows(source, declaration.index + declaration[0].length, indices)
+    texts.push(...rows.texts)
+    unreadable.push(...rows.unreadable)
+  }
+  return { texts, unreadable }
+}
+
+/**
+ * Splits `ledger.ts` into the claim values it renders, from both shapes it uses: a
+ * field written as `name:` or `detail:`, and a value in the position a compact row
+ * type labels as one. A field whose value cannot be read, or whose literal is only
+ * part of a larger expression, is returned in `unreadable` and fails the check.
  */
 function ledgerClaimTexts(source) {
   const texts = []
@@ -418,6 +591,9 @@ function ledgerClaimTexts(source) {
       unreadable.push({ line, text: expression || match[0].trim() })
     }
   }
+  const rows = rowClaimTexts(source)
+  texts.push(...rows.texts)
+  unreadable.push(...rows.unreadable)
   return { texts, unreadable }
 }
 
