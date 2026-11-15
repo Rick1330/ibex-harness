@@ -20,6 +20,19 @@ func (s *stubTokenValidator) Validate(ctx context.Context, accessToken string) (
 	return s.fn(ctx, accessToken)
 }
 
+// callCreateToken drives ic with a CreateToken request and returns the handler
+// error.
+func callCreateToken(ic grpc.UnaryServerInterceptor, ctx context.Context, handler grpc.UnaryHandler) error {
+	_, err := ic(ctx, &authv1.CreateTokenRequest{},
+		&grpc.UnaryServerInfo{FullMethod: "/ibex.auth.v1.AuthService/CreateToken"}, handler)
+	return err
+}
+
+// bearerContext carries a single authorization header into an incoming context.
+func bearerContext(header string) context.Context {
+	return metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", header))
+}
+
 func TestAuthzUnaryInterceptor_skipsValidateToken(t *testing.T) {
 	t.Parallel()
 
@@ -56,19 +69,16 @@ func TestAuthzUnaryInterceptor_validBearer(t *testing.T) {
 		}, nil
 	}})
 
-	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer secret"))
+	ctx := bearerContext("Bearer secret")
 	var gotCaller CallerContext
-	_, err := ic(ctx, &authv1.CreateTokenRequest{},
-		&grpc.UnaryServerInfo{FullMethod: "/ibex.auth.v1.AuthService/CreateToken"},
-		func(ctx context.Context, req any) (any, error) {
-			c, ok := CallerFromContext(ctx)
-			if !ok {
-				t.Fatal("missing caller")
-			}
-			gotCaller = c
-			return &authv1.CreateTokenResponse{}, nil
-		},
-	)
+	err := callCreateToken(ic, ctx, func(ctx context.Context, req any) (any, error) {
+		c, ok := CallerFromContext(ctx)
+		if !ok {
+			t.Fatal("missing caller")
+		}
+		gotCaller = c
+		return &authv1.CreateTokenResponse{}, nil
+	})
 	if err != nil {
 		t.Fatalf("interceptor: %v", err)
 	}
@@ -107,17 +117,17 @@ func TestBearerFromMetadata(t *testing.T) {
 		},
 		{
 			name:     "invalid prefix",
-			ctx:      metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Token x")),
+			ctx:      bearerContext("Token x"),
 			wantCode: codes.Unauthenticated,
 		},
 		{
 			name:     "empty bearer",
-			ctx:      metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer ")),
+			ctx:      bearerContext("Bearer "),
 			wantCode: codes.Unauthenticated,
 		},
 		{
 			name:     "ok",
-			ctx:      metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer  pat-token ")),
+			ctx:      bearerContext("Bearer  pat-token "),
 			wantCode: codes.OK,
 			wantTok:  "pat-token",
 		},
@@ -150,11 +160,8 @@ func TestAuthzUnaryInterceptor_invalidBearer(t *testing.T) {
 		return nil, token.ErrUnauthenticated
 	}})
 
-	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer bad"))
-	_, err := ic(ctx, &authv1.CreateTokenRequest{},
-		&grpc.UnaryServerInfo{FullMethod: "/ibex.auth.v1.AuthService/CreateToken"},
-		func(context.Context, any) (any, error) { return nil, nil },
-	)
+	ctx := bearerContext("Bearer bad")
+	err := callCreateToken(ic, ctx, func(context.Context, any) (any, error) { return nil, nil })
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("code: %v", status.Code(err))
 	}
@@ -182,7 +189,7 @@ func TestAuthzUnaryInterceptor_serviceTokenIsLimitedToLifecycleMethods(t *testin
 	}
 
 	called = false
-	_, err = ic(tokenOnlyCtx, &authv1.CreateTokenRequest{}, &grpc.UnaryServerInfo{FullMethod: "/ibex.auth.v1.AuthService/CreateToken"}, func(context.Context, any) (any, error) {
+	err = callCreateToken(ic, tokenOnlyCtx, func(context.Context, any) (any, error) {
 		called = true
 		return nil, nil
 	})

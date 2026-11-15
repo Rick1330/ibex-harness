@@ -43,7 +43,7 @@ capability_password() {
     "$IBEX_AUTH_LOGIN") printf '%s' 'capability-test-only-auth' ;;
     "$IBEX_BOOTSTRAP_LOGIN") printf '%s' 'capability-test-only-bootstrap' ;;
     *)
-      printf 'capability_password: unknown capability login %s\n' "$1" >&2
+      printf 'capability_password: unknown capability login %s\n' "$login" >&2
       return 1
       ;;
   esac
@@ -57,6 +57,9 @@ capability_dsn() {
   local owner_dsn="$1"
   local login="$2"
   local password scheme rest authority tail hostport
+  # nosemgrep: codacy.bash.security.hard-coded-password - the verifier is a
+  # fixed, test-only value for an ephemeral CI database; capability_password
+  # is the single source and no production credential is ever assigned here.
   password="$(capability_password "$login")" || return 1
   if [[ "$owner_dsn" != *'://'* ]]; then
     printf 'capability_dsn: %s is not a URL DSN\n' "$owner_dsn" >&2
