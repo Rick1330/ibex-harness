@@ -418,7 +418,7 @@ const claimFields = ['name', 'detail']
  * `text` with the characters a regular expression would read as syntax escaped, so
  * an identifier taken from the source can be matched literally.
  */
-const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)
 
 /**
  * The text between the bracket that opens at `index` and the one that closes it, or
@@ -453,7 +453,7 @@ function readBracketed(source, index) {
  * a row array be skipped instead of reported.
  */
 function tupleLabels(source, typeName) {
-  const declaration = new RegExp(`type\\s+${escapeRegExp(typeName)}\\s*=\\s*readonly\\s*\\[`).exec(source)
+  const declaration = new RegExp(String.raw`type\s+${escapeRegExp(typeName)}\s*=\s*readonly\s*\[`).exec(source)
   if (declaration === null) return null
   const elements = readBracketed(source, declaration.index + declaration[0].length - 1)
   if (elements === null) return null

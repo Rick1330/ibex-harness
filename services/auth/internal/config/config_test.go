@@ -22,6 +22,28 @@ func validAuthConfig() Config {
 	}
 }
 
+// setBaseAuthEnv supplies the two variables Load needs before it can reach any
+// field under test.
+func setBaseAuthEnv(t *testing.T) {
+	t.Setenv("IBEX_ENV", "development")
+	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+}
+
+// setJWTDurationEnv supplies the three token TTLs Load parses.
+func setJWTDurationEnv(t *testing.T) {
+	t.Setenv("JWT_ACCESS_TOKEN_TTL", "10m")
+	t.Setenv("JWT_REFRESH_TOKEN_TTL", "48h")
+	t.Setenv("JWT_STEP_UP_TOKEN_TTL", "2m")
+}
+
+// requireValid asserts the configuration passes Validate.
+func requireValid(t *testing.T, cfg Config) {
+	t.Helper()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+}
+
 func TestValidate_rejectsInvalidConfig(t *testing.T) {
 	t.Parallel()
 
@@ -75,8 +97,7 @@ func TestValidate_rejectsInvalidConfig(t *testing.T) {
 }
 
 func TestLoadRejectsNonPositiveValidateTokenRPM(t *testing.T) {
-	t.Setenv("IBEX_ENV", "development")
-	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+	setBaseAuthEnv(t)
 	t.Setenv("IBEX_AUTH_VALIDATE_RPM", "0")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for IBEX_AUTH_VALIDATE_RPM=0")
@@ -84,8 +105,7 @@ func TestLoadRejectsNonPositiveValidateTokenRPM(t *testing.T) {
 }
 
 func TestLoadRejectsNonPositiveShutdownTimeout(t *testing.T) {
-	t.Setenv("IBEX_ENV", "development")
-	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+	setBaseAuthEnv(t)
 	t.Setenv("IBEX_SHUTDOWN_TIMEOUT", "0s")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for zero shutdown timeout")
@@ -113,10 +133,9 @@ func TestLoad_RequiresExplicitEnvironment(t *testing.T) {
 }
 
 func TestLoadFromEnvHappyPath(t *testing.T) {
-	t.Setenv("IBEX_ENV", "development")
+	setBaseAuthEnv(t)
 	t.Setenv("IBEX_SERVICE_NAME", "auth")
 	t.Setenv("OTEL_SERVICE_NAME", "auth")
-	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
 	t.Setenv("IBEX_LOG_LEVEL", "DEBUG")
 	t.Setenv("IBEX_ARGON2_MEMORY_KIB", "65536")
 	t.Setenv("IBEX_ARGON2_TIME", "2")
@@ -138,8 +157,7 @@ func TestLoadFromEnvHappyPath(t *testing.T) {
 }
 
 func TestLoadRejectsInvalidLogLevel(t *testing.T) {
-	t.Setenv("IBEX_ENV", "development")
-	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+	setBaseAuthEnv(t)
 	t.Setenv("IBEX_LOG_LEVEL", "TRACE")
 
 	if _, err := Load(); err == nil {
@@ -150,19 +168,9 @@ func TestLoadRejectsInvalidLogLevel(t *testing.T) {
 func TestValidateAcceptsDefaultShape(t *testing.T) {
 	t.Parallel()
 
-	cfg := Config{
-		Environment:      "development",
-		ServiceName:      "auth",
-		Port:             "8081",
-		GRPCPort:         "9091",
-		PostgresDSN:      "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable",
-		ValidateTokenRPM: 6000,
-		ShutdownTimeout:  30 * time.Second,
-	}
+	cfg := validAuthConfig()
 
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("expected config to validate: %v", err)
-	}
+	requireValid(t, cfg)
 }
 
 func TestListenAddress(t *testing.T) {
@@ -187,9 +195,7 @@ func TestValidate_CredentialsMasterKey(t *testing.T) {
 		t.Parallel()
 		cfg := validAuthConfig()
 		cfg.CredentialsMasterKey = ""
-		if err := cfg.Validate(); err != nil {
-			t.Fatalf("unexpected: %v", err)
-		}
+		requireValid(t, cfg)
 	})
 	t.Run("rejects_invalid_base64", func(t *testing.T) {
 		t.Parallel()
@@ -203,9 +209,7 @@ func TestValidate_CredentialsMasterKey(t *testing.T) {
 		t.Parallel()
 		cfg := validAuthConfig()
 		cfg.CredentialsMasterKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-		if err := cfg.Validate(); err != nil {
-			t.Fatalf("unexpected: %v", err)
-		}
+		requireValid(t, cfg)
 	})
 }
 
@@ -222,9 +226,7 @@ func TestValidate_TOTPSessionConfig(t *testing.T) {
 	t.Run("ok", func(t *testing.T) {
 		t.Parallel()
 		cfg := base
-		if err := cfg.Validate(); err != nil {
-			t.Fatalf("unexpected: %v", err)
-		}
+		requireValid(t, cfg)
 	})
 	t.Run("missing_master", func(t *testing.T) {
 		t.Parallel()
@@ -263,9 +265,7 @@ func TestValidate_TOTPSessionConfig(t *testing.T) {
 		cfg := validAuthConfig()
 		cfg.TOTPEnabled = false
 		cfg.JWTPrivateKeyPEM = ""
-		if err := cfg.Validate(); err != nil {
-			t.Fatalf("unexpected: %v", err)
-		}
+		requireValid(t, cfg)
 	})
 }
 
@@ -313,11 +313,8 @@ func TestValidate_AuthServiceTokenRequiredOutsideDevelopment(t *testing.T) {
 }
 
 func TestLoad_JWTDurationOverrides(t *testing.T) {
-	t.Setenv("IBEX_ENV", "development")
-	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
-	t.Setenv("JWT_ACCESS_TOKEN_TTL", "10m")
-	t.Setenv("JWT_REFRESH_TOKEN_TTL", "48h")
-	t.Setenv("JWT_STEP_UP_TOKEN_TTL", "2m")
+	setBaseAuthEnv(t)
+	setJWTDurationEnv(t)
 	t.Setenv("IBEX_AUTH_TOTP_ENABLED", "false")
 	t.Setenv("IBEX_CREDENTIALS_MASTER_KEY_ID", "  ")
 	cfg, err := Load()
@@ -339,11 +336,8 @@ func TestLoad_JWTDurationOverrides(t *testing.T) {
 }
 
 func TestLoad_JWTDurationRejects(t *testing.T) {
-	t.Setenv("IBEX_ENV", "development")
-	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
-	t.Setenv("JWT_ACCESS_TOKEN_TTL", "10m")
-	t.Setenv("JWT_REFRESH_TOKEN_TTL", "48h")
-	t.Setenv("JWT_STEP_UP_TOKEN_TTL", "2m")
+	setBaseAuthEnv(t)
+	setJWTDurationEnv(t)
 
 	t.Setenv("JWT_ACCESS_TOKEN_TTL", "0s")
 	if _, err := Load(); err == nil {
@@ -362,8 +356,7 @@ func TestLoad_JWTDurationRejects(t *testing.T) {
 }
 
 func TestLoad_TOTPEnabledRequiresJWTFields(t *testing.T) {
-	t.Setenv("IBEX_ENV", "development")
-	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+	setBaseAuthEnv(t)
 	t.Setenv("IBEX_AUTH_TOTP_ENABLED", "true")
 	t.Setenv("IBEX_CREDENTIALS_MASTER_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("JWT_PRIVATE_KEY_PEM", "")
@@ -375,8 +368,7 @@ func TestLoad_TOTPEnabledRequiresJWTFields(t *testing.T) {
 }
 
 func TestParseLogLevelViaLoad(t *testing.T) {
-	t.Setenv("IBEX_ENV", "development")
-	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+	setBaseAuthEnv(t)
 	for _, level := range []string{"INFO", "WARN", "WARNING", "ERROR", "debug"} {
 		t.Setenv("IBEX_LOG_LEVEL", level)
 		if _, err := Load(); err != nil {

@@ -52,6 +52,8 @@ normalize_psql_dsn() {
 # alphanumeric test values, so no percent-encoding is needed.
 capability_dsn() {
   local login="$1"
+  # nosemgrep: codacy.bash.security.hard-coded-password - fixed test-only
+  # verifier for an ephemeral benchmark database, passed in by the caller.
   local password="$2"
   if [[ "$POSTGRES_DSN" =~ ^postgres(ql)?(\+asyncpg)?://[^@/]*@(.+)$ ]]; then
     printf 'postgres://%s:%s@%s' "$login" "$password" "${BASH_REMATCH[3]}"
