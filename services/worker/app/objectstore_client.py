@@ -211,13 +211,68 @@ def _parse_s3_uri(uri: str) -> tuple[str, str]:
     return rest[:slash], key
 
 
-def delete_uri(uri: str, *, settings: Any | None = None) -> None:
+def delete_uri(uri: str, *, org_id: str, settings: Any | None = None) -> None:
+    cfg, key = _object_scope(uri, org_id=org_id, settings=settings)
+    _delete_key(cfg, key)
+
+
+def _object_scope(
+    uri: str, *, org_id: str, settings: Any | None
+) -> tuple[_S3Cfg, str]:
+    """Resolve an ``s3://bucket/key`` URI into a reachable config and key.
+
+    The URI is parsed before the configuration is loaded so a malformed address
+    is reported as the caller error it is, not as a deployment misconfiguration.
+    The bucket check is not cosmetic: a request signed for one bucket cannot
+    reach another, and a mismatch means the ref names a store this deployment
+    does not own.
+
+    The tenant-prefix check is the one that makes erasure safe against its own
+    inputs. A ``memory_artifact_refs.locator`` is caller-written text — the
+    tenant identity holds INSERT on that table — so a crafted ref row could name
+    another tenant's key inside this bucket, and an unscoped delete would honour
+    it. Every archived key is written as ``<org_id>/...``
+    (``put_encrypted_json`` builds it that way), so a key outside this org's
+    prefix is a ref this caller cannot own. The check runs before the config is
+    loaded, so a cross-tenant locator is refused even when the store is
+    unreachable.
+    """
     bucket, key = _parse_s3_uri(uri)
+    _require_tenant_prefix(key, org_id)
     cfg = _load_cfg(settings)
     _require_endpoint(cfg)
     if bucket != cfg.bucket:
         raise ValueError("bucket mismatch")
-    _delete_key(cfg, key)
+    return cfg, key
+
+
+def _require_tenant_prefix(key: str, org_id: str) -> None:
+    """Refuse a key outside ``<org_id>/``. The message never echoes the key.
+
+    A fixed message matters: this exception text reaches the erasure receipt's
+    ``error`` column and the worker log, and the key is attacker-influenced.
+    """
+    if not org_id:
+        raise ValueError("tenant id required for object-store access")
+    if not key.startswith(f"{org_id}/"):
+        raise ValueError("object key is outside the tenant prefix")
+
+
+def object_exists(uri: str, *, org_id: str, settings: Any | None = None) -> bool:
+    """HEAD one object; True while it is still present.
+
+    An erasure receipt may only read ``verified`` when the store confirmed
+    absence, so this raises on any failure other than 404 instead of returning
+    False: an unreachable store is not an empty one, and a receipt that cannot
+    distinguish them is a false proof.
+    """
+    cfg, key = _object_scope(uri, org_id=org_id, settings=settings)
+    resp = _sign_and_request(_SignedReq("HEAD", _object_url(cfg, key), cfg))
+    if resp.status_code == 404:
+        return False
+    if resp.status_code >= 300:
+        raise RuntimeError(f"s3 head {key}: {resp.status_code}")
+    return True
 
 
 def put_encrypted_json(key: str, plaintext: bytes, *, settings: Any | None = None) -> str:

@@ -2044,13 +2044,15 @@ These four tables use `ibex_core.rls_privacy_visible(org_id)`, which accepts onl
 
 **Tenancy.** The column is named `organization_id`, not `org_id`; the policy is `organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid`, with RLS enabled and forced. `UNIQUE (organization_id, agent_id, dedupe_key)` is the idempotency key; `idx_idempotency_ledger_lease` is partial on `state = 'claimed'` for the reaper. A finalized row must carry both `status_code` and `response_payload`.
 
-##### `ibex_core.memory_lifecycle_outbox` (migration `000045`)
+##### `ibex_core.memory_lifecycle_outbox` (migration `000045`, extended by `000074`)
 
 **Purpose.** Redacted memory lifecycle events (`created`, `quarantined`, `content_updated`, `superseded`, `forgotten`, `expired`, `purged`) for a future dedicated lifecycle relay. Provisional substrate (GAP-007), not an accepted contract.
 
-**Key columns.** `id`, `org_id`, `memory_id`, `revision`, `schema_version` (must be 1), `event_type`, `occurred_at`, `available_at`, `attempts`, `locked_until`, `delivered_at`.
+**Key columns.** `id`, `org_id`, `memory_id`, `revision`, `schema_version` (must be 1), `event_type`, `occurred_at`, `available_at`, `attempts`, `locked_until`, `delivered_at`, `erasure_state` (`pending` / `partial` / `complete` / `failed`, default `pending`), `erasure_deadline`.
 
 **Tenancy.** RLS enabled and forced with both `USING` and `WITH CHECK` on `rls_org_visible(org_id)`, so a tenant cannot insert another tenant's event. `org_id` has **no** FK on purpose: purge events must outlive organization row cleanup. `UNIQUE (org_id, memory_id, revision)` gives one event per revision; the pending index is `(available_at, occurred_at, id) WHERE delivered_at IS NULL`. The payload is normalised columns only — no memory content.
+
+**Erasure state (`000074`).** `erasure_state` is the job state of the erasure this row describes, and only the erasure event types (`forgotten`, `purged`, `expired`) ever leave `pending`: the others describe a memory that still exists. `partial` means a store is unproven and a retry can still help; `complete` means every `erasure_store_receipts` row for that revision is `verified` or `not_applicable`; `failed` is terminal, set when `erasure_deadline` passed with a store unproven. `erasure_deadline` is set at the first claim and never extended. Grants are `SELECT, INSERT` for `ibex_app` plus a column-scoped `UPDATE (attempts, locked_until, erasure_state, available_at, delivered_at)` from `000074` (the consumer leases and settles rows as the tenant identity) and `SELECT, INSERT, UPDATE` for `ibex_service`. The column list is the privilege: `org_id`, `memory_id`, `revision` and `event_type` are the row's identity and meaning, so a tenant identity able to rewrite them could forge `erasure_state = 'complete'` on a live `created` row or retarget an erasure. Discovery cannot run as a tenant — the table is RLS-scoped — so `ibex_core.memory_lifecycle_claim_erasure(p_limit, p_lease_seconds, p_deadline_seconds)` is a `SECURITY DEFINER` function owned by `ibex_service` (NOLOGIN, `NOBYPASSRLS` since `000063`) that returns identifiers only and is granted to the `ibex_worker` login, never to `ibex_app`. It reaches every tenant through the `current_user = 'ibex_service'` branch of `rls_org_visible`, not through a role attribute, and it rejects a lease above 3600 s or a deadline above 604800 s regardless of what the caller configured.
 
 ##### `ibex_core.budget_reservations` (migration `000046`)
 
@@ -2059,6 +2061,30 @@ These four tables use `ibex_core.rls_privacy_visible(org_id)`, which accepts onl
 **Key columns.** `id`, `organization_id`, `agent_id`, `budget_period_id`, `reservation_key` (1–256 chars), `request_hash` (64 lowercase hex), `state` (`claimed` / `finalized` / `released` / `expired`), `amount_estimated_cents`, `price_input_cents_per_1k`, `price_output_cents_per_1k`, `amount_final_cents`, `finalized_completeness` (`complete` / `estimated`), `lease_expires_at`, `version`, `created_at`, `updated_at`.
 
 **Tenancy.** Column name is `organization_id`; policy `rls_org_visible(organization_id)`, RLS enabled and forced. `UNIQUE (organization_id, agent_id, reservation_key)`; `agent_id` cascades on org teardown, `budget_period_id` does not. Check constraints tie `state` to `amount_final_cents`, `finalized_completeness`, and `lease_expires_at`, so a claim cannot exist without a lease and a finalized row cannot exist without a final amount. No DELETE grant: the reaper only transitions state.
+
+---
+
+#### Erasure provenance and proof (migrations `000072`–`000074`)
+
+A memory forget tombstones PostgreSQL and writes a `memory_lifecycle_outbox` row, but the memory's copies outside PostgreSQL — S3 capture archives, ClickHouse evidence, and the `session_events` row that carried it — were unreachable: nothing in the schema linked a memory to them. Provenance cannot be reconstructed after the fact, so the archiver records the link at write time, the consumer erases each copy, and the erasure path records its proof per store. Both tables use `rls_org_visible(org_id)` with RLS enabled and forced, and neither carries a foreign key to `organizations` or `memories`: they must outlive an org purge, because they are the worklist that drives the external deletions and the evidence that they happened.
+
+##### `ibex_core.memory_artifact_refs` (migration `000072`)
+
+**Purpose.** One row per (memory, store, locator): where a memory's copy lives outside PostgreSQL. Written by the capture archiver in the same transaction as `session_events.archived_to`.
+
+**Key columns.** `id`, `org_id`, `memory_id`, `store` (`objectstore` / `clickhouse` / `session_event`), `locator` (1–1024 chars: an object-store URI, the `ibex.evidence_events.event_id` of the ClickHouse evidence as text, or the `session_events.id` as text), `session_id`, `created_at`.
+
+**Tenancy.** RLS enabled and forced with both `USING` and `WITH CHECK` on `rls_org_visible(org_id)`, so a tenant cannot record another tenant's provenance. `UNIQUE (org_id, memory_id, store, locator)` makes a redelivered capture event a no-op (`ON CONFLICT DO NOTHING`); index `(org_id, memory_id)` serves the erasure read. `ibex_app` holds `SELECT, INSERT` — no `DELETE`: a ref is the only address of an external copy, so deleting one would turn every store it names into `not_applicable` on the next erasure, a one-statement bypass of the proof. The consumer deliberately keeps a ref after a verified erasure: the receipt is the proof and the ref is the address that proof refers to, so there is nothing to retire. `ibex_service` additionally holds `DELETE` for operator-driven cleanup.
+
+##### `ibex_core.erasure_store_receipts` (migration `000073`, store domain extended by `000074`)
+
+**Purpose.** Per-memory, per-revision, per-store proof that a forget reached that store. The org-level analogue is `deletion_store_receipts` (000037), which is keyed to a deletion job and cannot describe a single memory.
+
+**Key columns.** `id`, `org_id`, `memory_id`, `revision` (≥ 1), `store` (`postgres` / `clickhouse` / `objectstore` / `session_event`), `status` (`pending` / `verified` / `failed` / `not_applicable`), `verified_absent_at`, `idempotency_key`, `error`, `created_at`, `updated_at`.
+
+**Tenancy.** RLS enabled and forced with both `USING` and `WITH CHECK` on `rls_org_visible(org_id)`. `UNIQUE (org_id, memory_id, revision, store)` gives one receipt per store per revision and is the consumer's idempotency mechanism (`ON CONFLICT ... DO UPDATE`, so a redelivered revision rewrites its receipt instead of adding one); index `(org_id, memory_id)` serves the resume read. `updated_at` is maintained by `ibex_core.set_updated_at()`. Grants are `SELECT, INSERT, UPDATE` for `ibex_app` and `SELECT, INSERT, UPDATE, DELETE` for `ibex_service`: `UPDATE` is what moves a receipt from `pending` to `verified`/`failed`, which is the one transition the erasure proof depends on. The tenant identity has no `DELETE` — a receipt is the proof, and deleting one erases the record that a store was cleared.
+
+**Statuses.** `verified` carries `verified_absent_at` and means the store confirmed absence. `failed` carries `error` and means the store did not confirm it — an unreachable store is `failed`, never `verified` and never `not_applicable`. `not_applicable` means the memory has no ref for that store, and nothing else — and it is only reachable for a store whose producer records a ref for every copy (`objectstore`, `session_event`). ClickHouse has no such producer, so the consumer never writes a ClickHouse receipt for a memory with no ClickHouse ref; it makes no ClickHouse claim rather than a false one. `000074` added `session_event` to the store domain: a memory forget erases the `session_events` row that carried it, and that copy needs its own receipt or one store stays unproven.
 
 ---
 

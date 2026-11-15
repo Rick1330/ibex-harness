@@ -114,6 +114,27 @@ class Settings(BaseSettings):
         gt=0,
         description="Interval for maintenance noop beat sweep",
     )
+    lifecycle_erasure_job_timeout_seconds: float = Field(
+        default=900.0,
+        gt=0,
+        le=3600,
+        validation_alias=AliasChoices(
+            "IBEX_WORKER_LIFECYCLE_ERASURE_JOB_TIMEOUT_SECONDS",
+        ),
+        description=(
+            "Wall-clock budget for one memory erasure, and the lease a claimed "
+            "outbox row holds; a row still unproven at its deadline is terminal"
+        ),
+    )
+    lifecycle_erasure_store_timeout_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        le=600,
+        validation_alias=AliasChoices(
+            "IBEX_WORKER_LIFECYCLE_ERASURE_STORE_TIMEOUT_SECONDS",
+        ),
+        description="Per-store budget inside one memory erasure",
+    )
     result_expires_seconds: int = Field(
         default=3600,
         ge=60,

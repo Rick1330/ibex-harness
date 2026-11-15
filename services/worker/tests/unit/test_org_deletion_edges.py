@@ -276,8 +276,8 @@ async def test_stage_objectstore_propagates_uri_delete_failure(
     monkeypatch.setenv("S3_ALLOW_INSECURE_HTTP", "1")
     settings = MagicMock(s3_endpoint="http://localhost:9000")
 
-    def boom(_uri, *, settings=None):
-        del settings
+    def boom(_uri, *, org_id, settings=None):
+        del org_id, settings
         raise RuntimeError("uri delete failed")
 
     monkeypatch.setattr("app.objectstore_client.delete_uri", boom)

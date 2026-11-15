@@ -9,3 +9,11 @@ groups:
         annotations:
           summary: "Worker task dead-lettered after max retries"
           description: "Task {{ $labels.task_name }} dead-lettered. Check ibex_core.failed_tasks."
+      - alert: IBEXWorkerMemoryErasureFailed
+        expr: ibex_worker_memory_erasure_total{state="failed"} > 0
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: "Memory erasure reached terminal failed state"
+          description: "A memory forget reached erasure_deadline with a store unproven, so that memory's external copies are still there and will not be retried. Inspect ibex_core.memory_lifecycle_outbox WHERE erasure_state = 'failed' and the matching ibex_core.erasure_store_receipts rows; the counter stays non-zero until an operator clears the cause."

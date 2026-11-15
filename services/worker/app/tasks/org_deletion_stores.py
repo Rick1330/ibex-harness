@@ -49,14 +49,39 @@ REDIS_PREFIX_TEMPLATES = (
     "ratelimit:{org_id}:",
 )
 
+_MUTATE_TIMEOUT_SECONDS = 30.0
+_COUNT_TIMEOUT_SECONDS = 10.0
+
+# Single-evidence-event erasure, for the memory forget consumer. ClickHouse has
+# no RLS, so the org predicate is what keeps a recorded locator from reaching
+# another tenant's row; the event id narrows the mutation to exactly the row the
+# artifact ref names instead of every event about a resource.
+CH_EVENT_TABLE = "evidence_events"
+CH_EVENT_DELETE_QUERY = (
+    "ALTER TABLE ibex.evidence_events DELETE"
+    " WHERE org_id = {org_id:UUID} AND event_id = {event_id:UUID}"
+)
+CH_EVENT_COUNT_QUERY = (
+    "SELECT count() FROM ibex.evidence_events"
+    " WHERE org_id = {org_id:UUID} AND event_id = {event_id:UUID}"
+)
+
 
 def clickhouse_configured(settings: Any) -> bool:
+    return _clickhouse_dsn_setting(settings) is not None
+
+
+def _clickhouse_dsn_setting(settings: Any) -> str | None:
+    """The configured ClickHouse DSN as text, or None when it is unset or blank."""
     dsn = (
         getattr(settings, "clickhouse_dsn", None)
         or os.environ.get("CLICKHOUSE_DSN")
         or os.environ.get("IBEX_WORKER_CLICKHOUSE_DSN")
     )
-    return bool(dsn and str(dsn).strip())
+    if dsn is None:
+        return None
+    text = str(dsn)
+    return text if text.strip() else None
 
 
 def redis_configured(settings: Any) -> bool:
@@ -64,19 +89,23 @@ def redis_configured(settings: Any) -> bool:
 
 
 def objectstore_configured(settings: Any) -> bool:
+    return _s3_endpoint_setting(settings) is not None
+
+
+def _s3_endpoint_setting(settings: Any) -> str | None:
+    """The configured S3 endpoint as text, or None when it is unset or blank."""
     endpoint = os.environ.get("S3_ENDPOINT") or getattr(settings, "s3_endpoint", None)
-    return bool(endpoint and str(endpoint).strip())
+    if endpoint is None:
+        return None
+    text = str(endpoint)
+    return text if text.strip() else None
 
 
 def clickhouse_dsn(settings: Any) -> str:
-    dsn = (
-        getattr(settings, "clickhouse_dsn", None)
-        or os.environ.get("CLICKHOUSE_DSN")
-        or os.environ.get("IBEX_WORKER_CLICKHOUSE_DSN")
-    )
-    if not dsn or not str(dsn).strip():
+    dsn = _clickhouse_dsn_setting(settings)
+    if dsn is None:
         raise RuntimeError("CLICKHOUSE_DSN required for org deletion")
-    return str(dsn)
+    return dsn
 
 
 def _ch_unknown_table(body: str) -> bool:
@@ -92,63 +121,103 @@ class CHClient:
 
 @dataclass(frozen=True, slots=True)
 class CHOp:
+    """One ClickHouse mutation or count: an org, and optionally one event in it."""
+
     client: CHClient
     table: str
     org_id: str
+    event_id: str | None = None
+
+
+def _ch_statement(
+    op: CHOp, org_queries: dict[str, str], event_query: str
+) -> tuple[str, dict[str, str]]:
+    """Return the statement and bound params for ``op``.
+
+    Both branches bind the org; only the event branch binds an event id. The
+    query text is a literal in every case (Bandit B608 — no built SQL).
+    """
+    params = {"param_org_id": op.org_id}
+    if op.event_id is None:
+        return org_queries[op.table], params
+    if op.table != CH_EVENT_TABLE:
+        # The event queries name ibex.evidence_events literally; pairing them
+        # with another table would delete rows the caller did not ask for.
+        raise ValueError("event-scoped ClickHouse op requires the evidence table")
+    params["param_event_id"] = op.event_id
+    return event_query, params
 
 
 def ch_mutate_table(op: CHOp) -> None:
-    mut = CH_DELETE_QUERIES[op.table]
-    resp = op.client.http.post(
-        op.client.url,
-        params={"query": mut, "param_org_id": op.org_id},
-        auth=op.client.auth,
-        timeout=30.0,
-    )
-    if resp.status_code >= 400:
-        body = resp.text
-        if _ch_unknown_table(body):
-            return
-        raise RuntimeError(f"clickhouse mutate {op.table}: {resp.status_code}")
+    """Apply one mutation. A table that does not exist yet has nothing to delete."""
+    mut, params = _ch_statement(op, CH_DELETE_QUERIES, CH_EVENT_DELETE_QUERY)
+    # A mutation reports no count; only the failure classification matters here.
+    _ = _ch_row_count(op, _ch_post(op, mut, params, _MUTATE_TIMEOUT_SECONDS), "mutate")
 
 
 async def ch_wait_absent(op: CHOp, deadline: float) -> None:
-    q = CH_COUNT_QUERIES[op.table]
     while time.monotonic() < deadline:
-        count = await ch_count_org(op, q)
+        count = await ch_count(op)
         if count == 0:
             return
         await asyncio.sleep(0.5)
-    raise TimeoutError(f"clickhouse {op.table} rows remain for org")
+    raise TimeoutError(f"clickhouse {op.table} rows remain for the erased scope")
 
 
-async def ch_count_org(op: CHOp, query: str) -> int:
-    resp = await asyncio.to_thread(
-        op.client.http.post,
+def _ch_post(op: CHOp, statement: str, params: dict[str, str], timeout: float) -> Any:
+    """POST one statement to ClickHouse. The query text is always a literal."""
+    return op.client.http.post(
         op.client.url,
-        params={"query": query, "param_org_id": op.org_id},
+        params={"query": statement, **params},
         auth=op.client.auth,
-        timeout=10.0,
+        timeout=timeout,
     )
+
+
+def _ch_row_count(op: CHOp, resp: Any, verb: str) -> int | None:
+    """Rows the response reports, or None when ClickHouse has no such table."""
     if resp.status_code < 400:
         return int(resp.text.strip() or "0")
     if _ch_unknown_table(resp.text):
-        return 0
-    raise RuntimeError(f"clickhouse count {op.table}: {resp.status_code}")
+        return None
+    raise RuntimeError(f"clickhouse {verb} {op.table}: {resp.status_code}")
 
 
-async def stage_clickhouse(settings: Any, *, org_id: str) -> None:
+async def ch_count(op: CHOp) -> int:
+    query, params = _ch_statement(op, CH_COUNT_QUERIES, CH_EVENT_COUNT_QUERY)
+    resp = await asyncio.to_thread(_ch_post, op, query, params, _COUNT_TIMEOUT_SECONDS)
+    return _ch_row_count(op, resp, "count") or 0
+
+
+def clickhouse_client(settings: Any) -> CHClient:
+    """Build the HTTP client both ClickHouse paths share (no per-call client)."""
     from app.extraction.clickhouse_traces import _http_endpoint, shared_clickhouse_client
 
     dsn = clickhouse_dsn(settings)
-    http = shared_clickhouse_client()
     url, auth = _http_endpoint(dsn)
-    client = CHClient(http=http, url=url, auth=auth)
+    return CHClient(http=shared_clickhouse_client(), url=url, auth=auth)
+
+
+async def stage_clickhouse(settings: Any, *, org_id: str) -> None:
+    client = clickhouse_client(settings)
     deadline = time.monotonic() + 120.0
     for table in CH_TABLES:
         await asyncio.to_thread(ch_mutate_table, CHOp(client, table, org_id))
     for table in CH_TABLES:
         await ch_wait_absent(CHOp(client, table, org_id), deadline)
+
+
+async def delete_clickhouse_event(
+    settings: Any, *, org_id: str, event_id: str, deadline: float
+) -> None:
+    """Delete one evidence event for one org and wait until it is gone.
+
+    Reused by the memory forget consumer: the same mutate/count machinery as the
+    org-wide stage, narrowed to the locator the artifact ref recorded.
+    """
+    op = CHOp(clickhouse_client(settings), CH_EVENT_TABLE, org_id, event_id=event_id)
+    await asyncio.to_thread(ch_mutate_table, op)
+    await ch_wait_absent(op, deadline)
 
 
 async def stage_redis(settings: Any, *, org_id: str) -> None:
@@ -189,7 +258,7 @@ def delete_objectstore_sync(settings: Any, org_id: str, uris: list[str]) -> None
     from app.objectstore_client import delete_org_prefix, delete_uri
 
     for uri in uris:
-        delete_uri(uri, settings=settings)
+        delete_uri(uri, org_id=org_id, settings=settings)
     delete_org_prefix(org_id, settings=settings)
 
 

@@ -1,14 +1,15 @@
 # IBEX Worker service
 
 Python Celery worker for async extraction, provider adapters, embedding jobs, organization
-deletion, billing reconciliation/rollups, maintenance, and MCP audit tasks. The current
-implementation is mixed rather than a skeleton:
+deletion, memory erasure, billing reconciliation/rollups, maintenance, and MCP audit tasks. The
+current implementation is mixed rather than a skeleton:
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
 | Session extraction and OpenAI/vLLM providers | **Shipped/verified by cassettes and unit tests** | `app/tasks/extraction.py`, `app/extraction/`, `eval/` |
 | Memory writes from extraction | **Shipped** | `app/tasks/extraction.py`, memory client and contract tests |
 | Organization deletion orchestration | **Shipped** | `app/tasks/org_deletion.py`, receipts/store modules |
+| Per-memory erasure consumer (`ibex.worker.lifecycle.erase_memory`) | **Implemented; PostgreSQL and ClickHouse verified, object-store I/O stubbed in tests** | `app/tasks/lifecycle_erasure.py`; `tests/integration/test_memory_lifecycle_erasure_postgres.py` (happy path) and `tests/integration/test_memory_lifecycle_erasure_retry_postgres.py` (failure, retry and isolation paths) run the real claim function and the real ClickHouse mutation, and replace object-store I/O because this suite has no MinIO |
 | Billing reconciliation and budget rollups | **Shipped** | `app/tasks/billing_reconcile.py` and task routes |
 | Dead-letter persistence, metrics, and OTel | **Shipped** | `app/observability.py`, failed-task repository, Prometheus rules |
 | Scheduled maintenance sweep and entries in `app/tasks/stubs.py` | **No-op/deferred** | Intentionally do not describe these as completed business logic |

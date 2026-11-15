@@ -22,6 +22,8 @@ from app.celery_app import create_celery_app
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory
 from app.observability import reset_observability_for_tests
+from app.tasks import lifecycle_erasure
+from tests.integration import lifecycle_erasure_harness as erasure_harness
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(_REPO_ROOT) not in sys.path:
@@ -277,3 +279,76 @@ async def truncate_failed_tasks(postgres_dsn: str) -> None:
             )
         )
     await engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def clickhouse_http_dsn() -> str:
+    """The ClickHouse HTTP DSN, skipping the suite when it is unreachable."""
+    return erasure_harness.require_clickhouse(erasure_harness.CH_DSN)
+
+
+@pytest.fixture
+async def clean_erasure_worklist(
+    owner_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Empty the erasure worklist before a memory-erasure test.
+
+    The consumer is a global sweep: it claims whatever is claimable, across
+    tenants, by design. A row another suite (or an earlier run of this one) left
+    pending would therefore be claimed and make the per-run tallies meaningless.
+    This suite owns these three tables for the duration of a run, which is why it
+    runs serially (``-p 1``) against the shared test database.
+    """
+    async with owner_factory() as session, session.begin():
+        for statement in erasure_harness.CLEANUP_STATEMENTS:
+            await session.execute(erasure_harness.sql_text(statement))
+
+
+@pytest.fixture
+def object_store(monkeypatch: pytest.MonkeyPatch) -> erasure_harness.FakeObjectStore:
+    """Replace the object-store client with a fake this suite can assert on."""
+    fake = erasure_harness.FakeObjectStore()
+    monkeypatch.setattr(lifecycle_erasure, "delete_uri", fake.delete)
+    monkeypatch.setattr(lifecycle_erasure, "object_exists", fake.exists)
+    return fake
+
+
+@pytest.fixture
+def erasure_env(
+    owner_factory: async_sessionmaker[AsyncSession],
+    capability_worker_dsn: str,
+    require_redis: str,
+    clickhouse_http_dsn: str,
+) -> erasure_harness.ErasureEnv:
+    """The real dependencies one memory-erasure consumer run needs."""
+    return erasure_harness.ErasureEnv(
+        owner=owner_factory,
+        dsn=capability_worker_dsn,
+        redis_url=require_redis,
+        ch_dsn=clickhouse_http_dsn,
+    )
+
+
+@pytest.fixture
+def no_ambient_clickhouse(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the ClickHouse env fallbacks for a memory-erasure test.
+
+    The consumer treats ``CLICKHOUSE_DSN`` in the environment as "ClickHouse is
+    deployed", so a suite that controls reachability through ``Settings`` must
+    clear it first — otherwise a developer or CI environment with the variable
+    set silently turns the unreachable-store case into a reachable one.
+    """
+    monkeypatch.delenv("CLICKHOUSE_DSN", raising=False)
+    monkeypatch.delenv("IBEX_WORKER_CLICKHOUSE_DSN", raising=False)
+
+
+@pytest.fixture
+async def harness(
+    erasure_env: erasure_harness.ErasureEnv,
+    clean_erasure_worklist: None,
+    no_ambient_clickhouse: None,
+) -> erasure_harness.Harness:
+    """Seed, run and read back the memory-erasure consumer."""
+    # Both dependencies are preconditions, not values.
+    del clean_erasure_worklist, no_ambient_clickhouse
+    return erasure_harness.Harness(env=erasure_env)

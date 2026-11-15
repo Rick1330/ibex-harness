@@ -38,6 +38,7 @@ from app.read.models import HotMemoryQuery
 from app.routers.memory_forget_support import (
     forget_memory_with_error_mapping,
     invalidate_forgotten_memory,
+    read_forget_erasure,
 )
 from app.routers.memory_lineage_support import lineage_response_from_result
 from app.routers.memory_search_support import (
@@ -201,8 +202,15 @@ async def forget_memory(
         agent_id=agent_id,
         memory_id=memory_id,
     )
+    erasure = await read_forget_erasure(
+        ctx.session_factory,
+        org_id=ctx.token.org_id,
+        memory_id=memory_id,
+        revision=revision,
+    )
     return ForgetMemoryResponse(
-        data=ForgetMemoryData(memory_id=memory_id, revision=revision, tombstoned=True)
+        data=ForgetMemoryData(memory_id=memory_id, revision=revision, tombstoned=True),
+        erasure=erasure,
     )
 
 

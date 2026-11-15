@@ -110,17 +110,17 @@ def test_delete_org_prefix_raises_without_endpoint(monkeypatch: pytest.MonkeyPat
 
 def test_delete_uri_unsupported() -> None:
     with pytest.raises(ValueError, match="unsupported uri"):
-        osc.delete_uri("https://example/x")
+        osc.delete_uri("https://example/x", org_id="org")
 
 
 def test_delete_uri_malformed() -> None:
     with pytest.raises(ValueError, match="malformed uri"):
-        osc.delete_uri("s3://nobucket")
+        osc.delete_uri("s3://nobucket", org_id="org")
 
 
 def test_delete_uri_empty_key() -> None:
     with pytest.raises(ValueError, match="empty object key"):
-        osc.delete_uri("s3://ibex-sessions/")
+        osc.delete_uri("s3://ibex-sessions/", org_id="org")
 
 
 def test_delete_uri_bucket_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -129,7 +129,44 @@ def test_delete_uri_bucket_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("S3_ENDPOINT", "http://localhost:9000")
     monkeypatch.setenv("S3_BUCKET_SESSIONS", "ibex-sessions")
     with pytest.raises(ValueError, match="bucket mismatch"):
-        osc.delete_uri("s3://other-bucket/key")
+        osc.delete_uri("s3://other-bucket/org/key", org_id="org")
+
+
+def test_delete_uri_refuses_another_tenants_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A crafted ref row must not be able to delete another tenant's object.
+
+    The locator is caller-written text, so the org prefix — not the URI — is what
+    decides which tenant the object belongs to. The check runs before the store is
+    even configured, so an unreachable store cannot turn a cross-tenant locator
+    into a store error that a later run might retry into a delete.
+    """
+    _clear_s3_env(monkeypatch)
+    with pytest.raises(ValueError, match="outside the tenant prefix") as refused:
+        osc.delete_uri("s3://ibex-sessions/other-org/capture/full/x.json", org_id="org")
+    assert "other-org" not in str(refused.value)
+
+
+def test_delete_uri_refuses_a_prefix_that_is_not_a_path_segment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``org`` must not match ``org-2/...``: the separator is part of the check."""
+    _clear_s3_env(monkeypatch)
+    with pytest.raises(ValueError, match="outside the tenant prefix"):
+        osc.delete_uri("s3://ibex-sessions/org-2/capture/x.json", org_id="org")
+
+
+def test_delete_uri_requires_a_tenant() -> None:
+    with pytest.raises(ValueError, match="tenant id required"):
+        osc.delete_uri("s3://ibex-sessions/org/x.json", org_id="")
+
+
+def test_object_exists_refuses_another_tenants_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HEAD shares the scope check, so absence cannot be proven cross-tenant."""
+    _clear_s3_env(monkeypatch)
+    with pytest.raises(ValueError, match="outside the tenant prefix"):
+        osc.object_exists("s3://ibex-sessions/other-org/capture/x.json", org_id="org")
 
 
 def test_delete_uri_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -141,7 +178,7 @@ def test_delete_uri_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("S3_BUCKET_SESSIONS", "ibex-sessions")
     mock_resp = MagicMock(status_code=204)
     with patch.object(osc.httpx, "request", return_value=mock_resp) as req:
-        osc.delete_uri("s3://ibex-sessions/org/a.json")
+        osc.delete_uri("s3://ibex-sessions/org/a.json", org_id="org")
     assert req.called
     assert req.call_args.args[0] == "DELETE"
 
