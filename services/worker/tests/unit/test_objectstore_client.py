@@ -31,6 +31,16 @@ def _allow_http(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("S3_ALLOW_INSECURE_HTTP", "1")
 
 
+def _minio_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the client at a local MinIO the tests never actually reach."""
+    _clear_s3_env(monkeypatch)
+    _allow_http(monkeypatch)
+    monkeypatch.setenv("S3_ENDPOINT", "http://localhost:9000")
+    monkeypatch.setenv("S3_ACCESS_KEY", "ak")
+    monkeypatch.setenv("S3_SECRET_KEY", "sk")
+    monkeypatch.setenv("S3_BUCKET_SESSIONS", "ibex-sessions")
+
+
 def test_cfg_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_s3_env(monkeypatch)
     monkeypatch.setenv("S3_ENDPOINT", "http://minio:9000/")
@@ -170,12 +180,7 @@ def test_object_exists_refuses_another_tenants_key(
 
 
 def test_delete_uri_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_s3_env(monkeypatch)
-    _allow_http(monkeypatch)
-    monkeypatch.setenv("S3_ENDPOINT", "http://localhost:9000")
-    monkeypatch.setenv("S3_ACCESS_KEY", "ak")
-    monkeypatch.setenv("S3_SECRET_KEY", "sk")
-    monkeypatch.setenv("S3_BUCKET_SESSIONS", "ibex-sessions")
+    _minio_env(monkeypatch)
     mock_resp = MagicMock(status_code=204)
     with patch.object(osc.httpx, "request", return_value=mock_resp) as req:
         osc.delete_uri("s3://ibex-sessions/org/a.json", org_id="org")
@@ -184,13 +189,8 @@ def test_delete_uri_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_put_encrypted_json_seals_and_puts(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_s3_env(monkeypatch)
-    _allow_http(monkeypatch)
+    _minio_env(monkeypatch)
     master = secrets_key_b64()
-    monkeypatch.setenv("S3_ENDPOINT", "http://localhost:9000")
-    monkeypatch.setenv("S3_ACCESS_KEY", "ak")
-    monkeypatch.setenv("S3_SECRET_KEY", "sk")
-    monkeypatch.setenv("S3_BUCKET_SESSIONS", "ibex-sessions")
     monkeypatch.setenv("S3_MASTER_KEY_B64", master)
     mock_resp = MagicMock(status_code=200)
     with patch.object(osc.httpx, "request", return_value=mock_resp) as req:
@@ -336,6 +336,74 @@ def test_put_rejects_failed_status(monkeypatch: pytest.MonkeyPatch) -> None:
         osc.put_encrypted_json("org/blob.json", b'{"x":1}')
 
 
+def test_validate_endpoint_scheme_requires_a_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The insecure-HTTP opt-in still requires an address to send a request to."""
+    _clear_s3_env(monkeypatch)
+    _allow_http(monkeypatch)
+    with pytest.raises(RuntimeError, match="S3_ENDPOINT host required"):
+        osc._validate_endpoint_scheme("http://")
+
+
+@pytest.mark.parametrize(("status", "present"), [(200, True), (204, True), (404, False)])
+def test_object_exists_maps_the_head_status_to_presence(
+    monkeypatch: pytest.MonkeyPatch, status: int, present: bool
+) -> None:
+    _minio_env(monkeypatch)
+    with patch.object(osc.httpx, "request", return_value=MagicMock(status_code=status)) as req:
+        assert osc.object_exists("s3://ibex-sessions/org/a.json", org_id="org") is present
+    assert req.call_args.args[0] == "HEAD"
+
+
+def test_object_exists_raises_when_the_head_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unreachable store is not an empty one, so it cannot read as absent."""
+    _minio_env(monkeypatch)
+    with (
+        patch.object(osc.httpx, "request", return_value=MagicMock(status_code=503)),
+        pytest.raises(RuntimeError, match="s3 head"),
+    ):
+        osc.object_exists("s3://ibex-sessions/org/a.json", org_id="org")
+
+
+def test_seal_archived_blob_requires_a_key_id() -> None:
+    with pytest.raises(RuntimeError, match="encryption key id required"):
+        osc._seal_archived_blob(b"0" * 32, "", b"{}")
+
+
+def test_list_page_sends_the_continuation_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    _minio_env(monkeypatch)
+    xml = "<ListBucketResult><Key>org/a</Key><IsTruncated>false</IsTruncated></ListBucketResult>"
+    with patch.object(
+        osc.httpx, "request", return_value=MagicMock(status_code=200, text=xml)
+    ) as req:
+        keys, continuation = osc._list_page(osc._load_cfg(), "org/", "tok-1")
+    assert (keys, continuation) == (["org/a"], "")
+    assert "continuation-token=tok-1" in req.call_args.args[1]
+
+
+def test_list_page_raises_on_a_failed_listing(monkeypatch: pytest.MonkeyPatch) -> None:
+    _minio_env(monkeypatch)
+    with (
+        patch.object(osc.httpx, "request", return_value=MagicMock(status_code=403, text="denied")),
+        pytest.raises(RuntimeError, match="s3 list org/"),
+    ):
+        osc._list_page(osc._load_cfg(), "org/", "")
+
+
+def test_delete_key_ignores_404_but_raises_on_a_real_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delete is idempotent: an object already gone is not an error."""
+    _minio_env(monkeypatch)
+    cfg = osc._load_cfg()
+    with patch.object(osc.httpx, "request", return_value=MagicMock(status_code=404)):
+        osc._delete_key(cfg, "org/gone.json")
+    with (
+        patch.object(osc.httpx, "request", return_value=MagicMock(status_code=500)),
+        pytest.raises(RuntimeError, match="s3 delete"),
+    ):
+        osc._delete_key(cfg, "org/a.json")
+
+
 def test_escape_key_path() -> None:
     assert osc._escape_key_path("a/b c/d") == "a/b%20c/d"
     assert osc._escape_key_path("/leading") == "leading"
@@ -362,11 +430,7 @@ def test_parse_master_key_invalid_encoding() -> None:
 
 
 def test_delete_org_prefix_lists_and_deletes(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_s3_env(monkeypatch)
-    _allow_http(monkeypatch)
-    monkeypatch.setenv("S3_ENDPOINT", "http://localhost:9000")
-    monkeypatch.setenv("S3_ACCESS_KEY", "ak")
-    monkeypatch.setenv("S3_SECRET_KEY", "sk")
+    _minio_env(monkeypatch)
     list_xml = (
         "<ListBucketResult><Key>org-1/a</Key><Key>org-1/b</Key>"
         "<IsTruncated>false</IsTruncated></ListBucketResult>"

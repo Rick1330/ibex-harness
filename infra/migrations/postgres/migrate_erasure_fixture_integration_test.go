@@ -57,6 +57,7 @@ type erasureReceiptSeed struct {
 func insertErasureReceipt(t *testing.T, ctx context.Context, db *sql.DB, seed erasureReceiptSeed) {
 	t.Helper()
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli - literal statement with $N bind parameters; nothing is concatenated into the SQL.
 		_, execErr := tx.ExecContext(ctx, `
 			INSERT INTO ibex_core.erasure_store_receipts
 				(org_id, memory_id, revision, store, status, idempotency_key)
