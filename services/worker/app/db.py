@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import dataclass
 
 from ibex_async_db import parse_async_database_url
 from sqlalchemy import text
@@ -53,9 +54,44 @@ _PINNED_ROLE_SQL: dict[str, str] = {
 }
 _SET_ORG_SQL = "SELECT set_config('app.current_org_id', :org_id, true)"
 
+# The capability login the worker must connect as. A module constant, not a
+# setting: the DSN already names the login, and a second configurable source
+# would let the assertion below be reconfigured to match a mistake.
+CAPABILITY_LOGIN = "ibex_worker"
+# The migration owner. Every service must stay off it: the tenancy guarantee
+# rests on the connection not being able to bypass RLS.
+OWNER_LOGIN = "ibex"
+
+# Reports the effective and session logins plus whether either is a superuser.
+# COALESCE(..., true) fails closed: a login that cannot be resolved in pg_roles
+# is treated as privileged.
+_LOGIN_PROBE_SQL = """
+    SELECT current_user, session_user,
+           COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), true),
+           COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = session_user), true)"""
+
+
+class CapabilityLoginError(RuntimeError):
+    """The pool login is not the capability login this service requires."""
+
+
+@dataclass(frozen=True, slots=True)
+class _LoginFacts:
+    """The login identity the probe read back from PostgreSQL."""
+
+    current: str
+    session: str
+    current_super: bool
+    session_super: bool
+
+
 __all__ = [
+    "CAPABILITY_LOGIN",
+    "OWNER_LOGIN",
+    "CapabilityLoginError",
     "app_org_scope",
     "app_probe_scope",
+    "assert_capability_login",
     "create_engine",
     "create_session_factory",
     "session_as_app",
@@ -82,6 +118,56 @@ def create_engine(settings: Settings) -> AsyncEngine:
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+
+async def assert_capability_login(engine: AsyncEngine) -> None:
+    """Fail unless the pool connects as ``ibex_worker``, not owner, not superuser.
+
+    A wrong password already fails loudly when the pool connects. A wrong login
+    starts silently and re-enables the RLS bypass the tenancy guarantee rests on
+    (the owner is a superuser, and ``FORCE ROW LEVEL SECURITY`` does not cover
+    superusers), so it fails startup here instead. Runs once when the pool is
+    first checked at startup, never per task, and never echoes the DSN.
+    """
+    violation = _login_violation(await _read_login_facts(engine))
+    if violation is not None:
+        raise CapabilityLoginError(violation)
+
+
+async def _read_login_facts(engine: AsyncEngine) -> _LoginFacts:
+    """Read the effective and session login plus their superuser flags."""
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    _LOGIN_PROBE_SQL
+                )
+            )
+        ).one()
+    current, session, current_super, session_super = row
+    return _LoginFacts(current, session, current_super, session_super)
+
+
+def _login_violation(facts: _LoginFacts) -> str | None:
+    """Return the startup error for a privileged or unexpected login, else ``None``."""
+    if facts.current == OWNER_LOGIN or facts.session == OWNER_LOGIN:
+        return (
+            f"worker: connection login is {OWNER_LOGIN!r}, the owner login; "
+            f"worker must connect as the {CAPABILITY_LOGIN!r} capability login, "
+            "never the RLS-bypassing owner"
+        )
+    if facts.current_super or facts.session_super:
+        return (
+            f"worker: connection login {facts.session!r} (current_user {facts.current!r}) "
+            "is a superuser; "
+            f"worker must connect as the non-superuser {CAPABILITY_LOGIN!r} capability login"
+        )
+    if facts.current != CAPABILITY_LOGIN:
+        return (
+            f"worker: connection login is {facts.current!r}, want the {CAPABILITY_LOGIN!r} "
+            "capability login; the DSN names the login and the expected value is compiled in"
+        )
+    return None
 
 
 @asynccontextmanager

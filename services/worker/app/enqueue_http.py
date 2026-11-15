@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -30,6 +32,14 @@ logger = logging.getLogger(__name__)
 MAX_ENQUEUE_BODY_BYTES = 600_000
 _DISPATCH_CONCURRENCY = 32
 
+# Tenant claim minted by the proxy (S01). The static bearer is transport auth; the
+# claim authorizes *which* tenant this request may act for.
+CLAIM_HEADER = "x-ibex-claim"
+_CLAIM_VERSION = "v1"
+_CLAIM_PARTS = 7
+# Tolerated clock skew between the proxy and this worker, applied to expiry only.
+_CLAIM_SKEW_SECONDS = 5
+
 _enqueue_started = False
 _enqueue_lock = threading.Lock()
 _dispatch_sem = threading.Semaphore(_DISPATCH_CONCURRENCY)
@@ -40,10 +50,22 @@ class DispatchBusyError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class _Claim:
+    """A verified tenant claim: the ids the worker is allowed to act for."""
+
+    org_id: str
+    agent_id: str
+    session_id: str
+    jti: str
+    expires_at: int
+
+
+@dataclass(frozen=True, slots=True)
 class _ValidatedEnqueue:
     kwargs: dict[str, Any]
     idempotency_key: str
     ledger: Any
+    claim: _Claim
 
 
 def _bearer_matches(provided: str, expected: str) -> bool:
@@ -63,6 +85,116 @@ def _parse_uuid(raw: object, field: str) -> UUID:
         return UUID(str(raw))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field} must be a UUID") from exc
+
+
+def _claim_secret(settings: Settings) -> str:
+    token = getattr(settings, "enqueue_api_token", None)
+    if token is None:
+        return ""
+    return token.get_secret_value().strip()
+
+
+def _claim_mac(secret: str, payload: str) -> str:
+    return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _claim_denied(reason: str) -> JSONResponse:
+    return JSONResponse({"error": reason}, status_code=403)
+
+
+def _split_claim(raw: str) -> tuple[str, ...] | None:
+    """Split the claim into its fields, or ``None`` when it is not v1-shaped."""
+    parts = raw.split(":")
+    if len(parts) != _CLAIM_PARTS or parts[0] != _CLAIM_VERSION:
+        return None
+    return parts
+
+
+def _claim_mac_matches(parts: tuple[str, ...], secret: str) -> bool:
+    """Compare the claim's MAC against the HMAC of everything before it."""
+    payload = ":".join(parts[: _CLAIM_PARTS - 1])
+    return hmac.compare_digest(_claim_mac(secret, payload), parts[-1].lower())
+
+
+def _claim_expires_at(parts: tuple[str, ...]) -> int | None:
+    """Parse the claim's expiry, or ``None`` when it is not an integer."""
+    try:
+        return int(parts[_CLAIM_PARTS - 2])
+    except ValueError:
+        return None
+
+
+def _claim_from_parts(parts: tuple[str, ...], expires_at: int) -> _Claim:
+    return _Claim(
+        org_id=parts[1],
+        agent_id=parts[2],
+        session_id=parts[3],
+        jti=parts[4],
+        expires_at=expires_at,
+    )
+
+
+def _parse_claim(raw: str, secret: str) -> _Claim | JSONResponse:
+    """Turn a claim header into its ids, or the denial that refuses it."""
+    parts = _split_claim(raw)
+    if parts is None or not _claim_mac_matches(parts, secret):
+        return _claim_denied("claim_invalid")
+    expires_at = _claim_expires_at(parts)
+    if expires_at is None:
+        return _claim_denied("claim_invalid")
+    if expires_at + _CLAIM_SKEW_SECONDS < int(time.time()):
+        return _claim_denied("claim_expired")
+    return _claim_from_parts(parts, expires_at)
+
+
+def _claim_scope_error(claim: _Claim, kwargs: dict[str, Any]) -> JSONResponse | None:
+    """Refuse a claim that names a different (org, agent, session) than the body."""
+    for field, claimed in (
+        ("org_id", claim.org_id),
+        ("agent_id", claim.agent_id),
+        ("session_id", claim.session_id),
+    ):
+        if claimed != kwargs[field]:
+            return _claim_denied("claim_scope_mismatch")
+    return None
+
+
+def _verify_claim(
+    request: Request, settings: Settings, kwargs: dict[str, Any]
+) -> _Claim | JSONResponse:
+    """Verify the proxy's tenant claim and bind it to the request body (S01).
+
+    The claim is ``v1:<org_id>:<agent_id>:<session_id>:<jti>:<exp>:<mac_hex>``
+    with ``mac_hex`` the HMAC-SHA256, under the enqueue secret, of everything
+    before it. A symmetric key is acceptable here: the worker already reads every
+    tenant's rows, so the claim is not a capability it lacks — it is proof that
+    the proxy, which did authenticate the caller, named this tenant. Without it
+    the static bearer would let any token holder act for any tenant.
+
+    The claim is bounded in time (``exp``) rather than single-use. A replay store
+    would need new durable state for no extra protection: a replayed claim can
+    only re-assert the same (org, agent, session) tuple, and the worker already
+    dedupes that tuple by Idempotency-Key.
+
+    Known limit: the key is the same secret as the bearer (one env value today),
+    so a leaked bearer can still forge a claim. What the claim buys is that the
+    tenant is no longer an unsigned body field and is bound to the agent, session,
+    and a short expiry. Giving the claim its own secret would make it a second
+    factor; that is a config change, not a contract change.
+    """
+    secret = _claim_secret(settings)
+    if not secret:
+        return _claim_denied("claim_invalid")
+    raw = (request.headers.get(CLAIM_HEADER) or "").strip()
+    if not raw:
+        return _claim_denied("claim_required")
+    claim = _parse_claim(raw, secret)
+    if isinstance(claim, JSONResponse):
+        return claim
+    scope_error = _claim_scope_error(claim, kwargs)
+    if scope_error is not None:
+        return scope_error
+    return claim
 
 
 def _authorize(request: Request, settings: Settings) -> JSONResponse | None:
@@ -207,12 +339,14 @@ def _unavailable() -> JSONResponse:
 
 
 async def _claim_or_response(
-    ledger: Any, kwargs: dict[str, Any], idem_key: str
+    ledger: Any, kwargs: dict[str, Any], idem_key: str, claim: _Claim
 ) -> tuple[ClaimOutcome | None, Response | None]:
     try:
+        # The verified claim, not the body, names the tenant. Verification has
+        # already proved the two agree, so a body org can never reach the scope.
         outcome: ClaimOutcome = await ledger.claim(
-            org_id=UUID(kwargs["org_id"]),
-            agent_id=UUID(kwargs["agent_id"]),
+            org_id=UUID(claim.org_id),
+            agent_id=UUID(claim.agent_id),
             key=idem_key,
             request_hash=fingerprint_enqueue(kwargs),
         )
@@ -258,6 +392,10 @@ async def _prepare_enqueue_request(
     except (ValueError, TypeError) as exc:
         return _bad_request(exc)
 
+    claim = _verify_claim(request, settings, kwargs)
+    if isinstance(claim, JSONResponse):
+        return claim
+
     idem_key = (request.headers.get("idempotency-key") or "").strip()
     if not idem_key:
         return JSONResponse({"error": "idempotency_key_required"}, status_code=400)
@@ -266,7 +404,9 @@ async def _prepare_enqueue_request(
     ledger = getattr(request.app.state, "ledger", None)
     if ledger is None:
         return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
-    return _ValidatedEnqueue(kwargs, idem_key, ledger)
+    return _ValidatedEnqueue(
+        kwargs=kwargs, idempotency_key=idem_key, ledger=ledger, claim=claim
+    )
 
 
 async def _dispatch_and_finalize(
@@ -295,7 +435,7 @@ async def enqueue_extraction(request: Request) -> Response:
     if isinstance(prepared, Response):
         return prepared
     outcome, response = await _claim_or_response(
-        prepared.ledger, prepared.kwargs, prepared.idempotency_key
+        prepared.ledger, prepared.kwargs, prepared.idempotency_key, prepared.claim
     )
     if response is not None:
         return response

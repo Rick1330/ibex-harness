@@ -21,7 +21,8 @@ def operator_settings(**kwargs: object) -> Settings:
     base: dict[str, object] = {
         "database_url": "postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex",
         "allowed_origins": "http://localhost:3100,https://operator.ibexharness.com",
-        "auth_service_token": "test-auth-service-token",
+        "auth_lifecycle_token": "test-auth-lifecycle-token",
+        "auth_issue_token": "test-auth-issue-token",
         "jwt_hmac_secret": HMAC_SECRET,
         "operator_cursor_secret": "cursor-secret-for-tests-32-bytes-min!!",
         "dashboard_csrf_secret": CSRF_SECRET,
@@ -37,11 +38,24 @@ def operator_settings(**kwargs: object) -> Settings:
     return Settings(**base)  # type: ignore[arg-type]
 
 
+def login_probe_result(
+    current: str = "ibex_runtime",
+    session: str | None = None,
+    *,
+    current_super: bool = False,
+    session_super: bool = False,
+) -> MagicMock:
+    """Result double whose ``.one()`` is the startup capability-login row."""
+    result = MagicMock()
+    result.one.return_value = (current, session or current, current_super, session_super)
+    return result
+
+
 def mock_engine() -> MagicMock:
     engine = MagicMock()
     engine.dispose = AsyncMock()
     conn = MagicMock()
-    conn.execute = AsyncMock()
+    conn.execute = AsyncMock(return_value=login_probe_result())
     conn.__aenter__ = AsyncMock(return_value=conn)
     conn.__aexit__ = AsyncMock(return_value=None)
     engine.connect = MagicMock(return_value=conn)

@@ -292,13 +292,21 @@ func TestValidate_AuthServiceTokenRequiredOutsideDevelopment(t *testing.T) {
 			if err := cfg.Validate(); err == nil {
 				t.Fatal("expected missing AuthService token error")
 			}
-			cfg.AuthServiceToken = "service-secret"
+			cfg.AuthLifecycleToken = "lifecycle-secret"
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("a lifecycle token alone must not satisfy the split")
+			}
+			cfg.AuthIssueToken = "issue-secret"
 			cfg.PolicySigningKeyPEM = policySigningPEM(t)
 			pair := tlscert.Generate(t, t.TempDir(), tlscert.Options{})
 			cfg.GRPCTLSCertFile = pair.CertFile
 			cfg.GRPCTLSKeyFile = pair.KeyFile
 			if err := cfg.Validate(); err != nil {
 				t.Fatalf("configured service token should validate: %v", err)
+			}
+			cfg.AuthIssueToken = cfg.AuthLifecycleToken
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("one value cannot hold both service-token authorities")
 			}
 		})
 	}

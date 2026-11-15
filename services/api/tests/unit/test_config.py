@@ -44,12 +44,24 @@ def test_non_development_operator_sessions_require_auth_service_token() -> None:
     try:
         Settings(**kwargs)
     except ValueError as exc:
-        assert "IBEX_AUTH_SERVICE_TOKEN" in str(exc)
+        assert "IBEX_AUTH_LIFECYCLE_TOKEN" in str(exc)
     else:
-        raise AssertionError("missing AuthService token must fail closed")
-    assert (
-        Settings(auth_service_token="service-token", **kwargs).auth_service_token == "service-token"
+        raise AssertionError("missing AuthService lifecycle token must fail closed")
+
+    # One credential cannot hold both authorities (finding S04): the issue
+    # token is a separate requirement, not a fallback.
+    try:
+        Settings(auth_lifecycle_token="lifecycle-token", **kwargs)
+    except ValueError as exc:
+        assert "IBEX_AUTH_ISSUE_TOKEN" in str(exc)
+    else:
+        raise AssertionError("missing AuthService issue token must fail closed")
+
+    configured = Settings(
+        auth_lifecycle_token="lifecycle-token", auth_issue_token="issue-token", **kwargs
     )
+    assert configured.auth_lifecycle_token == "lifecycle-token"
+    assert configured.auth_issue_token == "issue-token"
 
 
 def test_cors_origin_list_trims_and_skips_empty() -> None:

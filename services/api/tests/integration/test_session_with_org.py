@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from uuid import uuid4
 
 import pytest
@@ -11,20 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
 from app.db import create_engine, create_session_factory, session_with_org
+from tests.integration.conftest import require_dsn
 
 pytestmark = pytest.mark.integration
 
 
-def _require_dsn() -> str:
-    dsn = os.environ.get("IBEX_API_DATABASE_URL") or os.environ.get("IBEX_MEMORY_DATABASE_URL")
-    if not dsn:
-        pytest.skip("IBEX_API_DATABASE_URL not set")
-    return dsn
-
-
 @pytest.fixture
 async def session_factory() -> async_sessionmaker[AsyncSession]:
-    settings = Settings(database_url=_require_dsn())
+    settings = Settings(database_url=require_dsn())
     engine = create_engine(settings)
     factory = create_session_factory(engine)
     try:

@@ -263,6 +263,11 @@ func TestRun_StopsOnSignal(t *testing.T) {
 	t.Setenv("IBEX_PORT", portStr)
 	t.Setenv("IBEX_GRPC_PORT", grpcPortStr)
 
+	// The startup login assertion needs a reachable database. This test exercises
+	// signal-driven shutdown, so the assertion is stubbed here instead of making
+	// the shutdown test database-dependent.
+	stubAuthLoginVerification(t)
+
 	sigCh := make(chan os.Signal, 1)
 	done := make(chan int, 1)
 	go func() { done <- runBootstrap(nil, sigCh) }()

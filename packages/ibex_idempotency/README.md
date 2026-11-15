@@ -22,6 +22,7 @@ packages/ibex_idempotency/
   tests/
     test_fingerprint.py
     test_ledger_unit.py
+    test_sessions_rls_integration.py   # real-DB proof of the ibex_app pin
 ```
 
 ## Consumers
@@ -49,6 +50,17 @@ ibex-idempotency = { path = "../../packages/ibex_idempotency" }
   or persist a mutation. Callers surface that as `503`, never as a silent
   no-op.
 
-Rows are written as the platform actor with `app.current_org_id` (and
-`app.is_service_account`) set explicitly for RLS defense-in-depth, even though
-the ledger table also enforces row-level security.
+Rows are written in a transaction that pins the tenant role and sets the org
+GUC, both transaction-local and in that order — `SET LOCAL ROLE ibex_app`, then
+`set_config('app.current_org_id', …, true)` — mirroring `packages/pgtenant`
+(`PinOrg`) in the Go runtime. The pin is what makes the policy apply: under the
+owner login RLS is inert, and under a `NOINHERIT` capability login
+(`ibex_runtime`, `ibex_worker`) the GUC alone leaves the statement executing as
+a login that holds no table grant, which fails `42501`.
+
+`app.is_service_account` is not written by either helper. Migration 000063
+replaced that forgeable bypass with `current_user = 'ibex_service'` in
+`ibex_core.rls_org_visible`, so no policy reads the GUC. The probe scope used by
+`ping()` is deliberately left unpinned: it reads the catalog
+(`to_regclass`, `has_table_privilege`) for the connected identity and no tenant
+row.

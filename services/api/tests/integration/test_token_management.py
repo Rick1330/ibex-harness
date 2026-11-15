@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -20,21 +19,15 @@ from app.config import Settings
 from app.db import create_engine, create_session_factory
 from app.main import ApiRuntimeOverrides, create_app
 from app.revocation_publish import RecordingOrgSuspendPublisher
+from tests.integration.conftest import capability_runtime_dsn, require_dsn
 
 pytestmark = pytest.mark.integration
 _AUTH = {"Authorization": "Bearer tok"}
 
 
-def _require_dsn() -> str:
-    dsn = os.environ.get("IBEX_API_DATABASE_URL") or os.environ.get("IBEX_MEMORY_DATABASE_URL")
-    if not dsn:
-        pytest.skip("IBEX_API_DATABASE_URL not set")
-    return dsn
-
-
 @pytest.fixture
 async def factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    settings = Settings(database_url=_require_dsn())
+    settings = Settings(database_url=require_dsn())
     engine = create_engine(settings)
     fac = create_session_factory(engine)
     try:
@@ -68,7 +61,10 @@ async def _cleanup_org(factory: async_sessionmaker[AsyncSession], org_id: UUID) 
 
 
 def _client(org_id: UUID, mgr: FakeTokenManager) -> TestClient:
-    settings = Settings(database_url=_require_dsn())
+    settings = Settings(
+        # App under test on the capability login; `factory` keeps the owner DSN.
+        database_url=capability_runtime_dsn(),
+    )
     validator = StaticTokenValidator(
         {"tok": ValidateResult(org_id=org_id, permissions=ADMIN, user_id=str(uuid4()))}
     )

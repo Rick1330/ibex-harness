@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Annotated, TypeVar
+from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, Request
 from ibex_idempotency import PostgresIdempotencyLedger
@@ -21,6 +22,11 @@ from app.write.cache import MemoryCacheWriter
 from app.write.orchestrator import MemoryWriteOrchestrator
 
 _T = TypeVar("_T")
+
+# Org claim context assembly sends with a memory read. Optional on the wire:
+# memory still derives the tenant from the token, so an older context
+# deployment that sends nothing keeps its current behaviour.
+ORG_HEADER = "X-Ibex-Org-Id"
 
 
 def _require_memory_component(
@@ -101,6 +107,55 @@ def require_memory_read(
     token: Annotated[ValidateResult, Depends(require_token)],
 ) -> ValidateResult:
     return _require_memory_permission(token, MEMORY_READ, "memory:read")
+
+
+def require_memory_read_for_org(
+    token: Annotated[ValidateResult, Depends(require_memory_read)],
+    org_header: Annotated[str | None, Header(alias=ORG_HEADER)] = None,
+) -> ValidateResult:
+    """``memory:read`` plus, when sent, an org claim that must match the token.
+
+    Context assembly sends ``X-Ibex-Org-Id`` for the org it is assembling for.
+    The tenant is still derived from the validated token: the header is a check,
+    never a second source of truth, and it can only narrow access.
+
+    - header absent: the token's org. Unchanged behaviour on purpose, so an
+      older context deployment keeps working during rollout.
+    - header names the token's org: unchanged.
+    - header names any other org: 403 ``ORG_MISMATCH`` before the route body
+      runs, so no read happens for the refused org.
+    - header is not a UUID: 400 ``INVALID_ORG_HEADER``.
+
+    Neither error names the organizations involved or says whether the named
+    org exists or holds memories: the caller is not authorized for it, so any
+    such detail would be an existence leak.
+    """
+    if org_header is None:
+        return token
+    try:
+        header_org = UUID(org_header.strip())
+    except ValueError as exc:
+        raise _invalid_org_header() from exc
+    if header_org != token.org_id:
+        raise _org_mismatch()
+    return token
+
+
+def _invalid_org_header() -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={"code": "INVALID_ORG_HEADER", "message": f"{ORG_HEADER} must be a UUID"},
+    )
+
+
+def _org_mismatch() -> HTTPException:
+    return HTTPException(
+        status_code=403,
+        detail={
+            "code": "ORG_MISMATCH",
+            "message": f"{ORG_HEADER} does not match the token's organization",
+        },
+    )
 
 
 def get_read_repository(request: Request) -> MemoryReadRepository:
@@ -190,7 +245,7 @@ def get_hot_cache_reader(request: Request) -> MemoryHotCacheReader:
 
 
 def get_search_memory_context(
-    token: Annotated[ValidateResult, Depends(require_memory_read)],
+    token: Annotated[ValidateResult, Depends(require_memory_read_for_org)],
     read_repository: Annotated[MemoryReadRepository, Depends(get_read_repository)],
     embedding_client: Annotated[object, Depends(get_embedding_client)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
@@ -205,7 +260,7 @@ def get_search_memory_context(
 
 def get_hot_memory_context(
     request: Request,
-    token: Annotated[ValidateResult, Depends(require_memory_read)],
+    token: Annotated[ValidateResult, Depends(require_memory_read_for_org)],
     hot_cache_reader: Annotated[MemoryHotCacheReader, Depends(get_hot_cache_reader)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> HotMemoryContext:

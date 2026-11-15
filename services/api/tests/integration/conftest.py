@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
+from functools import cache
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -20,6 +23,16 @@ from app.db import create_engine, create_session_factory
 from app.main import ApiRuntimeOverrides, create_app
 from app.revocation_publish import RecordingOrgSuspendPublisher
 
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from infra.testing.pgcapability import (
+    RUNTIME_LOGIN,
+    capability_dsn,
+    provision_capability_logins,
+)
+
 CURSOR_SECRET = "cursor-secret-32-bytes-minimum!!"
 # >=32 bytes: Settings rejects shorter operator HMAC material.
 OPERATOR_HMAC_SECRET = "integration-operator-hmac-secret-32b!"
@@ -27,10 +40,36 @@ OPERATOR_CURSOR_SECRET = "integration-operator-cursor-secret-32b!"
 
 
 def require_dsn() -> str:
-    dsn = os.environ.get("IBEX_API_DATABASE_URL") or os.environ.get("POSTGRES_TEST_DSN")
+    """Owner DSN for seeding and assertions (never the app under test)."""
+    dsn = (
+        os.environ.get("IBEX_API_DATABASE_URL")
+        or os.environ.get("POSTGRES_TEST_DSN")
+        or os.environ.get("IBEX_MEMORY_DATABASE_URL")
+    )
     if not dsn:
-        pytest.skip("IBEX_API_DATABASE_URL or POSTGRES_TEST_DSN not set")
+        pytest.skip(
+            "IBEX_API_DATABASE_URL, POSTGRES_TEST_DSN, or IBEX_MEMORY_DATABASE_URL not set"
+        )
     return dsn
+
+
+@cache
+def _provisioned_runtime_dsn(owner_dsn: str) -> str:
+    try:
+        provision_capability_logins(owner_dsn, _REPO_ROOT)
+    except RuntimeError as exc:
+        pytest.fail(str(exc))
+    return capability_dsn(owner_dsn, RUNTIME_LOGIN)
+
+
+def capability_runtime_dsn() -> str:
+    """DSN for the app under test: ``ibex_runtime``, never the owner.
+
+    The app asserts this login at startup. Seeding and assertions keep using
+    :func:`require_dsn` (the owner), so fixtures are not blocked by RLS.
+    Provisioning runs once per owner DSN.
+    """
+    return _provisioned_runtime_dsn(require_dsn())
 
 
 @pytest.fixture
@@ -77,8 +116,10 @@ _TENANT_DELETE_STATEMENTS: tuple[str, ...] = (
 class TwoTenantOperator:
     """Two logged-in operator clients, each bound to its own organization.
 
+    Each ``TestClient`` boots the app under test on the ``ibex_runtime``
+    capability login (startup asserts it), so its requests exercise real RLS.
     ``factory`` is an owner-DSN session factory: tests seed and clean up rows
-    outside the application's RLS-bound ``ibex_app`` session.
+    outside the application's RLS-bound session.
     """
 
     org_a: UUID
@@ -104,7 +145,9 @@ class TwoTenantOperator:
 
 def _operator_settings() -> Settings:
     return Settings(
-        database_url=require_dsn(),
+        # The app under test boots on the capability login and asserts it at
+        # startup; the owner DSN is only for the fixture's own seeding.
+        database_url=capability_runtime_dsn(),
         environment="development",
         operator_feature_enabled=True,
         jwt_hmac_secret=OPERATOR_HMAC_SECRET,

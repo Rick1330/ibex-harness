@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/canonicaljson"
+	"github.com/Rick1330/ibex-harness/packages/pgtenant"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
@@ -238,10 +239,11 @@ func (w *runWriter) writeSessionEvents(ctx context.Context) error {
 	return nil
 }
 
+// setOrgRLS pins the tenant role and org selector for this transaction. The
+// pin itself lives in pgtenant so there is one implementation; this keeps the
+// package's own error prefix.
 func setOrgRLS(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) error {
-	_, err := tx.ExecContext(ctx,
-		`SELECT set_config('app.current_org_id', $1, true)`, orgID.String())
-	if err != nil {
+	if err := pgtenant.PinOrg(ctx, tx, orgID); err != nil {
 		return fmt.Errorf("evidenceoutbox: set org rls: %w", err)
 	}
 	return nil

@@ -24,7 +24,7 @@ from app.budget_publish import (
     RedisBudgetPublisher,
 )
 from app.config import Settings, get_settings
-from app.db import create_engine, create_session_factory
+from app.db import assert_capability_login, create_engine, create_session_factory
 from app.drain import DrainState
 from app.errors import (
     ApiError,
@@ -377,6 +377,12 @@ async def _startup_database(
     state.engine = engine
     state.session_factory = create_session_factory(engine)
     await _refresh_readiness(state, auth=auth, engine=engine)
+    if state.ready:
+        # A wrong login starts silently and re-enables the RLS bypass the
+        # tenancy guarantee rests on, so it fails startup rather than the first
+        # request. Gated on readiness: an unreachable database stays a
+        # not-ready state, not a crash loop.
+        await assert_capability_login(engine)
 
 
 def _start_redis_fan_in(state: ApiAppState, cfg: Settings) -> None:

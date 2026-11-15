@@ -206,11 +206,25 @@ async def forget_memory(
     )
 
 
-@router.post("/search", summary="Semantic search over memories")
+@router.post(
+    "/search",
+    summary="Semantic search over memories",
+    responses={
+        400: {"description": "Invalid X-Ibex-Org-Id header"},
+        403: {"description": "Memory read not permitted, or X-Ibex-Org-Id names another org"},
+    },
+)
 async def search_memories(
     request: SearchMemoriesRequest,
     ctx: Annotated[SearchMemoryContext, Depends(get_search_memory_context)],
 ) -> SearchMemoriesResponse:
+    """Semantic search inside the validated token's organization.
+
+    The tenant is the token's org. A caller that also sends ``X-Ibex-Org-Id``
+    must name that same org: a different org is refused with 403 before any
+    read, rather than being silently scoped to the token's org. Sending no
+    header keeps the token-only behaviour.
+    """
     agent_id = resolve_search_agent_id(ctx.token, request.agent_id)
     try:
         await ensure_search_agent_authorized(
@@ -240,7 +254,14 @@ async def search_memories(
     return search_response_from_results(results)
 
 
-@router.get("/hot", summary="List hot-cache memories for an agent")
+@router.get(
+    "/hot",
+    summary="List hot-cache memories for an agent",
+    responses={
+        400: {"description": "Invalid X-Ibex-Org-Id header"},
+        403: {"description": "Memory read not permitted, or X-Ibex-Org-Id names another org"},
+    },
+)
 async def list_hot_memories(
     ctx: Annotated[HotMemoryContext, Depends(get_hot_memory_context)],
     agent_id: Annotated[UUID, Query()],
@@ -251,6 +272,9 @@ async def list_hot_memories(
 
     Response shape matches POST /v1/memories/search so assemblers can treat
     hot and cold hits uniformly (``source=hot_cache``).
+
+    ``X-Ibex-Org-Id`` is checked exactly as on the search route: it must match
+    the token's org when present, and a mismatch is a 403 before the cache read.
     """
     resolved_agent_id = resolve_search_agent_id(ctx.token, agent_id)
     try:

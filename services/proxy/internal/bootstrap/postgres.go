@@ -234,6 +234,28 @@ const (
 	pgPingTimeout     = 5 * time.Second
 )
 
+const (
+	// runtimeCapabilityLogin is the login the proxy must connect as. It is
+	// compiled in on purpose: POSTGRES_DSN already names the login, and a second
+	// configurable source would let the check below be reconfigured to match a
+	// mistake.
+	runtimeCapabilityLogin = "ibex_runtime"
+	// ownerLogin is the migration owner. Every service must stay off it: the
+	// tenancy guarantee rests on the connection not being able to bypass RLS.
+	ownerLogin = "ibex"
+)
+
+// capabilityLoginSQL reports the effective and session logins plus whether
+// either is a superuser. COALESCE(..., true) fails closed: a login that cannot
+// be resolved in pg_roles is treated as privileged.
+const capabilityLoginSQL = `
+	SELECT current_user, session_user,
+	       COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), true),
+	       COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = session_user), true)`
+
+// openProxyPostgres opens and verifies the pool. A wrong password already fails
+// loudly at connect; a wrong login starts silently and re-enables the RLS bypass
+// the tenancy guarantee rests on, so it fails startup instead.
 func openProxyPostgres(dsn string) (*sql.DB, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -248,7 +270,42 @@ func openProxyPostgres(dsn string) (*sql.DB, error) {
 		_ = db.Close() // best-effort close after failed ping
 		return nil, fmt.Errorf("postgres ping: %w", err)
 	}
+	if err := assertProxyCapabilityLogin(pingCtx, db); err != nil {
+		_ = db.Close() // best-effort close: the pool is unusable after a failed check
+		return nil, err
+	}
 	return db, nil
+}
+
+// assertProxyCapabilityLogin refuses to run unless the connection is the
+// ibex_runtime capability login and neither the owner nor a superuser. It runs
+// once when the pool opens, never per request, and never echoes the DSN.
+func assertProxyCapabilityLogin(ctx context.Context, db *sql.DB) error {
+	var current, session string
+	var currentSuper, sessionSuper bool
+	if err := db.QueryRowContext(ctx, capabilityLoginSQL).
+		Scan(&current, &session, &currentSuper, &sessionSuper); err != nil {
+		return fmt.Errorf("proxy: verify login role: %w", err)
+	}
+	if current == ownerLogin || session == ownerLogin {
+		return fmt.Errorf(
+			"proxy: connection login is %q, the owner login; proxy must connect as the %q capability login, never the RLS-bypassing owner",
+			ownerLogin, runtimeCapabilityLogin,
+		)
+	}
+	if currentSuper || sessionSuper {
+		return fmt.Errorf(
+			"proxy: connection login %q (current_user %q) is a superuser; proxy must connect as the non-superuser %q capability login",
+			session, current, runtimeCapabilityLogin,
+		)
+	}
+	if current != runtimeCapabilityLogin {
+		return fmt.Errorf(
+			"proxy: connection login is %q, want the %q capability login; POSTGRES_DSN names the login and the expected value is compiled in",
+			current, runtimeCapabilityLogin,
+		)
+	}
+	return nil
 }
 
 type cachedDirectiveInputs struct {

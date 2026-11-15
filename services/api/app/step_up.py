@@ -171,7 +171,7 @@ def _enforce_local_step_up(proof: _StepUpProof) -> None:
 async def _enforce_auth_step_up(proof: _StepUpProof) -> None:
     rpc = AuthRPC(
         proof.settings.auth_grpc_addr,
-        proof.settings.auth_service_token or "",
+        proof.settings.auth_lifecycle_token or "",
         max(proof.settings.auth_timeout_ms / 1000.0, 0.2),
         proof.settings.auth_grpc_ca_file or "",
     )

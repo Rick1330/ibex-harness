@@ -165,9 +165,18 @@ to commit when a value is missing, is not printable ASCII without spaces, is not
 `POSTGRES_PASSWORD`, because credential reuse would silently collapse two roles into one. No other process derives or
 defaults them, so an empty entry fails the profile instead of starting with an unset password.
 
-They are documented here because the profile reads them, not because a service authenticates with them: every Compose
-DSN is still the owner login (`postgres://${POSTGRES_USER:-ibex}:…`), so the provisioned capability logins remain unused
-until the DSN cutover.
+They are documented here because the profile reads them, and because every application service now authenticates with one. The profile's six application DSNs name the capability logins directly — bootstrap `ibex_bootstrap`
+(`infra/compose/v1-single-node/compose.yml`:268), auth `ibex_auth` (`:306`), proxy and api and memory `ibex_runtime`
+(`:349`, `:405`, `:452`), worker `ibex_worker` (`:548`) — while `migrate` (`:209`) and `provision` (`:239`) stay on the
+owner login, because provision alters each capability role's password and migrations create cluster-global roles. Each
+long-running service asserts the login at startup and refuses to run on the owner or a superuser: proxy
+(`services/proxy/internal/bootstrap/postgres.go`:280-306), auth (`services/auth/cmd/auth/login.go`:57-84), api
+(`services/api/app/db.py`:46-80), memory (`services/memory/app/capability_login.py`:41-72), worker
+(`services/worker/app/db.py`:112-148). A login that cannot
+authenticate fails the start rather than degrading; a grant a service lacks surfaces on the first read as an error,
+never as a silent read on the owner. `make repo-guards` runs
+`infra/scripts/check-tenant-pin.py`, which fails a tracked Go or Python file that writes `app.current_org_id` without
+also pinning a tenant role (`SET LOCAL ROLE`, or `pgtenant.PinOrg`).
 
 ### RLS Context Settings (service internal behavior)
 
@@ -278,7 +287,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_SESSION_SWEEP_INTERVAL` | No | `1m` | How often the idle sweeper runs; must be ≤ idle timeout | Multi-replica safe via advisory lock |
 | `IBEX_EXTRACTION_TURNS_TTL` | No (**3.5.D.4**) | same as idle timeout | Redis TTL for `{org_id}:session:{agent}:{external_id}:extraction_turns` on shared `REDIS_URL` (proxy has no separate extraction Redis) | Fail-open on chat path; ADR-0072 |
 | `IBEX_WORKER_ENQUEUE_BASE_URL` | No (**3.5.D.4**) | (empty) | Worker enqueue HTTP origin (e.g. `http://worker:8007`) | Empty disables proxy enqueue client |
-| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Conditional (**3.5.D.4**) | (empty) | Shared Bearer with worker `IBEX_WORKER_ENQUEUE_API_TOKEN` | Required with base URL; no non-empty default; empty token disables enqueue. Secret; never logged |
+| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Conditional (**3.5.D.4**) | (empty) | Shared bearer for proxy→worker `POST /internal/extraction/enqueue`, **and** the HMAC key the proxy signs the tenant claim with. The bearer is now transport authentication; the signed claim in `x-ibex-claim` is the tenant authority | Required with base URL; no non-empty default; empty token disables enqueue. Secret; never logged. **Known limit:** the claim key is the same value as the bearer, so a leaked bearer can still forge a claim (`services/proxy/internal/extractionenqueue/client.go`:9-13) |
 | `IBEX_IDEMPOTENCY_TTL` | No | `24h` | Redis TTL for completed `idempotency:{org_id}:{key}` chat Idempotency-Key records ([ADR-0035](adr/0035-chat-idempotency-key.md)). Pending claims use a separate ~9m package default. | Requires `REDIS_URL`; empty Redis → Noop (no dedupe) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | No | `50ms` | Per claim/commit Redis budget; timeout fail-opens without dedupe | Aligns with auth validate budget class |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
@@ -311,7 +320,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_PROVIDER_FALLBACK_MAX_DEPTH` | No (**4.C.4**) | `1` | Max hops from org `fallback_chain` after primary Complete failure | Values `<1` clamp to `1`; empty chain = opt-out |
 | `IBEX_CONTEXT_ENABLED` | No (**3.5.D.2**) | `false` | Master switch for context-assembly injection on chat completions; `false` = Phase 2 directive-only (no Assemble gRPC). Independent of empty `IBEX_CONTEXT_GRPC_TARGET` (nil client) | Additive; fail-open. With a non-empty target, validate rejects `IBEX_CONTEXT_ENABLED=true` outside `IBEX_ENV=development` unless `IBEX_CONTEXT_COLOCATED=true` ([ADR-0097](adr/0097-v1-supported-profile.md) §4) |
 | `IBEX_CONTEXT_COLOCATED` | No (**ADR-0097 §4**) | `false` | Declares that the context process shares the proxy's network namespace and binds a loopback IP literal, permitting the plaintext context hop outside development | Fail-closed opt-in. It never relaxes the loopback-target rule: a non-loopback target is still rejected before the opt-in is considered |
-| `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` | Conditional (**ADR-0096**) | (empty) | Shared caller token sent as exactly one `x-ibex-context-service-token` gRPC metadata entry on every context RPC; required when `IBEX_CONTEXT_ENABLED=true` and `IBEX_CONTEXT_GRPC_TARGET` is set | Secret; never logged. Must be distinct from the auth-service token (`IBEX_AUTH_SERVICE_TOKEN`, `x-ibex-service-token`). Proxy startup also fails when the context server rejects this token, and the target must be a loopback IP literal |
+| `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` | Conditional (**ADR-0096**) | (empty) | Shared caller token sent as exactly one `x-ibex-context-service-token` gRPC metadata entry on every context RPC; required when `IBEX_CONTEXT_ENABLED=true` and `IBEX_CONTEXT_GRPC_TARGET` is set | Secret; never logged. Must be distinct from both auth-service credentials (`IBEX_AUTH_LIFECYCLE_TOKEN` and `IBEX_AUTH_ISSUE_TOKEN`, which travel as `x-ibex-service-token`). Proxy startup also fails when the context server rejects this token, and the target must be a loopback IP literal |
 | `IBEX_CONTEXT_GRPC_TARGET` | No (**3.5.D.1**) | `127.0.0.1:9092` | Proxy dial target for ContextAssemblyService (distinct from server bind `IBEX_CONTEXT_GRPC_ADDR`) | Empty skips dial (nil client); host:port when set. When context is enabled the host must be a loopback IP literal (`127.0.0.1` or `::1`); hostnames are rejected because the dial re-resolves them and the token is cleartext |
 | `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | No (**3.5.D.1**) | `45ms` | Per-call AssembleContext budget on the proxy client | Independent of server `IBEX_CONTEXT_TIMEOUT` / `IBEX_CONTEXT_DEADLINE_MS` |
 | `IBEX_CONTEXT_TIMEOUT` | No (**3.5.C.2**) | `45ms` | Outer parallel-retrieval deadline for context library (`ContextSettings.timeout_ms`); accepts `45` or `45ms` | Fail-open on timeout — return partial sources |
@@ -327,7 +336,7 @@ Used by: **proxy** (`services/proxy`)
 
 **Context caller authentication (ADR-0096).** The context hop is authenticated with a shared service token, and its preconditions are enforced at proxy startup:
 
-- `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` is required when `IBEX_CONTEXT_ENABLED=true` and `IBEX_CONTEXT_GRPC_TARGET` is set. The value is secret, is never logged, and must be at least 32 characters of `[A-Za-z0-9_-]`. **Operator obligation:** use a distinct value from `IBEX_AUTH_SERVICE_TOKEN` (and from `IBEX_CONTEXT_MEMORY_API_TOKEN`, which the context server does enforce at startup). The proxy does not hold the auth-service token, so it cannot compare against it; reusing one value would let a holder of either credential stand in for the other.
+- `IBEX_CONTEXT_GRPC_SERVICE_TOKEN` is required when `IBEX_CONTEXT_ENABLED=true` and `IBEX_CONTEXT_GRPC_TARGET` is set. The value is secret, is never logged, and must be at least 32 characters of `[A-Za-z0-9_-]`. **Operator obligation:** use a distinct value from `IBEX_AUTH_LIFECYCLE_TOKEN` and `IBEX_AUTH_ISSUE_TOKEN` (and from `IBEX_CONTEXT_MEMORY_API_TOKEN`, which the context server does enforce at startup). The proxy does not hold either auth-service credential, so it cannot compare against them; reusing one value would let a holder of either credential stand in for the other.
 - `IBEX_CONTEXT_GRPC_TARGET` must resolve exclusively to loopback when context is enabled, because the token travels in cleartext metadata.
 - `IBEX_CONTEXT_ENABLED=true` with a non-empty target is rejected outside `IBEX_ENV=development` unless `IBEX_CONTEXT_COLOCATED=true`. The context server serves plaintext only, so any other profile must assert co-location (shared network namespace, loopback IP literal, ADR-0097 §4). The opt-in never relaxes the loopback-target rule.
 - The proxy probes the server's caller authentication at startup and fails closed when the token is rejected. A rejected or unreachable context server still fails open per request: chat proceeds with directive-only context and `X-IBEX-Context-Fallback: true`.
@@ -346,7 +355,9 @@ Used by: **auth** (`services/auth`)
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `POSTGRES_DSN` | Yes | (none) | Postgres DSN (`postgres://...`) | Secret |
+| `POSTGRES_DSN` | Yes | (none) | Postgres DSN (`postgres://ibex_auth:…` in the v1 profile) | Secret. The service refuses to start unless the connection login is `ibex_auth`, not the owner and not a superuser (`services/auth/cmd/auth/login.go`:57-84) |
+| `IBEX_AUTH_LIFECYCLE_TOKEN` | Outside development, when TOTP or a JWT signing key is configured | (empty) | API-to-AuthService credential for `ValidateOperatorSession`, `RevokeOperatorSession` and `ConsumeStepUp` only. It cannot mint a session | **Secret.** Must differ from `IBEX_AUTH_ISSUE_TOKEN`; the auth service rejects a pair that is equal or missing (`services/auth/internal/config/config.go`:93-104,212-217). API alias: `IBEX_API_AUTH_LIFECYCLE_TOKEN` |
+| `IBEX_AUTH_ISSUE_TOKEN` | Outside development, when TOTP or a JWT signing key is configured | (empty) | API-to-AuthService credential for `IssueOperatorSession` only. It cannot validate, revoke, or consume a step-up proof | **Secret.** Must differ from `IBEX_AUTH_LIFECYCLE_TOKEN`. API alias: `IBEX_API_AUTH_ISSUE_TOKEN` |
 | `REDIS_URL` | No | (empty) | Redis for token-revocation PUBLISH (`ibex:token:revocations`) **and** ValidateToken peer rate limiting (`ratelimit:auth:validate:*`). Empty → Noop publisher + Noop ValidateToken rate limit (private-network assumption). Proxies with empty Redis skip auth-cache wrap (immediate revoke via gRPC); do not rely on LRU TTL alone. Must match proxy Redis when auth cache is active. | Secret if password present |
 | `IBEX_AUTH_VALIDATE_RPM` | No | `6000` | Per-**proxy-host** calendar-minute cap on gRPC `ValidateToken` when `REDIS_URL` is set (key = peer IP/host after stripping port). All ValidateToken calls from that host — valid and invalid — share one counter. Size to peak legitimate proxy RPS×60, not only abuse thresholds (~100 RPS at default 6000). Exceed → `RESOURCE_EXHAUSTED`. Redis check errors fail-open with WARN. | Defense-in-depth; ValidateToken remains an internal RPC |
 | `IBEX_PORT` | No | `8081` | HTTP port for `/health`, `/ready`, `/metrics` | |
@@ -359,6 +370,19 @@ Used by: **auth** (`services/auth`)
 | `IBEX_LOG_LEVEL` | No | `INFO` | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` | |
 | `IBEX_BOOTSTRAP_PAT_FILE` | Yes (bootstrap command) | (none) | File path for the one-time admin PAT, created atomically with mode `0600` before the transaction commits. The profile sets `/run/ibex/bootstrap.pat` on a host bind mount; retrieve it with `make v1-bootstrap-pat` | Secret-bearing file; the bootstrap process never logs or prints it. Required so the command cannot fall back to stdout. `make v1-bootstrap-pat` prints it to the operator's terminal: do not capture that output in CI or a job log |
 | `IBEX_BOOTSTRAP_ORG_NAME` / `_ORG_SLUG` / `_USER_EMAIL` / `_USER_NAME` / `_AGENT_NAME` / `_AGENT_SLUG` / `_PAT_NAME` | No | `IBEX Harness` / `ibex` / `owner@ibex.local` / `Owner` / `Default Agent` / `default` / `Bootstrap PAT` | First-run identity inputs for the one-shot `bootstrap` command | Non-secret; slug and email shapes are validated before SQL |
+
+### Session RPC contract (API → AuthService)
+
+The two credentials above are not interchangeable, and one gRPC metadata key carries the tenant the call is for.
+
+| Element | Value | Enforced at |
+|---|---|---|
+| Lifecycle bearer | `IBEX_AUTH_LIFECYCLE_TOKEN`, `x-ibex-service-token` metadata | `services/auth/internal/grpc/authz.go`:39-61,117-124 |
+| Issue bearer | `IBEX_AUTH_ISSUE_TOKEN`, same metadata key | `services/auth/internal/grpc/authz.go`:39-61,125-127 |
+| Org assertion | `x-ibex-expected-org` — exactly one non-empty value | `services/auth/internal/grpc/authz.go`:145-159 |
+| Org comparison | asserted value must equal the session's org; mismatch is `PermissionDenied` | `services/auth/internal/grpc/authz.go`:168-180 |
+
+A call to `ValidateOperatorSession`, `RevokeOperatorSession` or `ConsumeStepUp` with the lifecycle bearer but **no** `x-ibex-expected-org` is refused (`PermissionDenied`, "missing expected org assertion"); an issue bearer cannot call them at all. What this does not buy: the API holds both values, so a compromised API can assert any org. The assertion is a correctness fence against org-blind calls, not a boundary against a compromised caller. Per-org credentials or mTLS caller identity remain open (S04 residual).
 
 ### gRPC (internal ValidateToken)
 
@@ -575,7 +599,7 @@ worker unless explicitly aliased in a future milestone.
 | `IBEX_WORKER_METRICS_PORT` | No | `8006` | Prometheus `/metrics` HTTP port | Memory service uses `8005` |
 | `IBEX_WORKER_ENQUEUE_PORT` | No (**3.5.D.4**) | `8007` | Starlette port for `POST /internal/extraction/enqueue` and `GET /health` | Co-located with Celery worker (ADR-0072) |
 | `IBEX_WORKER_ENQUEUE_HOST` | No (**3.5.D.4**) | `127.0.0.1` | Bind host for enqueue HTTP | Containers set `0.0.0.0` explicitly for probes |
-| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Yes* (**3.5.D.4**) | (none) | Static Bearer for proxy→worker enqueue | **No non-empty default.** Missing/blank → enqueue HTTP server does not start (fail-closed enablement). `POST /internal/extraction/enqueue` uses `hmac.compare_digest`. Probe `GET /health` stays unauthenticated (liveness only; no secrets), matching embedder `/health`. Secret; never logged |
+| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Yes* (**3.5.D.4**) | (none) | Static bearer **and** claim-signing key for proxy→worker enqueue. The bearer is transport authentication; the tenant authority is the signed `x-ibex-claim` | **No non-empty default.** Missing/blank → enqueue HTTP server does not start (fail-closed enablement). `POST /internal/extraction/enqueue` compares the bearer with `hmac.compare_digest` (401 on mismatch), then verifies `x-ibex-claim` — v1, HMAC-SHA256, 60 s TTL with 5 s skew — and refuses a body naming a different org/agent/session (403) (`services/worker/app/enqueue_http.py`:101-160). Probe `GET /health` stays unauthenticated (liveness only; no secrets), matching embedder `/health`. Secret; never logged. **Known limit:** the claim key is the same value as the bearer, so a leaked bearer can still forge a claim (`:122-126`) |
 | `IBEX_WORKER_EXTRACTION_PROVIDER` | No | `openai` | Extraction LLM backend: `openai` or `vllm` | Alias: `EXTRACTION_PROVIDER`. Fail-closed at first extract if required secrets/URL missing |
 | `OPENAI_API_KEY` | Conditional | (none) | Bearer token for hosted OpenAI extraction | Required when provider=`openai`. Alias: `IBEX_WORKER_OPENAI_API_KEY` |
 | `IBEX_WORKER_EXTRACTION_OPENAI_MODEL` | No | `gpt-4o-mini` | OpenAI model id | |
@@ -608,7 +632,7 @@ Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or one of
 | `IBEX_CONTEXT_PACKER_MAX_CONSECUTIVE_SKIPS` | No | `5` | Greedy consecutive-skip stop (also in §9) |
 | `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` | No | `16` | `secrets.token_urlsafe` nbytes for **per-assembly** memory delimiter nonce (1..64; [ADR-0070](../engineering/adr/0070-context-formatter-ordering-nonce.md)) |
 | `IBEX_CONTEXT_MEMORY_BASE_URL` | Conditional | (none) | Memory service base URL for hot/cold HTTP |
-| `IBEX_CONTEXT_MEMORY_API_TOKEN` | Conditional | (none) | Bearer token with `memory:read` |
+| `IBEX_CONTEXT_MEMORY_API_TOKEN` | Conditional | (none) | Bearer token with `memory:read` bound to one org. Context also sends `X-Ibex-Org-Id` for the org it is assembling for; memory refuses a mismatch with 403 `ORG_MISMATCH` before any read and a non-UUID value with 400 (`services/context/app/clients/memory.py`:30; `services/memory/app/deps.py`:112-147`). An absent header keeps the token's org, so an older context deployment still works | Secret; never logged. The header can only narrow access — the tenant is still derived from the validated token |
 | `IBEX_CONTEXT_REDIS_URL` / `REDIS_URL` | Conditional | (none) | Redis for directive cache envelope |
 | `IBEX_CONTEXT_DEADLINE_MS` | No | `40` | Server-side retrieval wall for AssembleContext; effective wait `min(IBEX_CONTEXT_TIMEOUT, deadline)` ([ADR-0071](../engineering/adr/0071-context-grpc-degradation-deadline.md)) |
 | `IBEX_CONTEXT_GRPC_ADDR` | No | `127.0.0.1:9092` | ContextAssemblyService bind address (`python -m app`); must be a loopback IP literal (`127.0.0.1` or `::1`) — hostnames are rejected rather than resolved — or the server refuses to start ([ADR-0096](adr/0096-context-grpc-caller-authentication.md)) |

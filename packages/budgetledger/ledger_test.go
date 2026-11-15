@@ -98,6 +98,7 @@ func TestNewPostgresLedgerRequiresDatabase(t *testing.T) {
 // expectBeginScoped wires the transaction preamble every ledger tx shares.
 func expectBeginScoped(mock sqlmock.Sqlmock, orgID uuid.UUID) {
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`SELECT set_config`).WithArgs(orgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`pg_advisory_xact_lock`).WithArgs(orgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 }
@@ -105,6 +106,7 @@ func expectBeginScoped(mock sqlmock.Sqlmock, orgID uuid.UUID) {
 // expectBeginSettled wires the transaction preamble for finalize/release.
 func expectBeginSettled(mock sqlmock.Sqlmock, orgID uuid.UUID) {
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`SELECT set_config`).WithArgs(orgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
@@ -562,143 +564,161 @@ func TestNewOptionalPostgresLedgerBuildsFromDatabase(t *testing.T) {
 	}
 }
 
+// claimFailureCase is one dependency inside Claim that can fail: arrange queues
+// the transaction preamble and fails exactly that statement.
+type claimFailureCase struct {
+	name    string
+	arrange func(sqlmock.Sqlmock, uuid.UUID, uuid.UUID)
+}
+
+// claimFailureCases covers every dependency Claim touches, so a failure anywhere
+// in the transaction surfaces instead of yielding an unscoped or half-applied
+// claim.
+var claimFailureCases = []claimFailureCase{
+	{
+		name: "begin",
+		arrange: func(mock sqlmock.Sqlmock, _, _ uuid.UUID) {
+			mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
+		},
+	},
+	{
+		name: "tenant role",
+		arrange: func(mock sqlmock.Sqlmock, _, _ uuid.UUID) {
+			mock.ExpectBegin()
+			mock.ExpectExec(`SET LOCAL ROLE ibex_app`).
+				WillReturnError(errors.New("role denied"))
+			mock.ExpectRollback()
+		},
+	},
+	{
+		name: "org scope",
+		arrange: func(mock sqlmock.Sqlmock, org, _ uuid.UUID) {
+			mock.ExpectBegin()
+			mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).
+				WillReturnError(errors.New("scope failed"))
+			mock.ExpectRollback()
+		},
+	},
+	{
+		name: "admission lock",
+		arrange: func(mock sqlmock.Sqlmock, org, _ uuid.UUID) {
+			mock.ExpectBegin()
+			mock.ExpectExec(`SET LOCAL ROLE ibex_app`).WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec(`pg_advisory_xact_lock`).WithArgs(org.String()).
+				WillReturnError(errors.New("lock failed"))
+			mock.ExpectRollback()
+		},
+	},
+	{
+		name: "active period",
+		arrange: func(mock sqlmock.Sqlmock, org, _ uuid.UUID) {
+			expectBeginScoped(mock, org)
+			mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
+				WillReturnError(errors.New("period failed"))
+			mock.ExpectRollback()
+		},
+	},
+	{
+		name: "reservation load",
+		arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID) {
+			expectBeginScoped(mock, org)
+			mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
+				WillReturnRows(activePeriodRows(uuid.New(), 10_000, 0))
+			mock.ExpectQuery(`FROM ibex_core\.budget_reservations[\s\S]*FOR UPDATE`).
+				WithArgs(org, agent, "k").
+				WillReturnError(errors.New("load failed"))
+			mock.ExpectRollback()
+		},
+	},
+	{
+		name: "fresh holds",
+		arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID) {
+			expectBeginScoped(mock, org)
+			mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
+				WillReturnRows(activePeriodRows(uuid.New(), 10_000, 0))
+			expectNoReservationRow(mock, org, agent, "k")
+			mock.ExpectQuery(`SELECT COALESCE`).WithArgs(org, sqlmock.AnyArg(), uuid.Nil).
+				WillReturnError(errors.New("holds failed"))
+			mock.ExpectRollback()
+		},
+	},
+	{
+		name: "fresh insert",
+		arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID) {
+			expectBeginScoped(mock, org)
+			mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
+				WillReturnRows(activePeriodRows(uuid.New(), 10_000, 0))
+			expectNoReservationRow(mock, org, agent, "k")
+			mock.ExpectQuery(`SELECT COALESCE`).WithArgs(org, sqlmock.AnyArg(), uuid.Nil).
+				WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(0))
+			mock.ExpectQuery(`INSERT INTO ibex_core\.budget_reservations`).
+				WillReturnError(errors.New("insert failed"))
+			mock.ExpectRollback()
+		},
+	},
+	{
+		name: "reclaim holds",
+		arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID) {
+			expectBeginScoped(mock, org)
+			mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
+				WillReturnRows(activePeriodRows(uuid.New(), 10_000, 0))
+			expired := time.Now().UTC().Add(-time.Minute)
+			mock.ExpectQuery(`FROM ibex_core\.budget_reservations[\s\S]*FOR UPDATE`).
+				WithArgs(org, agent, "k").
+				WillReturnRows(reservationRows(reservationSpec{
+					id: uuid.New(), hash: "h", state: "claimed", lease: &expired, version: 1,
+				}))
+			mock.ExpectQuery(`SELECT COALESCE`).WithArgs(org, sqlmock.AnyArg(), sqlmock.AnyArg()).
+				WillReturnError(errors.New("holds failed"))
+			mock.ExpectRollback()
+		},
+	},
+	{
+		name: "reclaim reset",
+		arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID) {
+			expectBeginScoped(mock, org)
+			mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
+				WillReturnRows(activePeriodRows(uuid.New(), 10_000, 0))
+			expired := time.Now().UTC().Add(-time.Minute)
+			mock.ExpectQuery(`FROM ibex_core\.budget_reservations[\s\S]*FOR UPDATE`).
+				WithArgs(org, agent, "k").
+				WillReturnRows(reservationRows(reservationSpec{
+					id: uuid.New(), hash: "h", state: "claimed", lease: &expired, version: 1,
+				}))
+			mock.ExpectQuery(`SELECT COALESCE`).WithArgs(org, sqlmock.AnyArg(), sqlmock.AnyArg()).
+				WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(0))
+			mock.ExpectQuery(`UPDATE ibex_core\.budget_reservations`).
+				WillReturnError(errors.New("reset failed"))
+			mock.ExpectRollback()
+		},
+	},
+	{
+		name: "expire stale",
+		arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID) {
+			expectBeginScoped(mock, org)
+			mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
+				WillReturnRows(activePeriodRows(uuid.New(), 1_000, 1_000))
+			expired := time.Now().UTC().Add(-time.Minute)
+			mock.ExpectQuery(`FROM ibex_core\.budget_reservations[\s\S]*FOR UPDATE`).
+				WithArgs(org, agent, "k").
+				WillReturnRows(reservationRows(reservationSpec{
+					id: uuid.New(), hash: "h", state: "claimed", lease: &expired, version: 1,
+				}))
+			mock.ExpectQuery(`SELECT COALESCE`).WithArgs(org, sqlmock.AnyArg(), sqlmock.AnyArg()).
+				WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(0))
+			mock.ExpectExec(`UPDATE ibex_core\.budget_reservations`).
+				WillReturnError(errors.New("expire failed"))
+			mock.ExpectRollback()
+		},
+	}}
+
 func TestClaimPropagatesDependencyErrors(t *testing.T) {
 	t.Parallel()
 	req := ClaimRequest{Key: "k", RequestHash: "h", EstimatedCents: 10}
-	cases := []struct {
-		name    string
-		arrange func(sqlmock.Sqlmock, uuid.UUID, uuid.UUID)
-	}{
-		{
-			name: "begin",
-			arrange: func(mock sqlmock.Sqlmock, _, _ uuid.UUID) {
-				mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
-			},
-		},
-		{
-			name: "org scope",
-			arrange: func(mock sqlmock.Sqlmock, org, _ uuid.UUID) {
-				mock.ExpectBegin()
-				mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).
-					WillReturnError(errors.New("scope failed"))
-				mock.ExpectRollback()
-			},
-		},
-		{
-			name: "admission lock",
-			arrange: func(mock sqlmock.Sqlmock, org, _ uuid.UUID) {
-				mock.ExpectBegin()
-				mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).
-					WillReturnResult(sqlmock.NewResult(0, 1))
-				mock.ExpectExec(`pg_advisory_xact_lock`).WithArgs(org.String()).
-					WillReturnError(errors.New("lock failed"))
-				mock.ExpectRollback()
-			},
-		},
-		{
-			name: "active period",
-			arrange: func(mock sqlmock.Sqlmock, org, _ uuid.UUID) {
-				expectBeginScoped(mock, org)
-				mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
-					WillReturnError(errors.New("period failed"))
-				mock.ExpectRollback()
-			},
-		},
-		{
-			name: "reservation load",
-			arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID) {
-				expectBeginScoped(mock, org)
-				mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
-					WillReturnRows(activePeriodRows(uuid.New(), 10_000, 0))
-				mock.ExpectQuery(`FROM ibex_core\.budget_reservations[\s\S]*FOR UPDATE`).
-					WithArgs(org, agent, "k").
-					WillReturnError(errors.New("load failed"))
-				mock.ExpectRollback()
-			},
-		},
-		{
-			name: "fresh holds",
-			arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID) {
-				expectBeginScoped(mock, org)
-				mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
-					WillReturnRows(activePeriodRows(uuid.New(), 10_000, 0))
-				expectNoReservationRow(mock, org, agent, "k")
-				mock.ExpectQuery(`SELECT COALESCE`).WithArgs(org, sqlmock.AnyArg(), uuid.Nil).
-					WillReturnError(errors.New("holds failed"))
-				mock.ExpectRollback()
-			},
-		},
-		{
-			name: "fresh insert",
-			arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID) {
-				expectBeginScoped(mock, org)
-				mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
-					WillReturnRows(activePeriodRows(uuid.New(), 10_000, 0))
-				expectNoReservationRow(mock, org, agent, "k")
-				mock.ExpectQuery(`SELECT COALESCE`).WithArgs(org, sqlmock.AnyArg(), uuid.Nil).
-					WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(0))
-				mock.ExpectQuery(`INSERT INTO ibex_core\.budget_reservations`).
-					WillReturnError(errors.New("insert failed"))
-				mock.ExpectRollback()
-			},
-		},
-		{
-			name: "reclaim holds",
-			arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID) {
-				expectBeginScoped(mock, org)
-				mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
-					WillReturnRows(activePeriodRows(uuid.New(), 10_000, 0))
-				expired := time.Now().UTC().Add(-time.Minute)
-				mock.ExpectQuery(`FROM ibex_core\.budget_reservations[\s\S]*FOR UPDATE`).
-					WithArgs(org, agent, "k").
-					WillReturnRows(reservationRows(reservationSpec{
-						id: uuid.New(), hash: "h", state: "claimed", lease: &expired, version: 1,
-					}))
-				mock.ExpectQuery(`SELECT COALESCE`).WithArgs(org, sqlmock.AnyArg(), sqlmock.AnyArg()).
-					WillReturnError(errors.New("holds failed"))
-				mock.ExpectRollback()
-			},
-		},
-		{
-			name: "reclaim reset",
-			arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID) {
-				expectBeginScoped(mock, org)
-				mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
-					WillReturnRows(activePeriodRows(uuid.New(), 10_000, 0))
-				expired := time.Now().UTC().Add(-time.Minute)
-				mock.ExpectQuery(`FROM ibex_core\.budget_reservations[\s\S]*FOR UPDATE`).
-					WithArgs(org, agent, "k").
-					WillReturnRows(reservationRows(reservationSpec{
-						id: uuid.New(), hash: "h", state: "claimed", lease: &expired, version: 1,
-					}))
-				mock.ExpectQuery(`SELECT COALESCE`).WithArgs(org, sqlmock.AnyArg(), sqlmock.AnyArg()).
-					WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(0))
-				mock.ExpectQuery(`UPDATE ibex_core\.budget_reservations`).
-					WillReturnError(errors.New("reset failed"))
-				mock.ExpectRollback()
-			},
-		},
-		{
-			name: "expire stale",
-			arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID) {
-				expectBeginScoped(mock, org)
-				mock.ExpectQuery(`FROM ibex_billing\.budget_periods`).WithArgs(org).
-					WillReturnRows(activePeriodRows(uuid.New(), 1_000, 1_000))
-				expired := time.Now().UTC().Add(-time.Minute)
-				mock.ExpectQuery(`FROM ibex_core\.budget_reservations[\s\S]*FOR UPDATE`).
-					WithArgs(org, agent, "k").
-					WillReturnRows(reservationRows(reservationSpec{
-						id: uuid.New(), hash: "h", state: "claimed", lease: &expired, version: 1,
-					}))
-				mock.ExpectQuery(`SELECT COALESCE`).WithArgs(org, sqlmock.AnyArg(), sqlmock.AnyArg()).
-					WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(0))
-				mock.ExpectExec(`UPDATE ibex_core\.budget_reservations`).
-					WillReturnError(errors.New("expire failed"))
-				mock.ExpectRollback()
-			},
-		},
-	}
-	for _, tc := range cases {
+	for _, tc := range claimFailureCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			mock, ledger, org, agent := newTestLedger(t, DefaultLease)
@@ -732,81 +752,87 @@ func TestClaimExceededSkipsExpireForTerminalRow(t *testing.T) {
 	assertMockDone(t, mock)
 }
 
+// settleFailureCase is one dependency inside Finalize or Release that can fail:
+// arrange queues the statements, and call runs the settlement under test.
+type settleFailureCase struct {
+	name    string
+	arrange func(sqlmock.Sqlmock, uuid.UUID, uuid.UUID, Reservation)
+	call    func(*PostgresLedger, Reservation) error
+}
+
+// settleFailureCases covers every dependency the two settlement paths touch, so
+// a failure surfaces instead of leaving the reservation in doubt.
+var settleFailureCases = []settleFailureCase{
+	{
+		name: "finalize exec",
+		arrange: func(mock sqlmock.Sqlmock, org, _ uuid.UUID, _ Reservation) {
+			expectBeginSettled(mock, org)
+			mock.ExpectExec(`UPDATE ibex_core\.budget_reservations`).
+				WillReturnError(errors.New("exec failed"))
+			mock.ExpectRollback()
+		},
+		call: func(ledger *PostgresLedger, claim Reservation) error {
+			return ledger.Finalize(context.Background(), claim, 5, CompletenessComplete)
+		},
+	},
+	{
+		name: "finalize rows affected",
+		arrange: func(mock sqlmock.Sqlmock, org, _ uuid.UUID, _ Reservation) {
+			expectBeginSettled(mock, org)
+			mock.ExpectExec(`UPDATE ibex_core\.budget_reservations`).
+				WillReturnResult(sqlmock.NewErrorResult(errors.New("rows failed")))
+			mock.ExpectRollback()
+		},
+		call: func(ledger *PostgresLedger, claim Reservation) error {
+			return ledger.Finalize(context.Background(), claim, 5, CompletenessComplete)
+		},
+	},
+	{
+		name: "finalize state load",
+		arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID, claim Reservation) {
+			expectBeginSettled(mock, org)
+			mock.ExpectExec(`UPDATE ibex_core\.budget_reservations`).
+				WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectQuery(`SELECT state, amount_final_cents, finalized_completeness, version`).
+				WithArgs(claim.ID, org, agent, "k").
+				WillReturnError(errors.New("state failed"))
+			mock.ExpectRollback()
+		},
+		call: func(ledger *PostgresLedger, claim Reservation) error {
+			return ledger.Finalize(context.Background(), claim, 5, CompletenessComplete)
+		},
+	},
+	{
+		name: "release exec",
+		arrange: func(mock sqlmock.Sqlmock, org, _ uuid.UUID, _ Reservation) {
+			expectBeginSettled(mock, org)
+			mock.ExpectExec(`UPDATE ibex_core\.budget_reservations`).
+				WillReturnError(errors.New("exec failed"))
+			mock.ExpectRollback()
+		},
+		call: func(ledger *PostgresLedger, claim Reservation) error {
+			return ledger.Release(context.Background(), claim)
+		},
+	},
+	{
+		name: "release state load",
+		arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID, claim Reservation) {
+			expectBeginSettled(mock, org)
+			mock.ExpectExec(`UPDATE ibex_core\.budget_reservations`).
+				WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectQuery(`SELECT state, amount_final_cents, finalized_completeness, version`).
+				WithArgs(claim.ID, org, agent, "k").
+				WillReturnError(errors.New("state failed"))
+			mock.ExpectRollback()
+		},
+		call: func(ledger *PostgresLedger, claim Reservation) error {
+			return ledger.Release(context.Background(), claim)
+		},
+	}}
+
 func TestSettlePropagatesDependencyErrors(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name    string
-		arrange func(sqlmock.Sqlmock, uuid.UUID, uuid.UUID, Reservation)
-		call    func(*PostgresLedger, Reservation) error
-	}{
-		{
-			name: "finalize exec",
-			arrange: func(mock sqlmock.Sqlmock, org, _ uuid.UUID, _ Reservation) {
-				expectBeginSettled(mock, org)
-				mock.ExpectExec(`UPDATE ibex_core\.budget_reservations`).
-					WillReturnError(errors.New("exec failed"))
-				mock.ExpectRollback()
-			},
-			call: func(ledger *PostgresLedger, claim Reservation) error {
-				return ledger.Finalize(context.Background(), claim, 5, CompletenessComplete)
-			},
-		},
-		{
-			name: "finalize rows affected",
-			arrange: func(mock sqlmock.Sqlmock, org, _ uuid.UUID, _ Reservation) {
-				expectBeginSettled(mock, org)
-				mock.ExpectExec(`UPDATE ibex_core\.budget_reservations`).
-					WillReturnResult(sqlmock.NewErrorResult(errors.New("rows failed")))
-				mock.ExpectRollback()
-			},
-			call: func(ledger *PostgresLedger, claim Reservation) error {
-				return ledger.Finalize(context.Background(), claim, 5, CompletenessComplete)
-			},
-		},
-		{
-			name: "finalize state load",
-			arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID, claim Reservation) {
-				expectBeginSettled(mock, org)
-				mock.ExpectExec(`UPDATE ibex_core\.budget_reservations`).
-					WillReturnResult(sqlmock.NewResult(0, 0))
-				mock.ExpectQuery(`SELECT state, amount_final_cents, finalized_completeness, version`).
-					WithArgs(claim.ID, org, agent, "k").
-					WillReturnError(errors.New("state failed"))
-				mock.ExpectRollback()
-			},
-			call: func(ledger *PostgresLedger, claim Reservation) error {
-				return ledger.Finalize(context.Background(), claim, 5, CompletenessComplete)
-			},
-		},
-		{
-			name: "release exec",
-			arrange: func(mock sqlmock.Sqlmock, org, _ uuid.UUID, _ Reservation) {
-				expectBeginSettled(mock, org)
-				mock.ExpectExec(`UPDATE ibex_core\.budget_reservations`).
-					WillReturnError(errors.New("exec failed"))
-				mock.ExpectRollback()
-			},
-			call: func(ledger *PostgresLedger, claim Reservation) error {
-				return ledger.Release(context.Background(), claim)
-			},
-		},
-		{
-			name: "release state load",
-			arrange: func(mock sqlmock.Sqlmock, org, agent uuid.UUID, claim Reservation) {
-				expectBeginSettled(mock, org)
-				mock.ExpectExec(`UPDATE ibex_core\.budget_reservations`).
-					WillReturnResult(sqlmock.NewResult(0, 0))
-				mock.ExpectQuery(`SELECT state, amount_final_cents, finalized_completeness, version`).
-					WithArgs(claim.ID, org, agent, "k").
-					WillReturnError(errors.New("state failed"))
-				mock.ExpectRollback()
-			},
-			call: func(ledger *PostgresLedger, claim Reservation) error {
-				return ledger.Release(context.Background(), claim)
-			},
-		},
-	}
-	for _, tc := range cases {
+	for _, tc := range settleFailureCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			mock, ledger, org, agent := newTestLedger(t, 0)

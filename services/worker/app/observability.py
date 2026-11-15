@@ -20,7 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.config import Settings, get_settings
-from app.db import create_engine, create_session_factory
+from app.db import assert_capability_login, create_engine, create_session_factory
 from app.repositories.failed_tasks import FailedTaskRecord, insert_failed_task
 from app.task_context import (
     parse_org_id,
@@ -308,6 +308,19 @@ def _init_database(settings: Settings) -> None:
     _session_factory = create_session_factory(_engine)
 
 
+def _assert_database_login() -> None:
+    """Fail worker startup unless the pool is the ``ibex_worker`` capability login.
+
+    A wrong password already fails loudly at connect. A wrong login starts
+    silently and re-enables the RLS bypass the tenancy guarantee rests on, so it
+    fails the worker's process init instead. Runs once per process, never per
+    task; skipped when no database is configured.
+    """
+    if _engine is None or _worker_loop is None:
+        return
+    _worker_loop.run_until_complete(assert_capability_login(_engine))
+
+
 @worker_process_init.connect
 def _on_worker_process_init(**signal_kwargs: Any) -> None:
     global _worker_loop
@@ -316,6 +329,7 @@ def _on_worker_process_init(**signal_kwargs: Any) -> None:
     asyncio.set_event_loop(_worker_loop)
     init_tracing()
     _init_database(get_settings())
+    _assert_database_login()
 
 
 @worker_ready.connect

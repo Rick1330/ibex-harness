@@ -3,6 +3,16 @@
 Mirrors services/worker HttpMemoryWriter conventions (Bearer auth, per-call
 timeout, typed transport errors) but uses httpx.AsyncClient and does not
 retry — assembly fail-opens on branch failure.
+
+Every call presents the shared service token *and* the org the assembly is
+serving, as ``X-Ibex-Org-Id``. Memory derives the tenant from the token and
+refuses a header that disagrees with it (403), so a wrong or stale credential
+is a loud branch error instead of a silent empty result.
+
+This does **not** let context serve an org its token does not belong to. The
+token still fixes the tenant; sending the header only makes the mismatch
+visible. Serving more than one org needs per-org credentials and is deferred
+(stage 2 of the v1 tenancy release plan).
 """
 
 from __future__ import annotations
@@ -15,6 +25,10 @@ from uuid import UUID
 
 import httpx
 
+# Header carrying the org the assembly is scoped to; memory compares it to the
+# token's org and answers 403 on a mismatch (never a silent re-scope).
+ORG_HEADER = "X-Ibex-Org-Id"
+
 
 class MemoryHttpError(Exception):
     """Non-retryable memory HTTP failure for a retrieval branch."""
@@ -26,6 +40,16 @@ class MemoryHttpError(Exception):
 
 class MemoryHttpTimeout(MemoryHttpError):
     """Memory HTTP call timed out."""
+
+
+class MemoryHttpForbidden(MemoryHttpError):
+    """Memory refused the call for this org or token (HTTP 403).
+
+    Kept distinct from the generic ``MemoryHttpError`` so retrieval can report
+    ``memory_forbidden`` instead of an opaque status: a 403 is the one memory
+    failure that means "the answer you got would have been wrong", and it must
+    not be mistaken for "this org has no memories".
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +81,7 @@ class MemoryHitPayload:
 
 @dataclass(frozen=True, slots=True)
 class HotMemoriesRequest:
+    org_id: UUID
     agent_id: UUID
     timeout_seconds: float
     limit: int = 20
@@ -65,6 +90,7 @@ class HotMemoriesRequest:
 
 @dataclass(frozen=True, slots=True)
 class SearchMemoriesRequest:
+    org_id: UUID
     agent_id: UUID
     query: str
     timeout_seconds: float
@@ -76,6 +102,7 @@ class SearchMemoriesRequest:
 class _MemoryCall:
     method: str
     path: str
+    org_id: str
     params: Mapping[str, Any] | None = None
     json: Mapping[str, Any] | None = None
 
@@ -85,6 +112,7 @@ def _build_memory_call(request: HotMemoriesRequest | SearchMemoriesRequest) -> _
         return _MemoryCall(
             method="GET",
             path="/v1/memories/hot",
+            org_id=str(request.org_id),
             params={
                 "agent_id": str(request.agent_id),
                 "limit": request.limit,
@@ -94,6 +122,7 @@ def _build_memory_call(request: HotMemoriesRequest | SearchMemoriesRequest) -> _
     return _MemoryCall(
         method="POST",
         path="/v1/memories/search",
+        org_id=str(request.org_id),
         json={
             "agent_id": str(request.agent_id),
             "query": request.query,
@@ -138,23 +167,38 @@ class MemoryHttpClient:
         response = await self._send(call, url, timeout_seconds)
         return _hits_from_search_response(response)
 
+    def _headers(self, call: _MemoryCall) -> dict[str, str]:
+        """Auth, accept, and the org this call is scoped to."""
+        headers = {
+            "Authorization": f"Bearer {self._config.token}",
+            "Accept": "application/json",
+            ORG_HEADER: call.org_id,
+        }
+        if call.json is not None:
+            headers["Content-Type"] = "application/json"
+        return headers
+
     async def _send(
         self,
         call: _MemoryCall,
         url: str,
         timeout_seconds: float,
     ) -> httpx.Response:
-        headers = {
-            "Authorization": f"Bearer {self._config.token}",
-            "Accept": "application/json",
-        }
-        if call.json is not None:
-            headers["Content-Type"] = "application/json"
+        response = await self._request(call, url, timeout_seconds)
+        _raise_for_status(response)
+        return response
+
+    async def _request(
+        self,
+        call: _MemoryCall,
+        url: str,
+        timeout_seconds: float,
+    ) -> httpx.Response:
         try:
-            response = await self._client.request(
+            return await self._client.request(
                 call.method,
                 url,
-                headers=headers,
+                headers=self._headers(call),
                 params=call.params,
                 json=call.json,
                 timeout=timeout_seconds,
@@ -163,12 +207,20 @@ class MemoryHttpClient:
             raise MemoryHttpTimeout("memory service timeout") from exc
         except httpx.TransportError as exc:
             raise MemoryHttpError("memory service transport error") from exc
-        if response.status_code >= 400:
-            raise MemoryHttpError(
-                f"memory service HTTP {response.status_code}",
-                status_code=response.status_code,
-            )
-        return response
+
+
+def _raise_for_status(response: httpx.Response) -> None:
+    """Map a refused or failed memory response to the typed client errors."""
+    if response.status_code == 403:
+        raise MemoryHttpForbidden(
+            "memory service refused this org",
+            status_code=response.status_code,
+        )
+    if response.status_code >= 400:
+        raise MemoryHttpError(
+            f"memory service HTTP {response.status_code}",
+            status_code=response.status_code,
+        )
 
 
 def _hits_from_search_response(response: httpx.Response) -> list[MemoryHitPayload]:

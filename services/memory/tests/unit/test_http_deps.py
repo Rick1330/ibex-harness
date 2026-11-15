@@ -21,6 +21,7 @@ from app.deps import (
     get_validator,
     get_write_orchestrator,
     require_memory_read,
+    require_memory_read_for_org,
     require_memory_write,
     require_token,
 )
@@ -97,6 +98,33 @@ def test_require_memory_read_forbidden() -> None:
 def test_require_memory_read_success() -> None:
     token = ValidateResult(org_id=uuid4(), permissions=MEMORY_READ)
     assert require_memory_read(token) is token
+
+
+def test_require_memory_read_for_org_absent_header_is_token_org() -> None:
+    token = ValidateResult(org_id=uuid4(), permissions=MEMORY_READ)
+    assert require_memory_read_for_org(token, None) is token
+
+
+def test_require_memory_read_for_org_matching_header_passes() -> None:
+    org_id = uuid4()
+    token = ValidateResult(org_id=org_id, permissions=MEMORY_READ)
+    assert require_memory_read_for_org(token, str(org_id)) is token
+
+
+def test_require_memory_read_for_org_mismatch_is_403() -> None:
+    token = ValidateResult(org_id=uuid4(), permissions=MEMORY_READ)
+    with pytest.raises(HTTPException) as exc:
+        require_memory_read_for_org(token, str(uuid4()))
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "ORG_MISMATCH"
+
+
+def test_require_memory_read_for_org_malformed_header_is_400() -> None:
+    token = ValidateResult(org_id=uuid4(), permissions=MEMORY_READ)
+    with pytest.raises(HTTPException) as exc:
+        require_memory_read_for_org(token, "not-a-uuid")
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "INVALID_ORG_HEADER"
 
 
 def test_get_read_repository_missing_returns_503() -> None:

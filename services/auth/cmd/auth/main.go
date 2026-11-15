@@ -105,9 +105,9 @@ type authRuntime struct {
 }
 
 func initAuthRuntime(cfg config.Config, log *logger.Logger, res *bootstrapResources) (authRuntime, error) {
-	db, err := openAuthPostgres(cfg)
+	db, err := openVerifiedAuthPostgres(cfg)
 	if err != nil {
-		log.ErrorCtx(context.Background(), "postgres open failed", "error", err)
+		log.ErrorCtx(context.Background(), "postgres open or login verification failed", "error", err)
 		return authRuntime{}, err
 	}
 	res.db = db
@@ -151,17 +151,17 @@ func loadAuthBootstrap() (config.Config, *logger.Logger, bool) {
 }
 
 type authServiceDeps struct {
-	validator        *token.Validator
-	authServiceToken string
-	tokenSvc         *service.TokenService
-	credSvc          *service.ProviderCredentialService
-	totpSvc          *service.TotpService
-	sessionIssuer    *sessionjwt.Issuer
-	policyIssuer     *policysnapshot.Issuer
-	agentsRepo       *repository.AgentsRepository
-	redisClient      redis.UniversalClient
-	validateLimiter  ratelimit.KeyedLimiter
-	log              *logger.Logger
+	validator       *token.Validator
+	serviceTokens   grpcserver.ServiceTokens
+	tokenSvc        *service.TokenService
+	credSvc         *service.ProviderCredentialService
+	totpSvc         *service.TotpService
+	sessionIssuer   *sessionjwt.Issuer
+	policyIssuer    *policysnapshot.Issuer
+	agentsRepo      *repository.AgentsRepository
+	redisClient     redis.UniversalClient
+	validateLimiter ratelimit.KeyedLimiter
+	log             *logger.Logger
 }
 
 func initAuthServices(
@@ -187,7 +187,7 @@ func initAuthServices(
 		return authServiceDeps{}, err
 	}
 	return authServiceDeps{
-		validator: core.validator, authServiceToken: cfg.AuthServiceToken, tokenSvc: core.tokenSvc, credSvc: credSvc,
+		validator: core.validator, serviceTokens: grpcserver.ServiceTokens{Lifecycle: cfg.AuthLifecycleToken, Issue: cfg.AuthIssueToken}, tokenSvc: core.tokenSvc, credSvc: credSvc,
 		totpSvc: totpSvc, sessionIssuer: sessionIssuer, policyIssuer: policyIssuer,
 		agentsRepo: core.agentsRepo, redisClient: core.redisClient,
 		validateLimiter: core.validateLimiter, log: log,
@@ -404,7 +404,7 @@ func newAuthGRPCServer(cfg config.Config, deps authServiceDeps, reg *ibexmetrics
 				Limiter: deps.validateLimiter,
 				Log:     deps.log,
 			}),
-			grpcserver.AuthzUnaryInterceptorWithServiceToken(deps.validator, deps.authServiceToken),
+			grpcserver.AuthzUnaryInterceptorWithServiceTokens(deps.validator, deps.serviceTokens),
 		),
 	}
 	if transport != nil {

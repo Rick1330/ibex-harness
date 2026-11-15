@@ -48,13 +48,19 @@ type Config struct {
 	JWTAccessTTL           time.Duration
 	JWTRefreshTTL          time.Duration
 	JWTStepUpTTL           time.Duration
-	AuthServiceToken       string
-	PolicySigningKeyPEM    string
-	PolicySigningKeyID     string
-	PolicyEpoch            int64
-	Argon2                 token.Argon2Params
-	ShutdownTimeout        time.Duration
-	Telemetry              telemetry.Config
+	// AuthLifecycleToken authenticates ValidateOperatorSession,
+	// RevokeOperatorSession and ConsumeStepUp; AuthIssueToken authenticates
+	// IssueOperatorSession. They are separate credentials because they carry
+	// different authority (finding S04): one secret that could both mint and
+	// inspect or revoke any org's session was org-blind by construction.
+	AuthLifecycleToken  string
+	AuthIssueToken      string
+	PolicySigningKeyPEM string
+	PolicySigningKeyID  string
+	PolicyEpoch         int64
+	Argon2              token.Argon2Params
+	ShutdownTimeout     time.Duration
+	Telemetry           telemetry.Config
 }
 
 func Load() (Config, error) {
@@ -70,7 +76,7 @@ func (c Config) Validate() error {
 		func() error { return validatePostgresDSN(c) },
 		func() error { return validateCredentialsMasterKey(c) },
 		func() error { return validateTOTPSessionConfig(c) },
-		func() error { return validateAuthServiceToken(c) },
+		func() error { return validateAuthServiceTokens(c) },
 		func() error { return validatePolicySigningConfig(c) },
 		func() error { return validateGRPCTLS(c) },
 		func() error { return validateValidateTokenRPM(c.ValidateTokenRPM) },
@@ -84,12 +90,15 @@ func (c Config) Validate() error {
 	return nil
 }
 
-func validateAuthServiceToken(c Config) error {
+func validateAuthServiceTokens(c Config) error {
 	if !requiresAuthServiceToken(c) {
 		return nil
 	}
-	if strings.TrimSpace(c.AuthServiceToken) == "" {
-		return fmt.Errorf("IBEX_AUTH_SERVICE_TOKEN is required when operator sessions are enabled outside development")
+	if strings.TrimSpace(c.AuthLifecycleToken) == "" || strings.TrimSpace(c.AuthIssueToken) == "" {
+		return fmt.Errorf("IBEX_AUTH_LIFECYCLE_TOKEN and IBEX_AUTH_ISSUE_TOKEN are required when operator sessions are enabled outside development")
+	}
+	if c.AuthLifecycleToken == c.AuthIssueToken {
+		return fmt.Errorf("IBEX_AUTH_LIFECYCLE_TOKEN and IBEX_AUTH_ISSUE_TOKEN must differ; one secret cannot hold both authorities")
 	}
 	return nil
 }

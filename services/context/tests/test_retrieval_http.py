@@ -83,10 +83,12 @@ async def test_memory_http_client_hot_and_search_via_mock_transport() -> None:
             client=client,
         )
         hot = await memory.get_hot_memories(
-            HotMemoriesRequest(agent_id=AGENT, timeout_seconds=0.1)
+            HotMemoriesRequest(org_id=ORG, agent_id=AGENT, timeout_seconds=0.1)
         )
         cold = await memory.search_memories(
-            SearchMemoriesRequest(agent_id=AGENT, query="theme", timeout_seconds=0.1)
+            SearchMemoriesRequest(
+                org_id=ORG, agent_id=AGENT, query="theme", timeout_seconds=0.1
+            )
         )
 
     assert captured["auth"] == f"Bearer {TOKEN}"

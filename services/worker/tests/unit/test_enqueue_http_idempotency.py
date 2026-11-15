@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from _enqueue_http_test_helpers import (
     _client,
+    _enqueue_headers,
     _ledger,
     _post_enqueue,
     _valid_body,
@@ -66,14 +67,14 @@ def test_enqueue_conflicts_when_full_payload_changes() -> None:
     key = body["session_id"]
     first = client.post(
         "/internal/extraction/enqueue",
-        headers={"Authorization": "Bearer sekrit", "Idempotency-Key": key},
+        headers=_enqueue_headers(body, key=key),
         json=body,
     )
     changed = dict(body)
     changed["turns"] = [{"turn_index": 0, "role": "user", "content": "different"}]
     second = client.post(
         "/internal/extraction/enqueue",
-        headers={"Authorization": "Bearer sekrit", "Idempotency-Key": key},
+        headers=_enqueue_headers(changed, key=key),
         json=changed,
     )
     assert first.status_code == 202
@@ -130,7 +131,7 @@ def test_enqueue_concurrent_idempotent_replay() -> None:
 
     client = _client(apply_async=slow_capture)
     body = _valid_body()
-    headers = {"Authorization": "Bearer sekrit", "Idempotency-Key": "concurrent-sess"}
+    headers = _enqueue_headers(body, key="concurrent-sess")
     barrier = threading.Barrier(8)
     results: list[int] = []
     task_ids: list[str] = []
@@ -164,7 +165,7 @@ def test_enqueue_dispatch_fail_clears_idempo_reservation() -> None:
 
     client = _client(apply_async=boom)
     body = _valid_body()
-    headers = {"Authorization": "Bearer sekrit", "Idempotency-Key": "fail-clear"}
+    headers = _enqueue_headers(body, key="fail-clear")
     assert (
         client.post("/internal/extraction/enqueue", headers=headers, json=body).status_code == 503
     )
@@ -194,7 +195,7 @@ def test_enqueue_idempotent_replay_returns_original_task(
     client = _client(apply_async=capture)
     body = _valid_body()
     key = body["session_id"] if key_mode == "session_id" else "explicit-key"
-    headers = {"Authorization": "Bearer sekrit", "Idempotency-Key": key}
+    headers = _enqueue_headers(body, key=key)
     first = client.post("/internal/extraction/enqueue", headers=headers, json=body)
     if delay:
         import time

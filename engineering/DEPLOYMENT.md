@@ -108,13 +108,22 @@ is also the confusing half, because the datastores report healthy while the prof
 for the `provision` exit code before reading any other service's state. `make v1-provision` rebuilds the one-shot's
 image and re-runs it, honouring `depends_on`, so the credential write is repaired without a teardown.
 
-**The DSN cutover is not part of this profile state.** Every Compose DSN is still the owner login
-(`postgres://${POSTGRES_USER:-ibex}:…`), so `provision` makes the capability logins usable without making anything use
-them. Row-level security therefore applies only where a transaction pins `ibex_app` — `api`, `memory`, `auth`,
-`mcp-operator`, and the proxy and worker paths pinned in #1183/#1184 — and every other statement runs as the owner.
-The readiness audit recorded that login with `rolsuper=t`, so row-level security does not filter it
-(`27-v1-readiness-audit.md`, P0-06 row). Moving each service's DSN onto its capability login, and the proxy's remaining
-pins, are the next change; until they land this profile must not be described as running as capability logins.
+**Every application service connects on its capability login.** The profile's six application DSNs name the login
+directly: `bootstrap` uses `ibex_bootstrap` (`:268`), `auth` uses `ibex_auth` (`:306`), `proxy`, `api` and `memory` use
+`ibex_runtime` (`:349`, `:405`, `:452`), and `worker` uses `ibex_worker` (`:548`). Each long-running service asserts the connection
+login at startup and refuses to run on the owner or a superuser, so a DSN that authenticates successfully on the wrong
+identity fails the start rather than opening an unfiltered read: `services/proxy/internal/bootstrap/postgres.go`:280-306,
+`services/auth/cmd/auth/login.go`:57-84, `services/api/app/db.py`:46-80,
+`services/memory/app/capability_login.py`:41-72, `services/worker/app/db.py`:112-148. Only `migrate` (`:209`) and
+`provision` (`:239`) keep the owner DSN, because provision writes each capability role's password and migrations create
+cluster-global roles. Row-level security therefore applies to every application statement.
+
+Live-proven on 2026-11-15: all 13 health-checked containers came up healthy, no application connection is `ibex`, an
+unpinned cross-tenant read on `ibex_runtime` raises SQLSTATE `42501`, and a route-level cross-tenant request returns
+403. That is a live cross-tenant read plus the integration suites — not a full acceptance suite, and not a two-tenant
+browser journey (`P0-21`, `P2-07`). `make repo-guards` runs `infra/scripts/check-tenant-pin.py`, which fails a tracked
+Go or Python file that writes `app.current_org_id` without also pinning a tenant role (`SET LOCAL ROLE`, or
+`packages/pgtenant.PinOrg`).
 
 **One published port.** The Compose project publishes only the edge HTTPS port (`${IBEX_EDGE_PORT:-443}:8443`; rootless
 runtimes should set `IBEX_EDGE_PORT=8443`). Datastores, AuthService, context, memory, worker and MCP ports stay on the

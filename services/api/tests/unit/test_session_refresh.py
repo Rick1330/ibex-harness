@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -40,6 +42,16 @@ def _proto_varint(field_num: int, value: int) -> bytes:
 
 def _rpc(addr: str = "127.0.0.1:50051", token: str = "", timeout: float = 5.0) -> AuthRPC:
     return AuthRPC(addr, token, timeout)
+
+
+def _session_token(org_id: str = "org") -> str:
+    """JWT-shaped session token carrying only the claim the client reads.
+
+    The lifecycle client names the org it is acting for by reading this claim;
+    AuthService is what verifies the signature and compares the two.
+    """
+    payload = base64.urlsafe_b64encode(json.dumps({"org_id": org_id}).encode()).rstrip(b"=")
+    return f"e30.{payload.decode()}.sig"
 
 
 def test_encode_issue_with_refresh_multi_byte() -> None:
@@ -126,13 +138,15 @@ async def test_refresh_operator_session_success() -> None:
     stub = AsyncMock(return_value=resp)
     with _patch_channel(stub):
         pair = await refresh_operator_session(
-            _rpc("127.0.0.1:50051", "service-token"),
+            AuthRPC("127.0.0.1:50051", "lifecycle-token", issue_token="issue-token"),
             refresh_token="old-refresh",
         )
     assert pair.access_token == "access-rs"
     assert pair.refresh_token == "refresh-rs"
     stub.assert_awaited_once()
-    assert stub.await_args.kwargs["metadata"] == (("x-ibex-service-token", "service-token"),)
+    # Issuance presents only its own credential: the lifecycle token is refused
+    # on IssueOperatorSession, and the reverse (finding S04).
+    assert stub.await_args.kwargs["metadata"] == (("x-ibex-service-token", "issue-token"),)
 
 
 @pytest.mark.asyncio
@@ -276,7 +290,7 @@ async def test_lifecycle_rpc_clients() -> None:
     with _patch_channel(stub):
         claims = await validate_operator_session(
             _rpc("127.0.0.1:50051", "service-token"),
-            access_token="a",
+            access_token=_session_token(),
         )
         await revoke_operator_session(
             _rpc("127.0.0.1:50051", "service-token"),
@@ -284,7 +298,7 @@ async def test_lifecycle_rpc_clients() -> None:
                 session_id="sid",
                 family_id="fid",
                 access_jti="jti",
-                access_token="a",
+                access_token=_session_token(),
                 refresh_token="r",
             ),
         )
@@ -306,11 +320,15 @@ async def test_lifecycle_rpc_clients() -> None:
         1: "sid",
         2: "fid",
         3: "jti",
-        4: "a",
+        4: _session_token(),
         5: "r",
     }
     assert all(
-        call.kwargs["metadata"] == (("x-ibex-service-token", "service-token"),)
+        call.kwargs["metadata"]
+        == (
+            ("x-ibex-service-token", "service-token"),
+            ("x-ibex-expected-org", "org"),
+        )
         for call in stub.await_args_list
     )
 
@@ -326,7 +344,7 @@ async def test_validate_operator_session_defaults_omitted_proto3_permissions_to_
     with _patch_channel(AsyncMock(return_value=response)):
         claims = await validate_operator_session(
             _rpc("127.0.0.1:50051"),
-            access_token="access",
+            access_token=_session_token(),
         )
     assert claims.permissions == 0
 
@@ -347,7 +365,7 @@ async def test_validate_operator_session_rejects_each_missing_identity_claim(
     stub = AsyncMock(return_value=response)
     await _assert_rpc_raises(
         stub,
-        validate_operator_session(_rpc("127.0.0.1:50051"), access_token="access"),
+        validate_operator_session(_rpc("127.0.0.1:50051"), access_token=_session_token()),
         AuthUnavailableError,
         "incomplete claims",
     )
@@ -358,7 +376,7 @@ async def test_validate_operator_session_maps_malformed_wire_to_unavailable() ->
     stub = AsyncMock(return_value=b"\x0f")
     await _assert_rpc_raises(
         stub,
-        validate_operator_session(_rpc("127.0.0.1:50051"), access_token="access"),
+        validate_operator_session(_rpc("127.0.0.1:50051"), access_token=_session_token()),
         AuthUnavailableError,
         "codec error",
     )
@@ -378,7 +396,7 @@ async def test_validate_operator_session_maps_auth_service_errors(code, expected
     stub = AsyncMock(side_effect=grpc.aio.AioRpcError(code, details="failure"))
     await _assert_rpc_raises(
         stub,
-        validate_operator_session(_rpc("127.0.0.1:50051"), access_token="access"),
+        validate_operator_session(_rpc("127.0.0.1:50051"), access_token=_session_token()),
         expected,
         message,
     )
@@ -389,7 +407,7 @@ async def test_validate_operator_session_maps_timeout_to_unavailable() -> None:
     stub = AsyncMock(side_effect=TimeoutError())
     await _assert_rpc_raises(
         stub,
-        validate_operator_session(_rpc("localhost:50051", "", 0.01), access_token="access"),
+        validate_operator_session(_rpc("localhost:50051", "", 0.01), access_token=_session_token()),
         AuthUnavailableError,
         "timeout",
     )
@@ -533,3 +551,64 @@ async def test_missing_ca_file_maps_to_auth_unavailable() -> None:
     )
     with pytest.raises(AuthUnavailableError, match="CA"):
         await refresh_operator_session(rpc, refresh_token="refresh")
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_call_asserts_the_session_org() -> None:
+    """Finding S04: the lifecycle credential alone must not name the org."""
+    response = (
+        _proto_string(1, "subject")
+        + _proto_string(2, "org-a")
+        + _proto_string(4, "sid")
+        + _proto_string(5, "jti")
+    )
+    stub = AsyncMock(return_value=response)
+    with _patch_channel(stub):
+        await validate_operator_session(
+            _rpc("127.0.0.1:50051", "lifecycle-token"),
+            access_token=_session_token("org-a"),
+        )
+    assert stub.await_args.kwargs["metadata"] == (
+        ("x-ibex-service-token", "lifecycle-token"),
+        ("x-ibex-expected-org", "org-a"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_call_without_an_org_is_refused_before_the_rpc() -> None:
+    stub = AsyncMock(return_value=b"")
+    with _patch_channel(stub), pytest.raises(AuthFailedError, match="expected org"):
+        await consume_step_up(
+            _rpc("127.0.0.1:50051", "lifecycle-token"),
+            ConsumeStepUpParams(
+                token="step",
+                subject="subject",
+                org_id="",
+                session_id="sid",
+                action="operator.export",
+            ),
+        )
+    stub.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_validate_operator_session_refuses_an_unreadable_token() -> None:
+    stub = AsyncMock(return_value=b"")
+    with _patch_channel(stub), pytest.raises(AuthFailedError, match="unreadable"):
+        await validate_operator_session(
+            _rpc("127.0.0.1:50051", "lifecycle-token"),
+            access_token="not-a-jwt",
+        )
+    stub.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_validate_operator_session_refuses_a_token_without_an_org() -> None:
+    token = f"e30.{base64.urlsafe_b64encode(b'{}').rstrip(b'=').decode()}.sig"
+    stub = AsyncMock(return_value=b"")
+    with _patch_channel(stub), pytest.raises(AuthFailedError, match="no org"):
+        await validate_operator_session(
+            _rpc("127.0.0.1:50051", "lifecycle-token"),
+            access_token=token,
+        )
+    stub.assert_not_awaited()

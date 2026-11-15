@@ -21,8 +21,7 @@ func releaseTestClaim() ClaimToken {
 }
 
 func expectClaimTransaction(m sqlmock.Sqlmock, claim ClaimToken) {
-	m.ExpectBegin()
-	m.ExpectExec(`SELECT set_config`).WithArgs(claim.Principal.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+	expectScopedBegin(m, claim.Principal.OrgID)
 }
 
 func expectReleaseDelete(m sqlmock.Sqlmock, claim ClaimToken, result driver.Result) {
@@ -69,7 +68,7 @@ func runReleaseFailureCases(t *testing.T, claim ClaimToken) {
 		},
 		{
 			name: "scope", setup: func(m sqlmock.Sqlmock, c ClaimToken) {
-				m.ExpectBegin()
+				expectRoleBegin(m)
 				m.ExpectExec(`SELECT set_config`).WithArgs(c.Principal.OrgID.String()).WillReturnError(errors.New("scope failed"))
 			}, want: "scope failed",
 		},

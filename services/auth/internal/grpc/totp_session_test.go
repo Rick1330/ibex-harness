@@ -49,6 +49,8 @@ type fakeSessionIssuer struct {
 	revokeCalls     int
 	consumeClaims   sessionjwt.Claims
 	consumeErr      error
+	consumeCalls    int
+	consumeExpect   sessionjwt.StepUpExpectations
 }
 
 func (f *fakeSessionIssuer) IssuePair(sessionjwt.IssuePairParams) (string, string, time.Time, time.Time, error) {
@@ -82,8 +84,18 @@ func (f *fakeSessionIssuer) RevokeSession(_ context.Context, sessionID, familyID
 	return f.revokeErr
 }
 
-func (f *fakeSessionIssuer) ConsumeStepUp(context.Context, sessionjwt.RawToken, sessionjwt.StepUpExpectations) (sessionjwt.Claims, error) {
-	return f.consumeClaims, f.consumeErr
+func (f *fakeSessionIssuer) ConsumeStepUp(_ context.Context, _ sessionjwt.RawToken, expect sessionjwt.StepUpExpectations) (sessionjwt.Claims, error) {
+	f.consumeExpect = expect
+	if f.consumeErr != nil {
+		return sessionjwt.Claims{}, f.consumeErr
+	}
+	// Mirrors sessionjwt: the expectations are checked before the proof is
+	// consumed, so a refused call must not count as a consumption.
+	if expect.OrgID != "" && expect.OrgID != f.consumeClaims.OrgID {
+		return sessionjwt.Claims{}, sessionjwt.ErrInvalidToken
+	}
+	f.consumeCalls++
+	return f.consumeClaims, nil
 }
 
 func totpServer(t *testing.T, totp totpPort, sess sessionIssuerPort) *Server {

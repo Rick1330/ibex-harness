@@ -25,6 +25,7 @@ def test_health_and_ready() -> None:
     )
     with (
         patch("app.probes.postgres_ready", AsyncMock(return_value=True)),
+        patch("app.main.assert_capability_login", AsyncMock()),
         TestClient(
             create_app(
                 settings=settings,
