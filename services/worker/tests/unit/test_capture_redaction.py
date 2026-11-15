@@ -268,7 +268,7 @@ async def test_archive_compensates_when_set_archived_to_fails(
     monkeypatch.setattr(
         capture_redaction,
         "_compensate_upload",
-        lambda u, _s: deleted.append(u),
+        lambda u, _org, _s: deleted.append(u),
     )
     job = _CaptureJob(org_id="o", event_id="1", payload={"content": "secret"})
     with pytest.raises(RuntimeError, match="db update failed"):
@@ -308,7 +308,7 @@ async def test_archive_compensates_when_session_commit_fails(
     monkeypatch.setattr(
         capture_redaction,
         "_compensate_upload",
-        lambda u, _s: deleted.append(u),
+        lambda u, _org, _s: deleted.append(u),
     )
 
     job = _CaptureJob(org_id="o", event_id="1", payload={"content": "x"})

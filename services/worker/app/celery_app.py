@@ -14,6 +14,7 @@ from app.task_names import (
     TASK_EMBEDDING_NOOP,
     TASK_EXTRACT_SESSION_MEMORIES,
     TASK_EXTRACTION_NOOP,
+    TASK_LIFECYCLE_ERASE_MEMORY,
     TASK_MAINTENANCE_ALWAYS_FAIL,
     TASK_MAINTENANCE_NOOP_SWEEP,
     TASK_MCP_AUDIT_NOOP,
@@ -33,6 +34,7 @@ TASK_ROUTES: dict[str, dict[str, str]] = {
     TASK_MAINTENANCE_ALWAYS_FAIL: {"queue": "maintenance"},
     TASK_RESULT_PROBE: {"queue": "maintenance"},
     TASK_ORG_DELETE_ORGANIZATION: {"queue": "maintenance"},
+    TASK_LIFECYCLE_ERASE_MEMORY: {"queue": "maintenance"},
     TASK_RECONCILE_USAGE_ACTUALS: {"queue": "maintenance"},
     TASK_BUDGET_SPENT_ROLLUP: {"queue": "maintenance"},
     TASK_BUDGET_RESERVATION_SWEEP: {"queue": "maintenance"},
@@ -104,6 +106,14 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
             },
             "budget-reservation-sweep": {
                 "task": TASK_BUDGET_RESERVATION_SWEEP,
+                "schedule": schedule(run_every=cfg.maintenance_beat_seconds),
+                "options": {"queue": "maintenance"},
+            },
+            # Same cadence as the reservation reaper: an undelivered erasure is
+            # work that has to converge, and a slower beat only delays the retry
+            # the outbox row already scheduled for itself.
+            "lifecycle-erase-memory": {
+                "task": TASK_LIFECYCLE_ERASE_MEMORY,
                 "schedule": schedule(run_every=cfg.maintenance_beat_seconds),
                 "options": {"queue": "maintenance"},
             },

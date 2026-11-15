@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from prometheus_client import Counter
 from sqlalchemy import text
 
 from app.celery_app import celery_app
@@ -22,6 +23,44 @@ _DEFAULT_MODE = "metadata_only"
 _STRIP_KEYS = frozenset({"raw", "content", "prompt"})
 _BIGINT_MAX = 2**63 - 1
 
+CAPTURE_ARCHIVE_WITHOUT_MEMORY_ID = Counter(
+    "ibex_worker_capture_archive_without_memory_id_total",
+    "Archived capture events that carried no memory id, so no artifact ref was recorded",
+)
+
+# One object-store ref and one session-event ref per memory id, written with the
+# ``archived_to`` update. The session id is read from the event row the caller
+# just updated, so the ref carries the session without a second round trip. The
+# memory-id list is bound as JSON text and expanded server-side: asyncpg cannot
+# bind a bare array literal without an explicit cast, and this keeps the
+# statement static (no SQL built from values).
+_ARTIFACT_REF_INSERT_SQL = """
+INSERT INTO ibex_core.memory_artifact_refs
+    (org_id, memory_id, store, locator, session_id)
+SELECT CAST(:org_id AS uuid),
+       ref.memory_id,
+       ref.store,
+       ref.locator,
+       (
+           SELECT e.session_id
+             FROM ibex_core.session_events e
+            WHERE e.id = CAST(:event_id AS bigint)
+              AND e.org_id = CAST(:org_id AS uuid)
+       )
+  FROM (
+        SELECT CAST(elem.value AS uuid) AS memory_id,
+               'objectstore' AS store,
+               CAST(:uri AS text) AS locator
+          FROM jsonb_array_elements_text(CAST(:memory_ids AS jsonb)) AS elem(value)
+        UNION ALL
+        SELECT CAST(elem.value AS uuid),
+               'session_event',
+               CAST(:event_id_text AS text)
+          FROM jsonb_array_elements_text(CAST(:memory_ids AS jsonb)) AS elem(value)
+       ) AS ref
+ON CONFLICT DO NOTHING
+"""
+
 
 @dataclass(frozen=True)
 class _CaptureJob:
@@ -31,6 +70,16 @@ class _CaptureJob:
     event_id: str | None = None
     agent_id: str | None = None
     payload: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ArtifactRefs:
+    """Where one archived capture lives, and the memories it belongs to."""
+
+    org_id: str
+    event_id: int
+    uri: str
+    memory_ids: tuple[str, ...]
 
 
 @dataclass
@@ -124,7 +173,7 @@ async def _run(job: _CaptureJob) -> dict[str, str]:
             return await _apply_mode(ctx, mode)
     except Exception:
         for uri in uploaded:
-            _compensate_upload(uri, settings)
+            _compensate_upload(uri, job.org_id, settings)
         raise
     finally:
         await engine.dispose()
@@ -213,9 +262,9 @@ async def _persist_redacted(ctx: _RedactCtx, filtered: dict[str, Any]) -> None:
         raise
     ctx.uploaded.append(uri)
     try:
-        await _set_archived_to(ctx.session, job, uri)
+        await _set_archived_to(ctx.session, job, uri, filtered)
     except Exception:
-        _compensate_upload(uri, ctx.settings)
+        _compensate_upload(uri, job.org_id, ctx.settings)
         ctx.uploaded.remove(uri)
         raise
 
@@ -226,14 +275,16 @@ async def _archive_payload(ctx: _RedactCtx, payload: dict[str, Any]) -> None:
     if not ctx.job.event_id:
         return
     try:
-        await _set_archived_to(ctx.session, ctx.job, uri)
+        await _set_archived_to(ctx.session, ctx.job, uri, payload)
     except Exception:
-        _compensate_upload(uri, ctx.settings)
+        _compensate_upload(uri, ctx.job.org_id, ctx.settings)
         ctx.uploaded.remove(uri)
         raise
 
 
-async def _set_archived_to(session, job: _CaptureJob, uri: str) -> None:
+async def _set_archived_to(
+    session, job: _CaptureJob, uri: str, payload: dict[str, Any] | None
+) -> None:
     event_id = _coerce_event_id(job.event_id)
     result = await session.execute(
         text(
@@ -250,14 +301,102 @@ async def _set_archived_to(session, job: _CaptureJob, uri: str) -> None:
         raise RuntimeError(
             f"session_events archive update matched 0 rows event_id={job.event_id}"
         )
+    await _record_artifact_refs(
+        session,
+        _ArtifactRefs(
+            org_id=job.org_id,
+            event_id=event_id,
+            uri=uri,
+            memory_ids=tuple(_memory_ids(payload)),
+        ),
+    )
 
 
-def _compensate_upload(uri: str, settings: Any) -> None:
+async def _record_artifact_refs(session: Any, refs: _ArtifactRefs) -> None:
+    """Record where the archived copy of each memory lives, in this transaction.
+
+    A memory forget can only erase what it can find. The archive URI and the
+    capture event are not derivable from the memory row, so the link is written
+    here — the one point where the memory ids, the object URI and the event id
+    are all in hand — and committed with the ``archived_to`` update. A payload
+    with no memory id writes no ref, because a fabricated link would send an
+    erasure to another tenant's object; the event is counted instead so the
+    coverage hole is visible rather than silent.
+
+    ``ON CONFLICT DO NOTHING`` makes a redelivered event a no-op: the unique key
+    is ``(org_id, memory_id, store, locator)``.
+    """
+    if not refs.memory_ids:
+        CAPTURE_ARCHIVE_WITHOUT_MEMORY_ID.inc()
+        return
+    await session.execute(text(_ARTIFACT_REF_INSERT_SQL), _artifact_ref_params(refs))
+
+
+def _artifact_ref_params(refs: _ArtifactRefs) -> dict[str, Any]:
+    return {
+        "org_id": refs.org_id,
+        "event_id": refs.event_id,
+        "event_id_text": str(refs.event_id),
+        "uri": refs.uri,
+        "memory_ids": json.dumps(list(refs.memory_ids)),
+    }
+
+
+def _memory_ids(payload: dict[str, Any] | None) -> list[str]:
+    """Canonical memory ids the payload links to, deduped, in first-seen order.
+
+    Only the documented capture shapes are read: ``memory_ids`` (a
+    ``memory_read`` event) and ``memory_id`` (a single-memory event). An id that
+    is not a UUID cannot name a memory and is dropped with a warning that carries
+    counts only, never payload content.
+    """
+    if not payload:
+        return []
+    found: dict[str, None] = {}
+    unusable = 0
+    for value in _raw_memory_ids(payload):
+        memory_id = _canonical_memory_id(value)
+        if memory_id is None:
+            unusable += 1
+            continue
+        found.setdefault(memory_id, None)
+    if unusable:
+        logger.warning(
+            "capture archive payload carried %d unusable memory id value(s); "
+            "no ref recorded for them",
+            unusable,
+        )
+    return list(found)
+
+
+def _raw_memory_ids(payload: dict[str, Any]) -> list[Any]:
+    """Every raw memory id value a capture payload carries, unvalidated."""
+    values: list[Any] = []
+    memory_ids = payload.get("memory_ids")
+    if isinstance(memory_ids, list):
+        values.extend(memory_ids)
+    memory_id = payload.get("memory_id")
+    if memory_id is not None:
+        values.append(memory_id)
+    return values
+
+
+def _canonical_memory_id(value: Any) -> str | None:
+    """The canonical text form of a memory id, or None when it is not a UUID."""
+    if isinstance(value, bool) or not isinstance(value, (str, UUID)):
+        return None
+    try:
+        return str(UUID(str(value)))
+    except ValueError:
+        return None
+
+
+def _compensate_upload(uri: str, org_id: str, settings: Any) -> None:
     """Best-effort delete of an uploaded archive when DB persist/commit fails."""
     try:
         from app.objectstore_client import delete_uri
 
-        delete_uri(uri, settings=settings)
+        delete_uri(uri, org_id=org_id, settings=settings)
     except Exception:
         logger.exception("failed to compensate archive upload uri=%s", uri)
 

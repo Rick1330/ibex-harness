@@ -379,30 +379,54 @@ func TestMemoryLifecycleOutbox_RLSLeastPrivilege(t *testing.T) {
 		t.Fatalf("up: %v", err)
 	}
 	ctx := context.Background()
-	orgA, orgB := seedTwoOrgsWithAgents(t, ctx, db)
-	memoryA := seedMemory(t, ctx, memorySeed{db: db, orgID: orgA, agentSlug: "agent-a", content: "outbox-a"})
-	memoryB := seedMemory(t, ctx, memorySeed{db: db, orgID: orgB, agentSlug: "agent-b", content: "outbox-b"})
-	if err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		for _, row := range [][2]string{{orgA, memoryA}, {orgB, memoryB}} {
-			if _, err := tx.ExecContext(ctx, `
-INSERT INTO ibex_core.memory_lifecycle_outbox
-(org_id, memory_id, revision, event_type)
-VALUES ($1::uuid, $2::uuid, 2, 'forgotten')`, row[0], row[1]); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatalf("seed lifecycle events: %v", err)
-	}
+	tenants := seedOutboxTenants(t, ctx, db)
+	requireOutboxVisibility(t, ctx, db, tenants)
+	// 000074 deliberately narrows this: the erasure consumer runs as the tenant
+	// identity, so ibex_app may lease (attempts, locked_until) and settle
+	// (erasure_state, available_at, delivered_at) its own row. What it must not
+	// be able to do is rewrite what the row *is* — forging `erasure_state =
+	// 'complete'` on a live `created` row, or retargeting the memory/org — so the
+	// least-privilege assertion is now column-scoped rather than table-wide.
+	requireAppCanLeaseOutbox(t, ctx, db, tenants.orgA)
+	requireAppCannotForgeOutboxIdentity(t, ctx, db, tenants.orgA)
+}
 
-	err := withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
-		var own, foreign int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.memory_lifecycle_outbox WHERE org_id=$1::uuid`, orgA).Scan(&own); err != nil {
-			return err
+// seedOutboxTenants seeds two tenants with one forgotten memory and one pending
+// outbox row each.
+func seedOutboxTenants(t *testing.T, ctx context.Context, db *sql.DB) tenantPair {
+	t.Helper()
+	orgA, orgB := seedTwoOrgsWithAgents(t, ctx, db)
+	seedOutboxFor(t, ctx, db, memorySeed{
+		db: db, orgID: orgA, agentSlug: "agent-a", content: "outbox-a",
+	})
+	seedOutboxFor(t, ctx, db, memorySeed{
+		db: db, orgID: orgB, agentSlug: "agent-b", content: "outbox-b",
+	})
+	return tenantPair{orgA: orgA, orgB: orgB}
+}
+
+// seedOutboxFor seeds one forgotten memory and the pending outbox row a forget
+// writes for it.
+func seedOutboxFor(t *testing.T, ctx context.Context, db *sql.DB, memory memorySeed) {
+	t.Helper()
+	memoryID := seedMemory(t, ctx, memory)
+	insertOutboxRow(t, ctx, db, outboxSeed{
+		orgID: memory.orgID, memoryID: memoryID, revision: 2, erasureState: "pending",
+	})
+}
+
+// requireOutboxVisibility pins that ibex_app sees its own outbox row and not
+// another tenant's: the RLS policy doing its job, as the tenant identity.
+func requireOutboxVisibility(t *testing.T, ctx context.Context, db *sql.DB, tenants tenantPair) {
+	t.Helper()
+	err := withOrgContext(ctx, db, tenants.orgA, func(tx *sql.Tx) error {
+		own, ownErr := countOutboxRows(ctx, tx, tenants.orgA)
+		if ownErr != nil {
+			return ownErr
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.memory_lifecycle_outbox WHERE org_id=$1::uuid`, orgB).Scan(&foreign); err != nil {
-			return err
+		foreign, foreignErr := countOutboxRows(ctx, tx, tenants.orgB)
+		if foreignErr != nil {
+			return foreignErr
 		}
 		if own != 1 || foreign != 0 {
 			return fmt.Errorf("ibex_app outbox visibility own=%d foreign=%d, want 1/0", own, foreign)
@@ -412,14 +436,15 @@ VALUES ($1::uuid, $2::uuid, 2, 'forgotten')`, row[0], row[1]); err != nil {
 	if err != nil {
 		t.Fatalf("outbox RLS visibility: %v", err)
 	}
-	var updateErr error
-	_ = withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
-		_, updateErr = tx.ExecContext(ctx, `UPDATE ibex_core.memory_lifecycle_outbox SET attempts=attempts+1 WHERE org_id=$1::uuid`, orgA)
-		return nil
-	}) // PostgreSQL aborts the denied statement's transaction; helper rolls it back.
-	if updateErr == nil {
-		t.Fatal("ibex_app unexpectedly updated relay-owned outbox state")
-	}
+}
+
+// countOutboxRows counts the outbox rows of one org as the current identity.
+func countOutboxRows(ctx context.Context, tx *sql.Tx, orgID string) (int, error) {
+	var count int
+	err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ibex_core.memory_lifecycle_outbox WHERE org_id=$1::uuid`,
+		orgID).Scan(&count)
+	return count, err
 }
 
 func TestMemoryLifecycleRevision_TombstoneIsTerminal(t *testing.T) {
@@ -487,23 +512,36 @@ func TestMemoryLifecycleDownCleanAndGuarded(t *testing.T) {
 		t.Fatalf("up after clean down: %v", err)
 	}
 	requireReconciledLifecycle(t, ctx, db, memoryID)
-	requireGuardedDownRefused(t, ctx, db, dsn, head)
+	requireGuardedDownRefused(t, guardedDown{ctx: ctx, db: db, dsn: dsn, head: head})
+}
+
+// headVersion returns the clean head version, failing on a read error or a
+// dirty schema. Every caller wants both checks, so they live in one place.
+func headVersion(t *testing.T, dsn string) uint {
+	t.Helper()
+	v, dirty, err := Version(dsn)
+	if err != nil {
+		t.Fatalf("read schema version: %v", err)
+	}
+	if dirty {
+		t.Fatalf("schema is dirty at version %d", v)
+	}
+	return v
 }
 
 func requireHeadVersionAtLeast(t *testing.T, dsn string, minVersion uint) uint {
 	t.Helper()
-	head, headDirty, err := Version(dsn)
-	if err != nil || headDirty || head < minVersion {
-		t.Fatalf("head version = (%d, dirty=%v, err=%v), want >= %d", head, headDirty, err, minVersion)
+	head := headVersion(t, dsn)
+	if head < minVersion {
+		t.Fatalf("head version = %d, want >= %d", head, minVersion)
 	}
 	return head
 }
 
 func requireVersion(t *testing.T, dsn string, want uint) {
 	t.Helper()
-	v, dirty, err := Version(dsn)
-	if err != nil || dirty || v != want {
-		t.Fatalf("version = (%d, dirty=%v, err=%v), want (%d, false, nil)", v, dirty, err, want)
+	if got := headVersion(t, dsn); got != want {
+		t.Fatalf("version = %d, want %d", got, want)
 	}
 }
 
@@ -531,7 +569,15 @@ func requireReconciledLifecycle(t *testing.T, ctx context.Context, db *sql.DB, m
 	}
 }
 
-func requireGuardedDownRefused(t *testing.T, ctx context.Context, db *sql.DB, dsn string, head uint) {
+type guardedDown struct {
+	ctx  context.Context
+	db   *sql.DB
+	dsn  string
+	head uint
+}
+
+func requireGuardedDownRefused(t *testing.T, down guardedDown) {
+	ctx, db, dsn, head := down.ctx, down.db, down.dsn, down.head
 	t.Helper()
 	downSQL, err := migrationFiles.ReadFile("000045_memory_lifecycle.down.sql")
 	if err != nil {

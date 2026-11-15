@@ -124,5 +124,41 @@ class ForgetMemoryData(BaseModel):
     tombstoned: Literal[True] = True
 
 
+ErasureStoreState = Literal["pending", "verified", "failed", "not_applicable"]
+ErasureJobState = Literal["pending", "partial", "complete", "failed"]
+
+
+class ErasureStores(BaseModel):
+    """Per-store erasure proof for the revision this response describes.
+
+    ``not_applicable`` means the memory had no copy recorded in that store — it
+    is never a substitute for ``verified``, and never a report of an unreachable
+    store.
+
+    ClickHouse is deliberately absent. The per-memory consumer can only prove a
+    store whose copies are recorded in ``memory_artifact_refs``, and nothing
+    records a per-memory ClickHouse locator, so an absent ref there means "not
+    checked", not "no copy". Reporting a store this response cannot speak for
+    would either over-claim (``not_applicable``/``verified``) or read as work
+    still queued (``pending``) that will never happen. ClickHouse evidence is
+    erased by the org-deletion saga, which proves absence org-wide.
+    """
+
+    objectstore: ErasureStoreState = "pending"
+    session_event: ErasureStoreState = "pending"
+
+
+class ErasureStatus(BaseModel):
+    """Whether the memory's copies outside PostgreSQL are proven gone.
+
+    ``pending`` is the honest answer while the consumer has not run yet, which is
+    the normal state immediately after a forget.
+    """
+
+    state: ErasureJobState = "pending"
+    stores: ErasureStores = Field(default_factory=ErasureStores)
+
+
 class ForgetMemoryResponse(BaseModel):
     data: ForgetMemoryData
+    erasure: ErasureStatus = Field(default_factory=ErasureStatus)
