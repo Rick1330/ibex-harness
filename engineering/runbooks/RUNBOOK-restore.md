@@ -265,7 +265,7 @@ timeline cannot write into the live repository (`:501-504`).
 **Credentials never go on a command line.** `make v1-restore` and `make v1-pitr`
 export `PGBACKREST_REPO1_CIPHER_PASS`, `PGBACKREST_REPO1_S3_KEY` and
 `PGBACKREST_REPO1_S3_KEY_SECRET` from the profile's `0600` `.env`
-(`infra/scripts/dev-tool.sh`:607-610; `infra/scripts/gen-v1-secrets.sh`:527-544). The
+(`infra/scripts/dev-tool.sh`:607-610; `infra/scripts/gen-v1-secrets.sh`:536-553). The
 script writes them to a `0600` file created with `mktemp` and hands that file to
 the engine with `--env-file`, removing it on exit
 (`pgbackrest-restore.sh`:317-398). It does not use `-e VAR`: with a rootful
@@ -291,7 +291,7 @@ expose it.
    stops them before the restore starts. Confirm with `make v1-ps`
    (`Makefile`:226-227) that `postgres` is running and no application service is.
    Do not run `make v1-up` yet: it starts the whole profile and then the smoke
-   request (`Makefile`:174-206), which reopens traffic.
+   request (`Makefile`:174-207), which reopens traffic.
 2. **Check the restored data against the replay contract.** The restore-replay
    integration test states what a restored copy must satisfy: the memory is a
    tombstone (`content = '[forgotten]'`, `status = 'deleted'`,
