@@ -3,7 +3,7 @@
 Shared libpq → asyncpg URL translation and TLS `connect_args` for IBEX Python
 services using SQLAlchemy + asyncpg.
 
-Consumers: `services/worker`, `services/memory`.
+Consumers: `services/worker`, `services/memory`, `services/api`, `services/mcp-operator`.
 
 ## Layout
 
@@ -14,9 +14,11 @@ packages/ibex_async_db/
   src/
     ibex_async_db/          # import ibex_async_db
       __init__.py
-      url.py
+      url.py                # libpq → asyncpg URL + SSL connect_args
+      capability_login.py   # shared startup capability-login assertion
   tests/
     test_url.py
+    test_capability_login.py
 ```
 
 ## Install (local monorepo)
@@ -49,6 +51,21 @@ engine = create_async_engine(target.url, connect_args=dict(target.connect_args))
 ```
 
 `normalize_async_database_url(url)` returns only the cleaned asyncpg SQLAlchemy URL.
+
+## Capability-login assertion
+
+`ibex_async_db.capability_login` holds the one implementation of the startup
+check that a service pool connects as its capability login, not the RLS-bypassing
+owner and not a superuser. Each service wraps it with its own expected login and
+error label:
+
+```python
+from ibex_async_db.capability_login import assert_capability_login
+
+await assert_capability_login(engine, expected_login="ibex_runtime", service_label="api")
+```
+
+The module imports SQLAlchemy; every consumer already depends on it.
 
 ## SSL policy
 

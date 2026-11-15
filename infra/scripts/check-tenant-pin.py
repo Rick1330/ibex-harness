@@ -52,7 +52,6 @@ def tracked_files() -> list[str]:
     # Fixed argv, resolved absolute path, no shell: the pattern and paths are
     # constants, so there is no untrusted input to interpret.
     # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-    # Fixed argv, resolved absolute path, no shell: nothing here is untrusted input.
     out = subprocess.run(  # nosec B603 B607
         [git, "grep", "-l", "-e", "app.current_org_id", "--", "*.go", "*.py"],
         capture_output=True,

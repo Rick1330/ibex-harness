@@ -51,20 +51,25 @@ _ENV_BY_LOGIN: Mapping[str, str] = {
 _PROVISION_TIMEOUT_SECONDS = 300
 
 
-def capability_dsn(owner_dsn: str, login: str) -> str:
+def capability_dsn(owner_dsn: str, login: str, *, password: str | None = None) -> str:
     """Return ``owner_dsn`` with the userinfo replaced by a capability login.
 
     The scheme, host, port, database and query string are preserved, so a
-    ``postgresql+asyncpg://`` URL stays async and ``sslmode`` survives.
+    ``postgresql+asyncpg://`` URL stays async and ``sslmode`` survives. The
+    login and password are percent-encoded with ``urllib.parse.quote``, so a
+    verifier containing ``%``, ``@``, ``:`` or ``/`` still yields a valid DSN.
+    ``password`` overrides the fixed verifier for tests.
     """
-    if login not in CAPABILITY_PASSWORDS:
-        msg = f"unknown capability login {login!r}"
-        raise ValueError(msg)
+    if password is None:
+        if login not in CAPABILITY_PASSWORDS:
+            msg = f"unknown capability login {login!r}"
+            raise ValueError(msg)
+        password = CAPABILITY_PASSWORDS[login]
     parts = urlsplit(owner_dsn)
     host = parts.hostname or "127.0.0.1"
     port = f":{parts.port}" if parts.port else ""
-    password = quote(CAPABILITY_PASSWORDS[login], safe="")
-    netloc = f"{login}:{password}@{host}{port}"
+    userinfo = f"{quote(login, safe='')}:{quote(password, safe='')}"
+    netloc = f"{userinfo}@{host}{port}"
     return urlunsplit(parts._replace(netloc=netloc))
 
 
