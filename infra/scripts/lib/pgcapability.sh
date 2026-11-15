@@ -49,18 +49,28 @@ capability_password() {
   esac
 }
 
+# _urlencode percent-encodes one DSN userinfo component. Python's urllib is the
+# library; hand-rolled escaping misses characters such as '%', '@', ':' and '/',
+# and a raw password with any of them breaks the DSN.
+_urlencode() {
+  python3 -c 'import sys, urllib.parse; sys.stdout.write(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+}
+
 # capability_dsn prints `owner_dsn` with the userinfo replaced by a capability
 # login. The scheme, host, port, database, and query string are preserved, so a
-# `postgresql+asyncpg://` URL stays async and `sslmode` survives. The passwords
-# are alphanumeric with dashes, so no percent-encoding is required.
+# `postgresql+asyncpg://` URL stays async and `sslmode` survives. The login and
+# password are percent-encoded, so a verifier containing '%', '@', ':' or '/'
+# still yields a valid DSN. The optional third argument overrides the verifier
+# and exists for the encoding test; production callers pass only the login.
 capability_dsn() {
   local owner_dsn="$1"
   local login="$2"
-  local password scheme rest authority tail hostport
-  # nosemgrep: codacy.bash.security.hard-coded-password - the verifier is a
-  # fixed, test-only value for an ephemeral CI database; capability_password
-  # is the single source and no production credential is ever assigned here.
-  password="$(capability_password "$login")" || return 1
+  local password="${3:-}"
+  local scheme rest authority tail hostport
+  if [[ -z "$password" ]]; then
+    # nosemgrep: codacy.bash.security.hard-coded-password - fixed test-only verifier for an ephemeral CI database; capability_password is the single source and no production credential is assigned here.
+    password="$(capability_password "$login")" || return 1
+  fi
   if [[ "$owner_dsn" != *'://'* ]]; then
     printf 'capability_dsn: %s is not a URL DSN\n' "$owner_dsn" >&2
     return 1
@@ -79,7 +89,8 @@ capability_dsn() {
     printf 'capability_dsn: %s carries no host\n' "$owner_dsn" >&2
     return 1
   fi
-  printf '%s://%s:%s@%s%s' "$scheme" "$login" "$password" "$hostport" "$tail"
+  printf '%s://%s:%s@%s%s' \
+    "$scheme" "$(_urlencode "$login")" "$(_urlencode "$password")" "$hostport" "$tail"
 }
 
 # libpq_dsn strips a SQLAlchemy driver suffix so the Go migration CLI (lib/pq)

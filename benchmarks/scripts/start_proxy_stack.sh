@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Capability-login helpers. Sourcing the shared library keeps the benchmark on
+# the same fixed verifiers as the dev compose stack and every other harness:
+# roles and their verifiers are cluster-global, so a benchmark that provisioned
+# different values would invalidate a dev stack already connected on these.
+# shellcheck source=../../infra/scripts/lib/pgcapability.sh
+source "$ROOT_DIR/infra/scripts/lib/pgcapability.sh"
+
 BENCH_PROXY_PORT="${BENCH_PROXY_PORT:-18082}"
 AUTH_GRPC_PORT="${AUTH_GRPC_PORT:-9091}"
 # Owner DSN: migrations, the dev seed, and the capability-login provision step.
@@ -9,17 +18,13 @@ AUTH_GRPC_PORT="${AUTH_GRPC_PORT:-9091}"
 POSTGRES_DSN="${POSTGRES_DSN:-postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable}"
 REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/0}"
 
-# Capability logins. Both binaries assert at startup that they are NOT connected
-# as the owner `ibex` and are connected as their compiled-in capability login
-# (`ibex_auth`, `ibex_runtime`), because the owner is the RLS-bypassing migration
-# role. These are fixed test credentials for a throwaway benchmark database, not
-# production secrets: the database is local to the benchmark run and is recreated
-# for each run. Override with the same variable names when the database was
-# provisioned with different values.
-IBEX_AUTH_DB_PASSWORD="${IBEX_AUTH_DB_PASSWORD:-bench-test-auth}"
-IBEX_RUNTIME_DB_PASSWORD="${IBEX_RUNTIME_DB_PASSWORD:-bench-test-runtime}"
-IBEX_WORKER_DB_PASSWORD="${IBEX_WORKER_DB_PASSWORD:-bench-test-worker}"
-IBEX_BOOTSTRAP_DB_PASSWORD="${IBEX_BOOTSTRAP_DB_PASSWORD:-bench-test-bootstrap}"
+# Fixed capability verifiers from the shared library. They are not overridable:
+# an override is exactly how the benchmark used to diverge from the dev stack
+# and reprovision the cluster out from under a running worker.
+IBEX_AUTH_DB_PASSWORD="$(capability_password "$IBEX_AUTH_LOGIN")"
+IBEX_RUNTIME_DB_PASSWORD="$(capability_password "$IBEX_RUNTIME_LOGIN")"
+IBEX_WORKER_DB_PASSWORD="$(capability_password "$IBEX_WORKER_LOGIN")"
+IBEX_BOOTSTRAP_DB_PASSWORD="$(capability_password "$IBEX_BOOTSTRAP_LOGIN")"
 export IBEX_AUTH_DB_PASSWORD IBEX_RUNTIME_DB_PASSWORD \
   IBEX_WORKER_DB_PASSWORD IBEX_BOOTSTRAP_DB_PASSWORD
 
@@ -34,7 +39,6 @@ export IBEX_LLM_MODE="${IBEX_LLM_MODE:-mock}"
 export IBEX_DEV_TOKEN="${IBEX_DEV_TOKEN:-ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY}"
 export IBEX_DEV_AGENT_ID="${IBEX_DEV_AGENT_ID:-00000000-0000-0000-0000-000000000003}"
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SEED_ORG_ID="00000000-0000-0000-0000-000000000001"
 SEED_AGENT_ID="00000000-0000-0000-0000-000000000003"
 SEED_TOKEN_ID="00000000-0000-0000-0000-000000000004"
@@ -44,34 +48,6 @@ normalize_psql_dsn() {
   dsn="${dsn//postgresql+asyncpg:/postgres:}"
   dsn="${dsn//postgresql:/postgres:}"
   echo "$dsn"
-}
-
-# capability_dsn rewrites the owner DSN's userinfo to a capability login and keeps
-# the host, port, database, and query parameters, so the capability logins reach
-# the same server the migration and the seed used. Passwords here are fixed
-# alphanumeric test values, so no percent-encoding is needed.
-capability_dsn() {
-  local login="$1"
-  # nosemgrep: codacy.bash.security.hard-coded-password - fixed test-only
-  # verifier for an ephemeral benchmark database, passed in by the caller.
-  local password="$2"
-  if [[ "$POSTGRES_DSN" =~ ^postgres(ql)?(\+asyncpg)?://[^@/]*@(.+)$ ]]; then
-    printf 'postgres://%s:%s@%s' "$login" "$password" "${BASH_REMATCH[3]}"
-    return 0
-  fi
-  echo "start_proxy_stack: cannot derive the $login DSN from POSTGRES_DSN; it must be a URL DSN that carries userinfo" >&2
-  return 1
-}
-
-# provision_capability_logins sets each capability role's SCRAM verifier and
-# lifts its CONNECTION LIMIT 0. The migrations create those roles locked, so
-# without this every capability login is refused before the assertion above is
-# even reached. It needs the migrations applied (the roles must exist) and is
-# idempotent: re-running rewrites the same verifiers.
-provision_capability_logins() {
-  echo "provisioning capability logins (ibex_auth, ibex_runtime, ibex_worker, ibex_bootstrap)..."
-  POSTGRES_MIGRATE_DSN="$POSTGRES_DSN" \
-    go run ./infra/migrations/postgres/cmd/migrate -command provision
 }
 
 run_psql_query() {
@@ -113,7 +89,7 @@ else
   verify_bench_seed
 fi
 
-provision_capability_logins
+provision_capability_logins "$POSTGRES_DSN"
 
 write_env_kv() {
   local key="$1"
@@ -139,9 +115,10 @@ export BENCH_PROXY_ENV_FILE
 
 # Resolve both capability DSNs before backgrounding anything: a malformed
 # POSTGRES_DSN must stop the script here, not inside a detached process whose
-# only symptom is a dead readiness probe.
-AUTH_POSTGRES_DSN="$(capability_dsn ibex_auth "$IBEX_AUTH_DB_PASSWORD")"
-PROXY_POSTGRES_DSN="$(capability_dsn ibex_runtime "$IBEX_RUNTIME_DB_PASSWORD")"
+# only symptom is a dead readiness probe. normalize_psql_dsn keeps the libpq
+# scheme the Go binaries expect even when POSTGRES_DSN names an async driver.
+AUTH_POSTGRES_DSN="$(capability_dsn "$(normalize_psql_dsn "$POSTGRES_DSN")" "$IBEX_AUTH_LOGIN")"
+PROXY_POSTGRES_DSN="$(capability_dsn "$(normalize_psql_dsn "$POSTGRES_DSN")" "$IBEX_RUNTIME_LOGIN")"
 
 echo "auth connecting as ibex_auth"
 POSTGRES_DSN="$AUTH_POSTGRES_DSN" \
