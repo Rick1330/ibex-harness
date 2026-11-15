@@ -294,18 +294,23 @@ class ParallelRetriever:
             hits = await asyncio.wait_for(fetch(timeout_s), timeout=timeout_s)
         except TimeoutError:
             return _timeout_memories(name, started, f"{name}_timeout")
-        except MemoryHttpForbidden as exc:
-            # Memory refused the call for this org: the assembly would otherwise
-            # look successful with zero hits, which is the under-retrieval this
-            # detail exists to expose. Log the branch and status only — no
-            # org id, no token, no content.
-            logger.warning(
-                "context_memory_forbidden source=%s status=%s",
-                name,
-                exc.status_code,
-            )
-            return _error_memories(name, started, MEMORY_FORBIDDEN)
         except MemoryHttpError as exc:
+            # One handler for the whole memory HTTP path, dispatched by type.
+            # ``MemoryHttpTimeout`` and ``MemoryHttpForbidden`` are siblings:
+            # both derive directly from ``MemoryHttpError`` and neither derives
+            # from the other, so the order of the checks below cannot shadow an
+            # outcome.
+            if isinstance(exc, MemoryHttpForbidden):
+                # Memory refused the call for this org: the assembly would
+                # otherwise look successful with zero hits, which is the
+                # under-retrieval this detail exists to expose. Log the branch
+                # and status only — no org id, no token, no content.
+                logger.warning(
+                    "context_memory_forbidden source=%s status=%s",
+                    name,
+                    exc.status_code,
+                )
+                return _error_memories(name, started, MEMORY_FORBIDDEN)
             # A memory HTTP timeout carries no status code but is still a timeout
             # outcome, not an error, so it keeps its own detail and its own shape.
             if isinstance(exc, MemoryHttpTimeout):

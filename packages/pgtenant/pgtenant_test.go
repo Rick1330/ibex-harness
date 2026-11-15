@@ -27,7 +27,11 @@ func deniedRole() *pq.Error {
 	return &pq.Error{Code: "42501", Message: `permission denied to set role "ibex_app"`}
 }
 
-func openTx(t *testing.T) (*sql.DB, sqlmock.Sqlmock, *sql.Tx) {
+// withTx opens a mock database and one transaction, then runs fn inside it. The
+// deferred rollback is the safety net: a failed assertion unwinds through it
+// instead of leaving the transaction open for the rest of the suite. A rollback
+// after a successful commit is a no-op, so a test may still commit.
+func withTx(t *testing.T, fn func(sqlmock.Sqlmock, *sql.Tx)) {
 	t.Helper()
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -39,7 +43,8 @@ func openTx(t *testing.T) (*sql.DB, sqlmock.Sqlmock, *sql.Tx) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	return db, mock, tx
+	defer func() { _ = tx.Rollback() }()
+	fn(mock, tx)
 }
 
 // TestPinOrg_IssuesRoleThenTransactionLocalGUC is the ordering control: the
@@ -47,22 +52,23 @@ func openTx(t *testing.T) (*sql.DB, sqlmock.Sqlmock, *sql.Tx) {
 // transaction-locally (is_local = true) so a pooled connection cannot carry it
 // into the next borrower.
 func TestPinOrg_IssuesRoleThenTransactionLocalGUC(t *testing.T) {
-	_, mock, tx := openTx(t)
 	org := uuid.New()
 
-	mock.ExpectExec(roleStatement).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(gucStatement).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectCommit()
+	withTx(t, func(mock sqlmock.Sqlmock, tx *sql.Tx) {
+		mock.ExpectExec(roleStatement).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(gucStatement).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
 
-	if err := pgtenant.PinOrg(context.Background(), tx, org); err != nil {
-		t.Fatalf("PinOrg: %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("commit: %v", err)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("statement sequence: %v", err)
-	}
+		if err := pgtenant.PinOrg(context.Background(), tx, org); err != nil {
+			t.Fatalf("PinOrg: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("statement sequence: %v", err)
+		}
+	})
 }
 
 // TestPinOrg_RoleDenialSurfaces42501 proves a capability login that may not
@@ -90,35 +96,36 @@ func TestPinOrg_GUCDenialSurfaces42501(t *testing.T) {
 // rather than continue as an unscoped transaction.
 func expectPinDenied(t *testing.T, statement string, expect func(sqlmock.Sqlmock, uuid.UUID)) {
 	t.Helper()
-	_, mock, tx := openTx(t)
 	org := uuid.New()
-	expect(mock, org)
+	withTx(t, func(mock sqlmock.Sqlmock, tx *sql.Tx) {
+		expect(mock, org)
 
-	err := pgtenant.PinOrg(context.Background(), tx, org)
-	if err == nil {
-		t.Fatalf("PinOrg accepted a denied %s", statement)
-	}
-	assertPinDenied(t, err)
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("statement sequence: %v", err)
-	}
+		err := pgtenant.PinOrg(context.Background(), tx, org)
+		if err == nil {
+			t.Fatalf("PinOrg accepted a denied %s", statement)
+		}
+		assertPinDenied(t, err)
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("statement sequence: %v", err)
+		}
+	})
 }
 
 // TestPinOrg_TransportErrorIsWrappedNotSwallowed keeps the wrapper honest for
 // the non-SQLSTATE case: a cancelled or dead connection must still be
 // inspectable by the caller.
 func TestPinOrg_TransportErrorIsWrappedNotSwallowed(t *testing.T) {
-	_, mock, tx := openTx(t)
+	withTx(t, func(mock sqlmock.Sqlmock, tx *sql.Tx) {
+		mock.ExpectExec(roleStatement).WillReturnError(sql.ErrConnDone)
 
-	mock.ExpectExec(roleStatement).WillReturnError(sql.ErrConnDone)
-
-	err := pgtenant.PinOrg(context.Background(), tx, uuid.New())
-	if !errors.Is(err, sql.ErrConnDone) {
-		t.Fatalf("error=%v want it to wrap sql.ErrConnDone", err)
-	}
-	if !strings.Contains(err.Error(), "pgtenant: pin role") {
-		t.Fatalf("error=%q missing pgtenant: pin role prefix", err)
-	}
+		err := pgtenant.PinOrg(context.Background(), tx, uuid.New())
+		if !errors.Is(err, sql.ErrConnDone) {
+			t.Fatalf("error=%v want it to wrap sql.ErrConnDone", err)
+		}
+		if !strings.Contains(err.Error(), "pgtenant: pin role") {
+			t.Fatalf("error=%q missing pgtenant: pin role prefix", err)
+		}
+	})
 }
 
 // assertPinDenied checks both halves of "not swallowed": the SQLSTATE survives

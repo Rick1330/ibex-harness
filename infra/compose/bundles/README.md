@@ -15,7 +15,19 @@ The memory/context substrate without the LLM proxy:
 | `embedder` | Deterministic `cpu` profile for contract tests and local use |
 | PostgreSQL with pgvector | Primary store and vector index |
 | Migrations | `infra/migrations` applied by the migrate image |
+| Provisioning | One-shot `provision` that sets the capability-login passwords |
 | Dev seed | `infra/scripts/seed_dev.sql` for local verification only |
+
+Every application service connects as its own capability login, never the owner `ibex`: `auth` uses `ibex_auth` and
+`memory` uses `ibex_runtime`. Both binaries assert this at startup and refuse the RLS-bypassing owner. The migrations
+create those roles with `CONNECTION LIMIT 0`, so the `provision` one-shot sets each SCRAM verifier and lifts the limit
+before either service starts; `auth` and `memory` wait for it to complete. `migrate` and the dev seed stay on the owner
+login, because they are privileged setup steps rather than application traffic.
+
+The capability passwords in this bundle are fixed test values (`bundle-test-auth`, `bundle-test-runtime`,
+`bundle-test-worker`, `bundle-test-bootstrap`) for a throwaway local database. They are deliberately not the owner
+credential and are pairwise distinct, which is what `provision` enforces. A deployment profile generates real secrets
+instead (`infra/compose/v1-single-node`).
 
 Optional: Redis for the hot cache. The base profile runs without it.
 
@@ -34,7 +46,8 @@ docker compose -f infra/compose/bundles/memory-context.yml up -d --build
 docker compose -f infra/compose/bundles/memory-context.yml down -v
 ```
 
-`make bundle-smoke` starts the profile, applies migrations and the dev seed, and then proves:
+`make bundle-smoke` starts the profile, applies migrations, provisions the capability logins, applies the dev seed,
+and then proves:
 
 - migrations are clean at the highest local Postgres version;
 - AuthService, embedder, and memory are healthy;
@@ -61,10 +74,11 @@ was actually exercised.
 
 1. PostgreSQL with pgvector.
 2. Migrations (`migrate up`).
-3. AuthService.
-4. Embedder.
-5. Memory.
-6. Seed data only in local/test.
+3. Capability-login provisioning (`migrate provision`), which unlocks the capability roles.
+4. AuthService.
+5. Embedder.
+6. Memory.
+7. Seed data only in local/test.
 
 ### Limits and non-claims
 

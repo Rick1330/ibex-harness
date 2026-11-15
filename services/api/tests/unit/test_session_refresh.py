@@ -577,8 +577,9 @@ async def test_lifecycle_call_asserts_the_session_org() -> None:
 @pytest.mark.asyncio
 async def test_lifecycle_call_without_an_org_is_refused_before_the_rpc() -> None:
     stub = AsyncMock(return_value=b"")
-    with _patch_channel(stub), pytest.raises(AuthFailedError, match="expected org"):
-        await consume_step_up(
+    await _assert_rpc_raises(
+        stub,
+        consume_step_up(
             _rpc("127.0.0.1:50051", "lifecycle-token"),
             ConsumeStepUpParams(
                 token="step",
@@ -587,18 +588,25 @@ async def test_lifecycle_call_without_an_org_is_refused_before_the_rpc() -> None
                 session_id="sid",
                 action="operator.export",
             ),
-        )
+        ),
+        AuthFailedError,
+        "expected org",
+    )
     stub.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_validate_operator_session_refuses_an_unreadable_token() -> None:
     stub = AsyncMock(return_value=b"")
-    with _patch_channel(stub), pytest.raises(AuthFailedError, match="unreadable"):
-        await validate_operator_session(
+    await _assert_rpc_raises(
+        stub,
+        validate_operator_session(
             _rpc("127.0.0.1:50051", "lifecycle-token"),
             access_token="not-a-jwt",
-        )
+        ),
+        AuthFailedError,
+        "unreadable",
+    )
     stub.assert_not_awaited()
 
 
@@ -606,9 +614,13 @@ async def test_validate_operator_session_refuses_an_unreadable_token() -> None:
 async def test_validate_operator_session_refuses_a_token_without_an_org() -> None:
     token = f"e30.{base64.urlsafe_b64encode(b'{}').rstrip(b'=').decode()}.sig"
     stub = AsyncMock(return_value=b"")
-    with _patch_channel(stub), pytest.raises(AuthFailedError, match="no org"):
-        await validate_operator_session(
+    await _assert_rpc_raises(
+        stub,
+        validate_operator_session(
             _rpc("127.0.0.1:50051", "lifecycle-token"),
             access_token=token,
-        )
+        ),
+        AuthFailedError,
+        "no org",
+    )
     stub.assert_not_awaited()

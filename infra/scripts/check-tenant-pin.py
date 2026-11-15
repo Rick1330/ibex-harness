@@ -19,7 +19,8 @@ Exit 1 on a violation, 0 otherwise. Stdlib only.
 from __future__ import annotations
 
 import re
-import subprocess
+import shutil
+import subprocess  # nosec B404 - fixed argv, no shell, no user input
 import sys
 
 GUC_WRITE = re.compile(r"set_config\(\s*'app\.current_org_id'")
@@ -45,8 +46,13 @@ SKIP_PREFIXES = ("benchmarks/",)
 
 
 def tracked_files() -> list[str]:
-    out = subprocess.run(
-        ["git", "grep", "-l", "-e", "app.current_org_id", "--", "*.go", "*.py"],
+    git = shutil.which("git")
+    if git is None:
+        sys.exit("check-tenant-pin: git is required to enumerate tracked files")
+    # Fixed argv, resolved absolute path, no shell: the pattern and paths are
+    # constants, so there is no untrusted input to interpret.
+    out = subprocess.run(  # nosec B603 B607
+        [git, "grep", "-l", "-e", "app.current_org_id", "--", "*.go", "*.py"],
         capture_output=True,
         text=True,
         check=False,

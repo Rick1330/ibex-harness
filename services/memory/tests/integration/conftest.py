@@ -50,10 +50,11 @@ def _async_dsn_from_env() -> str | None:
 
 @cache
 def _provisioned_runtime_dsn(owner_dsn: str) -> str:
-    try:
-        provision_capability_logins(owner_dsn, _REPO_ROOT)
-    except RuntimeError as exc:
-        pytest.fail(str(exc))
+    # ``provision_capability_logins`` raises RuntimeError with a redacted message
+    # and leaves the outcome to the caller. This suite decides "failure", so the
+    # error is left to propagate: catching it only to re-raise through
+    # ``pytest.fail`` would rewrite the same message and drop the traceback.
+    provision_capability_logins(owner_dsn, _REPO_ROOT)
     return capability_dsn(owner_dsn, RUNTIME_LOGIN)
 
 

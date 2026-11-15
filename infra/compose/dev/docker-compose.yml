@@ -1,3 +1,17 @@
+# Local development stack. Every application service connects on a capability
+# login, never the owner `ibex`: the worker asserts `ibex_worker` at process init
+# and refuses the owner, because the migration owner is a superuser and
+# `FORCE ROW LEVEL SECURITY` does not cover superusers. Migration 000064 creates
+# the capability roles locked (no verifier, CONNECTION LIMIT 0), so the one-shot
+# `provision` service sets the verifiers and lifts the limits before any service
+# that logs in as one starts.
+#
+# The passwords below are fixed test values for this throwaway dev database. They
+# are deliberately not the owner credential and are pairwise distinct, which is
+# what provision enforces; they also match the harness scripts
+# (infra/scripts/lib/pgcapability.sh) so a local database provisioned by either
+# side stays usable by the other. A deployment profile generates its own instead
+# (see infra/compose/v1-single-node/gen-v1-secrets.sh).
 services:
   postgres:
     image: docker.io/pgvector/pgvector:pg16
@@ -86,6 +100,47 @@ services:
       retries: 10
       start_period: 10s
 
+  # One-shot migration. `make db-migrate` runs the same command from the host;
+  # both are idempotent, and putting it in the stack means `make compose-dev-up`
+  # yields a schema the worker can use instead of depending on a remembered
+  # manual step.
+  migrate:
+    build:
+      context: ../../..
+      dockerfile: infra/migrations/Dockerfile
+    environment:
+      POSTGRES_MIGRATE_DSN: postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:-ibex}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
+    command: ["up"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # One-shot capability-login provisioning. It runs after `migrate` because the
+  # roles must already exist, and the worker waits for it: if provisioning fails,
+  # Compose refuses to start the worker rather than letting it connect as a login
+  # the binary would reject anyway. `make compose-dev-up` retries it on the next
+  # run; provision is idempotent.
+  provision:
+    build:
+      context: ../../..
+      dockerfile: infra/migrations/Dockerfile
+    environment:
+      # provision derives the owner credential from this DSN and refuses any
+      # capability secret that equals it.
+      POSTGRES_MIGRATE_DSN: postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:-ibex}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable
+      # Fixed test credentials; all four are required by provision even though
+      # this stack only runs the worker.
+      IBEX_AUTH_DB_PASSWORD: capability-test-only-auth
+      IBEX_RUNTIME_DB_PASSWORD: capability-test-only-runtime
+      IBEX_WORKER_DB_PASSWORD: capability-test-only-worker
+      IBEX_BOOTSTRAP_DB_PASSWORD: capability-test-only-bootstrap
+    command: ["provision"]
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   worker:
     build:
       # compose file lives in infra/compose/dev → three levels up is repo root
@@ -100,7 +155,10 @@ services:
       REDIS_URL: redis://redis:6379/0
       REDIS_DB_QUEUE: "1"
       REDIS_DB_RESULTS: "3"
-      POSTGRES_DSN: ${IBEX_WORKER_DATABASE_URL:-postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:-ibex}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable}
+      # The worker asserts this login at process init (services/worker/app/db.py)
+      # and refuses to boot on the owner. Overriding it with the owner login fails
+      # the worker instead of silently re-enabling the RLS bypass.
+      POSTGRES_DSN: ${IBEX_WORKER_DATABASE_URL:-postgres://ibex_worker:capability-test-only-worker@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable}
       IBEX_WORKER_METRICS_PORT: "8006"
       IBEX_WORKER_ENQUEUE_PORT: "8007"
       IBEX_WORKER_ENQUEUE_HOST: "0.0.0.0"
@@ -111,6 +169,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      provision:
+        condition: service_completed_successfully
 
   worker-beat:
     build:
@@ -130,9 +190,15 @@ services:
       REDIS_URL: redis://redis:6379/0
       REDIS_DB_QUEUE: "1"
       REDIS_DB_RESULTS: "3"
+      # Beat runs the same Celery app as the worker, so it carries the worker's
+      # login rather than a second identity: a beat-side database use must not
+      # silently start on the owner the worker is forbidden to use.
+      POSTGRES_DSN: ${IBEX_WORKER_DATABASE_URL:-postgres://ibex_worker:capability-test-only-worker@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable}
     depends_on:
       redis:
         condition: service_healthy
+      provision:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f '[c]elery.*beat' >/dev/null || exit 1"]
       interval: 15s

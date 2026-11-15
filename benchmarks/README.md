@@ -158,7 +158,7 @@ go test ./benchmarks/go -run=^$ -bench=. -benchmem -count=2 > benchmarks/output/
 go test ./services/proxy/internal/http -run=^$ -bench=BenchmarkProxy -benchmem -count=2 >> benchmarks/output/go-bench.txt
 ```
 
-Load benchmarks require a running proxy stack:
+Load benchmarks require a running proxy stack against an already-migrated database:
 
 ```bash
 bash benchmarks/scripts/start_proxy_stack.sh
@@ -173,6 +173,15 @@ docker run --rm --network host -v "$PWD:/work" -w /work \
   --summary-trend-stats="med,p(90),p(95),p(99),p(99.9),min,max" \
   --summary-export benchmarks/output/k6-summary.json
 bash benchmarks/scripts/stop_proxy_stack.sh
+```
+
+`start_proxy_stack.sh` seeds the database, then runs `migrate provision` so the capability logins exist, and starts
+AuthService as `ibex_auth` and the proxy as `ibex_runtime`. Neither binary will connect as the owner `ibex`: both assert
+their capability login at startup. The capability passwords are fixed test values (`bench-test-auth`,
+`bench-test-runtime`, `bench-test-worker`, `bench-test-bootstrap`) for the throwaway benchmark database, and can be
+overridden with the same `IBEX_*_DB_PASSWORD` variables.
+
+```bash
 BENCH_PROFILE=fast python benchmarks/scripts/aggregate_metrics.py
 python benchmarks/scripts/regression_gate.py
 BENCH_PROFILE=fast python benchmarks/scripts/build_benchmark_data.py
