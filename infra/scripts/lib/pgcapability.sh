@@ -36,7 +36,8 @@ IBEX_BOOTSTRAP_LOGIN='ibex_bootstrap'
 
 # capability_password prints the fixed verifier for a capability login.
 capability_password() {
-  case "$1" in
+  local login="$1"
+  case "$login" in
     "$IBEX_RUNTIME_LOGIN") printf '%s' 'capability-test-only-runtime' ;;
     "$IBEX_WORKER_LOGIN") printf '%s' 'capability-test-only-worker' ;;
     "$IBEX_AUTH_LOGIN") printf '%s' 'capability-test-only-auth' ;;
