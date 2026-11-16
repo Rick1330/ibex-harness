@@ -20,6 +20,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck source=../lib/pitr_time.sh
+. "$ROOT/infra/scripts/lib/pitr_time.sh"
 
 # Whitespace class for trimming a single psql -tA value. Defined once because
 # every scalar read back from the cluster trims with the same pattern.
@@ -86,6 +88,13 @@ PITR_BACKUP_OK=false
 PITR_RESTORE_OK=false
 PITR_ATTEMPTED=false
 PITR_WAL_ARCHIVE_OK=false
+# The archive queue is recorded alongside the upload age: the age is an RPO only
+# while nothing older is still waiting to be pushed, so the report writer needs
+# both facts to decide whether the measurement is a bound.
+PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC=""
+PITR_WAL_ARCHIVE_LAST_SEGMENT=""
+PITR_WAL_ARCHIVE_CURRENT_SEGMENT=""
+PITR_WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE=""
 PITR_RPO_MEASURED=""
 # Record the requested target immediately: a run blocked before the target is
 # parsed must still say which recovery point was asked for.
@@ -121,6 +130,31 @@ pitr_blocked() {
   echo "[restore] PITR blocked: $1" >&2
 }
 
+# pitr_failed records why an *attempted* restore did not succeed. Unlike
+# pitr_blocked it leaves the mechanism alone: pgBackRest was available and was
+# used, the restore simply failed. blocked_by carries the reason either way, so
+# the artefact a failed run leaves behind says what went wrong.
+pitr_failed() {
+  PITR_BLOCKED_BY="$1"
+  echo "[restore] PITR failed: $1" >&2
+}
+
+# prepare_pitr_report_path proves the report destination is writable before
+# anything is stopped or restored. The point of the run is the artefact: a run
+# whose evidence cannot be written has not achieved what it set out to do, and
+# discovering that at exit — after the restore already happened — turns a
+# successful recovery into an unexplained one.
+prepare_pitr_report_path() {
+  [[ -n "$PITR_REPORT" ]] || return 0
+  local dir
+  dir="$(dirname "$PITR_REPORT")"
+  if ! mkdir -p "$dir" 2>/dev/null || [[ ! -w "$dir" ]]; then
+    echo "[restore] FAILED: the report directory $dir cannot be created or written; nothing has been stopped" >&2
+    return 1
+  fi
+  return 0
+}
+
 cleanup_pitr_verify_container() {
   if [[ -n "$PITR_VERIFY_CONTAINER" ]]; then
     "${CLI[@]}" rm -f "$PITR_VERIFY_CONTAINER" >/dev/null 2>&1 || true
@@ -130,10 +164,6 @@ cleanup_pitr_verify_container() {
 
 emit_pitr_report() {
   [[ -n "$PITR_REPORT" ]] || return 0
-  if [[ "$PITR_RESTORE_OK" != "true" && "$PITR_ATTEMPTED" != "true" && -z "$PITR_BLOCKED_BY" ]]; then
-    echo "[restore] no PITR report written: the restore never started and no reason was recorded" >&2
-    return 0
-  fi
   PITR_REPORT="$PITR_REPORT" \
     PITR_STARTED_AT="$PITR_STARTED_AT" \
     PITR_ENVIRONMENT_CLASS="$(pitr_environment_class)" \
@@ -141,6 +171,10 @@ emit_pitr_report() {
     PITR_BACKUP_OK="$PITR_BACKUP_OK" \
     PITR_RESTORE_OK="$PITR_RESTORE_OK" \
     PITR_WAL_ARCHIVE_OK="$PITR_WAL_ARCHIVE_OK" \
+    PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC="$PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC" \
+    PITR_WAL_ARCHIVE_LAST_SEGMENT="$PITR_WAL_ARCHIVE_LAST_SEGMENT" \
+    PITR_WAL_ARCHIVE_CURRENT_SEGMENT="$PITR_WAL_ARCHIVE_CURRENT_SEGMENT" \
+    PITR_WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE="$PITR_WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE" \
     PITR_RPO_MEASURED="$PITR_RPO_MEASURED" \
     PITR_TARGET_TIMESTAMP="$PITR_TARGET_TIMESTAMP" \
     PITR_RECOVERY_TARGET_REACHED="$PITR_RECOVERY_TARGET_REACHED" \
@@ -158,10 +192,34 @@ on_exit() {
     cleanup_cred_env_file
   fi
   cleanup_pitr_verify_container
-  emit_pitr_report || echo "[restore] WARNING: could not write the PITR report" >&2
-  return "$status"
+  # Every failed exit must leave a report that says why, including the paths
+  # that fail before a caller records a reason (network or volume discovery, a
+  # refusal after Postgres was stopped). Without this the requested path is
+  # absent — or, worse, still holds an earlier run's success.
+  if [[ "$status" -ne 0 && "$PITR_RESTORE_OK" != "true" && -z "$PITR_BLOCKED_BY" ]]; then
+    if [[ "$PITR_ATTEMPTED" == "true" ]]; then
+      pitr_failed "the restore ran but did not complete; the run exited with status $status"
+    else
+      pitr_blocked "the run exited with status $status before the restore started"
+    fi
+  fi
+  # A report that cannot be written is a failed run, not a quiet one: a run that
+  # cannot produce evidence must not look like one that did. An earlier failure
+  # keeps its status.
+  if ! emit_pitr_report; then
+    echo "[restore] ERROR: could not write the PITR report to ${PITR_REPORT:-<unset>}" >&2
+    if [[ "$status" -eq 0 ]]; then
+      status=1
+    fi
+  fi
+  exit "$status"
 }
 trap on_exit EXIT
+
+if ! prepare_pitr_report_path; then
+  pitr_blocked "the report directory for ${PITR_REPORT} cannot be created or written; nothing has been stopped"
+  exit 2
+fi
 
 # Resolve docker-compose named volume from Compose metadata only (fail closed).
 # Never pick an arbitrary docker volume ls suffix match.
@@ -277,7 +335,7 @@ COMPOSE_VOLUME=""
 # form, then normalise it to the shape pgBackRest accepts so the documented
 # `2026-11-14T09:01:00Z` input works instead of failing deep in the restore.
 iso_target=""
-target_epoch=""
+target_micros=""
 if [[ -n "$RESTORE_TARGET" ]]; then
   if ! [[ "$RESTORE_TARGET" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[T\ ][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)?$ ]]; then
     echo "[restore] PGBACKREST_RESTORE_TARGET is not an ISO8601 timestamp: $RESTORE_TARGET" >&2
@@ -286,7 +344,15 @@ if [[ -n "$RESTORE_TARGET" ]]; then
   fi
   iso_target="$RESTORE_TARGET"
   PITR_TARGET_TIMESTAMP="$iso_target"
-  target_epoch="$(date -u -d "$iso_target" +%s 2>/dev/null || true)"
+  # Integer microseconds, not whole seconds: the replayed transaction is
+  # compared against this value, and truncating it here is what made a replay
+  # at .800 before a target at .900 fail.
+  target_micros="$(iso_micros "$iso_target")"
+  if [[ -z "$target_micros" ]]; then
+    echo "[restore] PGBACKREST_RESTORE_TARGET could not be converted to an epoch: $iso_target" >&2
+    pitr_blocked "PGBACKREST_RESTORE_TARGET could not be converted to an epoch: $iso_target"
+    exit 2
+  fi
   RESTORE_TARGET="${iso_target/T/ }"
   if [[ "$RESTORE_TARGET" == *Z ]]; then
     RESTORE_TARGET="${RESTORE_TARGET%Z}+00"
@@ -599,7 +665,7 @@ live_cluster_identity() {
 # fresh. When archiving is not proven the RPO field stays null and the report
 # cannot claim an RPO pass.
 measure_live_wal_archive() {
-  local identity cid user db row archived last_epoch now
+  local identity cid user db row archived last_us last_seg cur_seg last_failed now_us
   [[ -n "$PITR_REPORT" ]] || return 0
   identity="$(live_cluster_identity || true)"
   if [[ "$identity" != *"|"*"|"* ]]; then
@@ -610,15 +676,16 @@ measure_live_wal_archive() {
   user="${identity#*|}"
   user="${user%%|*}"
   db="${identity##*|}"
+  # last_archived_time is when an upload *completed*, so it is an RPO only while
+  # nothing older is still queued. The segment names answer that question and
+  # travel with the report: the writer refuses the claim when the queue is not
+  # drained. Microseconds keep the age exact; whole seconds would round it.
   row="$("${CLI[@]}" exec "$cid" psql -U "$user" -d "$db" -tAc \
-    "SELECT archived_count || '|' || COALESCE(EXTRACT(EPOCH FROM last_archived_time)::bigint, -1) FROM pg_stat_archiver" \
+    "SELECT archived_count || '|' || COALESCE((EXTRACT(EPOCH FROM last_archived_time) * 1000000)::bigint, -1) || '|' || COALESCE(last_archived_wal, '') || '|' || pg_walfile_name(pg_current_wal_lsn()) || '|' || CASE WHEN last_failed_time IS NOT NULL AND (last_archived_time IS NULL OR last_failed_time > last_archived_time) THEN 'true' ELSE 'false' END FROM pg_stat_archiver" \
     2>/dev/null | tr -d '\r' | tail -n1 || true)"
-  if [[ "$row" != *"|"* ]]; then
-    echo "[restore] WAL archive freshness unreadable (pg_stat_archiver)"
-    return 0
-  fi
-  archived="${row%%|*}"
-  last_epoch="${row##*|}"
+  # An empty row is "unmeasured", not a reason to abort: `read` returns 1 at
+  # EOF, so the failure is swallowed here and handled by the checks below.
+  IFS='|' read -r archived last_us last_seg cur_seg last_failed <<<"$row" || true
   # '' or a non-digit means the count is unusable, so RPO stays unmeasured. An
   # all-digit value is the valid case and is handled below, so the default arm
   # is a deliberate no-op rather than a silent acceptance.
@@ -626,38 +693,109 @@ measure_live_wal_archive() {
     '' | *[!0-9]*) return 0 ;;
     *) : ;;
   esac
-  case "$last_epoch" in
-    '' | *[!0-9]*) return 0 ;;
+  case "$last_us" in
+    '' | *[!0-9-]*) return 0 ;;
     *) : ;;
   esac
-  if (( archived == 0 || last_epoch <= 0 )); then
+  if (( archived == 0 || last_us <= 0 )); then
     echo "[restore] WAL archiving has archived no segment (archived_count=$archived) — RPO unmeasurable"
     return 0
   fi
-  now="$(date +%s)"
+  now_us="$(date +%s%6N)"
   PITR_WAL_ARCHIVE_OK=true
-  PITR_RPO_MEASURED=$(( now - last_epoch ))
-  if (( PITR_RPO_MEASURED < 0 )); then
-    PITR_RPO_MEASURED=0
+  PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC=$(( (now_us - last_us) / 1000000 ))
+  if (( PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC < 0 )); then
+    PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC=0
   fi
-  echo "[restore] wal_archive_ok=true newest_archived_age_sec=$PITR_RPO_MEASURED"
+  PITR_RPO_MEASURED="$PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC"
+  PITR_WAL_ARCHIVE_LAST_SEGMENT="$last_seg"
+  PITR_WAL_ARCHIVE_CURRENT_SEGMENT="$cur_seg"
+  PITR_WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE="$last_failed"
+  echo "[restore] wal_archive_ok=true newest_archived_age_sec=$PITR_RPO_MEASURED last_archived_wal=${last_seg:-unknown} current_wal=${cur_seg:-unknown} failed_since_archive=${last_failed:-unknown}"
+}
+
+# recovery_identity prints "<user>|<db>" for a restored cluster.
+#
+# The live primary is the convenient source, but it is exactly what is missing
+# during a real recovery: deriving the identity from a running container made
+# every offline recovery connect as `postgres` against a cluster bootstrapped
+# with `ibex`, so a valid restore failed verification after 120 s. Compose
+# metadata for the selected profile answers the same question with nothing
+# running, and the two overrides cover a host or break-glass restore.
+recovery_identity() {
+  local identity user db from_compose
+  identity="$(live_cluster_identity || true)"
+  if [[ "$identity" == *"|"*"|"* ]]; then
+    user="${identity#*|}"
+    user="${user%%|*}"
+    db="${identity##*|}"
+    printf '%s|%s\n' "$user" "$db"
+    return 0
+  fi
+  if [[ -n "${PGBACKREST_RECOVERY_USER:-}" || -n "${PGBACKREST_RECOVERY_DB:-}" ]]; then
+    printf '%s|%s\n' "${PGBACKREST_RECOVERY_USER:-postgres}" "${PGBACKREST_RECOVERY_DB:-postgres}"
+    return 0
+  fi
+  from_compose="$(
+    compose -f "$COMPOSE_FILE" config --format json 2>/dev/null | python3 -c '
+import json, sys
+cfg = json.load(sys.stdin)
+svc = (cfg.get("services") or {}).get("postgres") or {}
+env = svc.get("environment") or {}
+if isinstance(env, list):
+    env = dict(item.split("=", 1) for item in env if "=" in item)
+print((env.get("POSTGRES_USER") or "postgres") + "|" + (env.get("POSTGRES_DB") or "postgres"))
+' 2>/dev/null
+  )" || true
+  if [[ "$from_compose" == *"|"* ]]; then
+    printf '%s\n' "$from_compose"
+    return 0
+  fi
+  printf 'postgres|postgres\n'
+}
+
+# record_recovery_target compares the replayed transaction with the requested
+# target in integer microseconds. Every branch that verifies a restored cluster
+# calls this, so the comparison exists once and cannot drift between them.
+#
+# An unreadable or absent replay value leaves PITR_RECOVERY_TARGET_REACHED
+# empty, and the callers treat anything other than "true" as unproven: "not
+# measured" is not "not missed".
+record_recovery_target() {
+  local replay_us="$1"
+  [[ -n "$iso_target" ]] || return 0
+  case "$replay_us" in
+    '' | *[!0-9-]*) return 0 ;;
+    *) : ;;
+  esac
+  (( replay_us >= 0 )) || return 0
+  PITR_RECOVERY_REPLAY_TIMESTAMP="$(format_epoch_micros "$replay_us")"
+  if [[ -z "$target_micros" ]]; then
+    PITR_RECOVERY_TARGET_REACHED=false
+    echo "[restore] ERROR: the recovery target has no epoch value; target not proven" >&2
+    return 0
+  fi
+  if (( replay_us <= target_micros )); then
+    PITR_RECOVERY_TARGET_REACHED=true
+    echo "[restore] recovery target reached: replay=$PITR_RECOVERY_REPLAY_TIMESTAMP target=$iso_target"
+  else
+    PITR_RECOVERY_TARGET_REACHED=false
+    echo "[restore] ERROR: recovery replayed past the target (replay=$PITR_RECOVERY_REPLAY_TIMESTAMP target=$iso_target)" >&2
+  fi
 }
 
 # record_cluster_facts reads the recovery point and the data size back from a
 # running restored cluster. "Reached the target" is a fact only when the
 # cluster's own last replayed transaction says so.
 record_cluster_facts() {
-  local container="$1" identity user=postgres db=postgres row replay
-  identity="$(live_cluster_identity || true)"
-  if [[ "$identity" == *"|"*"|"* ]]; then
-    user="${identity#*|}"
-    user="${user%%|*}"
-    db="${identity##*|}"
-  fi
+  local container="$1" identity user db row replay
+  identity="$(recovery_identity || true)"
+  user="${identity%%|*}"
+  db="${identity#*|}"
   [[ -n "$user" ]] || user=postgres
   [[ -n "$db" ]] || db=postgres
   row="$("${CLI[@]}" exec "$container" psql -U "$user" -d "$db" -tAc \
-    "SELECT COALESCE(EXTRACT(EPOCH FROM pg_last_xact_replay_timestamp())::bigint, -1) || '|' || pg_database_size(current_database())" \
+    "SELECT COALESCE((EXTRACT(EPOCH FROM pg_last_xact_replay_timestamp()) * 1000000)::bigint, -1) || '|' || pg_database_size(current_database())" \
     2>/dev/null | tr -d '\r' | tail -n1 || true)"
   if [[ "$row" == *"|"* ]]; then
     replay="${row%%|*}"
@@ -668,24 +806,13 @@ record_cluster_facts() {
       '' | *[!0-9]*) PITR_CLUSTER_DATA_BYTES="" ;;
       *) : ;;
     esac
-    # Same rule for the replay epoch, which may legitimately be negative (-1
-    # means "no replayed transaction yet"), so the pattern also allows '-'.
+    # The replay epoch may legitimately be negative (-1 means "no replayed
+    # transaction yet"), so the pattern also allows '-'.
     case "$replay" in
       '' | *[!0-9-]*) replay="" ;;
       *) : ;;
     esac
-    if [[ -n "$replay" ]] && (( replay >= 0 )); then
-      PITR_RECOVERY_REPLAY_TIMESTAMP="$(date -u -d "@$replay" +%Y-%m-%dT%H:%M:%SZ)"
-      if [[ -n "$target_epoch" ]]; then
-        if (( replay <= target_epoch )); then
-          PITR_RECOVERY_TARGET_REACHED=true
-          echo "[restore] recovery target reached: replay=$PITR_RECOVERY_REPLAY_TIMESTAMP target=$iso_target"
-        else
-          PITR_RECOVERY_TARGET_REACHED=false
-          echo "[restore] ERROR: recovery replayed past the target (replay=$PITR_RECOVERY_REPLAY_TIMESTAMP target=$iso_target)" >&2
-        fi
-      fi
-    fi
+    record_recovery_target "$replay"
   fi
   PITR_RESTORED_ORGS="$("${CLI[@]}" exec "$container" psql -U "$user" -d "$db" -tAc \
     "SELECT COUNT(*)::text FROM ibex_core.organizations" 2>/dev/null | tr -d "$PG_WS_TRIM" | tail -n1 || true)"
@@ -706,7 +833,7 @@ record_cluster_facts() {
 # point can be read instead of asserted. It is removed on exit; the restored
 # volume is left in place, stopped, as before.
 start_pitr_verify_container() {
-  local network="$1" identity user=postgres db=postgres ready=false
+  local network="$1" identity user db ready=false
   PITR_VERIFY_CONTAINER="ibex-pitr-verify-$$"
   if ! "${CLI[@]}" run -d --name "$PITR_VERIFY_CONTAINER" "${run_args[@]}" "${cred_file_args[@]}" \
     --network "$network" \
@@ -716,12 +843,9 @@ start_pitr_verify_container() {
     echo "[restore] FAILED: could not start the restored scratch cluster" >&2
     return 1
   fi
-  identity="$(live_cluster_identity || true)"
-  if [[ "$identity" == *"|"*"|"* ]]; then
-    user="${identity#*|}"
-    user="${user%%|*}"
-    db="${identity##*|}"
-  fi
+  identity="$(recovery_identity || true)"
+  user="${identity%%|*}"
+  db="${identity#*|}"
   [[ -n "$user" ]] || user=postgres
   [[ -n "$db" ]] || db=postgres
   for _ in $(seq 1 120); do
@@ -754,7 +878,10 @@ if [[ -n "$SCRATCH_VOLUME" ]]; then
     pitr_blocked "scratch volume $SCRATCH_VOLUME does not exist; create it first"
     exit 1
   fi
-  NETWORK="$(resolve_compose_network "$COMPOSE_FILE")"
+  if ! NETWORK="$(resolve_compose_network "$COMPOSE_FILE")"; then
+    pitr_blocked "the Compose network for the restore container could not be resolved (no container, or no network on it)"
+    exit 1
+  fi
   echo "[restore] scratch restore volume=$SCRATCH_VOLUME network=$NETWORK image=$IMAGE"
   PITR_ATTEMPTED=true
   if ! "${CLI[@]}" run --rm "${run_args[@]}" "${cred_file_args[@]}" \
@@ -778,12 +905,21 @@ if [[ -n "$SCRATCH_VOLUME" ]]; then
   fi
   record_cluster_facts "$PITR_VERIFY_CONTAINER"
   cleanup_pitr_verify_container
-  if [[ "$PITR_RECOVERY_TARGET_REACHED" == "false" ]]; then
-    echo "[restore] FAILED: the restored cluster did not stop at the requested target" >&2
+  # Only an affirmative result is a proof. An empty value means psql failed, the
+  # row was malformed, or no transaction had been replayed yet, and none of those
+  # is a restore that stopped where it was asked to.
+  if [[ -n "$iso_target" && "$PITR_RECOVERY_TARGET_REACHED" != "true" ]]; then
+    pitr_failed "the restored cluster did not prove the requested target ($iso_target)"
+    echo "[restore] FAILED: the restored cluster did not prove the requested target" >&2
     exit 1
   fi
   PITR_BACKUP_OK=true
   PITR_RESTORE_OK=true
+  # The printed command names the connection the restore actually used, resolved
+  # once here rather than twice inside the heredoc.
+  NEXT_IDENTITY="$(recovery_identity)"
+  NEXT_USER="${NEXT_IDENTITY%%|*}"
+  NEXT_DB="${NEXT_IDENTITY#*|}"
   cat <<NEXT
 
 The restored cluster is not running. Start it on the scratch volume, with
@@ -796,7 +932,7 @@ $(print_credential_load)
     -v $CONF:$CONTAINER_CONF:ro \\
     $IMAGE postgres -c archive_mode=off
 
-  ${CLI[*]} exec ibex-pitr-scratch psql -U ibex -d ibex \\
+  ${CLI[*]} exec ibex-pitr-scratch psql -U $NEXT_USER -d $NEXT_DB \\
     -c 'SELECT pg_is_in_recovery(), pg_last_xact_replay_timestamp()'
 NEXT
   exit 0
@@ -898,6 +1034,44 @@ canonical_dir() {
   ( cd "$dir" 2>/dev/null && pwd -P ) || printf '%s\n' "$dir"
 }
 
+# record_host_cluster_facts reads the recovery point and the data size from a
+# host cluster that was just verified. The IBEX database is used when the
+# restored cluster has one: pg_database_size() of `postgres` measures the
+# maintenance database, not the data that was restored, and reporting it would
+# flatter the restore with a number that proves nothing.
+record_host_cluster_facts() {
+  local db=postgres row replay has_ibex
+  has_ibex="$("$@" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'ibex'" 2>/dev/null | tr -d "$PG_WS_TRIM" || true)"
+  if [[ "$has_ibex" == "1" ]]; then
+    db=ibex
+  fi
+  row="$("$@" -d "$db" -tAc \
+    "SELECT COALESCE((EXTRACT(EPOCH FROM pg_last_xact_replay_timestamp()) * 1000000)::bigint, -1) || '|' || pg_database_size(current_database())" \
+    2>/dev/null | tr -d '\r' | tail -n1 || true)"
+  if [[ "$row" == *"|"* ]]; then
+    replay="${row%%|*}"
+    PITR_CLUSTER_DATA_BYTES="${row##*|}"
+    case "$PITR_CLUSTER_DATA_BYTES" in
+      '' | *[!0-9]*) PITR_CLUSTER_DATA_BYTES="" ;;
+      *) : ;;
+    esac
+    case "$replay" in
+      '' | *[!0-9-]*) replay="" ;;
+      *) : ;;
+    esac
+    record_recovery_target "$replay"
+  fi
+  if [[ "$db" == "ibex" ]]; then
+    PITR_RESTORED_ORGS="$("$@" -d "$db" -tAc "SELECT COUNT(*)::text FROM ibex_core.organizations" 2>/dev/null | tr -d "$PG_WS_TRIM" | tail -n1 || true)"
+    case "$PITR_RESTORED_ORGS" in
+      '' | *[!0-9]*) PITR_RESTORED_ORGS="" ;;
+      *) : ;;
+    esac
+    PITR_RESTORED_MEMORIES="$("$@" -d "$db" -tAc "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
+  fi
+  echo "[restore] restored cluster bytes=${PITR_CLUSTER_DATA_BYTES:-unknown} orgs=${PITR_RESTORED_ORGS:-unknown} memories=${PITR_RESTORED_MEMORIES:-unknown}"
+}
+
 # verify_destructive_restore_host is the same proof for a host data directory:
 # PG_VERSION first (so an empty directory is never initialised into a false
 # success), then the cluster is started and pg_is_in_recovery() is required to
@@ -972,6 +1146,9 @@ verify_destructive_restore_host() {
     return 1
   fi
   echo "[restore] recovery state verified: pg_is_in_recovery()=false (data_directory=$actual_data_dir)"
+  # The host branch used to stop here, so every targeted host restore reached
+  # the same success state without anyone reading the replayed transaction.
+  record_host_cluster_facts "${psql_target[@]}"
   return 0
 }
 
@@ -980,7 +1157,10 @@ PITR_ATTEMPTED=true
 if [[ "$stopped_via_compose" == "true" && -n "$COMPOSE_VOLUME" ]]; then
   # Host pgbackrest cannot resolve the object store; run inside the compose
   # network.
-  NETWORK="$(resolve_compose_network "$COMPOSE_FILE")"
+  if ! NETWORK="$(resolve_compose_network "$COMPOSE_FILE")"; then
+    pitr_failed "the Compose network for the restore container could not be resolved after Postgres was stopped"
+    exit 1
+  fi
   echo "[restore] running pgbackrest in compose network=$NETWORK image=$IMAGE"
   if ! "${CLI[@]}" run --rm "${run_args[@]}" "${cred_file_args[@]}" \
     --network "$NETWORK" \
@@ -999,8 +1179,9 @@ if [[ "$stopped_via_compose" == "true" && -n "$COMPOSE_VOLUME" ]]; then
   if [[ -n "$RESTORED_CID" ]]; then
     record_cluster_facts "$RESTORED_CID"
   fi
-  if [[ "$PITR_RECOVERY_TARGET_REACHED" == "false" ]]; then
-    echo "[restore] FAILED: the restored cluster did not stop at the requested target" >&2
+  if [[ -n "$iso_target" && "$PITR_RECOVERY_TARGET_REACHED" != "true" ]]; then
+    pitr_failed "the restored cluster did not prove the requested target ($iso_target)"
+    echo "[restore] FAILED: the restored cluster did not prove the requested target" >&2
     exit 1
   fi
 else
@@ -1009,6 +1190,11 @@ else
     exit 1
   fi
   if ! verify_destructive_restore_host; then
+    exit 1
+  fi
+  if [[ -n "$iso_target" && "$PITR_RECOVERY_TARGET_REACHED" != "true" ]]; then
+    pitr_failed "the restored cluster did not prove the requested target ($iso_target)"
+    echo "[restore] FAILED: the restored cluster did not prove the requested target" >&2
     exit 1
   fi
 fi

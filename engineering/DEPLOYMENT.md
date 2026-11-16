@@ -280,10 +280,14 @@ drift apart. The path is `IBEX_PITR_REPORT`, else `PITR_REPORT=` on the `make` l
 `${RESTORE_DRILL_REPORT_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/ibex/restore-drill/pitr-report.json`; the default is
 the per-user state directory because a non-root operator cannot write `/var/lib/ibex`. A run that never reached the
 restore — a missing repository config, an unresolvable runtime, a missing scratch volume — still writes a report, with
-`mechanism: "unavailable"` and a non-empty `blocked_by`. The writer refuses an `unavailable` report without that reason,
-refuses `rpo_pass` for any mechanism other than `pgbackrest_wal`, and refuses `rpo_pass` when the measured RPO is null or
-a requested recovery target was missed. A PITR report does not advance `ibex_restore_drill_last_success_unixtime`: that
-gauge means the scheduled drill ran, and a rehearsal must not mask a drill that stopped.
+`mechanism: "unavailable"` and a non-empty `blocked_by`. A run that fails *after* the restore started writes the same
+reason under `blocked_by` with the mechanism it actually used. The writer refuses an `unavailable` report without that
+reason, refuses `rpo_pass` for any mechanism other than `pgbackrest_wal`, and refuses `rpo_pass` when the measured RPO is
+null, above the target, or read from an archive queue that was not provably drained, or when a requested recovery target
+was not affirmatively reached — an empty result is a target nobody checked, not a target that was met. The report is
+written atomically, and a run whose report cannot be written exits non-zero: a run that cannot produce evidence must not
+look like one that did. A PITR report does not advance `ibex_restore_drill_last_success_unixtime`: that gauge means the
+scheduled drill ran, and a rehearsal must not mask a drill that stopped.
 
 **What a committed report contains.** `restore-drill-report.json` and `pitr-report.json` share one schema:
 
@@ -291,16 +295,18 @@ gauge means the scheduled drill ran, and a rehearsal must not mask a drill that 
 |---|---|
 | `drill_kind` | `restore-drill` (dump/restore drill) or `pitr` (point-in-time rehearsal) |
 | `drill_started_at`, `environment_class` | When and where the run happened, e.g. `local-podman-scratch`; a local result is not a hosted one |
-| `blocked_by` | Non-empty only when `mechanism` is `unavailable`; names what stopped the run |
+| `blocked_by` | Names what stopped the run. Always set when `mechanism` is `unavailable`; also set when a restore that had started failed, with the mechanism it actually used |
 | `postgres.mechanism` | `pgbackrest_wal`, `pg_dump_fallback`, `unavailable`, or `unmeasured` |
-| `postgres.wal_archive_ok` | `pg_stat_archiver` showed at least one archived segment with a `last_archived_time`, read *before* the backup |
-| `postgres.rpo_measured_sec` | Age of the newest archived WAL segment at the start of the run; null when archiving was not proven |
+| `postgres.wal_archive_ok` | `pg_stat_archiver` showed at least one archived segment with a `last_archived_time`; read at the start of the run — before the drill's backup, and before the restore for a PITR rehearsal |
+| `postgres.wal_archive_upload_age_sec` | Age of the newest archive **upload** when it was sampled. An observation, not a claim: upload completion is not the transaction time the segment carried |
+| `postgres.wal_archive_backlog` | Whether the archive queue was drained at that moment (`false`), was not (`true`), or could not be told (`null`). Computed from `last_archived_wal`, `pg_walfile_name(pg_current_wal_lsn())` and a failed push after the last success |
+| `postgres.rpo_measured_sec` | The upload age, but only when the queue was drained: then it is an upper bound on the RPO. Null when archiving was not proven or the queue was not drained |
 | `postgres.target_timestamp` | The recovery target the run asked for, or null |
 | `postgres.recovery_target_reached` | Whether the restored cluster's last replayed transaction was at or before that target; null when no target was requested |
 | `postgres.recovery_replay_timestamp` | That last replayed transaction, read from the restored cluster |
 | `postgres.cluster_data_bytes` | `pg_database_size` of the restored database; a target reached over an empty cluster is not a recovery |
 | `postgres.restored_row_counts` | `organizations` and `memories` read back from the restored cluster |
-| `postgres.rpo_pass` | True only for `pgbackrest_wal` with a measured RPO inside the target, a completed restore, and no missed target |
+| `postgres.rpo_pass` | True only for `pgbackrest_wal` with a measured RPO inside the target, a drained archive queue, a completed restore, and an affirmatively reached recovery target when one was requested |
 
 **The drill's `--mechanism=pgbackrest` removes the fallback.** `infra/scripts/platform/restore-drill.sh` accepts
 `--mechanism=auto|pgbackrest|pg_dump` (or `IBEX_DRILL_MECHANISM`), and `--target=<ISO8601>` (or `IBEX_DRILL_TARGET`).
