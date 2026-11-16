@@ -36,3 +36,52 @@ reason = "No upstream fixed release; carried by @rollup/plugin-node-resolve at b
 id = "GHSA-vjh5-4x84-xrqp"
 ignoreUntil = 2026-12-01
 reason = "4.x fixed upstream in 4.6.2; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (introduced >= 3.0.0, no fixed event), which this repository does not use. The Console is not hosted and claims no production deployment. Re-audit when OSV closes the 3.x range or before any hosted rollout."
+
+# nuxt / nitro-server encoded-slash route-rule advisory (GHSA-f3x9-2chm-73c8,
+# CVE-2026-128071). The 4.x line was fixed upstream in 4.6.4, and this lock
+# resolves nuxt and @nuxt/nitro-server 4.6.4, so the code actually installed is
+# past the 4.x fix. OSV still reports the advisory because it also carries an
+# open-ended range (introduced >= 3.0.0, no `fixed` event) for the 3.x line,
+# which this repository does not use; osv-scanner therefore shows an installed
+# 4.6.4 against "FIXED VERSION: 4.6.4". This package is not build-time-only and
+# does reach the Nitro server artifact, so the filter rests on the installed
+# version already containing the fix — not on the package being absent from the
+# deployment. Re-audit when OSV closes the 3.x range, if the lock ever resolves
+# below 4.6.4, or before any hosted rollout.
+[[IgnoredVulns]]
+id = "GHSA-f3x9-2chm-73c8"
+ignoreUntil = 2026-12-01
+reason = "4.x fixed upstream in 4.6.4; this lock resolves nuxt and @nuxt/nitro-server 4.6.4. OSV still matches via its open-ended 3.x range (introduced >= 3.0.0, no fixed event), which this repository does not use. Runtime package, but the installed code is past the fix, so no unfixed code ships. Re-audit when OSV closes the 3.x range, if the lock drops below 4.6.4, or before any hosted rollout."
+
+# nuxt unhandled server-render error advisory (GHSA-96x6-fvhx-49hg,
+# CVE-2026-128075). The 4.x line was fixed upstream in 4.6.4, and this lock
+# resolves nuxt 4.6.4, so the code actually installed is past the 4.x fix. OSV
+# still reports the advisory because it also carries an open-ended range
+# (introduced >= 3.0.0, no `fixed` event) for the 3.x line, which this
+# repository does not use; osv-scanner therefore shows an installed 4.6.4
+# against "FIXED VERSION: 4.6.4". This package is not build-time-only and does
+# reach the Nitro server artifact, so the filter rests on the installed version
+# already containing the fix — not on the package being absent from the
+# deployment. Re-audit when OSV closes the 3.x range, if the lock ever resolves
+# below 4.6.4, or before any hosted rollout.
+[[IgnoredVulns]]
+id = "GHSA-96x6-fvhx-49hg"
+ignoreUntil = 2026-12-01
+reason = "4.x fixed upstream in 4.6.4; this lock resolves nuxt 4.6.4. OSV still matches via its open-ended 3.x range (introduced >= 3.0.0, no fixed event), which this repository does not use. Runtime package, but the installed code is past the fix, so no unfixed code ships. Re-audit when OSV closes the 3.x range, if the lock drops below 4.6.4, or before any hosted rollout."
+
+# nuxt / nitro-server island-props path-collision advisory
+# (GHSA-hf59-9xwc-2g4p, CVE-2026-128076). The 4.x line was fixed upstream in
+# 4.6.4, and this lock resolves nuxt and @nuxt/nitro-server 4.6.4, so the code
+# actually installed is past the 4.x fix. OSV still reports the advisory
+# because it also carries an open-ended range (introduced >= 3.21.6, no `fixed`
+# event) for the 3.x line, which this repository does not use; osv-scanner
+# therefore shows an installed 4.6.4 against "FIXED VERSION: 4.6.4". This
+# package is not build-time-only and does reach the Nitro server artifact, so
+# the filter rests on the installed version already containing the fix — not on
+# the package being absent from the deployment. Re-audit when OSV closes the
+# 3.x range, if the lock ever resolves below 4.6.4, or before any hosted
+# rollout (ADR-0088).
+[[IgnoredVulns]]
+id = "GHSA-hf59-9xwc-2g4p"
+ignoreUntil = 2026-12-01
+reason = "4.x fixed upstream in 4.6.4; this lock resolves nuxt and @nuxt/nitro-server 4.6.4. OSV still matches via its open-ended 3.x range (introduced >= 3.21.6, no fixed event), which this repository does not use. Runtime package, but the installed code is past the fix, so no unfixed code ships. Re-audit when OSV closes the 3.x range, if the lock drops below 4.6.4, or before any hosted rollout."
