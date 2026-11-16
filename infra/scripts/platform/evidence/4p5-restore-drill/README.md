@@ -26,8 +26,10 @@ bash infra/scripts/platform/restore-drill.sh
 ## Honesty notes
 
 - `postgres.rpo_pass` is **false** for `pg_dump_fallback` (not PITR). Residual: #869.
-- `postgres.rpo_measured_sec` is **null** — backup wall-clock is not RPO; WAL archive
-  freshness + PITR are required before exporting a measured RPO (#869).
+- `postgres.rpo_upper_bound_sec` is **null** — a dump has no recoverable WAL position, so
+  there is no frontier to demonstrate. An RPO upper bound needs the instant archiving
+  stopped (`wal_archive_quiesced_at`) and the instant the restored cluster replayed to
+  (`recovery_replay_timestamp`); neither exists for a dump (#869).
 - `kyverno_policy_applied` is **false** until staging/kind soak: #869.
 - Never attach reports produced with `ALLOW_NO_DB=1` (script prints `NOT_EVIDENCE`).
 
@@ -42,8 +44,9 @@ evidence-grade run, the following normalizations were applied before commit:
 2. **`evidence_note`** — added to record environment (podman `ibex-test-pg`,
    database `ibex_drill`, role `ibex_rls` → `SET LOCAL ROLE ibex_app`), mechanism
    honesty, and Kyverno deferral (#869).
-3. **`rpo_measured_sec`** — set to `null` when the generator had incorrectly
-   exported backup wall-clock as RPO (corrected to match drill honesty: RPO
-   remains unmeasured without WAL/PITR).
+3. **`rpo_upper_bound_sec`** — the field that replaced `rpo_measured_sec` is
+   `null`: the generator once exported backup wall-clock as an RPO, and a dump
+   cannot demonstrate a frontier at all. `wal_archive_quiesced_at` and
+   `recovery_replay_timestamp` are `null` for the same reason.
 
 `transcript.txt` remains the verbatim tee of the drill stdout.

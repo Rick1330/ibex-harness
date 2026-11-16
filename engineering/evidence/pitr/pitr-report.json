@@ -10,14 +10,20 @@
   "postgres": {
     "rpo_target_sec": 300,
     "rto_target_sec": 1800,
-    "rpo_measured_sec": 17,
+    "rpo_upper_bound_sec": null,
     "rto_measured_sec": null,
     "backup_ok": true,
     "restore_ok": true,
-    "rpo_pass": true,
+    "rpo_pass": false,
     "rto_pass": false,
     "mechanism": "pgbackrest_wal",
+    "restore_target": "scratch",
     "wal_archive_ok": true,
+    "wal_archive_upload_age_sec": 17,
+    "wal_archive_timeout_sec": null,
+    "wal_archive_wal_segment_size": null,
+    "wal_archive_backlog": null,
+    "wal_archive_quiesced_at": null,
     "target_timestamp": "2026-11-16T07:42:48Z",
     "recovery_target_reached": true,
     "recovery_replay_timestamp": "2026-11-16T07:42:42Z",
@@ -53,15 +59,18 @@
     "pending": null,
     "rpo_pass": false
   },
-  "tenant_isolation_post_restore": false,
+  "tenant_isolation_post_restore": null,
   "helm_lint_template": false,
   "kyverno_policy_applied": false,
   "kyverno_residual": "#869",
+  "postgres_rpo_residual": "targeted_restore_proves_target_not_rpo",
   "fixture": {
     "rows": null,
     "orgs": null,
     "rows_verified": null,
     "rows_restored": null,
     "min_rows_for_rto_evidence": 1000
-  }
+  },
+  "residual": "tenant_isolation_not_measured_pitr",
+  "evidence_note": "Produced by a targeted rehearsal (TARGET=2026-11-16T07:42:48Z): it proves the restore and the recovery target, and it cannot carry an RPO claim. A targeted restore stops where the operator asked, so the gap from its replay point to the target is the target offset plus the restore time, not archive lag. The scratch path stops nothing, so no quiesce instant was measured (wal_archive_quiesced_at: null) and no RPO bound is derivable; rpo_upper_bound_sec is null and rpo_pass is false for that reason. The historical 17 was an upload age from pg_stat_archiver, not a frontier, and was not renamed into the new field."
 }

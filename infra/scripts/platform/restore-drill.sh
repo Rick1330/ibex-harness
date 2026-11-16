@@ -166,7 +166,7 @@ emit_unavailable_report() {
     PG_RESTORE_OK=false \
     PG_RPO_SEC="$PG_RPO_SEC" \
     PG_RTO_SEC="$PG_RTO_SEC" \
-    ISO_OK=false \
+    ISO_OK="" \
     KIND_OK=false \
     KYVERNO_OK=false \
     WAL_ARCHIVE_OK=false \
@@ -301,6 +301,20 @@ floor_sec() {
   fi
 }
 
+# read_fact prints one key from the restore script's facts file, or nothing when
+# the key was not measured. The file is key=value and carries timestamps and
+# counts only, so a missing key and an empty one mean the same thing: unmeasured.
+read_fact() {
+  local key="$1" file="$2" line value=""
+  [[ -f "$file" ]] || return 0
+  while IFS= read -r line; do
+    if [[ "$line" == "$key="* ]]; then
+      value="${line#*=}"
+    fi
+  done <"$file"
+  printf '%s\n' "$value"
+}
+
 # Per-run fixture UUIDs — never reuse fixed tenant IDs that could collide with real data.
 ORG_A="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 ORG_B="$(python3 -c 'import uuid; print(uuid.uuid4())')"
@@ -384,15 +398,22 @@ WAL_ARCHIVE_AGE_SEC=""
 WAL_ARCHIVE_LAST_SEGMENT=""
 WAL_ARCHIVE_CURRENT_SEGMENT=""
 WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE=""
-# The upload age is a diagnostic. The RPO bound the writer derives from it needs
-# the cluster's archive_timeout, and the queue state needs its wal_segment_size
-# and how many older segments are still sitting in pg_wal.
+# The upload age is a diagnostic. The cluster's archive_timeout and
+# wal_segment_size travel with it so an operator reading a miss has the numbers;
+# neither gates the RPO any more.
 WAL_ARCHIVE_TIMEOUT_SEC=""
 WAL_ARCHIVE_WAL_SEGMENT_SIZE=""
-WAL_ARCHIVE_OLDER_SEGMENTS=""
+# The instant archiving stopped, read back from the restore script's facts file.
+# Once the primary is stopped nothing new is archived, so this freezes the
+# frontier the RPO upper bound is measured from.
+WAL_ARCHIVE_QUIESCED_AT=""
+# The restore script records what it measured for this drill, because a child
+# shell's variables cannot reach the parent. The file is key=value: timestamps
+# and counts only, never a credential.
+RESTORE_FACTS_FILE="$REPORT_DIR/pgbackrest-restore-facts.env"
 measure_wal_archive() {
   local row archived last_us last_seg cur_seg last_failed archive_timeout
-  local continuity seg_bytes older_segments now_us
+  local seg_bytes now_us
   row="$(psql_cmd -Atc "SELECT archived_count || '|' || COALESCE((EXTRACT(EPOCH FROM last_archived_time) * 1000000)::bigint, -1) || '|' || COALESCE(last_archived_wal, '') || '|' || pg_walfile_name(pg_current_wal_lsn()) || '|' || CASE WHEN last_failed_time IS NOT NULL AND (last_archived_time IS NULL OR last_failed_time > last_archived_time) THEN 'true' ELSE 'false' END || '|' || COALESCE((EXTRACT(EPOCH FROM current_setting('archive_timeout')::interval))::bigint, -1) FROM pg_stat_archiver" 2>/dev/null | tr -d '\r' | tail -n1 || true)"
   if [[ -z "$row" || "$row" != *"|"* ]]; then
     echo "[drill] WAL archive freshness unreadable (pg_stat_archiver)"
@@ -420,18 +441,18 @@ measure_wal_archive() {
     '' | *[!0-9]*) archive_timeout="" ;;
     *) : ;;
   esac
-  # Adjacency is not continuity: archival order is not guaranteed, so an older
-  # segment still present in pg_wal means the queue has not drained however
-  # close the newest archived segment is. A psql that cannot list pg_wal leaves
-  # this unproven, which the writer refuses rather than reads as drained.
-  continuity="$(psql_cmd -Atc "SELECT pg_size_bytes(current_setting('wal_segment_size')) || '|' || COALESCE((SELECT count(*) FROM pg_ls_waldir() w, pg_stat_archiver a WHERE a.last_archived_wal IS NOT NULL AND w.name ~ '^[0-9A-F]{24}$' AND w.name < a.last_archived_wal)::text, '')" 2>/dev/null | tr -d '\r' | tail -n1 || true)"
-  IFS='|' read -r seg_bytes older_segments <<<"$continuity" || true
+  # The older-segment count is gone with the pg_wal listing that produced it: a
+  # file older than the newest archived segment may simply not have been
+  # recycled yet, so the count cannot express continuity. The restore is the
+  # continuity proof — it replays every segment from the backup to the replay
+  # point, so a gap either stops recovery or truncates the replay timestamp.
+  # The segment size stays as a diagnostic, but a drill report records
+  # wal_archive_backlog: null because this continuity input is not measured
+  # here. A PITR report, which measures the older-segment count, still computes
+  # it.
+  seg_bytes="$(psql_cmd -Atc "SELECT pg_size_bytes(current_setting('wal_segment_size'))" 2>/dev/null | tr -d '\r' | tail -n1 || true)"
   case "$seg_bytes" in
     '' | *[!0-9]*) seg_bytes="" ;;
-    *) : ;;
-  esac
-  case "$older_segments" in
-    '' | *[!0-9]*) older_segments="" ;;
     *) : ;;
   esac
   WAL_ARCHIVE_OK=true
@@ -442,11 +463,10 @@ measure_wal_archive() {
   fi
   WAL_ARCHIVE_TIMEOUT_SEC="$archive_timeout"
   WAL_ARCHIVE_WAL_SEGMENT_SIZE="$seg_bytes"
-  WAL_ARCHIVE_OLDER_SEGMENTS="$older_segments"
   WAL_ARCHIVE_LAST_SEGMENT="$last_seg"
   WAL_ARCHIVE_CURRENT_SEGMENT="$cur_seg"
   WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE="$last_failed"
-  echo "[drill] wal_archive_ok=true newest_archived_age_sec=$WAL_ARCHIVE_AGE_SEC archive_timeout_sec=${archive_timeout:-unknown} wal_segment_size_bytes=${seg_bytes:-unknown} older_segments_present=${older_segments:-unknown} last_archived_wal=${last_seg:-unknown} current_wal=${cur_seg:-unknown} failed_since_archive=${last_failed:-unknown}"
+  echo "[drill] wal_archive_ok=true newest_archived_age_sec=$WAL_ARCHIVE_AGE_SEC archive_timeout_sec=${archive_timeout:-unknown} wal_segment_size_bytes=${seg_bytes:-unknown} last_archived_wal=${last_seg:-unknown} current_wal=${cur_seg:-unknown} failed_since_archive=${last_failed:-unknown}"
 }
 measure_wal_archive
 
@@ -521,6 +541,11 @@ SQL
 fi
 
 PG_RESTORE_START=$(date +%s)
+# Every drill branch restores over the real data directory — the Compose volume,
+# the host PGDATA, or the container bound by POSTGRES_CONTAINER — so this run
+# records `host`. The drill proves tenant isolation on restored data, so its
+# report records true or false and never null.
+PG_RESTORE_TARGET=host
 PG_RESTORE_USED_PGBACKREST=false
 if [[ -n "$DRILL_TARGET" ]]; then
   # The restore script validates the ISO8601 form and normalises it for
@@ -544,12 +569,17 @@ if [[ "$DRILL_MECHANISM" != "pg_dump" ]] \
   && [[ -z "$PG_RUNTIME" ]] \
   && command -v pgbackrest >/dev/null 2>&1 \
   && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
+  # The restore script measures the quiesce instant in its own shell, so it
+  # writes the facts this report needs. An empty file means it measured nothing.
+  : >"$RESTORE_FACTS_FILE"
+  export PGBACKREST_RESTORE_FACTS_FILE="$RESTORE_FACTS_FILE"
   if bash infra/scripts/platform/pgbackrest-restore.sh; then
     PG_RESTORE_OK=true
     PG_RESTORE_USED_PGBACKREST=true
   else
     echo "[drill] WARN pgbackrest restore failed"
   fi
+  WAL_ARCHIVE_QUIESCED_AT="$(read_fact wal_archive_quiesced_at "$RESTORE_FACTS_FILE")"
 elif [[ "$DRILL_MECHANISM" != "pg_dump" ]] \
   && [[ -n "$PG_RUNTIME" ]] \
   && command -v pgbackrest >/dev/null 2>&1 \
@@ -618,17 +648,15 @@ fi
 
 PG_RESTORE_END=$(date +%s)
 
-# A requested recovery target is only met when the restored cluster reports a
-# last replayed transaction at or before it. Reading the timestamp is the
-# evidence; the boolean alone would be an assertion.
+# The replayed transaction is the recovery frontier, and it is recorded for every
+# successful restore: the RPO upper bound is derived from it, so an untargeted run
+# needs it as much as a targeted one. Reading the timestamp is the evidence; the
+# boolean alone would be an assertion.
 RECOVERY_TARGET_REACHED=""
 RECOVERY_REPLAY_TIMESTAMP=""
-if [[ -n "$DRILL_TARGET" && "$PG_RESTORE_OK" == "true" ]]; then
-  # Microseconds on both sides. Whole seconds round the replay forward and the
-  # target down, so a replay at .800 before a target at .900 used to read as a
-  # miss — and the same rounding can hide a real miss.
+replay_us=""
+if [[ "$PG_RESTORE_OK" == "true" ]]; then
   replay_us="$(psql_cmd -Atc "SELECT COALESCE((EXTRACT(EPOCH FROM pg_last_xact_replay_timestamp()) * 1000000)::bigint, -1)" 2>/dev/null | tr -d '[:space:]' | tail -n1 || true)"
-  target_us="$(iso_micros "$DRILL_TARGET")"
   # Empty or non-numeric clears the epoch; an all-digit (or negative, for the
   # replay timestamp) value is valid and passes through, so the default is a
   # deliberate no-op.
@@ -636,12 +664,22 @@ if [[ -n "$DRILL_TARGET" && "$PG_RESTORE_OK" == "true" ]]; then
     '' | *[!0-9-]*) replay_us="" ;;
     *) : ;;
   esac
+  if [[ -n "$replay_us" ]] && (( replay_us >= 0 )); then
+    RECOVERY_REPLAY_TIMESTAMP="$(format_epoch_micros "$replay_us")"
+  else
+    replay_us=""
+  fi
+fi
+if [[ -n "$DRILL_TARGET" && "$PG_RESTORE_OK" == "true" ]]; then
+  # Microseconds on both sides. Whole seconds round the replay forward and the
+  # target down, so a replay at .800 before a target at .900 used to read as a
+  # miss — and the same rounding can hide a real miss.
+  target_us="$(iso_micros "$DRILL_TARGET")"
   case "$target_us" in
     '' | *[!0-9]*) target_us="" ;;
     *) : ;;
   esac
-  if [[ -n "$replay_us" && -n "$target_us" ]] && (( replay_us >= 0 )); then
-    RECOVERY_REPLAY_TIMESTAMP="$(format_epoch_micros "$replay_us")"
+  if [[ -n "$replay_us" && -n "$target_us" ]]; then
     if (( replay_us <= target_us )); then
       RECOVERY_TARGET_REACHED=true
       echo "[drill] recovery target reached: replay=${RECOVERY_REPLAY_TIMESTAMP} target=$DRILL_TARGET"
@@ -660,22 +698,24 @@ fi
 if [[ "$PG_RESTORE_OK" == "true" ]]; then
   PG_RTO_MEASURED="$(floor_sec $((PG_RESTORE_END - PG_RESTORE_START)))"
 fi
-# RPO is not computed here. The report writer derives the bound from the archive
-# facts recorded above — the upload age plus the cluster's archive_timeout — and
-# leaves it null when the queue is not provably drained or the timeout is unset,
-# because an upload age on its own is not an RPO. pg_dump cannot measure an RPO
-# at all.
+# RPO is not computed here. The report writer derives it from the two instants
+# this run measured — the quiesce instant and what the restored cluster replayed
+# to — and leaves it null when either is missing, because an upload age on its
+# own is not an RPO. pg_dump cannot measure an RPO at all.
 if [[ -n "$PG_BACKUP_SEC" ]]; then
   echo "[drill] backup_wall_clock_sec=$PG_BACKUP_SEC (not exported as RPO)"
 fi
-if [[ "$PG_USED_PGBACKREST" == "true" && "$WAL_ARCHIVE_OK" == "true" ]]; then
-  echo "[drill] WAL archive measured: upload_age_sec=$WAL_ARCHIVE_AGE_SEC archive_timeout_sec=${WAL_ARCHIVE_TIMEOUT_SEC:-unknown} (the report writer derives the RPO bound)"
+if [[ -n "$WAL_ARCHIVE_QUIESCED_AT" && -n "$RECOVERY_REPLAY_TIMESTAMP" ]]; then
+  echo "[drill] RPO frontier: quiesced_at=$WAL_ARCHIVE_QUIESCED_AT replay=$RECOVERY_REPLAY_TIMESTAMP (the report writer derives the upper bound)"
 else
-  echo "[drill] postgres RPO left unmeasured — requires pgBackRest WAL archiving (#869)"
+  echo "[drill] postgres RPO upper bound left unclaimed: quiesced_at=${WAL_ARCHIVE_QUIESCED_AT:-unmeasured} replay=${RECOVERY_REPLAY_TIMESTAMP:-unmeasured}"
 fi
 
 # Tenant isolation under RLS: requires POSTGRES_RLS_DSN or container RLS user.
-ISO_OK=false
+# Empty means "not measured": this run never ran a cross-tenant check. Only the
+# branch below that actually runs one may record false, because false is a
+# measured failure and the writer refuses it unconditionally.
+ISO_OK=""
 if [[ -z "$PG_RLS_URL" && -z "$PG_RUNTIME" ]]; then
   echo "[drill] POSTGRES_RLS_DSN unset — tenant isolation unproven (do not use superuser PGURL)"
 elif [[ -n "$PG_RUNTIME" ]] || [[ -n "$PG_RLS_URL" ]]; then
@@ -702,6 +742,11 @@ COMMIT;
   echo "[drill] post-restore org_b rows (superuser)=$RESTORED_B"
   if [[ "$RESTORED_B" == "1" && "$ISO_A_OWN" == "1" && "$ISO_B_OWN" == "1" && "$ISO_A_CROSS" == "0" && "$ISO_B_CROSS" == "0" ]]; then
     ISO_OK=true
+  else
+    # The cross-tenant check ran and did not pass: this is a measured failure,
+    # not an unmeasured check, so it is recorded as false and the writer refuses
+    # the report.
+    ISO_OK=false
   fi
   echo "[drill] tenant isolation A_own=$ISO_A_OWN A_cross=$ISO_A_CROSS B_own=$ISO_B_OWN B_cross=$ISO_B_CROSS ok=$ISO_OK"
 fi
@@ -782,14 +827,15 @@ export WAL_ARCHIVE_OK TARGET_TIMESTAMP="$DRILL_TARGET"
 export WAL_ARCHIVE_UPLOAD_AGE_SEC="$WAL_ARCHIVE_AGE_SEC"
 export WAL_ARCHIVE_LAST_SEGMENT WAL_ARCHIVE_CURRENT_SEGMENT
 export WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE
-export WAL_ARCHIVE_TIMEOUT_SEC WAL_ARCHIVE_WAL_SEGMENT_SIZE WAL_ARCHIVE_OLDER_SEGMENTS
+export WAL_ARCHIVE_TIMEOUT_SEC WAL_ARCHIVE_WAL_SEGMENT_SIZE
+export WAL_ARCHIVE_QUIESCED_AT
 export RECOVERY_TARGET_REACHED RECOVERY_REPLAY_TIMESTAMP
 export CLUSTER_DATA_BYTES RESTORED_ORGS RESTORED_MEMORIES
 export BLOCKED_BY=""
 export CH_RPO_SEC CH_RTO_SEC CH_RPO_MEASURED CH_RTO_MEASURED CH_REACHABLE
 export OBJ_RPO_SEC OBJ_RTO_SEC OBJ_RPO_MEASURED OBJ_RTO_MEASURED
 export OUTBOX_SEQ OUTBOX_PENDING ISO_OK KIND_OK KYVERNO_OK TRANSCRIPT PG_MECHANISM
-export PG_BACKUP_OK PG_RESTORE_OK ALLOW_NO_DB
+export PG_BACKUP_OK PG_RESTORE_OK PG_RESTORE_TARGET ALLOW_NO_DB
 DRILL_DURATION_SEC=$(( $(date +%s) - DRILL_STARTED_UNIX ))
 export FIXTURE_ROWS FIXTURE_ORGS FIXTURE_ROWS_ACTUAL FIXTURE_ROWS_RESTORED
 export DRILL_MIN_FIXTURE_ROWS DRILL_DURATION_SEC

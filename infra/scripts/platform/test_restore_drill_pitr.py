@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
-"""PITR cases: the recovery target that was asked for, and the WAL backlog.
+"""PITR cases: the recovery target, the WAL backlog, and the RPO upper bound.
 
-A point-in-time rehearsal makes exactly two claims a reader has to trust — that
-the restored cluster stopped at the requested moment, and that the RPO quoted
-was measured against a drained archive. Both are graded here against a PITR
-environment, so the three classes share one builder rather than three
-near-identical ones.
+A restore makes two claims a reader has to trust — that the restored cluster
+stopped where it was asked to, and that the RPO upper bound is the frontier the
+restore demonstrated. Both are graded here against one PITR environment, so the
+classes share a builder rather than each carrying a near-identical one.
 """
 
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
+from typing import Any
 
 from restore_drill_test_support import base_env, mod
+
+# The committed rehearsal, read from disk so the artefact itself is graded.
+ARTEFACT = (
+    Path(__file__).resolve().parents[3] / "engineering" / "evidence" / "pitr" / "pitr-report.json"
+)
 
 # A 16 MiB cluster (256 segments per WAL log id) with nothing older left in
 # pg_wal: the reference state a single matrix row may vary from.
@@ -26,6 +33,7 @@ def pitr_env(**overrides: str) -> dict[str, str]:
     env = base_env(
         DRILL_KIND="pitr",
         PG_MECHANISM="pgbackrest_wal",
+        PG_RESTORE_TARGET="scratch",
         WAL_ARCHIVE_OK="true",
         TARGET_TIMESTAMP="2026-11-16T10:00:00Z",
         RECOVERY_TARGET_REACHED="true",
@@ -33,7 +41,22 @@ def pitr_env(**overrides: str) -> dict[str, str]:
         CLUSTER_DATA_BYTES="1048576",
         RESTORED_ORGS="3",
         RESTORED_MEMORIES="50000",
-        ISO_OK="false",
+        # The PITR producer never measures isolation, so it records that fact
+        # rather than a failure it never observed.
+        ISO_OK="",
+    )
+    env.update(overrides)
+    return env
+
+
+def untargeted_env(**overrides: str) -> dict[str, str]:
+    """A run with no recovery target: the only shape that can carry a bound."""
+    env = pitr_env(
+        TARGET_TIMESTAMP="",
+        RECOVERY_TARGET_REACHED="",
+        WAL_ARCHIVE_QUIESCED_AT="2026-11-16T10:00:05Z",
+        # An untargeted run is a destructive restore, not a scratch rehearsal.
+        PG_RESTORE_TARGET="host",
     )
     env.update(overrides)
     return env
@@ -50,9 +73,15 @@ class PitrReportTests(unittest.TestCase):
         self.assertEqual(report["postgres"]["recovery_replay_timestamp"], "2026-11-16T09:59:58Z")
         self.assertEqual(report["postgres"]["cluster_data_bytes"], 1048576)
         self.assertEqual(report["postgres"]["restored_row_counts"]["memories"], 50000)
-        self.assertTrue(report["postgres"]["rpo_pass"])
-        # A scratch rehearsal never proves tenant isolation; it must not need to.
-        self.assertFalse(report["tenant_isolation_post_restore"])
+        # A targeted restore proves the target, not an RPO: no bound is carried.
+        self.assertIsNone(report["postgres"]["rpo_upper_bound_sec"])
+        self.assertFalse(report["postgres"]["rpo_pass"])
+        self.assertEqual(
+            report["postgres_rpo_residual"], "targeted_restore_proves_target_not_rpo"
+        )
+        # A rehearsal never measures tenant isolation: the report says so
+        # instead of recording a failure the producer never observed.
+        self.assertIsNone(report["tenant_isolation_post_restore"])
         self.assertTrue(report["evidence_eligible"])
 
     def test_missed_target_cannot_pass(self) -> None:
@@ -69,6 +98,9 @@ class PitrReportTests(unittest.TestCase):
         )
         self.assertIsNone(report["postgres"]["target_timestamp"])
         self.assertIsNone(report["postgres"]["recovery_target_reached"])
+        # No replay instant was recorded either, so no bound is claimed.
+        self.assertIsNone(report["postgres"]["rpo_upper_bound_sec"])
+        self.assertFalse(report["postgres"]["rpo_pass"])
 
 
 class WalArchiveBacklogTests(unittest.TestCase):
@@ -276,105 +308,214 @@ class WalArchiveBacklogTests(unittest.TestCase):
                 )
 
     def test_drained_archive_can_claim_rpo_pass(self) -> None:
-        report = mod.build_report(pitr_env())
+        report = mod.build_report(untargeted_env())
         self.assertFalse(report["postgres"]["wal_archive_backlog"])
+        self.assertEqual(report["postgres"]["rpo_upper_bound_sec"], 7)
         self.assertTrue(report["postgres"]["rpo_pass"])
         self.assertTrue(report["evidence_eligible"])
 
-    def test_backlogged_archive_cannot_claim_rpo_pass(self) -> None:
-        # A one-second-old upload of a segment written twenty minutes ago is a
-        # backlog draining, not a one-second RPO.
+    def test_a_backlogged_archive_does_not_withhold_a_demonstrated_bound(self) -> None:
+        # The deliberate reversal: a backlog is a diagnostic, not a gate. The
+        # restore replayed every segment up to the replay point, so the frontier
+        # it demonstrated is the proof — a gap would have stopped recovery or
+        # truncated the replay timestamp, and the number would show it.
         report = mod.build_report(
-            pitr_env(
+            untargeted_env(
                 WAL_ARCHIVE_UPLOAD_AGE_SEC="1",
                 WAL_ARCHIVE_LAST_SEGMENT="000000010000000000000001",
                 WAL_ARCHIVE_CURRENT_SEGMENT="00000001000000000000000d",
+                WAL_ARCHIVE_OLDER_SEGMENTS="3",
             )
         )
         self.assertTrue(report["postgres"]["wal_archive_backlog"])
         self.assertEqual(report["postgres"]["wal_archive_upload_age_sec"], 1)
-        # The observation is kept, but it is not carried as the measured RPO.
-        self.assertIsNone(report["postgres"]["rpo_measured_sec"])
-        self.assertFalse(report["postgres"]["rpo_pass"])
-        # The restore and its target are still proven; only the RPO claim is
-        # withheld, so the report remains citable for what it did prove.
-        self.assertTrue(report["evidence_eligible"])
+        self.assertEqual(report["postgres"]["rpo_upper_bound_sec"], 7)
+        self.assertTrue(report["postgres"]["rpo_pass"])
 
-    def test_unrecorded_archive_state_cannot_claim_rpo_pass(self) -> None:
+    def test_unrecorded_archive_state_is_a_diagnostic_not_a_gate(self) -> None:
+        # An unmeasured queue cannot tell an operator anything, but it cannot
+        # withdraw a bound the restore demonstrated either.
         report = mod.build_report(
-            pitr_env(
+            untargeted_env(
                 WAL_ARCHIVE_LAST_SEGMENT="",
                 WAL_ARCHIVE_CURRENT_SEGMENT="",
                 WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE="",
             )
         )
         self.assertIsNone(report["postgres"]["wal_archive_backlog"])
-        self.assertFalse(report["postgres"]["rpo_pass"])
-
-    def test_honesty_validator_refuses_a_forged_rpo_pass_over_a_backlog(self) -> None:
-        report = mod.build_report(
-            pitr_env(
-                WAL_ARCHIVE_LAST_SEGMENT="000000010000000000000001",
-                WAL_ARCHIVE_CURRENT_SEGMENT="00000001000000000000000d",
-            )
-        )
-        report["postgres"]["rpo_pass"] = True
-        with self.assertRaises(mod.ReportHonestyError):
-            mod.assert_honest(report)
-
-    def test_honesty_validator_refuses_an_rpo_pass_over_the_target(self) -> None:
-        report = mod.build_report(pitr_env())
-        report["postgres"]["rpo_measured_sec"] = 900
-        report["postgres"]["rpo_pass"] = True
-        with self.assertRaises(mod.ReportHonestyError):
-            mod.assert_honest(report)
-
-
-class RpoBoundTests(unittest.TestCase):
-    """The RPO is a bound with a time component, not an upload age.
-
-    With ``archive_timeout`` disabled, segment N can finish minutes before its
-    upload completes while segment N+1 already holds newer commits. The upload
-    age alone then reads as a zero-second RPO over data that is not in the
-    archive; the bound is the upload age plus the timeout, and without a
-    measured timeout there is no bound at all.
-    """
-
-    def test_unset_archive_timeout_leaves_the_rpo_unmeasured(self) -> None:
-        report = mod.build_report(
-            pitr_env(WAL_ARCHIVE_UPLOAD_AGE_SEC="0", WAL_ARCHIVE_TIMEOUT_SEC="")
-        )
-        self.assertIsNone(report["postgres"]["wal_archive_timeout_sec"])
-        self.assertIsNone(report["postgres"]["rpo_measured_sec"])
-        self.assertFalse(report["postgres"]["rpo_pass"])
-        # The observation is kept: it is a diagnostic, not a claim.
-        self.assertEqual(report["postgres"]["wal_archive_upload_age_sec"], 0)
-
-    def test_zero_archive_timeout_leaves_the_rpo_unmeasured(self) -> None:
-        report = mod.build_report(
-            pitr_env(WAL_ARCHIVE_UPLOAD_AGE_SEC="0", WAL_ARCHIVE_TIMEOUT_SEC="0")
-        )
-        self.assertEqual(report["postgres"]["wal_archive_timeout_sec"], 0)
-        self.assertIsNone(report["postgres"]["rpo_measured_sec"])
-        self.assertFalse(report["postgres"]["rpo_pass"])
-
-    def test_archive_timeout_is_part_of_the_bound(self) -> None:
-        report = mod.build_report(
-            pitr_env(WAL_ARCHIVE_UPLOAD_AGE_SEC="17", WAL_ARCHIVE_TIMEOUT_SEC="60")
-        )
-        self.assertEqual(report["postgres"]["wal_archive_upload_age_sec"], 17)
-        self.assertEqual(report["postgres"]["wal_archive_timeout_sec"], 60)
-        self.assertEqual(report["postgres"]["rpo_measured_sec"], 77)
+        self.assertEqual(report["postgres"]["rpo_upper_bound_sec"], 7)
         self.assertTrue(report["postgres"]["rpo_pass"])
 
-    def test_the_timeout_alone_can_put_a_run_over_target(self) -> None:
-        # 250 s of upload age is inside the 300 s target; the 60 s the timeout
-        # adds is not. A pass here would understate the real bound.
+
+class RpoUpperBoundTests(unittest.TestCase):
+    """The bound is the frontier the restore demonstrated, referenced to the quiesce.
+
+    ``ceil(wal_archive_quiesced_at - recovery_replay_timestamp)``. It is not
+    inferred from ``pg_stat_archiver``: a push slower than ``archive_timeout``
+    leaves the counters looking drained while the newest recoverable commit is
+    older than the number they would produce.
+    """
+
+    def test_drained_counters_over_an_old_frontier_are_not_a_pass(self) -> None:
+        # The reviewer's counterexample: every counter says the queue is drained,
+        # and the frontier is still 400 s old. The number is the frontier.
         report = mod.build_report(
-            pitr_env(WAL_ARCHIVE_UPLOAD_AGE_SEC="250", WAL_ARCHIVE_TIMEOUT_SEC="60")
+            untargeted_env(
+                WAL_ARCHIVE_OK="true",
+                WAL_ARCHIVE_UPLOAD_AGE_SEC="1",
+                WAL_ARCHIVE_TIMEOUT_SEC="60",
+                WAL_ARCHIVE_QUIESCED_AT="2026-11-16T10:07:38Z",
+                RECOVERY_REPLAY_TIMESTAMP="2026-11-16T10:00:58Z",
+            )
         )
-        self.assertEqual(report["postgres"]["rpo_measured_sec"], 310)
+        self.assertFalse(report["postgres"]["wal_archive_backlog"])
+        self.assertEqual(report["postgres"]["rpo_upper_bound_sec"], 400)
         self.assertFalse(report["postgres"]["rpo_pass"])
+        self.assertTrue(report["evidence_eligible"])
+
+    def test_a_targeted_restore_records_no_bound(self) -> None:
+        report = mod.build_report(
+            pitr_env(WAL_ARCHIVE_QUIESCED_AT="2026-11-16T10:00:01Z")
+        )
+        self.assertEqual(report["postgres"]["target_timestamp"], "2026-11-16T10:00:00Z")
+        self.assertIsNone(report["postgres"]["rpo_upper_bound_sec"])
+        self.assertFalse(report["postgres"]["rpo_pass"])
+        self.assertEqual(
+            report["postgres_rpo_residual"], "targeted_restore_proves_target_not_rpo"
+        )
+        # The target and the restore are still proven, so it stays citable.
+        self.assertTrue(report["postgres"]["recovery_target_reached"])
+        self.assertTrue(report["evidence_eligible"])
+
+    def test_an_unreadable_instant_is_not_a_bound(self) -> None:
+        # Empty, unparseable, zone-less and non-UTC values are all "not
+        # measured": the frontier pair has to be two real UTC instants.
+        bad_values = ("", "yesterday", "2026-11-16T10:00:00", "2026-11-16T10:00:00+02:00")
+        for bad in bad_values:
+            with self.subTest(instant=bad):
+                self.assertIsNone(mod.rpo_upper_bound(bad, "2026-11-16T10:00:00Z"))
+        report = mod.build_report(untargeted_env())
+        report["postgres"]["wal_archive_quiesced_at"] = "yesterday"
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("must be an ISO8601 UTC timestamp", str(raised.exception))
+
+    def test_a_negative_difference_is_unmeasured_not_zero(self) -> None:
+        self.assertIsNone(
+            mod.rpo_upper_bound("2026-11-16T10:00:00Z", "2026-11-16T10:00:01Z")
+        )
+        report = mod.build_report(
+            untargeted_env(
+                WAL_ARCHIVE_QUIESCED_AT="2026-11-16T09:59:50Z",
+                RECOVERY_REPLAY_TIMESTAMP="2026-11-16T09:59:58Z",
+            )
+        )
+        self.assertIsNone(report["postgres"]["rpo_upper_bound_sec"])
+        self.assertFalse(report["postgres"]["rpo_pass"])
+
+    def test_the_bound_rounds_up(self) -> None:
+        # 2.5 s is 3 s: a bound must not round toward optimism.
+        self.assertEqual(
+            mod.rpo_upper_bound("2026-11-16T10:00:02.500Z", "2026-11-16T10:00:00Z"), 3
+        )
+
+    def test_an_unset_archive_timeout_does_not_withhold_the_bound(self) -> None:
+        report = mod.build_report(untargeted_env(WAL_ARCHIVE_TIMEOUT_SEC=""))
+        self.assertIsNone(report["postgres"]["wal_archive_timeout_sec"])
+        self.assertEqual(report["postgres"]["rpo_upper_bound_sec"], 7)
+        self.assertTrue(report["postgres"]["rpo_pass"])
+
+    def test_a_non_numeric_archive_timeout_is_unproven_not_fatal(self) -> None:
+        # The writer used to raise on this *after* the restore ran, so the run
+        # left no report at all.
+        self.assertIsNone(mod.parse_int_or_none("unknown"))
+        report = mod.build_report(untargeted_env(WAL_ARCHIVE_TIMEOUT_SEC="unknown"))
+        self.assertIsNone(report["postgres"]["wal_archive_timeout_sec"])
+        self.assertEqual(report["postgres"]["rpo_upper_bound_sec"], 7)
+
+    def test_a_forged_bound_is_refused(self) -> None:
+        report = mod.build_report(untargeted_env())
+        self.assertEqual(report["postgres"]["rpo_upper_bound_sec"], 7)
+        report["postgres"]["rpo_upper_bound_sec"] = 17
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("does not match the frontier", str(raised.exception))
+
+    def test_a_pass_without_a_quiesce_instant_is_refused(self) -> None:
+        report = mod.build_report(untargeted_env(WAL_ARCHIVE_QUIESCED_AT=""))
+        report["postgres"]["rpo_pass"] = True
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("wal_archive_quiesced_at", str(raised.exception))
+
+    def test_a_pass_without_a_replay_instant_is_refused(self) -> None:
+        report = mod.build_report(untargeted_env(RECOVERY_REPLAY_TIMESTAMP=""))
+        report["postgres"]["rpo_pass"] = True
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("recovery_replay_timestamp", str(raised.exception))
+
+    def test_a_pass_over_the_target_is_refused(self) -> None:
+        # The frontier derives 400 s; the builder withholds the pass, and a
+        # report that claims one anyway is refused.
+        report = mod.build_report(
+            untargeted_env(
+                WAL_ARCHIVE_QUIESCED_AT="2026-11-16T10:07:38Z",
+                RECOVERY_REPLAY_TIMESTAMP="2026-11-16T10:00:58Z",
+            )
+        )
+        self.assertEqual(report["postgres"]["rpo_upper_bound_sec"], 400)
+        report["postgres"]["rpo_pass"] = True
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("above the 300s target", str(raised.exception))
+
+
+class CommittedPitrArtefactTests(unittest.TestCase):
+    """The committed rehearsal is a targeted run, and its artefact says so."""
+
+    def _artefact(self) -> dict[str, Any]:
+        return json.loads(ARTEFACT.read_text(encoding="utf-8"))
+
+    def test_the_committed_artefact_carries_no_rpo_claim(self) -> None:
+        report = self._artefact()
+        self.assertNotIn("rpo_measured_sec", report["postgres"])
+        self.assertNotIn("wal_archive_older_segments", report["postgres"])
+        # The branch the run took, and the archive diagnostics the shipped
+        # producer writes. Omitting them is what let the artefact stop being
+        # producer-faithful; the upload age is the one the transcript recorded.
+        self.assertEqual(report["postgres"]["restore_target"], "scratch")
+        self.assertEqual(report["postgres"]["wal_archive_upload_age_sec"], 17)
+        for field in (
+            "wal_archive_timeout_sec",
+            "wal_archive_wal_segment_size",
+            "wal_archive_backlog",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, report["postgres"])
+        self.assertIsNone(report["postgres"]["rpo_upper_bound_sec"])
+        self.assertFalse(report["postgres"]["rpo_pass"])
+        self.assertEqual(
+            report["postgres_rpo_residual"], "targeted_restore_proves_target_not_rpo"
+        )
+        self.assertTrue(report["postgres"]["recovery_target_reached"])
+        self.assertTrue(report["evidence_eligible"])
+        # The rehearsal never measured tenant isolation, and says so.
+        self.assertIsNone(report["tenant_isolation_post_restore"])
+        self.assertEqual(report["residual"], "tenant_isolation_not_measured_pitr")
+        mod.assert_honest(report)
+
+    def test_a_forced_pass_on_the_artefact_is_refused(self) -> None:
+        report = self._artefact()
+        report["postgres"]["rpo_pass"] = True
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("untargeted restore", str(raised.exception))
+        # Without the target it fails on the missing quiesce instant instead.
+        report["postgres"]["target_timestamp"] = None
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("wal_archive_quiesced_at", str(raised.exception))
 
 
 class TargetVerificationTests(unittest.TestCase):
@@ -422,7 +563,8 @@ class TargetVerificationTests(unittest.TestCase):
             report["postgres"]["recovery_replay_timestamp"],
             "2026-11-16T09:59:58.800Z",
         )
-        self.assertTrue(report["postgres"]["rpo_pass"])
+        # The target is proven; the run is targeted, so it carries no RPO claim.
+        self.assertFalse(report["postgres"]["rpo_pass"])
 
 
 if __name__ == "__main__":

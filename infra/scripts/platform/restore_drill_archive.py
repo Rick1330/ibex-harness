@@ -1,11 +1,13 @@
-"""The WAL archive model: is the queue provably drained, and how big is a gap?
+"""The WAL archive model: what the queue state and segment arithmetic say.
 
-The RPO a restore-drill report quotes is an upper bound on the lag only while
-the archive queue is drained. Two facts decide that, and both are arithmetic on
-WAL segment names rather than report shape, so they live here: how many segment
-files one WAL log id holds (which depends on the cluster's ``wal_segment_size``),
-and how many segments sit between the newest archived one and the one being
-written.
+The RPO a report carries is the frontier the restore demonstrated, not a
+property of the archive queue: the restore replays every segment from the
+backup to the replay point, so a gap either stops recovery or truncates the
+replay timestamp. What lives here is the diagnostic arithmetic — how many
+segment files one WAL log id holds (which depends on the cluster's
+``wal_segment_size``), and how many segments sit between the newest archived one
+and the one being written — so an operator reading a miss has the queue state
+beside the number.
 
 The functions take what the producer measured and return ``True``, ``False`` or
 ``None``. ``None`` means "cannot tell" and must never be read as "no backlog":
@@ -130,12 +132,13 @@ def wal_archive_backlog(
 
     ``last_archived_time`` records when an upload *completed*, not the
     transaction time the segment it carried covers. While a backlog drains, an
-    old segment uploads now and its age looks like a fresh recovery point, so an
-    RPO read from it can understate the real lag by the whole length of the
-    backlog.
+    old segment uploads now and its age looks like a fresh recovery point, so the
+    upload age can understate the real lag by the whole length of the backlog.
+    That is why the age is a diagnostic and never the RPO: the bound comes from
+    the frontier the restore demonstrated.
 
-    The queue state is what turns the upload age into a bound, and adjacency is
-    not enough to establish it: archival order is not guaranteed, so the newest
+    The queue state is a diagnostic beside that number, and adjacency is not
+    enough to establish it: archival order is not guaranteed, so the newest
     archived segment can be adjacent to the current one while an older required
     segment is still missing. The queue is drained only when the writer is at
     most one segment ahead, no older segment is still sitting in ``pg_wal``, and

@@ -166,6 +166,42 @@ class PitrReportIdentityTests(unittest.TestCase):
             self.assertTrue(report.exists())
 
 
+class RpoWarningTests(unittest.TestCase):
+    """The operator-visible warning follows the field the bound is carried in."""
+
+    def _main_output(self, **overrides: str) -> str:
+        with tempfile.TemporaryDirectory() as directory:
+            env = base_env(
+                REPORT=str(Path(directory) / "report.json"),
+                ALLOW_NO_DB="1",
+                IBEX_DRILL_METRICS_DISABLED="1",
+                **overrides,
+            )
+            saved = dict(os.environ)
+            try:
+                os.environ.clear()
+                os.environ.update(env)
+                with contextlib.redirect_stdout(io.StringIO()) as printed:
+                    mod.main()
+            finally:
+                os.environ.clear()
+                os.environ.update(saved)
+            return printed.getvalue()
+
+    def test_a_demonstrated_bound_without_a_pass_is_warned_about(self) -> None:
+        output = self._main_output(
+            PG_MECHANISM="pgbackrest_wal",
+            WAL_ARCHIVE_QUIESCED_AT="2026-11-16T07:49:27Z",
+        )
+        self.assertIn("RPO upper bound not claimed", output)
+
+    def test_no_bound_means_no_rpo_warning(self) -> None:
+        output = self._main_output(
+            PG_MECHANISM="pgbackrest_wal", WAL_ARCHIVE_QUIESCED_AT=""
+        )
+        self.assertNotIn("RPO upper bound", output)
+
+
 class DrillMetricsTests(unittest.TestCase):
     def test_success_advances_last_success_and_reports_rto(self) -> None:
         report = mod.build_report(base_env())
