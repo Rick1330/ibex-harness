@@ -186,6 +186,57 @@ class ReportContractTests(unittest.TestCase):
             mod.assert_honest(report)
         self.assertIn("completed restore", str(raised.exception))
 
+    def test_a_failed_restore_carries_no_bound(self) -> None:
+        # The producer used to emit a numeric bound from two valid instants even
+        # though restore_ok was false. A frontier read out of a restore that did
+        # not complete is not a measurement, so the field is null.
+        report = mod.build_report(
+            base_env(PG_MECHANISM="pgbackrest_wal", PG_RESTORE_OK="false")
+        )
+        self.assertFalse(report["postgres"]["restore_ok"])
+        self.assertIsNone(report["postgres"]["rpo_upper_bound_sec"])
+        self.assertFalse(report["postgres"]["rpo_pass"])
+
+    def test_honesty_validator_refuses_a_bound_over_a_failed_restore(self) -> None:
+        # The non-pass branch: a number with no pass must still be internally
+        # consistent, so a report edited to carry a bound over a failed restore
+        # is refused. The instants still parse and still derive 5 s, so the
+        # completed-run rule is the one that fires.
+        report = mod.build_report(
+            base_env(PG_MECHANISM="pgbackrest_wal", PG_RESTORE_OK="false")
+        )
+        report["postgres"]["rpo_upper_bound_sec"] = 5
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("completed restore", str(raised.exception))
+
+    def test_the_validator_refuses_an_rpo_pass_over_a_failed_backup(self) -> None:
+        # ``postgres_rpo_pass`` requires backup_ok *and* restore_ok, so the
+        # validator must not accept a combination the producer predicate
+        # rejects: a pass over a restore that worked and a backup that did not.
+        report = mod.build_report(
+            base_env(PG_MECHANISM="pgbackrest_wal", PG_BACKUP_OK="false")
+        )
+        self.assertTrue(report["postgres"]["restore_ok"])
+        self.assertIsNone(report["postgres"]["rpo_upper_bound_sec"])
+        self.assertFalse(report["postgres"]["rpo_pass"])
+        report["postgres"]["rpo_pass"] = True
+        report["postgres"]["rpo_upper_bound_sec"] = 5
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("completed backup", str(raised.exception))
+
+    def test_the_validator_refuses_a_bound_over_a_failed_backup(self) -> None:
+        # The same two facts on the non-pass branch: a number with no pass is
+        # still held to the run that produced it.
+        report = mod.build_report(
+            base_env(PG_MECHANISM="pgbackrest_wal", PG_BACKUP_OK="false")
+        )
+        report["postgres"]["rpo_upper_bound_sec"] = 5
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("completed backup", str(raised.exception))
+
     def test_honesty_validator_refuses_a_float_bound(self) -> None:
         # 900.0 against a 300 s target used to pass: the comparison was skipped
         # for a non-integer, which read as "not above target".

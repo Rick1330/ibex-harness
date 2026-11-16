@@ -315,6 +315,29 @@ read_fact() {
   printf '%s\n' "$value"
 }
 
+# read_replay_us prints the replayed transaction in integer microseconds, read
+# from the cluster this run restored.
+#
+# A pgBackRest restore writes into the Compose volume or PGBACKREST_PGDATA — not
+# into whatever psql_cmd happens to reach: psql_cmd talks to POSTGRES_DSN, the
+# default localhost DSN, or POSTGRES_CONTAINER. Reading the replay instant
+# through it can read a *different* server, and a live primary has no replayed
+# transaction at all: an untargeted bound would go unmeasured, and a targeted
+# restore that worked would be graded against a frontier it never produced. The
+# restore script reads the instant from the cluster it restored — inside the
+# restored container, or through the connection built from the restored
+# postmaster.pid after checking data_directory — and writes it to the facts
+# file, which is what this reads.
+read_replay_us() {
+  local fact
+  if [[ "$PG_RESTORE_USED_PGBACKREST" == "true" ]]; then
+    fact="$(read_fact recovery_replay_timestamp "$RESTORE_FACTS_FILE")"
+    iso_micros "$fact"
+    return 0
+  fi
+  psql_cmd -Atc "SELECT COALESCE((EXTRACT(EPOCH FROM pg_last_xact_replay_timestamp()) * 1000000)::bigint, -1)" 2>/dev/null | tr -d '[:space:]' | tail -n1 || true
+}
+
 # Per-run fixture UUIDs — never reuse fixed tenant IDs that could collide with real data.
 ORG_A="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 ORG_B="$(python3 -c 'import uuid; print(uuid.uuid4())')"
@@ -392,9 +415,9 @@ PG_RTO_MEASURED=""
 # the bound from it.
 WAL_ARCHIVE_OK=false
 WAL_ARCHIVE_AGE_SEC=""
-# The upload age is only a bound while nothing older is still queued, so the
-# queue state is measured with it and travels to the report writer, which
-# refuses the claim when the archive is not provably drained.
+# The upload age is a diagnostic, never a bound. The queue state travels with it
+# for diagnosis only: wal_archive_backlog is null in every report, because the
+# pg_wal continuity input is not measurable (see measure_wal_archive).
 WAL_ARCHIVE_LAST_SEGMENT=""
 WAL_ARCHIVE_CURRENT_SEGMENT=""
 WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE=""
@@ -446,10 +469,9 @@ measure_wal_archive() {
   # recycled yet, so the count cannot express continuity. The restore is the
   # continuity proof — it replays every segment from the backup to the replay
   # point, so a gap either stops recovery or truncates the replay timestamp.
-  # The segment size stays as a diagnostic, but a drill report records
-  # wal_archive_backlog: null because this continuity input is not measured
-  # here. A PITR report, which measures the older-segment count, still computes
-  # it.
+  # The segment size stays as a diagnostic, but a report records
+  # wal_archive_backlog: null because this continuity input is not measurable.
+  # The PITR producer stopped measuring it for the same reason.
   seg_bytes="$(psql_cmd -Atc "SELECT pg_size_bytes(current_setting('wal_segment_size'))" 2>/dev/null | tr -d '\r' | tail -n1 || true)"
   case "$seg_bytes" in
     '' | *[!0-9]*) seg_bytes="" ;;
@@ -651,12 +673,13 @@ PG_RESTORE_END=$(date +%s)
 # The replayed transaction is the recovery frontier, and it is recorded for every
 # successful restore: the RPO upper bound is derived from it, so an untargeted run
 # needs it as much as a targeted one. Reading the timestamp is the evidence; the
-# boolean alone would be an assertion.
+# boolean alone would be an assertion. It is read from the cluster this run
+# restored, never from whatever server the DSN names (see read_replay_us).
 RECOVERY_TARGET_REACHED=""
 RECOVERY_REPLAY_TIMESTAMP=""
 replay_us=""
 if [[ "$PG_RESTORE_OK" == "true" ]]; then
-  replay_us="$(psql_cmd -Atc "SELECT COALESCE((EXTRACT(EPOCH FROM pg_last_xact_replay_timestamp()) * 1000000)::bigint, -1)" 2>/dev/null | tr -d '[:space:]' | tail -n1 || true)"
+  replay_us="$(read_replay_us)"
   # Empty or non-numeric clears the epoch; an all-digit (or negative, for the
   # replay timestamp) value is valid and passes through, so the default is a
   # deliberate no-op.

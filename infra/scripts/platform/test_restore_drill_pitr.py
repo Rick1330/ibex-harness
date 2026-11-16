@@ -108,8 +108,9 @@ class WalArchiveBacklogTests(unittest.TestCase):
 
     `last_archived_time` is when an upload completed, not the transaction time
     the segment covers. While a backlog drains, an old segment uploads now and
-    its age looks like a fresh recovery point, so the queue state has to be part
-    of the claim.
+    its age looks like a fresh recovery point, so the upload age cannot be the
+    bound. The queue state is recorded beside the number as a diagnostic; the
+    bound itself is the frontier the restore demonstrated.
     """
 
     def _assert_matrix(
@@ -182,7 +183,7 @@ class WalArchiveBacklogTests(unittest.TestCase):
         )
         self._assert_matrix(cases)
 
-    def test_matrix_unproven_inputs_fail_closed(self) -> None:
+    def test_matrix_unproven_inputs_are_unmeasured_not_drained(self) -> None:
         # A name that does not parse, or a fact never measured, is not drained.
         cases = (
             (
@@ -307,9 +308,16 @@ class WalArchiveBacklogTests(unittest.TestCase):
                     f"a {gap}-segment gap is a backlog at {size} byte segments",
                 )
 
-    def test_drained_archive_can_claim_rpo_pass(self) -> None:
+    def test_an_unmeasured_backlog_does_not_withhold_a_demonstrated_bound(self) -> None:
+        # The defect F1 names: PostgreSQL retains already-archived segments in
+        # pg_wal until recycling, so a positive count of segments older than
+        # last_archived_wal did not mean they were pending archival — a healthy
+        # PITR run reported a backlog until those files were recycled. The
+        # producer no longer measures the count, so the report records null —
+        # exactly as a drill report does — and it gates nothing either way.
         report = mod.build_report(untargeted_env())
-        self.assertFalse(report["postgres"]["wal_archive_backlog"])
+        self.assertEqual(report["drill_kind"], "pitr")
+        self.assertIsNone(report["postgres"]["wal_archive_backlog"])
         self.assertEqual(report["postgres"]["rpo_upper_bound_sec"], 7)
         self.assertTrue(report["postgres"]["rpo_pass"])
         self.assertTrue(report["evidence_eligible"])
@@ -318,7 +326,9 @@ class WalArchiveBacklogTests(unittest.TestCase):
         # The deliberate reversal: a backlog is a diagnostic, not a gate. The
         # restore replayed every segment up to the replay point, so the frontier
         # it demonstrated is the proof — a gap would have stopped recovery or
-        # truncated the replay timestamp, and the number would show it.
+        # truncated the replay timestamp, and the number would show it. The
+        # continuity input is hand-set here because no producer measures it any
+        # more; the case proves the writer does not gate on it either way.
         report = mod.build_report(
             untargeted_env(
                 WAL_ARCHIVE_UPLOAD_AGE_SEC="1",
@@ -368,7 +378,7 @@ class RpoUpperBoundTests(unittest.TestCase):
                 RECOVERY_REPLAY_TIMESTAMP="2026-11-16T10:00:58Z",
             )
         )
-        self.assertFalse(report["postgres"]["wal_archive_backlog"])
+        self.assertIsNone(report["postgres"]["wal_archive_backlog"])
         self.assertEqual(report["postgres"]["rpo_upper_bound_sec"], 400)
         self.assertFalse(report["postgres"]["rpo_pass"])
         self.assertTrue(report["evidence_eligible"])

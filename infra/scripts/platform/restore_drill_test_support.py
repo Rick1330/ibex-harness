@@ -49,15 +49,15 @@ def base_env(**overrides: str) -> dict[str, str]:
         # rehearsal beside the live cluster.
         "PG_RESTORE_TARGET": "host",
         "PG_RTO_MEASURED": "3",
-        # A drained archive, and the frontier pair a restore demonstrates: the
-        # primary stopped at 07:42:52 and the restored cluster replayed to
-        # 07:42:47, so the upper bound is 5 s. The archive counters are
-        # diagnostics; only these two instants produce the bound.
+        # The frontier pair a restore demonstrates: the primary stopped at
+        # 07:42:52 and the restored cluster replayed to 07:42:47, so the upper
+        # bound is 5 s. The archive counters are diagnostics; only these two
+        # instants produce the bound, and the pg_wal continuity input is not
+        # measured by any producer, so wal_archive_backlog stays null.
         "WAL_ARCHIVE_OK": "true",
         "WAL_ARCHIVE_UPLOAD_AGE_SEC": "30",
         "WAL_ARCHIVE_TIMEOUT_SEC": "60",
         "WAL_ARCHIVE_WAL_SEGMENT_SIZE": "16777216",
-        "WAL_ARCHIVE_OLDER_SEGMENTS": "0",
         "WAL_ARCHIVE_LAST_SEGMENT": "000000010000000000000011",
         "WAL_ARCHIVE_CURRENT_SEGMENT": "000000010000000000000012",
         "WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE": "false",

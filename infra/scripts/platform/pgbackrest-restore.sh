@@ -94,19 +94,25 @@ PITR_ATTEMPTED=false
 # caller claimed.
 PITR_RESTORE_TARGET=""
 PITR_WAL_ARCHIVE_OK=false
-# The archive queue is recorded alongside the upload age: the age is an RPO only
-# while nothing older is still waiting to be pushed, so the report writer needs
-# both facts to decide whether the measurement is a bound.
+# The archive counters are diagnostics beside the bound, never the bound itself:
+# the upload age is when an upload *completed*, not the transaction time the
+# segment it carried covers, so a draining backlog can make it look fresh.
 PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC=""
 PITR_WAL_ARCHIVE_LAST_SEGMENT=""
 PITR_WAL_ARCHIVE_CURRENT_SEGMENT=""
 PITR_WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE=""
-# The bound the upload age supports needs the cluster's archive_timeout, and the
-# queue state needs the cluster's own wal_segment_size and pg_wal listing: the
-# age alone is a diagnostic, not an RPO.
+# The cluster's archive_timeout and wal_segment_size travel with the counters so
+# an operator reading a miss has the numbers.
 PITR_WAL_ARCHIVE_TIMEOUT_SEC=""
 PITR_WAL_ARCHIVE_WAL_SEGMENT_SIZE=""
-PITR_WAL_ARCHIVE_OLDER_SEGMENTS=""
+# The older-segment count is not measured. PostgreSQL retains already-archived
+# segments in pg_wal until recycling, so a positive count of segments older than
+# last_archived_wal does not mean they are pending archival: a healthy PITR run
+# reported a backlog until those files were recycled. The continuity proof is the
+# restore itself, which replays every segment from the backup to the replay
+# point, so this report records wal_archive_backlog: null because the continuity
+# input is not measurable.
+
 # Record the requested target immediately: a run blocked before the target is
 # parsed must still say which recovery point was asked for.
 PITR_TARGET_TIMESTAMP="${PGBACKREST_RESTORE_TARGET:-}"
@@ -232,7 +238,6 @@ emit_pitr_report() {
     PITR_WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE="$PITR_WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE" \
     PITR_WAL_ARCHIVE_TIMEOUT_SEC="$PITR_WAL_ARCHIVE_TIMEOUT_SEC" \
     PITR_WAL_ARCHIVE_WAL_SEGMENT_SIZE="$PITR_WAL_ARCHIVE_WAL_SEGMENT_SIZE" \
-    PITR_WAL_ARCHIVE_OLDER_SEGMENTS="$PITR_WAL_ARCHIVE_OLDER_SEGMENTS" \
     PITR_TARGET_TIMESTAMP="$PITR_TARGET_TIMESTAMP" \
     PITR_RECOVERY_TARGET_REACHED="$PITR_RECOVERY_TARGET_REACHED" \
     PITR_RECOVERY_REPLAY_TIMESTAMP="$PITR_RECOVERY_REPLAY_TIMESTAMP" \
@@ -731,11 +736,13 @@ live_cluster_identity() {
 # operator reads beside it.
 #
 # What is recorded is the *measurement*, not a claim: the upload age, the
-# cluster's archive_timeout, its wal_segment_size and how many older segments are
-# still sitting in pg_wal.
+# cluster's archive_timeout and its wal_segment_size. The pg_wal older-segment
+# count is deliberately not measured — retained-but-archived segments make it
+# uninterpretable — so wal_archive_backlog is null in every report this script
+# writes (see the note beside PITR_WAL_ARCHIVE_WAL_SEGMENT_SIZE).
 measure_live_wal_archive() {
   local identity cid user db row archived last_us last_seg cur_seg last_failed
-  local archive_timeout continuity seg_bytes older_segments now_us
+  local archive_timeout seg_bytes now_us
   [[ -n "$PITR_REPORT" ]] || return 0
   identity="$(live_cluster_identity || true)"
   if [[ "$identity" != *"|"*"|"* ]]; then
@@ -775,20 +782,13 @@ measure_live_wal_archive() {
     '' | *[!0-9]*) archive_timeout="" ;;
     *) : ;;
   esac
-  # Adjacency is not continuity: PostgreSQL does not promise archival order, so
-  # an older segment still present in pg_wal means the queue has not drained
-  # however close the newest archived segment is. A psql that cannot list pg_wal
-  # leaves this unproven, which the writer refuses rather than reads as drained.
-  continuity="$("${CLI[@]}" exec "$cid" psql -U "$user" -d "$db" -tAc \
-    "SELECT pg_size_bytes(current_setting('wal_segment_size')) || '|' || COALESCE((SELECT count(*) FROM pg_ls_waldir() w, pg_stat_archiver a WHERE a.last_archived_wal IS NOT NULL AND w.name ~ '^[0-9A-F]{24}$' AND w.name < a.last_archived_wal)::text, '')" \
+  # The segment size stays: it sets how many segment files one WAL log id holds,
+  # so an operator reading the archived/current names has the arithmetic.
+  seg_bytes="$("${CLI[@]}" exec "$cid" psql -U "$user" -d "$db" -tAc \
+    "SELECT pg_size_bytes(current_setting('wal_segment_size'))" \
     2>/dev/null | tr -d '\r' | tail -n1 || true)"
-  IFS='|' read -r seg_bytes older_segments <<<"$continuity" || true
   case "$seg_bytes" in
     '' | *[!0-9]*) seg_bytes="" ;;
-    *) : ;;
-  esac
-  case "$older_segments" in
-    '' | *[!0-9]*) older_segments="" ;;
     *) : ;;
   esac
   now_us="$(date +%s%6N)"
@@ -799,11 +799,10 @@ measure_live_wal_archive() {
   fi
   PITR_WAL_ARCHIVE_TIMEOUT_SEC="$archive_timeout"
   PITR_WAL_ARCHIVE_WAL_SEGMENT_SIZE="$seg_bytes"
-  PITR_WAL_ARCHIVE_OLDER_SEGMENTS="$older_segments"
   PITR_WAL_ARCHIVE_LAST_SEGMENT="$last_seg"
   PITR_WAL_ARCHIVE_CURRENT_SEGMENT="$cur_seg"
   PITR_WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE="$last_failed"
-  echo "[restore] wal_archive_ok=true newest_archived_age_sec=$PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC archive_timeout_sec=${archive_timeout:-unknown} wal_segment_size_bytes=${seg_bytes:-unknown} older_segments_present=${older_segments:-unknown} last_archived_wal=${last_seg:-unknown} current_wal=${cur_seg:-unknown} failed_since_archive=${last_failed:-unknown}"
+  echo "[restore] wal_archive_ok=true newest_archived_age_sec=$PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC archive_timeout_sec=${archive_timeout:-unknown} wal_segment_size_bytes=${seg_bytes:-unknown} last_archived_wal=${last_seg:-unknown} current_wal=${cur_seg:-unknown} failed_since_archive=${last_failed:-unknown}"
 }
 
 # recovery_identity prints "<user>|<db>" for a restored cluster.
