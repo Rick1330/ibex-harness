@@ -1,0 +1,67 @@
+{
+  "milestone": "4.P.5",
+  "drill_kind": "pitr",
+  "drill_started_at": "2026-11-16T07:43:07Z",
+  "environment_class": "local-podman-scratch",
+  "transcript": null,
+  "evidence_eligible": true,
+  "allow_no_db": false,
+  "blocked_by": null,
+  "postgres": {
+    "rpo_target_sec": 300,
+    "rto_target_sec": 1800,
+    "rpo_measured_sec": 17,
+    "rto_measured_sec": null,
+    "backup_ok": true,
+    "restore_ok": true,
+    "rpo_pass": true,
+    "rto_pass": false,
+    "mechanism": "pgbackrest_wal",
+    "wal_archive_ok": true,
+    "target_timestamp": "2026-11-16T07:42:48Z",
+    "recovery_target_reached": true,
+    "recovery_replay_timestamp": "2026-11-16T07:42:42Z",
+    "cluster_data_bytes": 12221463,
+    "restored_row_counts": {
+      "organizations": 2,
+      "memories": 9
+    },
+    "note": "pgBackRest+WAL path",
+    "rto_evidence_pass": false
+  },
+  "clickhouse": {
+    "rpo_target_sec": 86400,
+    "rto_target_sec": 3600,
+    "rpo_measured_sec": null,
+    "rto_measured_sec": null,
+    "reachable": false,
+    "note": "reachability timing only when measured; unmeasured fields are null"
+  },
+  "redis": {
+    "backup": false,
+    "note": "intentional \u2014 cache/ephemeral (locked decision)"
+  },
+  "object_minio": {
+    "rpo_target_sec": 86400,
+    "rto_target_sec": 3600,
+    "rpo_measured_sec": null,
+    "rto_measured_sec": null
+  },
+  "outbox": {
+    "rpo_target": 0,
+    "max_aggregate_seq": null,
+    "pending": null,
+    "rpo_pass": false
+  },
+  "tenant_isolation_post_restore": false,
+  "helm_lint_template": false,
+  "kyverno_policy_applied": false,
+  "kyverno_residual": "#869",
+  "fixture": {
+    "rows": null,
+    "orgs": null,
+    "rows_verified": null,
+    "rows_restored": null,
+    "min_rows_for_rto_evidence": 1000
+  }
+}

@@ -273,6 +273,45 @@ live repository (`:501-504`); the scratch copy is left stopped until that comman
 `pg_is_in_recovery()`, `pg_last_xact_replay_timestamp()` and a row-level check around the target. A restore into the live
 volume must run as uid 999 as well; a root-owned restore leaves a data directory the server cannot read.
 
+**Every PITR run leaves a report.** `make v1-pitr` does not only perform the restore: it writes `pitr-report.json`
+through the same writer the restore drill uses (`infra/scripts/platform/pitr_report.sh` →
+`restore_drill_report.py`), so the artefact an operator reads at 03:00 and the artefact a pull request commits cannot
+drift apart. The path is `IBEX_PITR_REPORT`, else `PITR_REPORT=` on the `make` line, else
+`${RESTORE_DRILL_REPORT_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/ibex/restore-drill/pitr-report.json`; the default is
+the per-user state directory because a non-root operator cannot write `/var/lib/ibex`. A run that never reached the
+restore — a missing repository config, an unresolvable runtime, a missing scratch volume — still writes a report, with
+`mechanism: "unavailable"` and a non-empty `blocked_by`. The writer refuses an `unavailable` report without that reason,
+refuses `rpo_pass` for any mechanism other than `pgbackrest_wal`, and refuses `rpo_pass` when the measured RPO is null or
+a requested recovery target was missed. A PITR report does not advance `ibex_restore_drill_last_success_unixtime`: that
+gauge means the scheduled drill ran, and a rehearsal must not mask a drill that stopped.
+
+**What a committed report contains.** `restore-drill-report.json` and `pitr-report.json` share one schema:
+
+| Field | Meaning |
+|---|---|
+| `drill_kind` | `restore-drill` (dump/restore drill) or `pitr` (point-in-time rehearsal) |
+| `drill_started_at`, `environment_class` | When and where the run happened, e.g. `local-podman-scratch`; a local result is not a hosted one |
+| `blocked_by` | Non-empty only when `mechanism` is `unavailable`; names what stopped the run |
+| `postgres.mechanism` | `pgbackrest_wal`, `pg_dump_fallback`, `unavailable`, or `unmeasured` |
+| `postgres.wal_archive_ok` | `pg_stat_archiver` showed at least one archived segment with a `last_archived_time`, read *before* the backup |
+| `postgres.rpo_measured_sec` | Age of the newest archived WAL segment at the start of the run; null when archiving was not proven |
+| `postgres.target_timestamp` | The recovery target the run asked for, or null |
+| `postgres.recovery_target_reached` | Whether the restored cluster's last replayed transaction was at or before that target; null when no target was requested |
+| `postgres.recovery_replay_timestamp` | That last replayed transaction, read from the restored cluster |
+| `postgres.cluster_data_bytes` | `pg_database_size` of the restored database; a target reached over an empty cluster is not a recovery |
+| `postgres.restored_row_counts` | `organizations` and `memories` read back from the restored cluster |
+| `postgres.rpo_pass` | True only for `pgbackrest_wal` with a measured RPO inside the target, a completed restore, and no missed target |
+
+**The drill's `--mechanism=pgbackrest` removes the fallback.** `infra/scripts/platform/restore-drill.sh` accepts
+`--mechanism=auto|pgbackrest|pg_dump` (or `IBEX_DRILL_MECHANISM`), and `--target=<ISO8601>` (or `IBEX_DRILL_TARGET`).
+`auto` is the historical behaviour: pgBackRest when the host runtime and repository are present, `pg_dump` otherwise.
+`pgbackrest` makes the pgBackRest branch mandatory: if the binary, the repository config, or the compose-volume binding
+is missing, the drill fails before it seeds a fixture or starts a stack, writes an `unavailable` report naming the
+blocker, and exits non-zero. It never degrades into `pg_dump`, because a silent switch to `pg_dump` is how a dump run
+became a committed report that could never show a PITR mechanism. A pgBackRest backup that fails after the readiness
+check (a repository outage, an unarmed stanza) is treated the same way: the drill stops instead of inducing data loss
+with no recoverable backup. `pg_dump` forces the fallback for environments that only want the RTO and isolation halves.
+
 **Risk: WAL retention during a repository outage.** With `archive-async=n`, a failed `archive-push` blocks WAL recycling,
 so `pg_wal` grows until the repository returns or the disk fills. That is the intended trade — a silent data-loss risk is
 worse than a visible disk alarm — but it must be monitored: alert when `pg_stat_archiver.failed_count` increases and on

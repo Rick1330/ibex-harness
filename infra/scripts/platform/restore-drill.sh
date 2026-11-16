@@ -15,6 +15,7 @@ TRANSCRIPT="$REPORT_DIR/transcript.txt"
 # generated before the backup and the restored row count is recorded in the
 # report, so a one-second RTO can never be presented as a real restore time.
 DRILL_STARTED_UNIX="$(date +%s)"
+DRILL_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 FIXTURE_ROWS="${IBEX_DRILL_FIXTURE_ROWS:-50000}"
 FIXTURE_ORGS=2
 DRILL_MIN_FIXTURE_ROWS="${IBEX_DRILL_MIN_FIXTURE_ROWS:-1000}"
@@ -31,6 +32,33 @@ exec > >(tee -a "$TRANSCRIPT") 2>&1
 echo "=== IBEX 4.P.5 restore drill ==="
 echo "started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "root=$ROOT"
+
+# Mechanism selection. `auto` is the historical behaviour: pgBackRest when the
+# host runtime and repository are present, pg_dump otherwise. `pgbackrest`
+# removes that fallback, because a silent switch to pg_dump is exactly how a
+# dump run became a committed report that could never show a PITR mechanism.
+# With it set, a missing runtime or repository fails the drill and writes an
+# `unavailable` report naming what blocked it. `pg_dump` forces the fallback for
+# environments that only want the RTO/isolation half of the drill.
+DRILL_MECHANISM="${IBEX_DRILL_MECHANISM:-auto}"
+DRILL_TARGET="${IBEX_DRILL_TARGET:-}"
+while (( $# > 0 )); do
+  case "$1" in
+    --mechanism=*) DRILL_MECHANISM="${1#*=}" ;;
+    --target=*) DRILL_TARGET="${1#*=}" ;;
+    *) echo "[drill] ERROR: unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+case "$DRILL_MECHANISM" in
+  auto | pgbackrest | pg_dump) : ;;
+  *) echo "[drill] ERROR: mechanism must be auto, pgbackrest or pg_dump (got '$DRILL_MECHANISM')" >&2; exit 2 ;;
+esac
+if [[ -n "$DRILL_TARGET" ]] && ! [[ "$DRILL_TARGET" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[T\ ][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)?$ ]]; then
+  echo "[drill] ERROR: --target must be an ISO8601 timestamp (got '$DRILL_TARGET')" >&2
+  exit 2
+fi
+echo "[drill] mechanism=$DRILL_MECHANISM target=${DRILL_TARGET:-<none>}"
 
 if [[ "${ALLOW_NO_DB:-0}" == "1" ]]; then
   cat <<'BANNER'
@@ -67,6 +95,76 @@ CH_RTO_SEC=$((60 * 60))
 OBJ_RPO_SEC=$((24 * 3600))
 OBJ_RTO_SEC=$((60 * 60))
 
+# environment_class names where the run happened. An operator reading a
+# committed report needs to know whether it came from a laptop profile, a CI
+# runner or a host, because a local result is not a hosted result.
+drill_environment_class() {
+  if [[ -n "${IBEX_DRILL_ENVIRONMENT_CLASS:-}" ]]; then
+    printf '%s\n' "$IBEX_DRILL_ENVIRONMENT_CLASS"
+    return 0
+  fi
+  local engine="host"
+  if [[ -n "${PG_RUNTIME:-}" ]]; then
+    engine="$PG_RUNTIME"
+  elif command -v docker >/dev/null 2>&1; then
+    engine=docker
+  elif command -v podman >/dev/null 2>&1; then
+    engine=podman
+  fi
+  if [[ "${SKIP_COMPOSE:-0}" == "1" ]]; then
+    printf 'local-%s-external\n' "$engine"
+  else
+    printf 'local-%s-compose\n' "$engine"
+  fi
+}
+
+# pgbackrest_blocked_reason prints why the pgBackRest path cannot run here, or
+# returns 1 when it can. The checks mirror the branch that actually runs the
+# backup, so a reason is never printed for a path that would have worked.
+pgbackrest_blocked_reason() {
+  if [[ -n "$PG_RUNTIME" ]]; then
+    printf 'postgres is bound to container %s via %s; pgBackRest targets the compose volume, not a container exec target\n' \
+      "$PG_CONTAINER" "$PG_RUNTIME"
+    return 0
+  fi
+  if ! command -v pgbackrest >/dev/null 2>&1; then
+    printf 'the pgbackrest binary is not installed on this host\n'
+    return 0
+  fi
+  if [[ ! -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
+    printf 'the pgBackRest repository config is missing (infra/backup/pgbackrest/pgbackrest.conf; run make v1-secrets)\n'
+    return 0
+  fi
+  return 1
+}
+
+# emit_unavailable_report writes the honest artefact for a run that could not
+# use the requested mechanism. A missing report is not a pass; a report that
+# says "unavailable, blocked by X" is. The writer refuses an unavailable report
+# without blocked_by, and refuses rpo_pass on one.
+emit_unavailable_report() {
+  local blocked_by="$1"
+  echo "[drill] writing unavailable report: $REPORT"
+  REPORT="$REPORT" \
+    TRANSCRIPT="$TRANSCRIPT" \
+    ALLOW_NO_DB="${ALLOW_NO_DB:-0}" \
+    DRILL_KIND=restore-drill \
+    DRILL_STARTED_AT="$DRILL_STARTED_AT" \
+    ENVIRONMENT_CLASS="$(drill_environment_class)" \
+    PG_MECHANISM=unavailable \
+    PG_BACKUP_OK=false \
+    PG_RESTORE_OK=false \
+    PG_RPO_SEC="$PG_RPO_SEC" \
+    PG_RTO_SEC="$PG_RTO_SEC" \
+    ISO_OK=false \
+    KIND_OK=false \
+    KYVERNO_OK=false \
+    WAL_ARCHIVE_OK=false \
+    TARGET_TIMESTAMP="$DRILL_TARGET" \
+    BLOCKED_BY="$blocked_by" \
+    python3 "$ROOT/infra/scripts/platform/restore_drill_report.py"
+}
+
 COMPOSE_FILE="${COMPOSE_FILE:-infra/compose/dev/docker-compose.yml}"
 PG_CONTAINER="${POSTGRES_CONTAINER:-}"
 PG_RUNTIME=""
@@ -80,6 +178,19 @@ if [[ -n "$PG_CONTAINER" ]]; then
     exit 1
   fi
   echo "[drill] using container runtime=$PG_RUNTIME name=$PG_CONTAINER"
+fi
+
+# --mechanism=pgbackrest is a claim that this run proves the PITR path. If the
+# path cannot run, the drill fails here — before seeding a fixture or starting a
+# stack — and says why. It never degrades into pg_dump.
+if [[ "$DRILL_MECHANISM" == "pgbackrest" ]]; then
+  if blocked="$(pgbackrest_blocked_reason)"; then
+    echo "[drill] ERROR: --mechanism=pgbackrest was requested but pgBackRest cannot run here: $blocked" >&2
+    echo "[drill] refusing to fall back to pg_dump: a pg_dump run is not PITR and must not be reported as one" >&2
+    emit_unavailable_report "$blocked"
+    exit 1
+  fi
+  echo "[drill] pgBackRest path is mandatory for this run"
 fi
 
 if [[ "${SKIP_COMPOSE:-0}" != "1" && -z "$PG_CONTAINER" ]]; then
@@ -251,21 +362,56 @@ PG_BACKUP_SEC=""
 PG_RTO_MEASURED=""
 PG_RPO_MEASURED=""
 
+# WAL archive freshness is the only honest source for Postgres RPO: it is the
+# age of the newest recoverable segment. It is measured *before* the backup,
+# because a backup forces a WAL switch and a measurement taken afterwards would
+# always look fresh — a number that flatters itself is not evidence.
+WAL_ARCHIVE_OK=false
+WAL_ARCHIVE_AGE_SEC=""
+measure_wal_archive() {
+  local row archived last_epoch now
+  row="$(psql_cmd -Atc "SELECT archived_count || '|' || COALESCE(EXTRACT(EPOCH FROM last_archived_time)::bigint, -1) FROM pg_stat_archiver" 2>/dev/null | tr -d '\r' | tail -n1 || true)"
+  if [[ -z "$row" || "$row" != *"|"* ]]; then
+    echo "[drill] WAL archive freshness unreadable (pg_stat_archiver)"
+    return 0
+  fi
+  archived="${row%%|*}"
+  last_epoch="${row##*|}"
+  case "$archived" in '' | *[!0-9]*) return 0 ;; esac
+  case "$last_epoch" in '' | *[!0-9]*) return 0 ;; esac
+  if (( archived == 0 || last_epoch <= 0 )); then
+    echo "[drill] WAL archiving has archived no segment (archived_count=$archived) — RPO unmeasurable"
+    return 0
+  fi
+  WAL_ARCHIVE_OK=true
+  now="$(date +%s)"
+  WAL_ARCHIVE_AGE_SEC=$(( now - last_epoch ))
+  if (( WAL_ARCHIVE_AGE_SEC < 0 )); then
+    WAL_ARCHIVE_AGE_SEC=0
+  fi
+  echo "[drill] wal_archive_ok=true newest_archived_age_sec=$WAL_ARCHIVE_AGE_SEC"
+}
+measure_wal_archive
+
 PG_BACKUP_START=$(date +%s)
 echo "[drill] postgres backup start"
+PG_USED_PGBACKREST=false
 # pgBackRest scripts target compose Postgres volumes — unsupported when the drill
 # is bound to POSTGRES_CONTAINER (podman/docker exec). Use pg_dump for that path.
-if [[ -z "$PG_RUNTIME" ]] \
+if [[ "$DRILL_MECHANISM" != "pg_dump" ]] \
+  && [[ -z "$PG_RUNTIME" ]] \
   && command -v pgbackrest >/dev/null 2>&1 \
   && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
   if bash infra/scripts/platform/pgbackrest-backup.sh full; then
     PG_BACKUP_OK=true
+    PG_USED_PGBACKREST=true
   else
     echo "[drill] WARN pgbackrest backup failed"
   fi
 else
-  if [[ -n "$PG_RUNTIME" ]] && command -v pgbackrest >/dev/null 2>&1 \
-    && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
+  if [[ "$DRILL_MECHANISM" == "pg_dump" ]]; then
+    echo "[drill] mechanism=pg_dump forces the fallback (this run cannot claim PITR)"
+  elif [[ -n "$PG_RUNTIME" ]]; then
     echo "[drill] NOTE: skipping pgBackRest — POSTGRES_CONTAINER=$PG_CONTAINER is not the compose volume target"
   fi
   echo "[drill] using pg_dump fallback for local evidence"
@@ -275,6 +421,14 @@ else
   else
     echo "[drill] WARN pg_dump failed"
   fi
+fi
+# The mandatory mechanism was available but produced no backup (a repository
+# outage, an unarmed stanza). That is an unavailable PITR path, not a licence to
+# continue: inducing data loss with no usable backup would destroy the fixture.
+if [[ "$DRILL_MECHANISM" == "pgbackrest" && "$PG_BACKUP_OK" != "true" ]]; then
+  echo "[drill] ERROR: pgBackRest backup failed; refusing to continue without a recoverable backup" >&2
+  emit_unavailable_report "pgBackRest backup failed (repository unreachable or stanza not armed); see the drill transcript"
+  exit 1
 fi
 PG_BACKUP_END=$(date +%s)
 if [[ "$PG_BACKUP_OK" == "true" ]]; then
@@ -310,7 +464,13 @@ SQL
 fi
 
 PG_RESTORE_START=$(date +%s)
-PG_USED_PGBACKREST=false
+PG_RESTORE_USED_PGBACKREST=false
+if [[ -n "$DRILL_TARGET" ]]; then
+  # The restore script validates the ISO8601 form and normalises it for
+  # pgBackRest's --target parser; the drill does not reshape it.
+  PGBACKREST_RESTORE_TARGET="$DRILL_TARGET"
+  export PGBACKREST_RESTORE_TARGET
+fi
 # The pgBackRest restore writes through Compose (a named volume) only when no
 # host data directory is supplied. With PGBACKREST_PGDATA set it restores through
 # pg_ctl into that host directory, and the Compose PG_VERSION probe below would
@@ -319,16 +479,22 @@ PG_RESTORE_USED_COMPOSE=false
 if [[ -z "${PGBACKREST_PGDATA:-}" ]]; then
   PG_RESTORE_USED_COMPOSE=true
 fi
-if [[ -z "$PG_RUNTIME" ]] \
+# The restore follows the mechanism the backup used. A pg_dump backup is
+# restored with pg_restore even on a host where pgBackRest is installed,
+# otherwise the run would report pg_dump_fallback while restoring a pgBackRest
+# set — the drift this drill exists to remove.
+if [[ "$DRILL_MECHANISM" != "pg_dump" ]] \
+  && [[ -z "$PG_RUNTIME" ]] \
   && command -v pgbackrest >/dev/null 2>&1 \
   && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
   if bash infra/scripts/platform/pgbackrest-restore.sh; then
     PG_RESTORE_OK=true
-    PG_USED_PGBACKREST=true
+    PG_RESTORE_USED_PGBACKREST=true
   else
     echo "[drill] WARN pgbackrest restore failed"
   fi
-elif [[ -n "$PG_RUNTIME" ]] \
+elif [[ "$DRILL_MECHANISM" != "pg_dump" ]] \
+  && [[ -n "$PG_RUNTIME" ]] \
   && command -v pgbackrest >/dev/null 2>&1 \
   && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
   echo "[drill] ERROR: pgBackRest restore targets compose volumes, not POSTGRES_CONTAINER=$PG_CONTAINER" >&2
@@ -349,7 +515,7 @@ fi
 
 # pgBackRest leaves Postgres stopped — restart before post-restore checks.
 # Only for compose/pg_ctl paths; POSTGRES_CONTAINER was never stopped by pgBackRest.
-if [[ "$PG_USED_PGBACKREST" == "true" ]]; then
+if [[ "$PG_RESTORE_USED_PGBACKREST" == "true" ]]; then
   if [[ -n "$PG_RUNTIME" ]]; then
     echo "[drill] ERROR: unexpected pgBackRest path with POSTGRES_CONTAINER set" >&2
     exit 1
@@ -394,17 +560,51 @@ if [[ "$PG_USED_PGBACKREST" == "true" ]]; then
 fi
 
 PG_RESTORE_END=$(date +%s)
+
+# A requested recovery target is only met when the restored cluster reports a
+# last replayed transaction at or before it. Reading the timestamp is the
+# evidence; the boolean alone would be an assertion.
+RECOVERY_TARGET_REACHED=""
+RECOVERY_REPLAY_TIMESTAMP=""
+if [[ -n "$DRILL_TARGET" && "$PG_RESTORE_OK" == "true" ]]; then
+  replay_epoch="$(psql_cmd -Atc "SELECT COALESCE(EXTRACT(EPOCH FROM pg_last_xact_replay_timestamp())::bigint, -1)" 2>/dev/null | tr -d '[:space:]' | tail -n1 || true)"
+  target_epoch="$(date -u -d "$DRILL_TARGET" +%s 2>/dev/null || true)"
+  case "$replay_epoch" in '' | *[!0-9-]*) replay_epoch="" ;; esac
+  case "$target_epoch" in '' | *[!0-9]*) target_epoch="" ;; esac
+  if [[ -n "$replay_epoch" && -n "$target_epoch" ]] && (( replay_epoch >= 0 )); then
+    RECOVERY_REPLAY_TIMESTAMP="$(date -u -d "@$replay_epoch" +%Y-%m-%dT%H:%M:%SZ)"
+    if (( replay_epoch <= target_epoch )); then
+      RECOVERY_TARGET_REACHED=true
+      echo "[drill] recovery target reached: replay=${RECOVERY_REPLAY_TIMESTAMP} target=$DRILL_TARGET"
+    else
+      RECOVERY_TARGET_REACHED=false
+      PG_RESTORE_OK=false
+      echo "[drill] ERROR: recovery replayed past the target (replay=${RECOVERY_REPLAY_TIMESTAMP} target=$DRILL_TARGET)" >&2
+    fi
+  else
+    RECOVERY_TARGET_REACHED=false
+    PG_RESTORE_OK=false
+    echo "[drill] ERROR: could not read pg_last_xact_replay_timestamp(); target not proven" >&2
+  fi
+fi
+
 if [[ "$PG_RESTORE_OK" == "true" ]]; then
   PG_RTO_MEASURED="$(floor_sec $((PG_RESTORE_END - PG_RESTORE_START)))"
 fi
 # RPO is the age of the latest recoverable WAL/recovery point — NOT backup duration.
-# pg_dump cannot measure RPO; pgBackRest also leaves RPO unmeasured until archive
-# freshness + PITR are verified (residual #869). Keep PG_BACKUP_SEC for logs only.
+# pg_dump cannot measure RPO. pgBackRest measures it from the archive freshness
+# observed before the backup; when archiving is not proven fresh the field stays
+# null and rpo_pass stays false, which is the honest answer.
 PG_RPO_MEASURED=""
 if [[ -n "$PG_BACKUP_SEC" ]]; then
   echo "[drill] backup_wall_clock_sec=$PG_BACKUP_SEC (not exported as RPO)"
 fi
-echo "[drill] postgres RPO left unmeasured — requires WAL archive freshness + PITR (#869)"
+if [[ "$PG_USED_PGBACKREST" == "true" && "$WAL_ARCHIVE_OK" == "true" ]]; then
+  PG_RPO_MEASURED="$WAL_ARCHIVE_AGE_SEC"
+  echo "[drill] postgres RPO measured from WAL archive age: ${PG_RPO_MEASURED}s"
+else
+  echo "[drill] postgres RPO left unmeasured — requires pgBackRest WAL archiving (#869)"
+fi
 
 # Tenant isolation under RLS: requires POSTGRES_RLS_DSN or container RLS user.
 ISO_OK=false
@@ -436,6 +636,18 @@ COMMIT;
     ISO_OK=true
   fi
   echo "[drill] tenant isolation A_own=$ISO_A_OWN A_cross=$ISO_A_CROSS B_own=$ISO_B_OWN B_cross=$ISO_B_CROSS ok=$ISO_OK"
+fi
+
+# cluster_data_bytes and the table counts are what make a restore report
+# legible: "reached the target" over an empty database is not a recovery.
+CLUSTER_DATA_BYTES=""
+RESTORED_ORGS=""
+RESTORED_MEMORIES=""
+if [[ "$PG_RESTORE_OK" == "true" && "${ALLOW_NO_DB:-0}" != "1" ]]; then
+  CLUSTER_DATA_BYTES="$(psql_cmd -Atc "SELECT pg_database_size(current_database())" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
+  RESTORED_ORGS="$(psql_cmd -Atc "SELECT COUNT(*)::text FROM ibex_core.organizations" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
+  RESTORED_MEMORIES="$(psql_cmd -Atc "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
+  echo "[drill] restored cluster bytes=${CLUSTER_DATA_BYTES:-unknown} orgs=${RESTORED_ORGS:-unknown} memories=${RESTORED_MEMORIES:-unknown}"
 fi
 
 FIXTURE_ROWS_RESTORED=""
@@ -495,6 +707,13 @@ if [[ "$PG_BACKUP_OK" == "true" ]]; then
 fi
 
 export REPORT PG_RPO_SEC PG_RTO_SEC PG_RPO_MEASURED PG_RTO_MEASURED
+export DRILL_KIND=restore-drill DRILL_STARTED_AT
+ENVIRONMENT_CLASS="$(drill_environment_class)"
+export ENVIRONMENT_CLASS
+export WAL_ARCHIVE_OK TARGET_TIMESTAMP="$DRILL_TARGET"
+export RECOVERY_TARGET_REACHED RECOVERY_REPLAY_TIMESTAMP
+export CLUSTER_DATA_BYTES RESTORED_ORGS RESTORED_MEMORIES
+export BLOCKED_BY=""
 export CH_RPO_SEC CH_RTO_SEC CH_RPO_MEASURED CH_RTO_MEASURED CH_REACHABLE
 export OBJ_RPO_SEC OBJ_RTO_SEC OBJ_RPO_MEASURED OBJ_RTO_MEASURED
 export OUTBOX_SEQ OUTBOX_PENDING ISO_OK KIND_OK KYVERNO_OK TRANSCRIPT PG_MECHANISM

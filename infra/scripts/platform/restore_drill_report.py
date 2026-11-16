@@ -15,12 +15,30 @@ import json
 import os
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 DEFAULT_STATE_DIR = "/var/lib/ibex/backup"
 DEFAULT_METRICS_FILENAME = "ibex_restore_drill_metrics.prom"
 DEFAULT_MIN_FIXTURE_ROWS = 1000
+
+# Locked targets (decision 4). A producer that does not set the variable gets the
+# locked value, so the drill and the PITR report cannot grade against different
+# numbers.
+DEFAULT_TARGETS = {
+    "PG_RPO_SEC": 300,
+    "PG_RTO_SEC": 1800,
+    "CH_RPO_SEC": 86400,
+    "CH_RTO_SEC": 3600,
+    "OBJ_RPO_SEC": 86400,
+    "OBJ_RTO_SEC": 3600,
+}
+
+
+class ReportHonestyError(ValueError):
+    """Raised when a report would claim more than the run actually proved."""
+
 
 # Metric order is fixed so the textfile diff is stable between runs.
 _METRIC_ORDER = (
@@ -66,6 +84,34 @@ def le_pass(measured: int | None, target: int) -> bool:
     return measured <= target
 
 
+def target_sec(e: dict[str, str], key: str) -> int:
+    """Read a locked target, falling back to the locked default."""
+    raw = (e.get(key) or "").strip()
+    if raw == "":
+        return DEFAULT_TARGETS[key]
+    return int(raw)
+
+
+def parse_bool_or_none(raw: str | None) -> bool | None:
+    """Three-state boolean: unset means "not measured", never "false"."""
+    value = (raw or "").strip().lower()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    return None
+
+
+def optional_text(raw: str | None) -> str | None:
+    """Trimmed text, or None when the producer left the variable unset.
+
+    A blank variable and an absent one mean the same thing to a reader of the
+    report: nothing was recorded. Collapsing both to None keeps that visible
+    instead of writing ``""``, which reads like a measured empty value.
+    """
+    return (raw or "").strip() or None
+
+
 def outbox_rpo_pass(*, pending: int | None, max_aggregate_seq: int | None, target: int = 0) -> bool:
     """Outbox RPO target is 0: pass only when pending is known and == target.
 
@@ -101,6 +147,11 @@ def mechanism_note(mechanism: str) -> str:
         )
     if mechanism == "pgbackrest_wal":
         return "pgBackRest+WAL path"
+    if mechanism == "unavailable":
+        return (
+            "pgBackRest+WAL is unavailable in this environment (see blocked_by). "
+            "No restore was attempted and no RPO is claimed."
+        )
     return "backup/restore not completed"
 
 
@@ -166,29 +217,56 @@ def rto_evidence_pass(*, rto_pass: bool, fixture: dict[str, Any]) -> bool:
     return bool(rto_pass) and rows is not None and rows >= floor
 
 
-def _postgres_block(e: dict[str, str], *, mechanism: str, note: str) -> dict[str, Any]:
+def _restored_row_counts(e: dict[str, str]) -> dict[str, int | None]:
+    """Row counts read back from the restored cluster (null when unreadable)."""
+    return {
+        "organizations": parse_int_or_none(e.get("RESTORED_ORGS", "")),
+        "memories": parse_int_or_none(e.get("RESTORED_MEMORIES", "")),
+    }
+
+
+def _postgres_block(e: dict[str, str], *, facts: RunFacts, note: str) -> dict[str, Any]:
     pg_rpo = parse_int_or_none(e.get("PG_RPO_MEASURED", ""))
     pg_rto = parse_int_or_none(e.get("PG_RTO_MEASURED", ""))
-    backup_ok = e.get("PG_BACKUP_OK") == "true"
-    restore_ok = e.get("PG_RESTORE_OK") == "true"
+    if facts.mechanism == "unavailable":
+        # Nothing was restored. A report that says so must not also carry the
+        # booleans of a run that happened.
+        backup_ok = False
+        restore_ok = False
+    else:
+        backup_ok = facts.backup_ok
+        restore_ok = facts.restore_ok
+    rpo_target = target_sec(e, "PG_RPO_SEC")
+    rto_target = target_sec(e, "PG_RTO_SEC")
+    rpo_pass = postgres_rpo_pass(
+        {
+            "backup_ok": backup_ok,
+            "restore_ok": restore_ok,
+            "measured": pg_rpo,
+            "target": rpo_target,
+            "mechanism": facts.mechanism,
+        }
+    )
+    # A requested recovery target that was missed means the restore did not land
+    # where it claimed to; that run cannot carry an RPO pass either.
+    if facts.target_reached is False:
+        rpo_pass = False
     return {
-        "rpo_target_sec": int(e["PG_RPO_SEC"]),
-        "rto_target_sec": int(e["PG_RTO_SEC"]),
+        "rpo_target_sec": rpo_target,
+        "rto_target_sec": rto_target,
         "rpo_measured_sec": pg_rpo,
         "rto_measured_sec": pg_rto,
         "backup_ok": backup_ok,
         "restore_ok": restore_ok,
-        "rpo_pass": postgres_rpo_pass(
-            {
-                "backup_ok": backup_ok,
-                "restore_ok": restore_ok,
-                "measured": pg_rpo,
-                "target": int(e["PG_RPO_SEC"]),
-                "mechanism": mechanism,
-            }
-        ),
-        "rto_pass": restore_ok and le_pass(pg_rto, int(e["PG_RTO_SEC"])),
-        "mechanism": mechanism,
+        "rpo_pass": rpo_pass,
+        "rto_pass": restore_ok and le_pass(pg_rto, rto_target),
+        "mechanism": facts.mechanism,
+        "wal_archive_ok": e.get("WAL_ARCHIVE_OK") == "true",
+        "target_timestamp": optional_text(e.get("TARGET_TIMESTAMP")),
+        "recovery_target_reached": facts.target_reached,
+        "recovery_replay_timestamp": optional_text(e.get("RECOVERY_REPLAY_TIMESTAMP")),
+        "cluster_data_bytes": parse_int_or_none(e.get("CLUSTER_DATA_BYTES", "")),
+        "restored_row_counts": _restored_row_counts(e),
         "note": note,
     }
 
@@ -208,45 +286,204 @@ def _outbox_block(e: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def build_report(env: dict[str, str] | None = None) -> dict[str, Any]:
-    e = env if env is not None else dict(os.environ)
-    mechanism = e.get("PG_MECHANISM", "unmeasured")
-    note = mechanism_note(mechanism)
-    backup_ok = e.get("PG_BACKUP_OK") == "true"
-    restore_ok = e.get("PG_RESTORE_OK") == "true"
-    allow_no_db = e.get("ALLOW_NO_DB") == "1"
-    iso_ok = e.get("ISO_OK") == "true"
-    kyverno_ok = e.get("KYVERNO_OK") == "true"
+@dataclass(frozen=True)
+class RunFacts:
+    """The producer facts one report grades, read from the environment once.
 
-    report: dict[str, Any] = {
+    Bundled rather than passed as seven positional arguments so a caller cannot
+    pair the mechanism of one run with the restore result of another, and so the
+    eligibility rule stays a one-argument predicate.
+    """
+
+    drill_kind: str
+    mechanism: str
+    backup_ok: bool
+    restore_ok: bool
+    iso_ok: bool
+    target_reached: bool | None
+    allow_no_db: bool
+
+
+def read_run_facts(e: dict[str, str]) -> RunFacts:
+    """Read every producer fact the report grades from one environment."""
+    return RunFacts(
+        drill_kind=(e.get("DRILL_KIND") or "restore-drill").strip(),
+        mechanism=e.get("PG_MECHANISM", "unmeasured"),
+        backup_ok=e.get("PG_BACKUP_OK") == "true",
+        restore_ok=e.get("PG_RESTORE_OK") == "true",
+        iso_ok=e.get("ISO_OK") == "true",
+        target_reached=parse_bool_or_none(e.get("RECOVERY_TARGET_REACHED")),
+        allow_no_db=e.get("ALLOW_NO_DB") == "1",
+    )
+
+
+def _evidence_eligible(facts: RunFacts) -> bool:
+    """What makes a report usable as evidence, per producer.
+
+    The drill proves the backup is restorable *and* that tenant isolation
+    survives the restore, so it needs the isolation result. A point-in-time
+    rehearsal restores into a scratch volume and never touches tenant data, so
+    it needs the target to have been reached instead. Neither can be eligible
+    when the mechanism was unavailable or the run is an ALLOW_NO_DB smoke.
+    """
+    if facts.allow_no_db or facts.mechanism == "unavailable":
+        return False
+    if not (facts.backup_ok and facts.restore_ok):
+        return False
+    if facts.drill_kind == "pitr":
+        return (
+            facts.mechanism == "pgbackrest_wal" and facts.target_reached is not False
+        )
+    return facts.iso_ok
+
+
+def _require_blocked_by(report: dict[str, Any]) -> None:
+    """An ``unavailable`` run must name what blocked it."""
+    if not (report.get("blocked_by") or "").strip():
+        raise ReportHonestyError(
+            "mechanism 'unavailable' requires a non-empty blocked_by"
+        )
+
+
+def _require_unavailable_claims_no_pass(postgres: dict[str, Any]) -> None:
+    """A run that restored nothing cannot carry an RPO or RTO pass."""
+    if postgres.get("rpo_pass") or postgres.get("rto_pass"):
+        raise ReportHonestyError("an unavailable run cannot claim rpo_pass/rto_pass")
+
+
+def _require_unavailable_is_not_evidence(report: dict[str, Any]) -> None:
+    """A run that restored nothing cannot be cited as evidence."""
+    if report.get("evidence_eligible"):
+        raise ReportHonestyError("an unavailable run cannot be evidence_eligible")
+
+
+def _require_pitr_mechanism(mechanism: str | None) -> None:
+    """``rpo_pass`` is a PITR claim: a dump or an unmeasured run cannot make it."""
+    if mechanism != "pgbackrest_wal":
+        raise ReportHonestyError(
+            f"rpo_pass requires mechanism pgbackrest_wal, got {mechanism!r}"
+        )
+
+
+def _require_measured_rpo(postgres: dict[str, Any]) -> None:
+    """Archiving being on is not an RPO: the gap has to have been measured."""
+    if postgres.get("rpo_measured_sec") is None:
+        raise ReportHonestyError("rpo_pass requires a measured RPO")
+
+
+def _require_reached_target(postgres: dict[str, Any]) -> None:
+    """A restore that missed the requested point cannot claim an RPO pass."""
+    if postgres.get("recovery_target_reached") is False:
+        raise ReportHonestyError(
+            "rpo_pass cannot be claimed when the recovery target was missed"
+        )
+
+
+def assert_honest(report: dict[str, Any]) -> dict[str, Any]:
+    """Refuse a report whose claims exceed what the run proved.
+
+    Every rule here exists because a report is the only artefact an operator can
+    read at 03:00: a fallback or unavailable run that carried ``rpo_pass: true``,
+    or an ``unavailable`` run with no reason, would be worse than no report.
+
+    Each invariant is one named check below. They are grouped by the claim they
+    defend, and a check only runs when that claim was made, so a report that
+    claims nothing is accepted without walking every rule.
+    """
+    postgres = report["postgres"]
+    mechanism = postgres.get("mechanism")
+    if mechanism == "unavailable":
+        _require_blocked_by(report)
+        _require_unavailable_claims_no_pass(postgres)
+        _require_unavailable_is_not_evidence(report)
+    if postgres.get("rpo_pass"):
+        _require_pitr_mechanism(mechanism)
+        _require_measured_rpo(postgres)
+        _require_reached_target(postgres)
+    return report
+
+
+def _metadata_block(e: dict[str, str], facts: RunFacts) -> dict[str, Any]:
+    """Header: which run this is, and what makes it citable as evidence."""
+    return {
         "milestone": "4.P.5",
-        "transcript": e.get("TRANSCRIPT"),
-        "evidence_eligible": (not allow_no_db) and iso_ok and backup_ok and restore_ok,
-        "allow_no_db": allow_no_db,
-        "postgres": _postgres_block(e, mechanism=mechanism, note=note),
+        "drill_kind": facts.drill_kind,
+        "drill_started_at": optional_text(e.get("DRILL_STARTED_AT")),
+        "environment_class": optional_text(e.get("ENVIRONMENT_CLASS")),
+        "transcript": e.get("TRANSCRIPT") or None,
+        "evidence_eligible": _evidence_eligible(facts),
+        "allow_no_db": facts.allow_no_db,
+        "blocked_by": optional_text(e.get("BLOCKED_BY")),
+    }
+
+
+def _store_blocks(e: dict[str, str]) -> dict[str, Any]:
+    """ClickHouse, Redis and object-store blocks: no restore claim is made."""
+    return {
         "clickhouse": {
-            "rpo_target_sec": int(e["CH_RPO_SEC"]),
-            "rto_target_sec": int(e["CH_RTO_SEC"]),
+            "rpo_target_sec": target_sec(e, "CH_RPO_SEC"),
+            "rto_target_sec": target_sec(e, "CH_RTO_SEC"),
             "rpo_measured_sec": parse_int_or_none(e.get("CH_RPO_MEASURED", "")),
             "rto_measured_sec": parse_int_or_none(e.get("CH_RTO_MEASURED", "")),
             "reachable": e.get("CH_REACHABLE") == "true",
-            "note": "reachability timing only when measured; unmeasured fields are null",
+            "note": (
+                "reachability timing only when measured; unmeasured fields are null"
+            ),
         },
         "redis": {
             "backup": False,
             "note": "intentional — cache/ephemeral (locked decision)",
         },
         "object_minio": {
-            "rpo_target_sec": int(e["OBJ_RPO_SEC"]),
-            "rto_target_sec": int(e["OBJ_RTO_SEC"]),
+            "rpo_target_sec": target_sec(e, "OBJ_RPO_SEC"),
+            "rto_target_sec": target_sec(e, "OBJ_RTO_SEC"),
             "rpo_measured_sec": parse_int_or_none(e.get("OBJ_RPO_MEASURED", "")),
             "rto_measured_sec": parse_int_or_none(e.get("OBJ_RTO_MEASURED", "")),
         },
-        "outbox": _outbox_block(e),
-        "tenant_isolation_post_restore": iso_ok,
+    }
+
+
+def _platform_block(e: dict[str, str], facts: RunFacts) -> dict[str, Any]:
+    """Isolation after restore, Helm render and Kyverno policy application."""
+    kyverno_ok = e.get("KYVERNO_OK") == "true"
+    return {
+        "tenant_isolation_post_restore": facts.iso_ok,
         "helm_lint_template": e.get("KIND_OK") == "true",
         "kyverno_policy_applied": kyverno_ok,
         "kyverno_residual": None if kyverno_ok else "#869",
+    }
+
+
+def _residuals(*, allow_no_db: bool, mechanism: str) -> dict[str, str]:
+    """The residual tag an operator reads to see why a claim is absent."""
+    if allow_no_db:
+        return {"residual": "not_evidence_allow_no_db"}
+    if mechanism == "unavailable":
+        return {"postgres_rpo_residual": "pitr_unavailable"}
+    if mechanism == "pg_dump_fallback":
+        return {"postgres_rpo_residual": "not_pitr_pg_dump_fallback_#869"}
+    return {}
+
+
+def build_report(env: dict[str, str] | None = None) -> dict[str, Any]:
+    """Assemble one report from the producer's environment.
+
+    The blocks are built by name so the report reads as what it is — header,
+    Postgres, stores, platform checks — and so no single function carries the
+    complexity of all of them.
+    """
+    e = env if env is not None else dict(os.environ)
+    facts = read_run_facts(e)
+    report: dict[str, Any] = {
+        **_metadata_block(e, facts),
+        "postgres": _postgres_block(
+            e,
+            facts=facts,
+            note=mechanism_note(facts.mechanism),
+        ),
+        **_store_blocks(e),
+        "outbox": _outbox_block(e),
+        **_platform_block(e, facts),
     }
     fixture = _fixture_block(e)
     report["fixture"] = fixture
@@ -254,12 +491,10 @@ def build_report(env: dict[str, str] | None = None) -> dict[str, Any]:
         rto_pass=bool(report["postgres"]["rto_pass"]),
         fixture=fixture,
     )
-    if allow_no_db:
-        report["residual"] = "not_evidence_allow_no_db"
-        report["evidence_eligible"] = False
-    elif mechanism == "pg_dump_fallback":
-        report["postgres_rpo_residual"] = "not_pitr_pg_dump_fallback_#869"
-    return report
+    report.update(
+        _residuals(allow_no_db=facts.allow_no_db, mechanism=facts.mechanism)
+    )
+    return assert_honest(report)
 
 
 def metrics_path_from_env(env: dict[str, str] | None = None) -> Path:
@@ -357,6 +592,14 @@ def write_metrics(path: Path, metrics: dict[str, int]) -> None:
 
 def _require_tenant_isolation(report: dict[str, Any], *, allow_no_db: bool, path: Path) -> None:
     if report["tenant_isolation_post_restore"]:
+        return
+    if report.get("drill_kind") == "pitr":
+        # A point-in-time rehearsal restores into a scratch volume and never
+        # proves tenant isolation; the report keeps that field false and claims
+        # nothing about it. The drill is where isolation is proven.
+        return
+    if report["postgres"].get("mechanism") == "unavailable":
+        # Nothing was restored, so there is no restored data to isolate.
         return
     if allow_no_db:
         print(

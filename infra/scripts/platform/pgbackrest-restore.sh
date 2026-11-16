@@ -36,7 +36,7 @@ resolve_conf() {
     return
   fi
   echo "[restore] missing real pgbackrest.conf at $conf (do not use .example)" >&2
-  exit 1
+  return 1
 }
 
 # container_cli picks the engine that owns the containers; IBEX_CONTAINER_CLI
@@ -67,6 +67,97 @@ read -r -a CLI <<<"$(container_cli)"
 compose() {
   "${CLI[@]}" compose "$@"
 }
+
+# --- Point-in-time restore report (Stage 2 / P0-10) -------------------------
+# `make v1-pitr` must leave an artefact, not only perform a restore. State is
+# recorded as the run proceeds and written once, from the exit trap, so a run
+# that dies half way still explains itself instead of leaving no report at all.
+# The writer (infra/scripts/platform/pitr_report.sh) maps these onto the same
+# schema the restore drill uses.
+PITR_REPORT="${PGBACKREST_RESTORE_REPORT:-}"
+PITR_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+PITR_ENVIRONMENT_CLASS="${IBEX_DRILL_ENVIRONMENT_CLASS:-}"
+PITR_MECHANISM="pgbackrest_wal"
+PITR_BACKUP_OK=false
+PITR_RESTORE_OK=false
+PITR_ATTEMPTED=false
+PITR_WAL_ARCHIVE_OK=false
+PITR_RPO_MEASURED=""
+# Record the requested target immediately: a run blocked before the target is
+# parsed must still say which recovery point was asked for.
+PITR_TARGET_TIMESTAMP="${PGBACKREST_RESTORE_TARGET:-}"
+PITR_RECOVERY_TARGET_REACHED=""
+PITR_RECOVERY_REPLAY_TIMESTAMP=""
+PITR_CLUSTER_DATA_BYTES=""
+PITR_RESTORED_ORGS=""
+PITR_RESTORED_MEMORIES=""
+PITR_BLOCKED_BY=""
+PITR_VERIFY_CONTAINER=""
+
+# pitr_environment_class names where the run happened, so a committed report is
+# never mistaken for a hosted result.
+pitr_environment_class() {
+  if [[ -n "$PITR_ENVIRONMENT_CLASS" ]]; then
+    printf '%s\n' "$PITR_ENVIRONMENT_CLASS"
+    return 0
+  fi
+  local engine="${CLI[0]:-unknown}" mode=compose
+  if [[ -n "${SCRATCH_VOLUME:-}" ]]; then
+    mode=scratch
+  fi
+  printf 'local-%s-%s\n' "$engine" "$mode"
+}
+
+# pitr_blocked records why PITR could not be performed at all. A run stopped by
+# a precondition reports `mechanism: unavailable` with this reason; the report
+# writer refuses an unavailable report that carries no reason.
+pitr_blocked() {
+  PITR_MECHANISM=unavailable
+  PITR_BLOCKED_BY="$1"
+  echo "[restore] PITR blocked: $1" >&2
+}
+
+cleanup_pitr_verify_container() {
+  if [[ -n "$PITR_VERIFY_CONTAINER" ]]; then
+    "${CLI[@]}" rm -f "$PITR_VERIFY_CONTAINER" >/dev/null 2>&1 || true
+    PITR_VERIFY_CONTAINER=""
+  fi
+}
+
+emit_pitr_report() {
+  [[ -n "$PITR_REPORT" ]] || return 0
+  if [[ "$PITR_RESTORE_OK" != "true" && "$PITR_ATTEMPTED" != "true" && -z "$PITR_BLOCKED_BY" ]]; then
+    echo "[restore] no PITR report written: the restore never started and no reason was recorded" >&2
+    return 0
+  fi
+  PITR_REPORT="$PITR_REPORT" \
+    PITR_STARTED_AT="$PITR_STARTED_AT" \
+    PITR_ENVIRONMENT_CLASS="$(pitr_environment_class)" \
+    PITR_MECHANISM="$PITR_MECHANISM" \
+    PITR_BACKUP_OK="$PITR_BACKUP_OK" \
+    PITR_RESTORE_OK="$PITR_RESTORE_OK" \
+    PITR_WAL_ARCHIVE_OK="$PITR_WAL_ARCHIVE_OK" \
+    PITR_RPO_MEASURED="$PITR_RPO_MEASURED" \
+    PITR_TARGET_TIMESTAMP="$PITR_TARGET_TIMESTAMP" \
+    PITR_RECOVERY_TARGET_REACHED="$PITR_RECOVERY_TARGET_REACHED" \
+    PITR_RECOVERY_REPLAY_TIMESTAMP="$PITR_RECOVERY_REPLAY_TIMESTAMP" \
+    PITR_CLUSTER_DATA_BYTES="$PITR_CLUSTER_DATA_BYTES" \
+    PITR_RESTORED_ORGS="$PITR_RESTORED_ORGS" \
+    PITR_RESTORED_MEMORIES="$PITR_RESTORED_MEMORIES" \
+    PITR_BLOCKED_BY="$PITR_BLOCKED_BY" \
+    bash "$ROOT/infra/scripts/platform/pitr_report.sh"
+}
+
+on_exit() {
+  local status=$?
+  if declare -F cleanup_cred_env_file >/dev/null; then
+    cleanup_cred_env_file
+  fi
+  cleanup_pitr_verify_container
+  emit_pitr_report || echo "[restore] WARNING: could not write the PITR report" >&2
+  return "$status"
+}
+trap on_exit EXIT
 
 # Resolve docker-compose named volume from Compose metadata only (fail closed).
 # Never pick an arbitrary docker volume ls suffix match.
@@ -149,7 +240,12 @@ resolve_compose_network() {
   printf '%s\n' "$net"
 }
 
-CONF="$(resolve_conf)"
+# resolve_conf runs in a subshell, so it cannot record the reason itself: the
+# caller records it, in the shell that owns the exit trap and the report.
+if ! CONF="$(resolve_conf)"; then
+  pitr_blocked "the pgBackRest repository config is missing or refused (infra/backup/pgbackrest/pgbackrest.conf)"
+  exit 1
+fi
 STANZA="${PGBACKREST_STANZA:-ibex-main}"
 # The path pgBackRest reads inside the restore container. The selected host
 # config is mounted at exactly this path, so a custom PGBACKREST_CONF is the one
@@ -176,12 +272,17 @@ COMPOSE_VOLUME=""
 # `T` separator and `Z` suffix that an operator types. Validate the ISO8601
 # form, then normalise it to the shape pgBackRest accepts so the documented
 # `2026-11-14T09:01:00Z` input works instead of failing deep in the restore.
+iso_target=""
+target_epoch=""
 if [[ -n "$RESTORE_TARGET" ]]; then
   if ! [[ "$RESTORE_TARGET" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[T\ ][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)?$ ]]; then
     echo "[restore] PGBACKREST_RESTORE_TARGET is not an ISO8601 timestamp: $RESTORE_TARGET" >&2
+    pitr_blocked "PGBACKREST_RESTORE_TARGET is not an ISO8601 timestamp: $RESTORE_TARGET"
     exit 2
   fi
   iso_target="$RESTORE_TARGET"
+  PITR_TARGET_TIMESTAMP="$iso_target"
+  target_epoch="$(date -u -d "$iso_target" +%s 2>/dev/null || true)"
   RESTORE_TARGET="${iso_target/T/ }"
   if [[ "$RESTORE_TARGET" == *Z ]]; then
     RESTORE_TARGET="${RESTORE_TARGET%Z}+00"
@@ -299,6 +400,7 @@ load_v1_repository_credentials() {
 # Postgres is stopped, so a refusal leaves the database running.
 if v1_repository_profile_selected "$COMPOSE_FILE"; then
   if ! load_v1_repository_credentials; then
+    pitr_blocked "the v1 profile repository credentials could not be loaded (see the message above)"
     exit 1
   fi
 fi
@@ -321,7 +423,6 @@ cleanup_cred_env_file() {
     CRED_ENV_FILE=""
   fi
 }
-trap cleanup_cred_env_file EXIT
 
 # digest_of prints the SHA-256 of one value. The value reaches sha256sum through
 # a pipe, never through argv, so it cannot appear in `ps` or in the process
@@ -391,6 +492,7 @@ write_credential_env_file() {
 cred_file_args=()
 if ! write_credential_env_file; then
   echo "[restore] FAILED: could not prepare the repository credentials; nothing has been stopped" >&2
+  pitr_blocked "the repository credentials could not be written to a 0600 file; nothing has been stopped"
   exit 1
 fi
 if [[ -n "$CRED_ENV_FILE" ]]; then
@@ -474,23 +576,186 @@ LOAD
   printf '  export %s\n\n' "${cred_vars[*]}"
 }
 
+# live_cluster_identity prints "<container>|<user>|<db>" for the running
+# profile Postgres, or returns 1 when it is not running. Reading the identity
+# from the container's own environment avoids a second source of truth for the
+# superuser name.
+live_cluster_identity() {
+  local cid identity
+  cid="$(compose -f "$COMPOSE_FILE" ps -q postgres 2>/dev/null | head -n1 || true)"
+  [[ -n "$cid" ]] || return 1
+  identity="$("${CLI[@]}" exec "$cid" sh -c 'printf "%s|%s\n" "${POSTGRES_USER:-postgres}" "${POSTGRES_DB:-postgres}"' 2>/dev/null || true)"
+  [[ -n "$identity" ]] || return 1
+  printf '%s|%s\n' "$cid" "$identity"
+}
+
+# measure_live_wal_archive records WAL archive freshness before anything is
+# restored. RPO is the age of the newest recoverable segment, and a backup or a
+# restore forces a WAL switch, so measuring it afterwards would always look
+# fresh. When archiving is not proven the RPO field stays null and the report
+# cannot claim an RPO pass.
+measure_live_wal_archive() {
+  local identity cid user db row archived last_epoch now
+  [[ -n "$PITR_REPORT" ]] || return 0
+  identity="$(live_cluster_identity || true)"
+  if [[ "$identity" != *"|"*"|"* ]]; then
+    echo "[restore] live cluster not reachable; WAL archive freshness unmeasured"
+    return 0
+  fi
+  cid="${identity%%|*}"
+  user="${identity#*|}"
+  user="${user%%|*}"
+  db="${identity##*|}"
+  row="$("${CLI[@]}" exec "$cid" psql -U "$user" -d "$db" -tAc \
+    "SELECT archived_count || '|' || COALESCE(EXTRACT(EPOCH FROM last_archived_time)::bigint, -1) FROM pg_stat_archiver" \
+    2>/dev/null | tr -d '\r' | tail -n1 || true)"
+  if [[ "$row" != *"|"* ]]; then
+    echo "[restore] WAL archive freshness unreadable (pg_stat_archiver)"
+    return 0
+  fi
+  archived="${row%%|*}"
+  last_epoch="${row##*|}"
+  case "$archived" in '' | *[!0-9]*) return 0 ;; esac
+  case "$last_epoch" in '' | *[!0-9]*) return 0 ;; esac
+  if (( archived == 0 || last_epoch <= 0 )); then
+    echo "[restore] WAL archiving has archived no segment (archived_count=$archived) — RPO unmeasurable"
+    return 0
+  fi
+  now="$(date +%s)"
+  PITR_WAL_ARCHIVE_OK=true
+  PITR_RPO_MEASURED=$(( now - last_epoch ))
+  if (( PITR_RPO_MEASURED < 0 )); then
+    PITR_RPO_MEASURED=0
+  fi
+  echo "[restore] wal_archive_ok=true newest_archived_age_sec=$PITR_RPO_MEASURED"
+}
+
+# record_cluster_facts reads the recovery point and the data size back from a
+# running restored cluster. "Reached the target" is a fact only when the
+# cluster's own last replayed transaction says so.
+record_cluster_facts() {
+  local container="$1" identity user=postgres db=postgres row replay
+  identity="$(live_cluster_identity || true)"
+  if [[ "$identity" == *"|"*"|"* ]]; then
+    user="${identity#*|}"
+    user="${user%%|*}"
+    db="${identity##*|}"
+  fi
+  [[ -n "$user" ]] || user=postgres
+  [[ -n "$db" ]] || db=postgres
+  row="$("${CLI[@]}" exec "$container" psql -U "$user" -d "$db" -tAc \
+    "SELECT COALESCE(EXTRACT(EPOCH FROM pg_last_xact_replay_timestamp())::bigint, -1) || '|' || pg_database_size(current_database())" \
+    2>/dev/null | tr -d '\r' | tail -n1 || true)"
+  if [[ "$row" == *"|"* ]]; then
+    replay="${row%%|*}"
+    PITR_CLUSTER_DATA_BYTES="${row##*|}"
+    case "$PITR_CLUSTER_DATA_BYTES" in '' | *[!0-9]*) PITR_CLUSTER_DATA_BYTES="" ;; esac
+    case "$replay" in '' | *[!0-9-]*) replay="" ;; esac
+    if [[ -n "$replay" ]] && (( replay >= 0 )); then
+      PITR_RECOVERY_REPLAY_TIMESTAMP="$(date -u -d "@$replay" +%Y-%m-%dT%H:%M:%SZ)"
+      if [[ -n "$target_epoch" ]]; then
+        if (( replay <= target_epoch )); then
+          PITR_RECOVERY_TARGET_REACHED=true
+          echo "[restore] recovery target reached: replay=$PITR_RECOVERY_REPLAY_TIMESTAMP target=$iso_target"
+        else
+          PITR_RECOVERY_TARGET_REACHED=false
+          echo "[restore] ERROR: recovery replayed past the target (replay=$PITR_RECOVERY_REPLAY_TIMESTAMP target=$iso_target)" >&2
+        fi
+      fi
+    fi
+  fi
+  PITR_RESTORED_ORGS="$("${CLI[@]}" exec "$container" psql -U "$user" -d "$db" -tAc \
+    "SELECT COUNT(*)::text FROM ibex_core.organizations" 2>/dev/null | tr -d '[:space:]' | tail -n1 || true)"
+  case "$PITR_RESTORED_ORGS" in '' | *[!0-9]*) PITR_RESTORED_ORGS="" ;; esac
+  PITR_RESTORED_MEMORIES="$("${CLI[@]}" exec "$container" psql -U "$user" -d "$db" -tAc \
+    "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories" \
+    2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
+  echo "[restore] restored cluster bytes=${PITR_CLUSTER_DATA_BYTES:-unknown} orgs=${PITR_RESTORED_ORGS:-unknown} memories=${PITR_RESTORED_MEMORIES:-unknown}"
+}
+
+# start_pitr_verify_container starts the restored scratch cluster with archiving
+# disabled — the same command the printed next step documents — so the recovery
+# point can be read instead of asserted. It is removed on exit; the restored
+# volume is left in place, stopped, as before.
+start_pitr_verify_container() {
+  local network="$1" identity user=postgres db=postgres ready=false
+  PITR_VERIFY_CONTAINER="ibex-pitr-verify-$$"
+  if ! "${CLI[@]}" run -d --name "$PITR_VERIFY_CONTAINER" "${run_args[@]}" "${cred_file_args[@]}" \
+    --network "$network" \
+    -v "${SCRATCH_VOLUME}:/var/lib/postgresql/data" \
+    -v "${CONF}:${CONTAINER_CONF}:ro" \
+    "$IMAGE" postgres -c archive_mode=off >/dev/null; then
+    echo "[restore] FAILED: could not start the restored scratch cluster" >&2
+    return 1
+  fi
+  identity="$(live_cluster_identity || true)"
+  if [[ "$identity" == *"|"*"|"* ]]; then
+    user="${identity#*|}"
+    user="${user%%|*}"
+    db="${identity##*|}"
+  fi
+  [[ -n "$user" ]] || user=postgres
+  [[ -n "$db" ]] || db=postgres
+  for _ in $(seq 1 120); do
+    if [[ "$("${CLI[@]}" exec "$PITR_VERIFY_CONTAINER" psql -U "$user" -d "$db" -tAc 'select pg_is_in_recovery()' 2>/dev/null | tr -d '[:space:]' || true)" == "f" ]]; then
+      ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$ready" != "true" ]]; then
+    # The server log is the only place that says why recovery stopped — a
+    # target beyond the end of the archived WAL, a missing repository
+    # credential, a corrupt segment. Print it instead of making the operator
+    # reproduce the failure to find out.
+    echo "[restore] FAILED: the restored scratch cluster did not leave recovery within 120s" >&2
+    "${CLI[@]}" logs --tail 40 "$PITR_VERIFY_CONTAINER" >&2 || true
+    return 1
+  fi
+  echo "[restore] scratch cluster verified: pg_is_in_recovery()=false"
+  return 0
+}
+
+measure_live_wal_archive
+
 if [[ -n "$SCRATCH_VOLUME" ]]; then
   # Drill path: restore beside the live cluster. Nothing is stopped, and the
   # live data directory is never mounted.
   if ! "${CLI[@]}" volume inspect "$SCRATCH_VOLUME" >/dev/null 2>&1; then
     echo "[restore] scratch volume $SCRATCH_VOLUME does not exist; create it first" >&2
+    pitr_blocked "scratch volume $SCRATCH_VOLUME does not exist; create it first"
     exit 1
   fi
   NETWORK="$(resolve_compose_network "$COMPOSE_FILE")"
   echo "[restore] scratch restore volume=$SCRATCH_VOLUME network=$NETWORK image=$IMAGE"
-  "${CLI[@]}" run --rm "${run_args[@]}" "${cred_file_args[@]}" \
+  PITR_ATTEMPTED=true
+  if ! "${CLI[@]}" run --rm "${run_args[@]}" "${cred_file_args[@]}" \
     --network "$NETWORK" \
     -v "${SCRATCH_VOLUME}:/var/lib/postgresql/data" \
     -v "${CONF}:${CONTAINER_CONF}:ro" \
     "$IMAGE" \
     pgbackrest --config="$CONTAINER_CONF" \
-      --stanza="$STANZA" --pg1-path=/var/lib/postgresql/data "${restore_args[@]}" restore
+      --stanza="$STANZA" --pg1-path=/var/lib/postgresql/data "${restore_args[@]}" restore; then
+    echo "[restore] FAILED: pgbackrest restore into $SCRATCH_VOLUME failed; the restored cluster is not verified" >&2
+    exit 1
+  fi
   echo "[restore] scratch restore ok $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # The restore returning 0 is not evidence that recovery stopped at the target.
+  # Start the restored copy the way the printed step documents, read the last
+  # replayed transaction, and only then record the run as a success.
+  if ! start_pitr_verify_container "$NETWORK"; then
+    cleanup_pitr_verify_container
+    echo "[restore] FAILED: the restored cluster could not be verified; not reporting a successful PITR" >&2
+    exit 1
+  fi
+  record_cluster_facts "$PITR_VERIFY_CONTAINER"
+  cleanup_pitr_verify_container
+  if [[ "$PITR_RECOVERY_TARGET_REACHED" == "false" ]]; then
+    echo "[restore] FAILED: the restored cluster did not stop at the requested target" >&2
+    exit 1
+  fi
+  PITR_BACKUP_OK=true
+  PITR_RESTORE_OK=true
   cat <<NEXT
 
 The restored cluster is not running. Start it on the scratch volume, with
@@ -522,7 +787,10 @@ compose_restore_available() {
 # container came up with empty values and the restore died after Postgres was
 # stopped.
 if compose_restore_available; then
-  probe_credential_delivery "$IMAGE" || exit 1
+  if ! probe_credential_delivery "$IMAGE"; then
+    pitr_blocked "the container engine did not deliver the repository credentials intact to a probe container; nothing has been stopped"
+    exit 1
+  fi
 fi
 
 echo "[restore] stopping Postgres before restore"
@@ -682,21 +950,44 @@ verify_destructive_restore_host() {
 }
 
 echo "[restore] stanza=$STANZA target=$TARGET conf=$CONF"
+PITR_ATTEMPTED=true
 if [[ "$stopped_via_compose" == "true" && -n "$COMPOSE_VOLUME" ]]; then
   # Host pgbackrest cannot resolve the object store; run inside the compose
   # network.
   NETWORK="$(resolve_compose_network "$COMPOSE_FILE")"
   echo "[restore] running pgbackrest in compose network=$NETWORK image=$IMAGE"
-  "${CLI[@]}" run --rm "${run_args[@]}" "${cred_file_args[@]}" \
+  if ! "${CLI[@]}" run --rm "${run_args[@]}" "${cred_file_args[@]}" \
     --network "$NETWORK" \
     -v "${COMPOSE_VOLUME}:${TARGET}" \
     -v "${CONF}:${CONTAINER_CONF}:ro" \
     "$IMAGE" \
     pgbackrest --config="$CONTAINER_CONF" \
-      --stanza="$STANZA" --pg1-path="$TARGET" "${destructive_restore_args[@]}" restore
-  verify_destructive_restore_compose
+      --stanza="$STANZA" --pg1-path="$TARGET" "${destructive_restore_args[@]}" restore; then
+    echo "[restore] FAILED: pgbackrest restore failed; the cluster is left stopped" >&2
+    exit 1
+  fi
+  if ! verify_destructive_restore_compose; then
+    exit 1
+  fi
+  RESTORED_CID="$(compose -f "$COMPOSE_FILE" ps -q postgres 2>/dev/null | head -n1 || true)"
+  if [[ -n "$RESTORED_CID" ]]; then
+    record_cluster_facts "$RESTORED_CID"
+  fi
+  if [[ "$PITR_RECOVERY_TARGET_REACHED" == "false" ]]; then
+    echo "[restore] FAILED: the restored cluster did not stop at the requested target" >&2
+    exit 1
+  fi
 else
-  pgbackrest --config="$CONF" --stanza="$STANZA" --pg1-path="$TARGET" "${destructive_restore_args[@]}" restore
-  verify_destructive_restore_host
+  if ! pgbackrest --config="$CONF" --stanza="$STANZA" --pg1-path="$TARGET" "${destructive_restore_args[@]}" restore; then
+    echo "[restore] FAILED: pgbackrest restore failed; the cluster is left stopped" >&2
+    exit 1
+  fi
+  if ! verify_destructive_restore_host; then
+    exit 1
+  fi
 fi
+# A successful restore is also the proof that the backup it read was usable, so
+# the report records backup_ok alongside restore_ok.
+PITR_BACKUP_OK=true
+PITR_RESTORE_OK=true
 echo "[restore] ok $(date -u +%Y-%m-%dT%H:%M:%SZ)"

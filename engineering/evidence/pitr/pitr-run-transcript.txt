@@ -1,0 +1,103 @@
+[restore] point-in-time target=2026-11-16 07:42:48+00 (from 2026-11-16T07:42:48Z; --type=time --target-action=promote)
+[restore] wal_archive_ok=true newest_archived_age_sec=17
+[restore] scratch restore volume=ibex-pitr-scratch-p0-10 network=ibex-v1-single-node-internal image=ibex-v1-postgres:local
+[restore] scratch restore ok 2026-11-16T07:43:10Z
+[restore] scratch cluster verified: pg_is_in_recovery()=false
+[restore] recovery target reached: replay=2026-11-16T07:42:42Z target=2026-11-16T07:42:48Z
+[restore] restored cluster bytes=12221463 orgs=2 memories=9
+
+The restored cluster is not running. Start it on the scratch volume, with
+archiving disabled so the restored timeline cannot write into the live
+repository, then verify the recovery point.
+
+The start command forwards the repository credentials by name (-e VAR), so the
+shell that runs it must hold the values; `make v1-restore` and `make v1-pitr`
+export them from the profile .env before running this script. To start the
+cluster by hand, load the same values the same way — nothing below prints a
+value or puts one on a command line:
+
+  ENV_FILE="${IBEX_V1_ENV:-/home/rick/dev/ibex-harness/infra/compose/v1-single-node/.env}"
+  ibex_env_value() { python3 /home/rick/dev/ibex-harness/infra/scripts/lib/dotenv.py "$1" < "$ENV_FILE"; }
+  PGBACKREST_REPO1_CIPHER_PASS="$(ibex_env_value PGBACKREST_REPO1_CIPHER_PASS)"
+  : "${PGBACKREST_REPO1_CIPHER_PASS:?empty; check $ENV_FILE}"
+  PGBACKREST_REPO1_S3_KEY="$(ibex_env_value IBEX_OBJECTSTORE_ACCESS_KEY)"
+  : "${PGBACKREST_REPO1_S3_KEY:?empty; check $ENV_FILE}"
+  PGBACKREST_REPO1_S3_KEY_SECRET="$(ibex_env_value IBEX_OBJECTSTORE_SECRET_KEY)"
+  : "${PGBACKREST_REPO1_S3_KEY_SECRET:?empty; check $ENV_FILE}"
+  export PGBACKREST_REPO1_CIPHER_PASS PGBACKREST_REPO1_S3_KEY PGBACKREST_REPO1_S3_KEY_SECRET
+  podman run -d --name ibex-pitr-scratch --network ibex-v1-single-node-internal --user postgres -e PGBACKREST_REPO1_CIPHER_PASS -e PGBACKREST_REPO1_S3_KEY -e PGBACKREST_REPO1_S3_KEY_SECRET \
+    -v ibex-pitr-scratch-p0-10:/var/lib/postgresql/data \
+    -v /home/rick/dev/ibex-harness/infra/backup/pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro \
+    ibex-v1-postgres:local postgres -c archive_mode=off
+
+  podman exec ibex-pitr-scratch psql -U ibex -d ibex \
+    -c 'SELECT pg_is_in_recovery(), pg_last_xact_replay_timestamp()'
+{
+  "milestone": "4.P.5",
+  "drill_kind": "pitr",
+  "drill_started_at": "2026-11-16T07:43:07Z",
+  "environment_class": "local-podman-scratch",
+  "transcript": null,
+  "evidence_eligible": true,
+  "allow_no_db": false,
+  "blocked_by": null,
+  "postgres": {
+    "rpo_target_sec": 300,
+    "rto_target_sec": 1800,
+    "rpo_measured_sec": 17,
+    "rto_measured_sec": null,
+    "backup_ok": true,
+    "restore_ok": true,
+    "rpo_pass": true,
+    "rto_pass": false,
+    "mechanism": "pgbackrest_wal",
+    "wal_archive_ok": true,
+    "target_timestamp": "2026-11-16T07:42:48Z",
+    "recovery_target_reached": true,
+    "recovery_replay_timestamp": "2026-11-16T07:42:42Z",
+    "cluster_data_bytes": 12221463,
+    "restored_row_counts": {
+      "organizations": 2,
+      "memories": 9
+    },
+    "note": "pgBackRest+WAL path",
+    "rto_evidence_pass": false
+  },
+  "clickhouse": {
+    "rpo_target_sec": 86400,
+    "rto_target_sec": 3600,
+    "rpo_measured_sec": null,
+    "rto_measured_sec": null,
+    "reachable": false,
+    "note": "reachability timing only when measured; unmeasured fields are null"
+  },
+  "redis": {
+    "backup": false,
+    "note": "intentional \u2014 cache/ephemeral (locked decision)"
+  },
+  "object_minio": {
+    "rpo_target_sec": 86400,
+    "rto_target_sec": 3600,
+    "rpo_measured_sec": null,
+    "rto_measured_sec": null
+  },
+  "outbox": {
+    "rpo_target": 0,
+    "max_aggregate_seq": null,
+    "pending": null,
+    "rpo_pass": false
+  },
+  "tenant_isolation_post_restore": false,
+  "helm_lint_template": false,
+  "kyverno_policy_applied": false,
+  "kyverno_residual": "#869",
+  "fixture": {
+    "rows": null,
+    "orgs": null,
+    "rows_verified": null,
+    "rows_restored": null,
+    "min_rows_for_rto_evidence": 1000
+  }
+}
+[pitr-report] wrote engineering/evidence/pitr/pitr-report.json
+pitr report=engineering/evidence/pitr/pitr-report.json
