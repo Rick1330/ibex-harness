@@ -108,10 +108,12 @@ Heavy jobs run only when their area changed. Filter definitions live in [`.githu
 | `proto` | `packages/proto/**` | (included in `go` via shared paths) |
 | `docker` | Dockerfiles, `.hadolint.yaml` | `run_docker`, `run_security` |
 | `workflows` | `.github/workflows/**`, actions, scripts | **`full`** → all areas |
-| `deps` | `go.mod`, `go.sum`, `pnpm-lock.yaml` | **`full`** + `run_security` |
+| `deps` | `go.mod`, `go.sum`, `osv-scanner.toml`, `pnpm-lock.yaml` | **`full`** + `run_security` |
 | `compose` | `infra/compose/**` | `run_compose` |
 | `benchmarks` | `benchmarks/**`, `site/public/benchmarks/**`, `benchmark.yml`, `services/auth/**`, `services/proxy/**`, `go.mod`, `go.sum` | `benchmark.yml` workflow trigger |
 | `docs` | `**/*.md`, `**/*.mdx` | fast `markdownlint` only |
+
+`osv-scanner.toml` sits in `deps` because osv-scanner reads the ignore policy from the working directory, so the scan's result depends on a file that must trigger the scan.
 
 **Cross-cutting rule:** `workflows` or `deps` changes set `full=true` and run every PR-gated job (Go, site, console, security). The main/nightly-only jobs still skip on PRs. `workflow_dispatch` with `force_full: true` (manual) runs the full matrix; an ordinary manual run keeps path filtering. `main` pushes and the 03:00 UTC schedule run the full matrix.
 
