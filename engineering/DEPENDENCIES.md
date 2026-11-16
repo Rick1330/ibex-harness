@@ -415,6 +415,15 @@ and `ci-gate-security` blocks. Re-check on expiry; do not extend silently.
 | --- | --- | --- | --- | --- | --- |
 | GHSA-gcqx-w48m-w2h4 (prototype poisoning) | `deepmerge` 4.3.1 | Low | Build only (`@rollup/plugin-node-resolve` merging repo-owned rollup config) | No patched release exists (`patched_versions: <0.0.0`). Not reachable with untrusted input: the merged objects are the repository's own build config. Track upstream. | 2026-12-01 |
 | GHSA-mrhx-c7xc-m3w5 (memory exhaustion) | `zod` 3.25.76 | High | Build only, via `docus → @nuxt/content` | Patched `zod` is `>=4.6.6`; `@nuxt/content` 3.x pins zod 3. Adoption requires a `docus`/`@nuxt/content` major. Not reachable at runtime: the public site is static output and has no request-time validation path. | 2026-12-01 |
+| GHSA-f3x9-2chm-73c8 (encoded slash in the request path) | `nuxt`, `@nuxt/nitro-server` 4.6.4 | Medium | Runtime, in the Console Nitro server artifact; no hosted Console (ADR-0088) | 4.x fixed upstream in 4.6.4; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (`introduced >= 3.0.0`, no `fixed` event), which this repository does not use. Tracked in #1238. | 2026-12-01 |
+| GHSA-96x6-fvhx-49hg (unhandled server-render error exposes message and data) | `nuxt` 4.6.4 | Medium | Runtime, in the Console Nitro server artifact; no hosted Console (ADR-0088) | 4.x fixed upstream in 4.6.4; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (`introduced >= 3.0.0`, no `fixed` event), which this repository does not use. Tracked in #1238. | 2026-12-01 |
+| GHSA-hf59-9xwc-2g4p (colliding island props share one `/__nuxt_island` path) | `nuxt`, `@nuxt/nitro-server` 4.6.4 | Low | Runtime, in the Console Nitro server artifact; no hosted Console (ADR-0088) | 4.x fixed upstream in 4.6.4; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (`introduced >= 3.21.6`, no `fixed` event), which this repository does not use. Tracked in #1238. | 2026-12-01 |
+| GHSA-vjh5-4x84-xrqp (case-variant paths skip server-side route rules) | `nuxt`, `@nuxt/nitro-server` 4.6.4 | Medium | Runtime, in the Console Nitro server artifact; no hosted Console (ADR-0088) | 4.x fixed upstream in 4.6.2; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (`introduced >= 3.0.0`, no `fixed` event), which this repository does not use. Introduced by #1029, the PR that added this filter. | 2026-12-01 |
+
+The four Nuxt rows are enforced, not only dated: `IgnoredVulns` is advisory-scoped, so each entry would
+suppress its advisory for the 3.x range as well. `infra/scripts/check-osv-waiver-floor.py` (run by
+`make repo-guards`) fails when `pnpm-lock.yaml` resolves `nuxt` or `@nuxt/nitro-server` below 4.6.4, checked per
+package so one cannot mask the other. A package absent from the lock has nothing to waive and is reported, not failed.
 
 `glob` (GHSA-3g3m-2fjr-6pw4) is **fixed**, not waived: `pnpm.overrides` in the root `package.json` pins
 `>=14.0.2` (resolves to 14.0.3), and the site and console builds are verified against it.

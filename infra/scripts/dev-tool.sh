@@ -897,7 +897,7 @@ case "${1:-help}" in
       '  stack-init [dev|test]  Wait for a stack and create required object-store buckets' \
       '  readiness              Run stack-init readiness probes' \
       '  lint-docs              Run markdownlint' '  security-scan          Run gitleaks locally' \
-      '  repo-guards            Run repository layout and hygiene guards (incl. alert routing, schema doc, contract registry, deprecations, SLO rules, reproducibility)' '  proto-lint              Run Buf lint' \
+      '  repo-guards            Run repository layout and hygiene guards (incl. alert routing, schema doc, contract registry, deprecations, SLO rules, OSV waiver floors, reproducibility)' '  proto-lint              Run Buf lint' \
       '  reproducibility-check  Fail when a published benchmark artifact cannot support its claim' \
       '                         Runs on .cache/reproducibility-venv, provisioned once from' \
       '                         .github/requirements/jsonschema.txt with pip --require-hashes' \
@@ -934,7 +934,10 @@ case "${1:-help}" in
   # The contract registry and deprecation record guards are the same two steps repo-guards
   # runs in CI. They are stdlib-only and path-independent, so a local edit to a record is
   # checked here instead of only in the python-gated unit suite.
-  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py; python3 infra/scripts/check-schema-doc.py; python3 services/api/scripts/check_contract_registry.py; python3 services/api/scripts/check_deprecations.py; bash infra/scripts/slo-rules-check.sh; bash infra/scripts/test-v1-backup-credentials.sh; python3 infra/scripts/check-tenant-pin.py; reproducibility_check ;;
+  # osv-scanner's IgnoredVulns is advisory-scoped, so the Nuxt waivers would also
+  # suppress the 3.x range. The floor guard and its self-test run with the other
+  # static guards: the guard is only worth having if it is proven to bite.
+  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py; python3 infra/scripts/check-schema-doc.py; python3 services/api/scripts/check_contract_registry.py; python3 services/api/scripts/check_deprecations.py; bash infra/scripts/slo-rules-check.sh; bash infra/scripts/test-v1-backup-credentials.sh; python3 infra/scripts/check-tenant-pin.py; python3 infra/scripts/check-osv-waiver-floor.py; python3 infra/scripts/test_check_osv_waiver_floor.py; reproducibility_check ;;
   reproducibility-check) reproducibility_check ;;
   slo-rules-check) cd "$ROOT_DIR"; bash infra/scripts/slo-rules-check.sh ;;
   proto-lint) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf lint ;;
