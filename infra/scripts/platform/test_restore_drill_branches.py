@@ -4,13 +4,19 @@
 `pgbackrest-restore.sh` restores through three branches, and each one has to
 prove the same things: that the cluster left recovery, that the requested
 recovery target was reached, and that the recovery facts were read from *that*
-cluster. The scratch branch is covered in ``test_restore_drill_mechanism``; this
+cluster. The scratch branch is covered in `test_restore_drill_mechanism`; this
 module drives the other two with the same stub-engine style, so a branch cannot
 regress to reporting a success it never proved.
+
+A host restore records `restore_target: host`. The PITR producer never measures
+tenant isolation, so its report records `tenant_isolation_post_restore: null`
+with a residual rather than a failure it never observed, and the run exits zero
+once the restore, the target and the frontier are proven.
 """
 
 from __future__ import annotations
 
+import datetime
 import json
 import tempfile
 import unittest
@@ -40,6 +46,7 @@ _HOST_PATH_COMMANDS = (
     "head",
     "mkdir",
     "mktemp",
+    "mv",
     "python3",
     "rm",
     "sed",
@@ -216,6 +223,8 @@ class HostRestoreTargetTests(unittest.TestCase):
                 ),
             )
             output = proc.stdout + proc.stderr
+            # The restore and its target proof succeed. Isolation was never
+            # measured, so the report says so and the run still exits zero.
             self.assertEqual(proc.returncode, 0, output)
             self.assertIn("recovery target reached", output)
             calls = (root / "tools.log").read_text(encoding="utf-8")
@@ -226,7 +235,12 @@ class HostRestoreTargetTests(unittest.TestCase):
             written = json.loads(report.read_text(encoding="utf-8"))
             self.assertTrue(written["postgres"]["recovery_target_reached"])
             self.assertTrue(written["postgres"]["restore_ok"])
+            self.assertEqual(written["postgres"]["restore_target"], "host")
             self.assertEqual(written["postgres"]["restored_row_counts"]["memories"], 9)
+            self.assertIsNone(written["tenant_isolation_post_restore"])
+            self.assertEqual(
+                written["residual"], "tenant_isolation_not_measured_pitr"
+            )
 
     def test_host_restore_with_an_unproven_target_fails(self) -> None:
         # psql answers nothing usable, so no replayed transaction was read. A
@@ -243,6 +257,82 @@ class HostRestoreTargetTests(unittest.TestCase):
                 )
             )
             assert_unproven_target_fails(self, env, report)
+
+
+class HostRestoreFrontierTests(unittest.TestCase):
+    """A destructive restore records the frontier it demonstrated.
+
+    The quiesce instant is written only after the stop returned, and the replay
+    instant is read from the restored cluster for every successful restore. An
+    untargeted run is the only one that can carry an RPO upper bound, and these
+    cases drive the shipped script to prove it does.
+    """
+
+    def _restore(self, root: Path, *, target: str, replay: datetime.datetime):
+        report = root / "pitr-report.json"
+        facts = root / "facts.env"
+        replay = replay.replace(microsecond=0)
+        replay_us = int(replay.timestamp()) * 1_000_000
+        env = host_restore_env(
+            RestoreRequest(root=root, target=target, replay_us=replay_us, report=report)
+        )
+        env["PGBACKREST_RESTORE_FACTS_FILE"] = str(facts)
+        return run_bash(PITR_RESTORE_SH, env), report, facts, replay
+
+    def test_untargeted_host_restore_claims_a_demonstrated_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            replay = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=60)
+            proc, report, facts, replay = self._restore(root, target="", replay=replay)
+            output = proc.stdout + proc.stderr
+            # The bound is demonstrated and written; isolation is recorded as
+            # not measured, and the run exits zero.
+            self.assertEqual(proc.returncode, 0, output)
+            self.assertIn("WAL archiving quiesced at", output)
+            written = json.loads(report.read_text(encoding="utf-8"))
+            self.assertIsNone(written["postgres"]["target_timestamp"])
+            self.assertIsNotNone(written["postgres"]["wal_archive_quiesced_at"])
+            self.assertEqual(
+                written["postgres"]["recovery_replay_timestamp"],
+                replay.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+            # The bound is the gap the restore demonstrated: ~60 s of it is the
+            # fixture, the rest is this run's own runtime.
+            self.assertGreaterEqual(written["postgres"]["rpo_upper_bound_sec"], 60)
+            self.assertLessEqual(written["postgres"]["rpo_upper_bound_sec"], 300)
+            self.assertTrue(written["postgres"]["rpo_pass"])
+            self.assertEqual(written["postgres"]["restore_target"], "host")
+            self.assertIsNone(written["tenant_isolation_post_restore"])
+            self.assertEqual(
+                written["residual"], "tenant_isolation_not_measured_pitr"
+            )
+            # The facts file is what a parent shell can read, and it carries no
+            # credential: only timestamps and counts.
+            facts_text = facts.read_text(encoding="utf-8")
+            self.assertIn("wal_archive_quiesced_at=", facts_text)
+            for secret in ("fixture-cipher", "fixture-key", "fixture-secret"):
+                self.assertNotIn(secret, facts_text)
+
+    def test_targeted_host_restore_carries_no_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proc, report, _facts, _replay = self._restore(
+                root,
+                target="2026-11-16T07:42:48Z",
+                replay=datetime.datetime(2026, 11, 16, 7, 42, 47, tzinfo=datetime.UTC),
+            )
+            output = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 0, output)
+            written = json.loads(report.read_text(encoding="utf-8"))
+            self.assertTrue(written["postgres"]["recovery_target_reached"])
+            self.assertEqual(written["postgres"]["restore_target"], "host")
+            self.assertIsNone(written["tenant_isolation_post_restore"])
+            self.assertIsNone(written["postgres"]["rpo_upper_bound_sec"])
+            self.assertFalse(written["postgres"]["rpo_pass"])
+            self.assertEqual(
+                written["postgres_rpo_residual"],
+                "targeted_restore_proves_target_not_rpo",
+            )
 
 
 class ComposeRestoreTargetTests(unittest.TestCase):

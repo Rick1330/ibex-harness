@@ -53,9 +53,10 @@ from restore_drill_report_schema import (
     outbox_rpo_pass,
     parse_int_or_none,
     postgres_rpo_pass,
+    rpo_upper_bound,
 )
 
-# Every public name defined here, plus the ten schema and archive names
+# Every public name defined here, plus the eleven schema and archive names
 # deliberately re-exported above. A name that is not in this list is not part of
 # the surface.
 __all__ = [
@@ -73,6 +74,7 @@ __all__ = [
     "postgres_rpo_pass",
     "read_last_success",
     "render_metrics",
+    "rpo_upper_bound",
     "segments_per_log",
     "wal_archive_backlog",
     "write_metrics",
@@ -229,12 +231,34 @@ def write_report(path: Path, report: dict[str, Any]) -> None:
 
 
 def _require_tenant_isolation(report: dict[str, Any], *, allow_no_db: bool, path: Path) -> None:
-    if report["tenant_isolation_post_restore"]:
-        return
-    if report.get("drill_kind") == "pitr":
-        # A point-in-time rehearsal restores into a scratch volume and never
-        # proves tenant isolation; the report keeps that field false and claims
-        # nothing about it. The drill is where isolation is proven.
+    """Refuse a report whose tenant-isolation claim the run does not support.
+
+    ``tenant_isolation_post_restore`` is tri-state. ``false`` is a measured
+    failure, which is never acceptable, so it is refused first and
+    unconditionally. ``true`` is a measured pass. ``null`` means this run did
+    not measure it: accepted only when the run could not have measured it (a
+    PITR rehearsal, an ``unavailable`` run that restored nothing, or an
+    ``ALLOW_NO_DB`` smoke). Two of those record a residual naming the gap — a
+    PITR rehearsal records ``tenant_isolation_not_measured_pitr``, and an
+    ``ALLOW_NO_DB`` smoke records ``tenant_isolation_unproven_no_postgres``
+    after a warning. An ``unavailable`` run records no residual, because it
+    restored nothing and its ``blocked_by`` already names the gap. The
+    exemptions are tested in that order — ``unavailable``, then
+    ``ALLOW_NO_DB``, then ``pitr`` — so a run that qualifies for two records
+    the earlier one's outcome. Any other ``null`` is refused, a scheduled drill
+    included, because the drill is where isolation is proven.
+
+    This reads the report, so it cannot prove the producer ran: a report edited
+    outside the producer could set ``null``. It can refuse a measured failure
+    and an unmeasured claim from the producer that is supposed to measure. It
+    does not detect fabrication, and does not pretend to.
+    """
+    isolation = report["tenant_isolation_post_restore"]
+    # Checked before every exemption: no drill_kind, mechanism or ALLOW_NO_DB
+    # flag makes a measured cross-tenant leak acceptable.
+    if isolation is False:
+        raise SystemExit("tenant isolation check failed")
+    if isolation is True:
         return
     if report["postgres"].get("mechanism") == "unavailable":
         # Nothing was restored, so there is no restored data to isolate.
@@ -247,7 +271,13 @@ def _require_tenant_isolation(report: dict[str, Any], *, allow_no_db: bool, path
         report["residual"] = "tenant_isolation_unproven_no_postgres"
         write_report(path, report)
         return
-    raise SystemExit("tenant isolation check failed")
+    if report.get("drill_kind") == "pitr":
+        # The PITR producer never runs a cross-tenant check, so it records that
+        # isolation was not measured rather than a failure it never observed.
+        report["residual"] = "tenant_isolation_not_measured_pitr"
+        write_report(path, report)
+        return
+    raise SystemExit("tenant isolation was not measured")
 
 
 def _warn_if_false(ok: bool, message: str) -> None:
@@ -257,10 +287,10 @@ def _warn_if_false(ok: bool, message: str) -> None:
 
 def _emit_metric_warnings(report: dict[str, Any]) -> None:
     pg = report["postgres"]
-    if pg["rpo_measured_sec"] is not None:
+    if pg["rpo_upper_bound_sec"] is not None:
         _warn_if_false(
             pg["rpo_pass"],
-            "WARNING: postgres RPO not claimed (mechanism/target) — see residuals",
+            "WARNING: postgres RPO upper bound not claimed (mechanism/target) — see residuals",
         )
     if pg["rto_measured_sec"] is not None:
         _warn_if_false(pg["rto_pass"], "WARNING: postgres RTO miss vs targets — investigate residual")

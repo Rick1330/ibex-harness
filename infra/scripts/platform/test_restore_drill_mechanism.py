@@ -213,6 +213,11 @@ class DrillMechanismFallbackTests(unittest.TestCase):
             self.assertFalse(written["postgres"]["rpo_pass"])
             self.assertFalse(written["evidence_eligible"])
             self.assertEqual(written["environment_class"], "test-harness")
+            # A run that never restored used no target, so it records none.
+            self.assertIsNone(written["postgres"]["restore_target"])
+            # The producer's own value: this run measured nothing, so isolation
+            # is "not measured" (null), never `false` (measured and failed).
+            self.assertIsNone(written["tenant_isolation_post_restore"])
 
     def test_env_equivalent_selects_the_same_path(self) -> None:
         # The env form and the flag form must select the same mechanism.
@@ -224,6 +229,34 @@ class DrillMechanismFallbackTests(unittest.TestCase):
             self.assertIn("refusing to fall back to pg_dump", output)
             written = json.loads((root / "reports" / "restore-drill-report.json").read_text())
             self.assertEqual(written["postgres"]["mechanism"], "unavailable")
+
+
+class DrillIsolationProducerTests(unittest.TestCase):
+    """The drill's own report must not turn an unmeasured check into a failure.
+
+    These cases drive the shipped script, not a hand-written environment: the
+    value under test is the one the producer writes at the isolation section.
+    """
+
+    def test_a_drill_with_no_rls_dsn_records_isolation_as_unmeasured(self) -> None:
+        # No container runtime and no POSTGRES_RLS_DSN, so the cross-tenant check
+        # never runs. The producer must write null, not false. This run is an
+        # ALLOW_NO_DB smoke, so the writer accepts the null with a residual and
+        # writes the report. Without the smoke flag the run exits at the seed
+        # step, before it can reach this section.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = drill_env(root, mechanism="pg_dump")
+            env["ALLOW_NO_DB"] = "1"
+            proc = run_bash(DRILL_SH, env)
+            output = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 0, output)
+            self.assertIn("tenant isolation unproven", output)
+            written = json.loads((root / "reports" / "restore-drill-report.json").read_text())
+            self.assertIsNone(written["tenant_isolation_post_restore"])
+            self.assertEqual(
+                written["residual"], "tenant_isolation_unproven_no_postgres"
+            )
 
 
 class PitrRestoreScriptTests(unittest.TestCase):
@@ -260,6 +293,14 @@ class PitrRestoreScriptTests(unittest.TestCase):
                 "2026-11-16T07:42:48.800000Z",
             )
             self.assertTrue(written["postgres"]["restore_ok"])
+            # The producer records the branch it took, and that it never
+            # measured isolation, so the report says "not measured" and names
+            # the residual instead of claiming a failure.
+            self.assertEqual(written["postgres"]["restore_target"], "scratch")
+            self.assertIsNone(written["tenant_isolation_post_restore"])
+            self.assertEqual(
+                written["residual"], "tenant_isolation_not_measured_pitr"
+            )
 
     def test_replay_fractionally_after_the_target_fails(self) -> None:
         # The other half of the same comparison: rounding must not hide a miss.
@@ -381,7 +422,8 @@ class PitrRestoreScriptTests(unittest.TestCase):
             output = proc.stdout + proc.stderr
             self.assertIn("scratch restore ok", output)
             self.assertNotEqual(proc.returncode, 0, output)
-            self.assertIn("could not write the PITR report", output)
+            self.assertIn("could not write the report", output)
+            self.assertIn("the PITR report writer failed", output)
 
 
 def iso_micros(raw: str) -> str:

@@ -230,28 +230,29 @@ strict form that fails instead.
 | `make v1-pitr TARGET=… SCRATCH_VOLUME=<name>` | Same target, into a separate volume, leaving the live cluster running and untouched |
 
 **What a destructive restore does, in order.** `infra/scripts/platform/pgbackrest-restore.sh` stops the `postgres`
-service through the profile's Compose file (`:528-533`), resolves the live volume from Compose metadata (`:535-541`),
-and runs `pgbackrest restore` inside the Compose network (`:685-696`). The restore carries `--delta` (`:197-205`):
-pgBackRest refuses a non-empty `pg1-path`, and the live data directory is non-empty by definition, so without `--delta`
-the command would abort after Postgres is already stopped. A point-in-time run adds
-`--type=time --target=<normalised> --target-action=promote` (`:192-195`); the target is validated as ISO-8601 and its
-`T` separator and `Z` suffix are rewritten to the `+00` offset pgBackRest's parser accepts (`:171-190`). The script
-then proves the result before reporting it: `PG_VERSION` must exist on the volume *before* the server is started
-(`:566-571`), because the image's entrypoint runs `initdb` on an empty `PGDATA` and a liveness check alone would report
-a fresh cluster as a successful restore; only then does it start Postgres (`:573`) and require
-`pg_is_in_recovery()=false` (`:582-595`). `[restore] ok` is printed after that proof (`:702`), and **both destructive
-paths leave the cluster running and verified**. They do not stop the application services — an operator drains those
-before a restore, and the restore runbook states that sequence.
+service through the profile's Compose file (the `stopping Postgres before restore` block), resolves the live volume from
+Compose metadata (`resolve_compose_volume`), and runs `pgbackrest restore` inside the Compose network. The restore
+carries `--delta` (`destructive_restore_args`): pgBackRest refuses a non-empty `pg1-path`, and the live data directory
+is non-empty by definition, so without `--delta` the command would abort after Postgres is already stopped. A
+point-in-time run adds `--type=time --target=<normalised> --target-action=promote` (`restore_args`); the target is
+validated as ISO-8601 and its `T` separator and `Z` suffix are rewritten to the `+00` offset pgBackRest's parser accepts
+(the `PGBACKREST_RESTORE_TARGET` validation block). The script then proves the result before reporting it: `PG_VERSION`
+must exist on the volume *before* the server is started (`verify_destructive_restore_compose`), because the image's
+entrypoint runs `initdb` on an empty `PGDATA` and a liveness check alone would report a fresh cluster as a successful
+restore; only then does it start Postgres and require `pg_is_in_recovery()=false`. `[restore] ok` is printed after that
+proof, and **both destructive paths leave the cluster running and verified**. They do not stop the application services
+— an operator drains those before a restore, and the restore runbook states that sequence.
 
 **Credentials.** `make v1-restore` and `make v1-pitr` export `PGBACKREST_REPO1_CIPHER_PASS`,
 `PGBACKREST_REPO1_S3_KEY` and `PGBACKREST_REPO1_S3_KEY_SECRET` from the profile's `0600` `.env`
-(`infra/scripts/dev-tool.sh`:607-610). The script writes them to a `0600` file created with `mktemp`, passes it to the
-engine with `--env-file`, and removes it on exit (`infra/scripts/platform/pgbackrest-restore.sh`:317-398). It does not
-use `-e VAR`: with a rootful engine (`IBEX_PODMAN_SUDO=1` makes the engine `sudo -n podman`) sudo's `env_reset` drops
-the exported values, so a name-only `-e` arrives empty and the restore fails after Postgres is already stopped. Before
-that destructive step the script starts a probe container the same way and requires every value to arrive intact
-(`:422-437,524-526`); a direct invocation with `COMPOSE_FILE` pointing at the v1 profile loads the same three values
-from the profile `.env` itself (`:265-295`). No credential belongs on a command line; a process listing would expose it.
+(`v1_backup_env` in `infra/scripts/dev-tool.sh`). The script writes them to a `0600` file created with `mktemp`, passes it to the
+engine with `--env-file`, and removes it on exit (`write_credential_env_file`). It does not use `-e VAR`: with a
+rootful engine (`IBEX_PODMAN_SUDO=1` makes the engine `sudo -n podman`) sudo's `env_reset` drops the exported values, so
+a name-only `-e` arrives empty and the restore fails after Postgres is already stopped. Before that destructive step the
+script starts a probe container the same way and requires every value to arrive intact (`probe_credential_delivery` and
+`compose_restore_available`); a direct invocation with `COMPOSE_FILE` pointing at the v1 profile loads the same three
+values from the profile `.env` itself (`load_v1_repository_credentials`). No credential belongs on a command line; a
+process listing would expose it.
 
 **Scheduling.** There is no looping backup service in the profile: a restart-looping scheduler inside Compose is a second
 scheduler with its own failure mode and no host-level visibility. Schedule `make v1-backup` from the host instead — a
@@ -266,10 +267,11 @@ invisible, so the warning is part of the contract rather than advice.
 first rehearsal for any target an operator intends to use in an incident: create the volume first
 (`podman volume create <name>` or `docker volume create <name>`), then
 `make v1-pitr TARGET=… SCRATCH_VOLUME=<name>`. The scratch branch stops nothing and never mounts the live data
-directory (`infra/scripts/platform/pgbackrest-restore.sh`:477-510), and it restores without `--delta` because the
-volume is empty. The restore runs the profile image as uid 999 so the restored files are readable by the server, and the
-printed next step starts the scratch cluster with `-c archive_mode=off` so the restored timeline cannot write into the
-live repository (`:501-504`); the scratch copy is left stopped until that command is run. Verify with
+directory (`infra/scripts/platform/pgbackrest-restore.sh`, the `SCRATCH_VOLUME` branch), and it restores without
+`--delta` because the volume is empty. The restore runs the profile image as uid 999 so the restored files are readable
+by the server, and the printed next step starts the scratch cluster with `-c archive_mode=off` so the restored timeline
+cannot write into the live repository (the `archive_mode=off` in that printed `run` command); the scratch copy is left
+stopped until that command is run. Verify with
 `pg_is_in_recovery()`, `pg_last_xact_replay_timestamp()` and a row-level check around the target. A restore into the live
 volume must run as uid 999 as well; a root-owned restore leaves a data directory the server cannot read.
 
@@ -282,13 +284,19 @@ the per-user state directory because a non-root operator cannot write `/var/lib/
 restore — a missing repository config, an unresolvable runtime, a missing scratch volume — still writes a report, with
 `mechanism: "unavailable"` and a non-empty `blocked_by`. A run that fails *after* the restore started writes the same
 reason under `blocked_by` with the mechanism it actually used. The writer refuses an `unavailable` report without that
-reason, refuses `rpo_pass` for any mechanism other than `pgbackrest_wal`, and refuses `rpo_pass` when the measured RPO is
-null, not an integer number of seconds, above the target, or read from an archive queue that was not provably drained,
-when the restore did not complete, or when a requested recovery target was not affirmatively reached — an empty result is
-a target nobody checked, not a target that was met. The report is
-written atomically, and a run whose report cannot be written exits non-zero: a run that cannot produce evidence must not
-look like one that did. A PITR report does not advance `ibex_restore_drill_last_success_unixtime`: that gauge means the
-scheduled drill ran, and a rehearsal must not mask a drill that stopped.
+reason, and refuses `rpo_pass` for any mechanism other than `pgbackrest_wal`, for a targeted restore, when the restore
+did not complete, when either frontier instant is missing or unreadable, when the number is not an integer or does not
+match the difference the two instants produce, or when it is above the 300 s target. A number carried without a pass is
+held to the same consistency rules. The report is written atomically, and a run whose report cannot be written exits
+non-zero: a run that cannot produce evidence must not look like one that did. A PITR report does not advance
+`ibex_restore_drill_last_success_unixtime`: that gauge means the scheduled drill ran, and a rehearsal must not mask a
+drill that stopped.
+
+**How to describe the number.** The report supports "upper bound demonstrated at `<instant>`" and "RPO ≤ X,
+demonstrated `<instant>`". It does not support "measured RPO", "exposure", "steady-state RPO", "guaranteed" or "the RPO
+is X": one run demonstrates one frontier, not a distribution, and the number is a bound rather than an observation. The
+number is wall-clock: it includes any idle time between the last write and the stop, so an operator reading a 300 s
+target must know that a quiet cluster can miss it with no archive fault at all.
 
 **What a committed report contains.** `restore-drill-report.json` and `pitr-report.json` share one schema:
 
@@ -298,19 +306,22 @@ scheduled drill ran, and a rehearsal must not mask a drill that stopped.
 | `drill_started_at`, `environment_class` | When and where the run happened, e.g. `local-podman-scratch`; a local result is not a hosted one |
 | `blocked_by` | Names what stopped the run. Always set when `mechanism` is `unavailable`; also set when a restore that had started failed, with the mechanism it actually used |
 | `postgres.mechanism` | `pgbackrest_wal`, `pg_dump_fallback`, `unavailable`, or `unmeasured` |
-| `postgres.wal_archive_ok` | `pg_stat_archiver` showed at least one archived segment with a `last_archived_time`; read at the start of the run — before the drill's backup, and before the restore for a PITR rehearsal |
-| `postgres.wal_archive_upload_age_sec` | Age of the newest archive **upload** when it was sampled. A diagnostic, not a claim: upload completion is not the transaction time the segment carried |
-| `postgres.wal_archive_timeout_sec` | The live cluster's `archive_timeout`, read with the archive facts. The RPO bound needs it: a commit reaches the archive within that window of its segment being switched, plus the segment's upload latency |
+| `postgres.restore_target` | Which restore target the producer actually used, recorded from the branch it took: `scratch` for a volume restored beside the live cluster, `host` for the real data directory. A fact about the run, not an exemption key. Null when no restore was attempted |
+| `postgres.wal_archive_ok` | `pg_stat_archiver` showed at least one archived segment with a `last_archived_time`; read at the start of the run — before the drill's backup, and before the restore for a PITR rehearsal. A **diagnostic** that does not gate `rpo_pass`: on a freshly initialised stanza it reads `false` for a run that demonstrably worked |
+| `postgres.wal_archive_upload_age_sec` | Age of the newest archive **upload** when it was sampled. A diagnostic, not a claim: upload completion is not the transaction time the segment carried, and a push slower than `archive_timeout` leaves the counters looking drained over an older frontier |
+| `postgres.wal_archive_timeout_sec` | The live cluster's `archive_timeout`, read with the archive facts. A **diagnostic**: it is not part of the bound, because the bound is the frontier the restore demonstrated |
 | `postgres.wal_archive_wal_segment_size` | The cluster's `wal_segment_size` in bytes, which sets how many segment files one WAL log id holds (`2^32 / size`: 4096 at 1 MiB, 256 at 16 MiB, 64 at 64 MiB). Null when it was not measured |
-| `postgres.wal_archive_older_segments` | How many segments older than `last_archived_wal` were still present in `pg_wal`. Adjacency is not continuity — archival order is not guaranteed — so any older segment still queued means the archive has not drained. Null when the listing could not be read |
-| `postgres.wal_archive_backlog` | Whether the archive queue was provably drained at that moment (`false`), was not (`true`), or could not be told (`null`). `false` requires the writer to be at most one segment ahead, no older segment left in `pg_wal`, a known segment size, and no failed push after the last success |
-| `postgres.rpo_measured_sec` | The RPO **bound**: the upload age plus `archive_timeout`, carried only for `pgbackrest_wal` with a provably drained queue and a known, non-zero timeout. Null when any of those is unproven — a zero-second bound over unarchived data is not a result |
+| `postgres.wal_archive_backlog` | Whether the archive queue looked drained at that moment (`false`), did not (`true`), or could not be told (`null`). A **diagnostic**: it does not gate `rpo_pass`, because `pg_wal` holds retained-but-archived segments and the restore itself is the continuity proof. A drill report records `null` because the drill no longer measures the older-segment count; a PITR report, which measures it, still computes the field |
+| `postgres.wal_archive_quiesced_at` | The instant archiving stopped, recorded after the stop returned and only when a stop happened. Nothing new is archived after it, so the recoverable frontier is frozen there. Null on a run that stopped nothing (the scratch path) or whose stop failed under `PGBACKREST_ALLOW_UNSAFE_RESTORE=1` |
+| `postgres.rpo_upper_bound_sec` | The RPO **upper bound**: `ceil(wal_archive_quiesced_at − recovery_replay_timestamp)`, rounded up, carried only for an untargeted `pgbackrest_wal` restore. It is the wall-clock distance to the newest commit the restore could recover, so it includes any idle time between the last write and the stop; a quiet cluster can miss a short target with no archive fault. Null when either instant is missing or unreadable, or when the difference is negative; a zero difference is `0` (the restore proved the frontier at the quiesce instant). Also null on every targeted restore — a targeted run proves the target, not an RPO |
 | `postgres.target_timestamp` | The recovery target the run asked for, or null |
 | `postgres.recovery_target_reached` | Whether the restored cluster's last replayed transaction was at or before that target; null when no target was requested |
-| `postgres.recovery_replay_timestamp` | That last replayed transaction, read from the restored cluster |
+| `postgres.recovery_replay_timestamp` | That last replayed transaction, read from the restored cluster for **every** successful restore, not only a targeted one |
 | `postgres.cluster_data_bytes` | `pg_database_size` of the restored database; a target reached over an empty cluster is not a recovery |
 | `postgres.restored_row_counts` | `organizations` and `memories` read back from the restored cluster |
-| `postgres.rpo_pass` | True only for `pgbackrest_wal` with a measured RPO inside the target, a drained archive queue, a completed restore, and an affirmatively reached recovery target when one was requested |
+| `postgres.rpo_pass` | True only for an **untargeted** `pgbackrest_wal` restore that completed, with an integer upper bound inside the target that the validator re-derives from the two instants. A targeted restore never carries it |
+| `postgres_rpo_residual` | Why no RPO claim is present: `pitr_unavailable`, `not_pitr_pg_dump_fallback_#869`, or `targeted_restore_proves_target_not_rpo` |
+| `tenant_isolation_post_restore` | Tri-state: `true` (measured, passed), `false` (the cross-tenant check ran and did not pass — a measured failure, refused first and unconditionally), or `null` (not measured in this run). A `null` is accepted in three cases only: a PITR rehearsal, which never queries restored tenant data under RLS and records `residual: "tenant_isolation_not_measured_pitr"`; a run whose `postgres.mechanism` is `unavailable`, which restored nothing and so has nothing to isolate, and which carries no tenant-isolation residual because its `blocked_by` already names the gap; and an `ALLOW_NO_DB` smoke, which prints `WARNING: tenant isolation not proven` and records `residual: "tenant_isolation_unproven_no_postgres"`. A `null` that is none of those three is refused with `tenant isolation was not measured` — a scheduled drill included, because the drill is where isolation is proven |
 
 **The drill's `--mechanism=pgbackrest` removes the fallback.** `infra/scripts/platform/restore-drill.sh` accepts
 `--mechanism=auto|pgbackrest|pg_dump` (or `IBEX_DRILL_MECHANISM`), and `--target=<ISO8601>` (or `IBEX_DRILL_TARGET`).

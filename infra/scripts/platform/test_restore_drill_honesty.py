@@ -9,7 +9,13 @@ runs a script.
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from typing import Any
 
 from restore_drill_test_support import base_env, mod
@@ -36,71 +42,61 @@ class OutboxRpoPassTests(unittest.TestCase):
 class PostgresRpoHonestyTests(unittest.TestCase):
     def test_rpo_pass_by_mechanism(self) -> None:
         cases = (
-            ("pg_dump_fallback", False, False),
-            ("pgbackrest_wal", False, True),
-            ("unmeasured", False, False),
-            # An undrained archive, or one whose state was never recorded, makes
-            # the measured age no upper bound: the claim must stay false.
-            ("pgbackrest_wal", True, False),
-            ("pgbackrest_wal", None, False),
+            # (mechanism, targeted, bound, expected)
+            ("pg_dump_fallback", False, 12, False),
+            ("pgbackrest_wal", False, 12, True),
+            ("unmeasured", False, 12, False),
+            # A targeted restore proves the target, not an RPO.
+            ("pgbackrest_wal", True, 12, False),
+            # No demonstrated frontier, or one above the target: no pass.
+            ("pgbackrest_wal", False, None, False),
+            ("pgbackrest_wal", False, 900, False),
         )
-        for mechanism, backlog, expect in cases:
-            with self.subTest(mechanism=mechanism, backlog=backlog):
+        for mechanism, targeted, bound, expect in cases:
+            with self.subTest(mechanism=mechanism, bound=bound):
                 got = mod.postgres_rpo_pass(
                     {
                         "backup_ok": True,
                         "restore_ok": True,
-                        "measured": 12,
+                        "bound": bound,
                         "target": 300,
                         "mechanism": mechanism,
-                        "backlog": backlog,
+                        "target_requested": targeted,
                     }
                 )
                 self.assertEqual(got, expect)
 
 
 class PgBackrestRpoGateTests(unittest.TestCase):
-    """rpo_pass is a PITR claim: only a measured, fresh pgBackRest WAL run earns it."""
+    """rpo_pass is a PITR claim: only a demonstrated, fresh pgBackRest WAL run earns it."""
 
-    def test_pgbackrest_wal_with_null_rpo_cannot_pass(self) -> None:
-        # Archiving was proven to work, but no RPO was measured: the cluster's
-        # archive_timeout was never recorded, so no bound can be derived.
-        # "Archiving is on" is not "the RPO target was met", so the claim must
-        # stay false.
+    def test_pgbackrest_wal_without_a_frontier_cannot_pass(self) -> None:
+        # Archiving was proven to work, but nothing froze the frontier: no
+        # quiesce instant was recorded, so no bound can be derived. "Archiving
+        # is on" is not "the RPO target was met", so the claim must stay false.
         report = mod.build_report(
-            base_env(
-                PG_MECHANISM="pgbackrest_wal",
-                WAL_ARCHIVE_OK="true",
-                WAL_ARCHIVE_TIMEOUT_SEC="",
-            )
+            base_env(PG_MECHANISM="pgbackrest_wal", WAL_ARCHIVE_QUIESCED_AT="")
         )
         self.assertEqual(report["postgres"]["mechanism"], "pgbackrest_wal")
-        self.assertIsNone(report["postgres"]["rpo_measured_sec"])
+        self.assertIsNone(report["postgres"]["rpo_upper_bound_sec"])
         self.assertFalse(report["postgres"]["rpo_pass"])
 
-    def test_pgbackrest_wal_with_measured_rpo_can_pass(self) -> None:
+    def test_pgbackrest_wal_with_a_demonstrated_bound_can_pass(self) -> None:
         # The counterpart to the test above: the gate is not permanently closed.
-        # The bound is the 30 s upload age plus the 60 s archive_timeout.
-        report = mod.build_report(
-            base_env(
-                PG_MECHANISM="pgbackrest_wal",
-                PG_RPO_SEC="300",
-                WAL_ARCHIVE_OK="true",
-            )
-        )
-        self.assertEqual(report["postgres"]["rpo_measured_sec"], 90)
+        # The bound is the 5 s between the quiesce instant and the replay.
+        report = mod.build_report(base_env(PG_MECHANISM="pgbackrest_wal"))
+        self.assertEqual(report["postgres"]["rpo_upper_bound_sec"], 5)
         self.assertTrue(report["postgres"]["rpo_pass"])
 
     def test_pgbackrest_wal_over_target_fails(self) -> None:
+        # A frontier 400 s behind the instant archiving stopped is a miss.
         report = mod.build_report(
             base_env(
                 PG_MECHANISM="pgbackrest_wal",
-                PG_RPO_SEC="300",
-                WAL_ARCHIVE_OK="true",
-                WAL_ARCHIVE_UPLOAD_AGE_SEC="900",
+                WAL_ARCHIVE_QUIESCED_AT="2026-11-16T07:49:27Z",
             )
         )
-        self.assertEqual(report["postgres"]["rpo_measured_sec"], 960)
+        self.assertEqual(report["postgres"]["rpo_upper_bound_sec"], 400)
         self.assertFalse(report["postgres"]["rpo_pass"])
 
     def test_pg_dump_fallback_never_claims_rpo_pass(self) -> None:
@@ -160,14 +156,15 @@ class UnavailableMechanismTests(unittest.TestCase):
         with self.assertRaises(mod.ReportHonestyError):
             mod.assert_honest(report)
 
-    def test_honesty_validator_refuses_rpo_pass_without_a_measurement(self) -> None:
+    def test_honesty_validator_refuses_rpo_pass_without_a_frontier(self) -> None:
         report = mod.build_report(
-            base_env(PG_MECHANISM="pgbackrest_wal", WAL_ARCHIVE_TIMEOUT_SEC="")
+            base_env(PG_MECHANISM="pgbackrest_wal", WAL_ARCHIVE_QUIESCED_AT="")
         )
-        self.assertIsNone(report["postgres"]["rpo_measured_sec"])
+        self.assertIsNone(report["postgres"]["rpo_upper_bound_sec"])
         report["postgres"]["rpo_pass"] = True
-        with self.assertRaises(mod.ReportHonestyError):
+        with self.assertRaises(mod.ReportHonestyError) as raised:
             mod.assert_honest(report)
+        self.assertIn("wal_archive_quiesced_at", str(raised.exception))
 
 
 class ReportContractTests(unittest.TestCase):
@@ -189,23 +186,139 @@ class ReportContractTests(unittest.TestCase):
             mod.assert_honest(report)
         self.assertIn("completed restore", str(raised.exception))
 
-    def test_honesty_validator_refuses_a_float_measured_rpo(self) -> None:
+    def test_honesty_validator_refuses_a_float_bound(self) -> None:
         # 900.0 against a 300 s target used to pass: the comparison was skipped
         # for a non-integer, which read as "not above target".
         report = self._passing_report()
-        report["postgres"]["rpo_measured_sec"] = 900.0
-        report["postgres"]["rpo_target_sec"] = 300
+        report["postgres"]["rpo_upper_bound_sec"] = 900.0
         with self.assertRaises(mod.ReportHonestyError) as raised:
             mod.assert_honest(report)
-        self.assertIn("rpo_measured_sec must be integer seconds", str(raised.exception))
+        self.assertIn("rpo_upper_bound_sec must be integer seconds", str(raised.exception))
 
     def test_honesty_validator_refuses_a_float_target(self) -> None:
+        # The bound matches its frontier, so the target check is the one reached.
         report = self._passing_report()
-        report["postgres"]["rpo_measured_sec"] = 12
         report["postgres"]["rpo_target_sec"] = 300.0
         with self.assertRaises(mod.ReportHonestyError) as raised:
             mod.assert_honest(report)
         self.assertIn("rpo_target_sec must be integer seconds", str(raised.exception))
+
+
+class TenantIsolationGateTests(unittest.TestCase):
+    """The write gate reads a tri-state, not a boolean.
+
+    ``tenant_isolation_post_restore`` is ``true`` (measured, passed), ``false``
+    (measured, failed) or ``null`` (not measured in this run). A measured
+    failure is never acceptable. An unmeasured result is acceptable only from a
+    PITR rehearsal, which never runs a cross-tenant check and must say so, and
+    it is recorded with a residual. The scheduled drill is where isolation is
+    proven, so an unmeasured drill is refused.
+
+    The gate reads the report, so it cannot prove the producer ran: a report
+    edited outside the producer could set ``null``. These cases assert what it
+    can enforce — a measured failure and an unmeasured claim from the producer
+    that is supposed to measure.
+    """
+
+    def _run_main(self, **overrides: str) -> tuple[dict[str, Any], str]:
+        """Drive the shipped entry point once; return the report and its stdout."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            env = base_env(
+                REPORT=str(path), ISO_OK="", IBEX_DRILL_METRICS_DISABLED="1"
+            )
+            env.update(
+                {"DRILL_KIND": "pitr", "PG_MECHANISM": "pgbackrest_wal", **overrides}
+            )
+            saved = dict(os.environ)
+            try:
+                os.environ.clear()
+                os.environ.update(env)
+                with contextlib.redirect_stdout(io.StringIO()) as printed:
+                    mod.main()
+            finally:
+                os.environ.clear()
+                os.environ.update(saved)
+            return json.loads(path.read_text(encoding="utf-8")), printed.getvalue()
+
+    def test_a_measured_isolation_pass_is_written(self) -> None:
+        report, _output = self._run_main(ISO_OK="true")
+        self.assertTrue(report["tenant_isolation_post_restore"])
+        self.assertNotIn("residual", report)
+
+    def test_a_measured_isolation_failure_is_refused(self) -> None:
+        # A drill that ran the cross-tenant check and saw it fail is a real
+        # failure: no drill_kind makes that acceptable.
+        with self.assertRaises(SystemExit) as raised:
+            self._run_main(ISO_OK="false")
+        self.assertEqual(str(raised.exception), "tenant isolation check failed")
+
+    def test_an_unmeasured_pitr_run_is_written_with_a_residual(self) -> None:
+        # The regression: a host PITR run proves the restore, the target and the
+        # frontier, and never measures isolation. That is "not measured", not
+        # "failed", so the run exits zero and the report names the gap.
+        report, _output = self._run_main(PG_RESTORE_TARGET="host")
+        self.assertEqual(report["postgres"]["restore_target"], "host")
+        self.assertIsNone(report["tenant_isolation_post_restore"])
+        self.assertEqual(report["residual"], "tenant_isolation_not_measured_pitr")
+        self.assertTrue(report["postgres"]["rpo_pass"])
+
+    def test_an_unmeasured_scratch_rehearsal_records_the_same_residual(self) -> None:
+        report, _output = self._run_main(
+            PG_RESTORE_TARGET="scratch", ENVIRONMENT_CLASS="local-podman-scratch"
+        )
+        self.assertEqual(report["postgres"]["restore_target"], "scratch")
+        self.assertIsNone(report["tenant_isolation_post_restore"])
+        self.assertEqual(report["residual"], "tenant_isolation_not_measured_pitr")
+
+    def test_an_unmeasured_drill_run_is_refused(self) -> None:
+        # The drill is where isolation is proven. A drill report that does not
+        # carry a measured result must not pass the gate.
+        with self.assertRaises(SystemExit) as raised:
+            self._run_main(DRILL_KIND="restore-drill")
+        self.assertEqual(str(raised.exception), "tenant isolation was not measured")
+
+    def test_an_unavailable_run_need_not_measure_isolation(self) -> None:
+        report, _output = self._run_main(
+            PG_MECHANISM="unavailable",
+            PG_BACKUP_OK="false",
+            PG_RESTORE_OK="false",
+            PG_RTO_MEASURED="",
+            BLOCKED_BY="the pgbackrest binary is not installed on this host",
+        )
+        self.assertEqual(report["postgres"]["mechanism"], "unavailable")
+        self.assertIsNone(report["tenant_isolation_post_restore"])
+
+    def test_an_allow_no_db_run_is_warned_about_and_written(self) -> None:
+        # ALLOW_NO_DB means the run could not measure isolation, so the producer
+        # records null. It must not borrow `false`, which now means a measured
+        # failure and is refused before any exemption applies.
+        report, output = self._run_main(ALLOW_NO_DB="1")
+        self.assertIn("tenant isolation not proven", output)
+        self.assertIsNone(report["tenant_isolation_post_restore"])
+        self.assertEqual(report["residual"], "tenant_isolation_unproven_no_postgres")
+
+    def test_a_measured_failure_is_refused_before_every_exemption(self) -> None:
+        # `false` is unconditional: no drill_kind, unavailable mechanism or
+        # ALLOW_NO_DB flag turns a measured cross-tenant failure into a written
+        # report. Each context below accepts `null`, and must still refuse
+        # `false`.
+        contexts = (
+            {"DRILL_KIND": "restore-drill"},
+            {"ALLOW_NO_DB": "1"},
+            {
+                "PG_MECHANISM": "unavailable",
+                "PG_BACKUP_OK": "false",
+                "PG_RESTORE_OK": "false",
+                "PG_RTO_MEASURED": "",
+                "BLOCKED_BY": "the pgbackrest binary is not installed on this host",
+            },
+        )
+        for context in contexts:
+            with self.subTest(context=context):
+                with self.assertRaises(SystemExit) as raised:
+                    self._run_main(ISO_OK="false", **context)
+                self.assertEqual(str(raised.exception), "tenant isolation check failed")
 
 
 class BuildReportTests(unittest.TestCase):
@@ -219,11 +332,11 @@ class BuildReportTests(unittest.TestCase):
         self.assertEqual(report["postgres"]["mechanism"], "pg_dump_fallback")
         self.assertFalse(report["postgres"]["rpo_pass"])
         self.assertTrue(report["postgres"]["rto_pass"])
-        self.assertIsNone(report["postgres"]["rpo_measured_sec"])
+        self.assertIsNone(report["postgres"]["rpo_upper_bound_sec"])
         self.assertEqual(report["postgres_rpo_residual"], "not_pitr_pg_dump_fallback_#869")
 
     def test_allow_no_db_not_evidence(self) -> None:
-        report = mod.build_report(base_env(ALLOW_NO_DB="1", ISO_OK="false"))
+        report = mod.build_report(base_env(ALLOW_NO_DB="1", ISO_OK=""))
         self.assertFalse(report["evidence_eligible"])
         self.assertTrue(report["allow_no_db"])
 

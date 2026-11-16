@@ -16,11 +16,12 @@ path, so the sibling import there is made path-safe rather than relying on
 
 from __future__ import annotations
 
+import datetime
 import os
 from dataclasses import dataclass
 from typing import Any
 
-from restore_drill_archive import ArchiveContinuity, is_count, wal_archive_backlog
+from restore_drill_archive import ArchiveContinuity, wal_archive_backlog
 
 DEFAULT_MIN_FIXTURE_ROWS = 1000
 
@@ -42,10 +43,19 @@ class ReportHonestyError(ValueError):
 
 
 def parse_int_or_none(raw: str | None) -> int | None:
+    """Integer, or ``None`` when the producer recorded nothing readable.
+
+    A value the producer could not parse is unproven, not a crash: raising here
+    killed the report writer *after* a restore had already run, so the run left
+    no artefact at all. "unknown" and "" both mean the same thing to a reader.
+    """
     raw = (raw or "").strip()
     if raw == "":
         return None
-    return int(raw)
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
 
 def le_pass(measured: int | None, target: int) -> bool:
@@ -96,22 +106,25 @@ def outbox_rpo_pass(*, pending: int | None, max_aggregate_seq: int | None, targe
 def postgres_rpo_pass(ctx: dict[str, Any]) -> bool:
     """pg_dump_fallback is not PITR — never claim RPO pass for that mechanism.
 
-    A measured age is only an upper bound on the RPO while the archive queue is
-    drained, so ``backlog`` must be exactly ``False``: ``None`` (unproven) is
-    refused for the same reason as ``True``.
+    ``bound`` is the frontier the restore demonstrated, not an observation of
+    ``pg_stat_archiver``: a drained-looking queue over a commit older than the
+    number claims is exactly the case this refuses. A targeted restore proves
+    the target was reached, not an RPO, so it never passes.
 
-    Expected keys: mechanism, backup_ok, restore_ok, measured, target, backlog.
+    Expected keys: mechanism, backup_ok, restore_ok, bound, target,
+    target_requested.
     """
     if ctx.get("mechanism") != "pgbackrest_wal":
         return False
-    if ctx.get("backlog") is not False:
+    if ctx.get("target_requested"):
         return False
-    measured = ctx.get("measured")
-    measured_sec = measured if isinstance(measured, int) else None
+    bound = ctx.get("bound")
+    if isinstance(bound, bool) or not isinstance(bound, int):
+        return False
     return (
         bool(ctx.get("backup_ok"))
         and bool(ctx.get("restore_ok"))
-        and le_pass(measured_sec, int(ctx["target"]))
+        and le_pass(bound, int(ctx["target"]))
     )
 
 
@@ -210,11 +223,14 @@ def _archive_continuity(e: dict[str, str]) -> ArchiveContinuity:
 
 
 def _wal_archive_facts(e: dict[str, str]) -> dict[str, Any]:
-    """What the producer observed about the archive, and what it proves.
+    """What the producer observed about the archive. Diagnostics only.
 
-    The upload age and the timeout are diagnostics on their own: neither is an
-    RPO until the queue is drained and the timeout is known, so they are recorded
-    separately from the bound they support.
+    None of these gates the RPO. The restore replays every segment from the
+    backup to the replay point, so a gap either stops recovery or truncates the
+    replay timestamp, and the derived bound shows it. The counters are recorded
+    for diagnosis: ``pg_wal`` holds retained-but-archived segments, and
+    ``wal_archive_ok`` is sampled before the backup, so a freshly initialised
+    stanza reads ``false`` for a run that demonstrably worked.
     """
     continuity = _archive_continuity(e)
     return {
@@ -226,7 +242,6 @@ def _wal_archive_facts(e: dict[str, str]) -> dict[str, Any]:
             e.get("WAL_ARCHIVE_TIMEOUT_SEC", "")
         ),
         "wal_archive_wal_segment_size": continuity.wal_segment_size,
-        "wal_archive_older_segments": continuity.older_segments_present,
         "wal_archive_backlog": wal_archive_backlog(
             last_archived_wal=e.get("WAL_ARCHIVE_LAST_SEGMENT"),
             current_wal=e.get("WAL_ARCHIVE_CURRENT_SEGMENT"),
@@ -238,96 +253,110 @@ def _wal_archive_facts(e: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def _archive_bounds_rpo(archive: dict[str, Any]) -> bool:
-    """Is the archive state proven well enough to bound the RPO at all?
+def _iso_micros(value: Any) -> int | None:
+    """Integer microseconds for an ISO8601 UTC instant, or ``None``.
 
-    Only a successful archive whose queue is provably drained can bound it. An
-    undrained or unproven queue does not, so the observations are kept as
-    diagnostics and not carried as a measured RPO.
+    The producers write ``…Z`` at microsecond precision. A zone-less or non-UTC
+    value is not the instant the frontier pair is made of, so it is refused
+    rather than converted through the host's local time.
     """
-    return bool(archive["wal_archive_ok"]) and archive["wal_archive_backlog"] is False
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() != datetime.timedelta(0):
+        return None
+    epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
+    delta = parsed - epoch
+    return (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
 
 
-def _rpo_bound(archive: dict[str, Any], mechanism: str) -> int | None:
-    """The RPO bound in seconds, or ``None`` when it cannot be established.
+def rpo_upper_bound(quiesced_at: Any, replay_at: Any) -> int | None:
+    """The RPO upper bound the restore demonstrated, in whole seconds.
 
-    A dump has no recoverable WAL position, so its report carries no RPO bound
-    even when the live cluster's archive happens to be healthy: the number would
-    describe a mechanism the run did not use.
+    ``ceil(wal_archive_quiesced_at - recovery_replay_timestamp)``. Once the
+    primary is stopped nothing new is archived, so the newest recoverable commit
+    is frozen at that instant; the restored cluster replayed up to
+    ``recovery_replay_timestamp``. The gap is the wall-clock distance to the
+    newest recoverable commit, so it includes idle time before the stop and
+    cannot report a bound smaller than the producer's own quiescence.
 
-    ``now - last_archived_time`` is the age of an upload, not a bound on the lag.
-    With ``archive_timeout`` disabled, segment N can finish minutes before its
-    upload completes while segment N+1 already holds newer commits: the queue
-    still looks drained and the upload age looks like a zero-second RPO over data
-    that is not in the archive. A commit lands in WAL immediately and reaches the
-    archive within ``archive_timeout`` of its segment being switched, plus that
-    segment's upload latency, so the honest bound is the upload age plus the
-    timeout.
-
-    With the timeout unset, zero, or unreadable there is no bound. A zero-second
-    RPO is exactly the false claim this refuses to make.
+    Rounded **up**: a bound must not round toward optimism. A negative difference
+    is ``None``, never 0: a replay later than the quiesce instant means these are
+    not the frontier pair, not that the RPO is zero.
     """
-    if mechanism != "pgbackrest_wal":
+    quiesced = _iso_micros(quiesced_at)
+    replay = _iso_micros(replay_at)
+    if quiesced is None or replay is None:
         return None
-    if not _archive_bounds_rpo(archive):
+    delta = quiesced - replay
+    if delta < 0:
         return None
-    upload_age = archive["wal_archive_upload_age_sec"]
-    timeout = archive["wal_archive_timeout_sec"]
-    if not is_count(upload_age):
-        return None
-    if not is_count(timeout) or timeout == 0:
-        return None
-    return upload_age + timeout
+    return -(-delta // 1_000_000)
+
+
+def _restore_outcome(facts: RunFacts) -> tuple[bool, bool]:
+    """The (backup_ok, restore_ok) a report may carry for this run.
+
+    An ``unavailable`` run restored nothing, so its report must not also carry
+    the booleans of a run that happened.
+    """
+    if facts.mechanism == "unavailable":
+        return False, False
+    return facts.backup_ok, facts.restore_ok
 
 
 def _postgres_block(e: dict[str, str], *, facts: RunFacts, note: str) -> dict[str, Any]:
     pg_rto = parse_int_or_none(e.get("PG_RTO_MEASURED", ""))
-    if facts.mechanism == "unavailable":
-        # Nothing was restored. A report that says so must not also carry the
-        # booleans of a run that happened.
-        backup_ok = False
-        restore_ok = False
-    else:
-        backup_ok = facts.backup_ok
-        restore_ok = facts.restore_ok
+    backup_ok, restore_ok = _restore_outcome(facts)
     rpo_target = target_sec(e, "PG_RPO_SEC")
     rto_target = target_sec(e, "PG_RTO_SEC")
     archive = _wal_archive_facts(e)
-    # The upload age is a diagnostic. The RPO is derived from it and the
-    # cluster's archive_timeout, and is null when either is unproven, so the
-    # field cannot be quoted as a bound it never was. Both observations stay
-    # visible in wal_archive_upload_age_sec and wal_archive_timeout_sec.
-    pg_rpo = _rpo_bound(archive, facts.mechanism)
+    # The RPO is what the restore demonstrated between the instant archiving
+    # stopped and the instant the restored cluster replayed to: null when either
+    # instant is missing, so the field cannot be quoted as a bound the run did
+    # not establish.
+    quiesced_at = optional_text(e.get("WAL_ARCHIVE_QUIESCED_AT"))
+    replay_at = optional_text(e.get("RECOVERY_REPLAY_TIMESTAMP"))
+    # A dump has no recoverable WAL position and a targeted restore proves the
+    # target rather than an RPO: neither carries a number.
+    bound = None
+    if facts.mechanism == "pgbackrest_wal" and not facts.target_requested:
+        bound = rpo_upper_bound(quiesced_at, replay_at)
     rpo_pass = postgres_rpo_pass(
         {
             "backup_ok": backup_ok,
             "restore_ok": restore_ok,
-            "measured": pg_rpo,
+            "bound": bound,
             "target": rpo_target,
             "mechanism": facts.mechanism,
-            "backlog": archive["wal_archive_backlog"],
+            "target_requested": facts.target_requested,
         }
     )
-    # A requested recovery target that was missed, or whose result was never
-    # recorded, means the restore did not prove it landed where it claimed to;
-    # that run cannot carry an RPO pass either. "Not measured" is not the same
-    # as "not missed": only an affirmative result clears the gate.
-    if facts.target_requested and facts.target_reached is not True:
-        rpo_pass = False
     return {
         "rpo_target_sec": rpo_target,
         "rto_target_sec": rto_target,
-        "rpo_measured_sec": pg_rpo,
+        "rpo_upper_bound_sec": bound,
         "rto_measured_sec": pg_rto,
         "backup_ok": backup_ok,
         "restore_ok": restore_ok,
         "rpo_pass": rpo_pass,
         "rto_pass": restore_ok and le_pass(pg_rto, rto_target),
         "mechanism": facts.mechanism,
+        # scratch|host from the branch the run took; never an env class.
+        "restore_target": optional_text(e.get("PG_RESTORE_TARGET")),
         **archive,
+        "wal_archive_quiesced_at": quiesced_at,
         "target_timestamp": optional_text(e.get("TARGET_TIMESTAMP")),
         "recovery_target_reached": facts.target_reached,
-        "recovery_replay_timestamp": optional_text(e.get("RECOVERY_REPLAY_TIMESTAMP")),
+        "recovery_replay_timestamp": replay_at,
         "cluster_data_bytes": parse_int_or_none(e.get("CLUSTER_DATA_BYTES", "")),
         "restored_row_counts": _restored_row_counts(e),
         "note": note,
@@ -362,7 +391,7 @@ class RunFacts:
     mechanism: str
     backup_ok: bool
     restore_ok: bool
-    iso_ok: bool
+    iso_ok: bool | None
     target_requested: bool
     target_reached: bool | None
     allow_no_db: bool
@@ -375,7 +404,7 @@ def read_run_facts(e: dict[str, str]) -> RunFacts:
         mechanism=e.get("PG_MECHANISM", "unmeasured"),
         backup_ok=e.get("PG_BACKUP_OK") == "true",
         restore_ok=e.get("PG_RESTORE_OK") == "true",
-        iso_ok=e.get("ISO_OK") == "true",
+        iso_ok=parse_bool_or_none(e.get("ISO_OK")),
         target_requested=optional_text(e.get("TARGET_TIMESTAMP")) is not None,
         target_reached=parse_bool_or_none(e.get("RECOVERY_TARGET_REACHED")),
         allow_no_db=e.get("ALLOW_NO_DB") == "1",
@@ -404,7 +433,7 @@ def _evidence_eligible(facts: RunFacts) -> bool:
     """What makes a report usable as evidence, per producer.
 
     The drill proves the backup is restorable *and* that tenant isolation
-    survives the restore, so it needs the isolation result. A point-in-time
+    survives the restore, so only a measured ``true`` qualifies. A point-in-time
     rehearsal restores into a scratch volume and never touches tenant data, so
     it needs the target to have been reached instead. Neither can be eligible
     when the mechanism was unavailable or the run is an ALLOW_NO_DB smoke.
@@ -415,7 +444,7 @@ def _evidence_eligible(facts: RunFacts) -> bool:
         return False
     if facts.drill_kind == "pitr":
         return _pitr_rehearsal_is_evidence(facts)
-    return facts.iso_ok
+    return facts.iso_ok is True
 
 
 def _require_blocked_by(report: dict[str, Any]) -> None:
@@ -441,15 +470,22 @@ def _require_unavailable_is_not_evidence(report: dict[str, Any]) -> None:
 def _require_pitr_mechanism(mechanism: str | None) -> None:
     """``rpo_pass`` is a PITR claim: a dump or an unmeasured run cannot make it."""
     if mechanism != "pgbackrest_wal":
+        raise ReportHonestyError(f"rpo_pass requires mechanism pgbackrest_wal, got {mechanism!r}")
+
+
+def _require_untargeted_restore(postgres: dict[str, Any]) -> None:
+    """A targeted restore proves the target, not an RPO.
+
+    Its elapsed time is dominated by the operator's target choice and the
+    restore, so the gap is not archive lag; a targeted run cannot pass at all.
+    """
+    target = postgres.get("target_timestamp")
+    if target:
         raise ReportHonestyError(
-            f"rpo_pass requires mechanism pgbackrest_wal, got {mechanism!r}"
+            "an RPO upper bound requires an untargeted restore: a targeted "
+            "restore proves the target was reached, not an RPO "
+            f"(target_timestamp={target})"
         )
-
-
-def _require_measured_rpo(postgres: dict[str, Any]) -> None:
-    """Archiving being on is not an RPO: the gap has to have been measured."""
-    if postgres.get("rpo_measured_sec") is None:
-        raise ReportHonestyError("rpo_pass requires a measured RPO")
 
 
 def _require_completed_restore(postgres: dict[str, Any]) -> None:
@@ -460,31 +496,44 @@ def _require_completed_restore(postgres: dict[str, Any]) -> None:
     restore that failed, and an operator reading it at 03:00 has no way to tell.
     """
     if postgres.get("restore_ok") is not True:
-        raise ReportHonestyError(
-            "rpo_pass requires a completed restore (restore_ok=true)"
-        )
+        raise ReportHonestyError("rpo_pass requires a completed restore (restore_ok=true)")
 
 
-def _require_reached_target(postgres: dict[str, Any]) -> None:
-    """A restore that missed — or never proved — the target cannot pass.
+def _require_instant(value: Any, field: str) -> None:
+    """One half of the frontier pair: present, and a parseable ISO8601 UTC instant."""
+    if _iso_micros(value) is not None:
+        return
+    if not (isinstance(value, str) and value.strip()):
+        raise ReportHonestyError(f"an RPO upper bound requires {field}: nothing was recorded")
+    raise ReportHonestyError(f"{field} must be an ISO8601 UTC timestamp, got {value!r}")
 
-    Only an affirmative result clears this gate. A report whose target was
-    requested but whose ``recovery_target_reached`` is null or absent is a target
-    nobody checked, and reading that as "not missed" is how a targeted restore
-    with an unproven target used to report success.
+
+def _require_frontier_facts(postgres: dict[str, Any]) -> None:
+    """The bound is derived from two measured instants; both have to be readable.
+
+    A number without them is an assertion, and each instant gets its own message
+    so an operator at 03:00 knows which measurement the run is missing.
     """
-    if postgres.get("target_timestamp") and postgres.get("recovery_target_reached") is not True:
-        raise ReportHonestyError(
-            "rpo_pass cannot be claimed without an affirmative recovery-target result"
-        )
+    for field in ("wal_archive_quiesced_at", "recovery_replay_timestamp"):
+        _require_instant(postgres.get(field), field)
 
 
-def _require_drained_archive(postgres: dict[str, Any]) -> None:
-    """An RPO read from an undrained archive is not an upper bound on the lag."""
-    if postgres.get("wal_archive_backlog") is not False:
+def _require_rpo_derived(postgres: dict[str, Any]) -> None:
+    """The number must be the one the two instants produce.
+
+    A report is a file: a number written beside a frontier that does not produce
+    it is a forgery, not a measurement. The validator re-derives it instead of
+    trusting the field, so ``17`` beside a 400 s frontier is refused.
+    """
+    claimed = _integer_seconds(postgres.get("rpo_upper_bound_sec"), "rpo_upper_bound_sec")
+    derived = rpo_upper_bound(
+        postgres.get("wal_archive_quiesced_at"),
+        postgres.get("recovery_replay_timestamp"),
+    )
+    if derived != claimed:
         raise ReportHonestyError(
-            "rpo_pass requires a provably drained WAL archive "
-            "(wal_archive_backlog=false)"
+            "rpo_upper_bound_sec does not match the frontier it claims: "
+            f"{claimed}s reported, {derived}s derived"
         )
 
 
@@ -504,12 +553,12 @@ def _integer_seconds(value: Any, field: str) -> int:
 
 
 def _require_rpo_within_target(postgres: dict[str, Any]) -> None:
-    """A measured RPO above the target is a miss, not a pass."""
-    measured = _integer_seconds(postgres.get("rpo_measured_sec"), "rpo_measured_sec")
+    """An RPO upper bound above the target is a miss, not a pass."""
+    bound = _integer_seconds(postgres.get("rpo_upper_bound_sec"), "rpo_upper_bound_sec")
     target = _integer_seconds(postgres.get("rpo_target_sec"), "rpo_target_sec")
-    if measured > target:
+    if bound > target:
         raise ReportHonestyError(
-            f"rpo_pass cannot be claimed with a measured RPO of {measured}s "
+            f"rpo_pass cannot be claimed with an RPO upper bound of {bound}s "
             f"above the {target}s target"
         )
 
@@ -533,11 +582,19 @@ def assert_honest(report: dict[str, Any]) -> dict[str, Any]:
         _require_unavailable_is_not_evidence(report)
     if postgres.get("rpo_pass"):
         _require_pitr_mechanism(mechanism)
+        _require_untargeted_restore(postgres)
         _require_completed_restore(postgres)
-        _require_measured_rpo(postgres)
-        _require_reached_target(postgres)
-        _require_drained_archive(postgres)
+        _require_frontier_facts(postgres)
+        _require_rpo_derived(postgres)
         _require_rpo_within_target(postgres)
+    elif postgres.get("rpo_upper_bound_sec") is not None:
+        # A number with no pass must still be internally consistent: it has to
+        # be the one the recorded frontier produces, on the mechanism that can
+        # produce it, for a run that was not targeted.
+        _require_pitr_mechanism(mechanism)
+        _require_untargeted_restore(postgres)
+        _require_frontier_facts(postgres)
+        _require_rpo_derived(postgres)
     return report
 
 
@@ -592,7 +649,9 @@ def _platform_block(e: dict[str, str], facts: RunFacts) -> dict[str, Any]:
     }
 
 
-def _residuals(*, allow_no_db: bool, mechanism: str) -> dict[str, str]:
+def _residuals(
+    *, allow_no_db: bool, mechanism: str, target_requested: bool
+) -> dict[str, str]:
     """The residual tag an operator reads to see why a claim is absent."""
     if allow_no_db:
         return {"residual": "not_evidence_allow_no_db"}
@@ -600,6 +659,8 @@ def _residuals(*, allow_no_db: bool, mechanism: str) -> dict[str, str]:
         return {"postgres_rpo_residual": "pitr_unavailable"}
     if mechanism == "pg_dump_fallback":
         return {"postgres_rpo_residual": "not_pitr_pg_dump_fallback_#869"}
+    if target_requested:
+        return {"postgres_rpo_residual": "targeted_restore_proves_target_not_rpo"}
     return {}
 
 
@@ -630,6 +691,10 @@ def build_report(env: dict[str, str] | None = None) -> dict[str, Any]:
         fixture=fixture,
     )
     report.update(
-        _residuals(allow_no_db=facts.allow_no_db, mechanism=facts.mechanism)
+        _residuals(
+            allow_no_db=facts.allow_no_db,
+            mechanism=facts.mechanism,
+            target_requested=facts.target_requested,
+        )
     )
     return assert_honest(report)

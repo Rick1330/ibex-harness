@@ -44,11 +44,15 @@ def base_env(**overrides: str) -> dict[str, str]:
         "PG_MECHANISM": "pg_dump_fallback",
         "PG_BACKUP_OK": "true",
         "PG_RESTORE_OK": "true",
+        # A drill restores over the real data directory, so it records `host`.
+        # The PITR fixtures below override this with `scratch` when they model a
+        # rehearsal beside the live cluster.
+        "PG_RESTORE_TARGET": "host",
         "PG_RTO_MEASURED": "3",
-        # A drained archive: the newest archived segment is the one before the
-        # one being written, no older segment is left in pg_wal, no push has
-        # failed since the last success, and archive_timeout is the 60 s the
-        # profile sets. The RPO bound is derived from these facts.
+        # A drained archive, and the frontier pair a restore demonstrates: the
+        # primary stopped at 07:42:52 and the restored cluster replayed to
+        # 07:42:47, so the upper bound is 5 s. The archive counters are
+        # diagnostics; only these two instants produce the bound.
         "WAL_ARCHIVE_OK": "true",
         "WAL_ARCHIVE_UPLOAD_AGE_SEC": "30",
         "WAL_ARCHIVE_TIMEOUT_SEC": "60",
@@ -57,6 +61,8 @@ def base_env(**overrides: str) -> dict[str, str]:
         "WAL_ARCHIVE_LAST_SEGMENT": "000000010000000000000011",
         "WAL_ARCHIVE_CURRENT_SEGMENT": "000000010000000000000012",
         "WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE": "false",
+        "WAL_ARCHIVE_QUIESCED_AT": "2026-11-16T07:42:52Z",
+        "RECOVERY_REPLAY_TIMESTAMP": "2026-11-16T07:42:47Z",
         "OUTBOX_SEQ": "0",
         "OUTBOX_PENDING": "0",
         "ISO_OK": "true",

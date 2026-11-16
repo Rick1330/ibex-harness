@@ -87,6 +87,12 @@ PITR_MECHANISM="pgbackrest_wal"
 PITR_BACKUP_OK=false
 PITR_RESTORE_OK=false
 PITR_ATTEMPTED=false
+# Which restore target this run actually used, set where the script commits to a
+# branch: `scratch` for the volume it restores beside the live cluster, `host`
+# for the real data directory. It is a producer fact, not an environment
+# variable, so the report records the branch the run took rather than what a
+# caller claimed.
+PITR_RESTORE_TARGET=""
 PITR_WAL_ARCHIVE_OK=false
 # The archive queue is recorded alongside the upload age: the age is an RPO only
 # while nothing older is still waiting to be pushed, so the report writer needs
@@ -106,6 +112,13 @@ PITR_WAL_ARCHIVE_OLDER_SEGMENTS=""
 PITR_TARGET_TIMESTAMP="${PGBACKREST_RESTORE_TARGET:-}"
 PITR_RECOVERY_TARGET_REACHED=""
 PITR_RECOVERY_REPLAY_TIMESTAMP=""
+# The instant archiving stopped. Once the primary is stopped nothing new is
+# archived, so the newest recoverable commit is frozen here; the RPO upper bound
+# is the gap between this instant and what the restored cluster replayed. It is
+# recorded only when a stop actually happened, so a run that restored beside a
+# live primary (the scratch path) and an unsafe run whose stop failed both leave
+# it empty and can claim no RPO.
+PITR_WAL_ARCHIVE_QUIESCED_AT=""
 PITR_CLUSTER_DATA_BYTES=""
 PITR_RESTORED_ORGS=""
 PITR_RESTORED_MEMORIES=""
@@ -167,6 +180,42 @@ cleanup_pitr_verify_container() {
   fi
 }
 
+# emit_fact writes one measured fact, and nothing at all when it was not
+# measured: an absent key and an empty one would read the same to a caller, so
+# only real values reach the file.
+emit_fact() {
+  [[ -n "$2" ]] || return 0
+  printf '%s=%s\n' "$1" "$2"
+}
+
+# write_restore_facts records what this run measured for a caller that cannot
+# read this shell — the restore drill, which owns its own report. The file is
+# key=value: timestamps and counts only, never a credential, and writing it needs
+# no network and no new dependency.
+#
+# It runs from the exit path, so a failed run still records what it measured; the
+# caller decides what the facts support.
+write_restore_facts() {
+  local target="${PGBACKREST_RESTORE_FACTS_FILE:-}" tmp
+  [[ -n "$target" ]] || return 0
+  if ! mkdir -p "$(dirname "$target")" 2>/dev/null; then
+    echo "[restore] WARNING: cannot create the directory for $target; the restore facts were not written" >&2
+    return 0
+  fi
+  tmp="$target.$$"
+  if ! {
+    emit_fact wal_archive_quiesced_at "$PITR_WAL_ARCHIVE_QUIESCED_AT"
+    emit_fact recovery_replay_timestamp "$PITR_RECOVERY_REPLAY_TIMESTAMP"
+    emit_fact cluster_data_bytes "$PITR_CLUSTER_DATA_BYTES"
+    emit_fact restored_orgs "$PITR_RESTORED_ORGS"
+    emit_fact restored_memories "$PITR_RESTORED_MEMORIES"
+  } >"$tmp" 2>/dev/null || ! mv -f "$tmp" "$target" 2>/dev/null; then
+    rm -f -- "$tmp"
+    echo "[restore] WARNING: could not write the restore facts to $target" >&2
+  fi
+  return 0
+}
+
 emit_pitr_report() {
   [[ -n "$PITR_REPORT" ]] || return 0
   PITR_REPORT="$PITR_REPORT" \
@@ -175,6 +224,7 @@ emit_pitr_report() {
     PITR_MECHANISM="$PITR_MECHANISM" \
     PITR_BACKUP_OK="$PITR_BACKUP_OK" \
     PITR_RESTORE_OK="$PITR_RESTORE_OK" \
+    PITR_RESTORE_TARGET="$PITR_RESTORE_TARGET" \
     PITR_WAL_ARCHIVE_OK="$PITR_WAL_ARCHIVE_OK" \
     PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC="$PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC" \
     PITR_WAL_ARCHIVE_LAST_SEGMENT="$PITR_WAL_ARCHIVE_LAST_SEGMENT" \
@@ -186,6 +236,7 @@ emit_pitr_report() {
     PITR_TARGET_TIMESTAMP="$PITR_TARGET_TIMESTAMP" \
     PITR_RECOVERY_TARGET_REACHED="$PITR_RECOVERY_TARGET_REACHED" \
     PITR_RECOVERY_REPLAY_TIMESTAMP="$PITR_RECOVERY_REPLAY_TIMESTAMP" \
+    PITR_WAL_ARCHIVE_QUIESCED_AT="$PITR_WAL_ARCHIVE_QUIESCED_AT" \
     PITR_CLUSTER_DATA_BYTES="$PITR_CLUSTER_DATA_BYTES" \
     PITR_RESTORED_ORGS="$PITR_RESTORED_ORGS" \
     PITR_RESTORED_MEMORIES="$PITR_RESTORED_MEMORIES" \
@@ -199,6 +250,7 @@ on_exit() {
     cleanup_cred_env_file
   fi
   cleanup_pitr_verify_container
+  write_restore_facts
   # Every failed exit must leave a report that says why, including the paths
   # that fail before a caller records a reason (network or volume discovery, a
   # refusal after Postgres was stopped). Without this the requested path is
@@ -214,7 +266,7 @@ on_exit() {
   # cannot produce evidence must not look like one that did. An earlier failure
   # keeps its status.
   if ! emit_pitr_report; then
-    echo "[restore] ERROR: could not write the PITR report to ${PITR_REPORT:-<unset>}" >&2
+    echo "[restore] ERROR: the PITR report writer failed for ${PITR_REPORT:-<unset>}; see the reason above" >&2
     if [[ "$status" -eq 0 ]]; then
       status=1
     fi
@@ -674,13 +726,13 @@ live_cluster_identity() {
 
 # measure_live_wal_archive records WAL archive freshness before anything is
 # restored. A backup or a restore forces a WAL switch, so measuring it afterwards
-# would always look fresh. When archiving is not proven the RPO field stays null
-# and the report cannot claim an RPO pass.
+# would always look fresh. Archiving is not what gates the RPO claim: the bound
+# is the frontier the restore demonstrates, and these counters are diagnostics an
+# operator reads beside it.
 #
 # What is recorded is the *measurement*, not a claim: the upload age, the
 # cluster's archive_timeout, its wal_segment_size and how many older segments are
-# still sitting in pg_wal. The report writer derives the bound and refuses it when
-# any of those is unproven.
+# still sitting in pg_wal.
 measure_live_wal_archive() {
   local identity cid user db row archived last_us last_seg cur_seg last_failed
   local archive_timeout continuity seg_bytes older_segments now_us
@@ -794,22 +846,33 @@ print((env.get("POSTGRES_USER") or "postgres") + "|" + (env.get("POSTGRES_DB") o
   printf 'postgres|postgres\n'
 }
 
-# record_recovery_target compares the replayed transaction with the requested
-# target in integer microseconds. Every branch that verifies a restored cluster
-# calls this, so the comparison exists once and cannot drift between them.
-#
-# An unreadable or absent replay value leaves PITR_RECOVERY_TARGET_REACHED
-# empty, and the callers treat anything other than "true" as unproven: "not
-# measured" is not "not missed".
-record_recovery_target() {
+# record_replay_fact records the last transaction the restored cluster replayed.
+# It runs for *every* successful restore, targeted or not: the instant is the
+# frontier an RPO upper bound is derived from, so an untargeted run needs it as
+# much as a targeted one. It returns 1 when the value is unusable, and leaves the
+# field empty — "not measured" must stay distinguishable from "measured as now".
+record_replay_fact() {
   local replay_us="$1"
-  [[ -n "$iso_target" ]] || return 0
   case "$replay_us" in
-    '' | *[!0-9-]*) return 0 ;;
+    '' | *[!0-9-]*) return 1 ;;
     *) : ;;
   esac
-  (( replay_us >= 0 )) || return 0
+  (( replay_us >= 0 )) || return 1
   PITR_RECOVERY_REPLAY_TIMESTAMP="$(format_epoch_micros "$replay_us")"
+  return 0
+}
+
+# compare_recovery_target compares that fact with the requested target in integer
+# microseconds. It runs only when a target was requested, and only on a value
+# record_replay_fact accepted, so the comparison exists once and cannot drift
+# between branches.
+#
+# An unreadable or absent replay value leaves PITR_RECOVERY_TARGET_REACHED empty,
+# and the callers treat anything other than "true" as unproven: "not measured" is
+# not "not missed".
+compare_recovery_target() {
+  local replay_us="$1"
+  [[ -n "$iso_target" ]] || return 0
   if [[ -z "$target_micros" ]]; then
     PITR_RECOVERY_TARGET_REACHED=false
     echo "[restore] ERROR: the recovery target has no epoch value; target not proven" >&2
@@ -822,6 +885,14 @@ record_recovery_target() {
     PITR_RECOVERY_TARGET_REACHED=false
     echo "[restore] ERROR: recovery replayed past the target (replay=$PITR_RECOVERY_REPLAY_TIMESTAMP target=$iso_target)" >&2
   fi
+}
+
+# record_recovery_facts is what every branch that verifies a restored cluster
+# calls: record the replay instant, then grade the target against it when one was
+# asked for.
+record_recovery_facts() {
+  record_replay_fact "$1" || return 0
+  compare_recovery_target "$1"
 }
 
 # record_cluster_facts reads the recovery point and the data size back from a
@@ -852,7 +923,7 @@ record_cluster_facts() {
       '' | *[!0-9-]*) replay="" ;;
       *) : ;;
     esac
-    record_recovery_target "$replay"
+    record_recovery_facts "$replay"
   fi
   PITR_RESTORED_ORGS="$("${CLI[@]}" exec "$container" psql -U "$user" -d "$db" -tAc \
     "SELECT COUNT(*)::text FROM ibex_core.organizations" 2>/dev/null | tr -d "$PG_WS_TRIM" | tail -n1 || true)"
@@ -924,6 +995,7 @@ if [[ -n "$SCRATCH_VOLUME" ]]; then
   fi
   echo "[restore] scratch restore volume=$SCRATCH_VOLUME network=$NETWORK image=$IMAGE"
   PITR_ATTEMPTED=true
+  PITR_RESTORE_TARGET=scratch
   if ! "${CLI[@]}" run --rm "${run_args[@]}" "${cred_file_args[@]}" \
     --network "$NETWORK" \
     -v "${SCRATCH_VOLUME}:/var/lib/postgresql/data" \
@@ -1018,6 +1090,15 @@ if [[ "$stopped" != "true" && "${PGBACKREST_ALLOW_UNSAFE_RESTORE:-0}" != "1" ]];
   echo "[restore] refused: could not stop Postgres (set PGBACKREST_ALLOW_UNSAFE_RESTORE=1 only for dry-run labs)" >&2
   exit 1
 fi
+# Record the quiesce instant only here: both stop attempts have returned and the
+# refusal above has ruled out the unsafe run whose stop failed. Nothing new
+# reaches the archive after the primary stops, so this instant freezes the
+# frontier the RPO upper bound is measured from. An unsafe run records nothing,
+# and therefore cannot claim a bound.
+if [[ "$stopped" == "true" ]]; then
+  PITR_WAL_ARCHIVE_QUIESCED_AT="$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)"
+  echo "[restore] WAL archiving quiesced at $PITR_WAL_ARCHIVE_QUIESCED_AT (primary stopped)"
+fi
 
 # verify_destructive_restore_compose proves the restore produced a usable
 # cluster before anything is reported as ok.
@@ -1109,7 +1190,7 @@ record_host_cluster_facts() {
       '' | *[!0-9-]*) replay="" ;;
       *) : ;;
     esac
-    record_recovery_target "$replay"
+    record_recovery_facts "$replay"
   fi
   if [[ "$db" == "ibex" ]]; then
     PITR_RESTORED_ORGS="$("${psql_cmd[@]}" -d "$db" -tAc "SELECT COUNT(*)::text FROM ibex_core.organizations" 2>/dev/null | tr -d "$PG_WS_TRIM" | tail -n1 || true)"
@@ -1209,6 +1290,10 @@ verify_destructive_restore_host() {
 
 echo "[restore] stanza=$STANZA target=$TARGET conf=$CONF"
 PITR_ATTEMPTED=true
+# Both destructive sub-branches below restore over the real data directory — the
+# Compose volume, or a host PGDATA — so this run records `host` whatever its
+# environment class says.
+PITR_RESTORE_TARGET=host
 if [[ "$stopped_via_compose" == "true" && -n "$COMPOSE_VOLUME" ]]; then
   # Host pgbackrest cannot resolve the object store; run inside the compose
   # network.

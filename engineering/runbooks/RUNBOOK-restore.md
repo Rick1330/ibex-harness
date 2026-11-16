@@ -4,8 +4,10 @@
 after data loss or corruption. The restore is **destructive**: it stops
 PostgreSQL, reconciles the live data directory with `--delta`, starts the cluster
 and proves it left recovery before printing `ok`
-(`infra/scripts/platform/pgbackrest-restore.sh`:528-533,564-598,702). Treat it as a
-declared incident with an incident note, not a routine maintenance command.
+(`infra/scripts/platform/pgbackrest-restore.sh`: the `stopping Postgres before
+restore` block, `verify_destructive_restore_compose` / `verify_destructive_restore_host`,
+and the `[restore] ok` line). Treat it as a declared incident with an incident note,
+not a routine maintenance command.
 
 ## Symptoms
 
@@ -31,8 +33,10 @@ chosen backup → restore**. The restore command appears only in
    with the stanza the restore reads:
 
    ```bash
-   # Docker bind-mount sources must be absolute (pgbackrest-restore.sh:693). A
-   # relative value here fails after PostgreSQL is already stopped (:528-533).
+   # Docker bind-mount sources must be absolute (pgbackrest-restore.sh: the
+   # `-v "${CONF}:${CONTAINER_CONF}:ro"` mount argument). A relative value here
+   # fails after PostgreSQL is already stopped (the `stopping Postgres before
+   # restore` block).
    export PGBACKREST_CONF="${PGBACKREST_CONF:-$(realpath infra/backup/pgbackrest/pgbackrest.conf)}"
    export PGBACKREST_STANZA="${PGBACKREST_STANZA:-ibex-main}"
    if [[ "$PGBACKREST_CONF" != /* ]]; then
@@ -53,19 +57,20 @@ chosen backup → restore**. The restore command appears only in
    ending the shell. Every later command that depends on these values uses the
    same shape.
 
-   **Why absolute.** `pgbackrest-restore.sh` stops PostgreSQL first
-   (`:528-533`), then bind-mounts the config into the restore container as
-   `-v "${CONF}:/etc/pgbackrest/pgbackrest.conf:ro"` (`:693`). Docker requires an
+   **Why absolute.** `pgbackrest-restore.sh` stops PostgreSQL first (the
+   `stopping Postgres before restore` block), then bind-mounts the config into the
+   restore container as `-v "${CONF}:${CONTAINER_CONF}:ro"` in each restore
+   invocation. Docker requires an
    absolute bind-mount source; a relative `PGBACKREST_CONF` is resolved against
    an unknown host directory and the mount fails with the database already down,
    turning a recoverable incident into an outage. The wrapper's own default is
-   already absolute (`infra/scripts/dev-tool.sh`:558); only a relative value the
+   already absolute (`v1_pgbackrest_conf` in `infra/scripts/dev-tool.sh`); only a relative value the
    operator supplies breaks it. For a **custom** config, pass an absolute path
    yourself — `realpath /path/to/custom.conf`. The check proves the *form* of the
    path, not that the file exists: GNU `realpath` resolves a missing final
    component without error, so existence is proven by the in-container repository
    check in [Recovery](#recovery) step 1 succeeding (and the wrapper refuses a
-   missing file before the restore starts, `infra/scripts/dev-tool.sh`:557-581).
+   missing file before the restore starts, `v1_pgbackrest_conf`).
    In a fresh checkout the default resolves to
    `infra/backup/pgbackrest/pgbackrest.conf`, which exists only after you copy
    the shipped `.example`; the repository check failing there is the correct
@@ -74,13 +79,12 @@ chosen backup → restore**. The restore command appears only in
    `pgbackrest-restore.sh` resolves the repository config from `PGBACKREST_CONF`
    and falls back to `infra/backup/pgbackrest/pgbackrest.conf`, and reads the
    stanza from `PGBACKREST_STANZA` with the default `ibex-main`
-   (`pgbackrest-restore.sh`:24-40,152-153). The `pgbackrest` binary reads neither
+   (`resolve_conf`, and the `STANZA` assignment). The `pgbackrest` binary reads neither
    variable, so both must be set in the shell as above: unset, the check queries
    the binary's default config and stanza, which is not necessarily the
    repository and stanza `make v1-restore` will use. A set `PGBACKREST_CONF` is
    honoured only when the file exists, and the wrapper refuses the shipped
-   `.example` (`pgbackrest-restore.sh`:24-40;
-   `infra/scripts/dev-tool.sh`:557-581).
+   `.example` (`resolve_conf`; `v1_pgbackrest_conf` in `infra/scripts/dev-tool.sh`).
 
    **Stop condition.** If the guard prints `PGBACKREST_CONF must be an absolute
    path`, **stop** and resolve the value again (`realpath /path/to/custom.conf`);
@@ -93,12 +97,11 @@ chosen backup → restore**. The restore command appears only in
    stanza.
 
    The `v1-restore` recipe itself is `@"$(BASH)" "$(DEV_TOOL)" v1 restore`
-   (`Makefile`:238-239) and does **not** name either variable, so the values
+   (the `v1-restore` target in `Makefile`) and does **not** name either variable, so the values
    reach `dev-tool.sh` only because GNU make exports command-line variable
    assignments into the recipe environment; `v1_restore` then runs
-   `pgbackrest-restore.sh` with its environment inherited
-   (`infra/scripts/dev-tool.sh`:710-714), and `resolve_conf` reads
-   `PGBACKREST_CONF` (`pgbackrest-restore.sh`:24-40). That is why the values are
+   `pgbackrest-restore.sh` with its environment inherited, and `resolve_conf` reads
+   `PGBACKREST_CONF`. That is why the values are
    written out here rather than assumed: nothing between `make` and the script
    re-reads or defaults them.
 
@@ -109,7 +112,8 @@ chosen backup → restore**. The restore command appears only in
    over PostgreSQL.
 3. Confirm the compose volume resolves. The restore stops Postgres through
    Compose and resolves the named volume from Compose metadata, failing closed
-   if it cannot (`pgbackrest-restore.sh`:73-123,528-533).
+   if it cannot (`resolve_compose_volume` and the `stopping Postgres before
+   restore` block).
 
 ## First response
 
@@ -134,7 +138,7 @@ Do not run a later step if an earlier one fails, and do not skip to the restore.
    (`infra/backup/pgbackrest/pgbackrest.conf.example`:9) resolves only on the
    Compose network, so a host-side `pgbackrest info` fails on name resolution for
    a reason that is not the repository's state. This mirrors the restore
-   invocation (`pgbackrest-restore.sh`:685-696) — same image, network,
+   invocation (the Compose-branch `pgbackrest … restore` call) — same image, network,
    config mount, `--config` and `--stanza` — but mounts no data volume: `info`
    renders the stanza and its `db (current)` section from the repository's
    `backup.info`, not from `PGDATA`, and not mounting the volume means this check
@@ -172,7 +176,7 @@ Do not run a later step if an earlier one fails, and do not skip to the restore.
    ```
 
    The default image is the profile's own postgres image
-   (`infra/scripts/dev-tool.sh`:701-708), which carries pgBackRest: there is no
+   (`v1_restore_env` in `infra/scripts/dev-tool.sh`), which carries pgBackRest: there is no
    `pgbackrest/pgbackrest` repository on Docker Hub, so a preflight defaulted to
    one fails at pull time and blocks recovery. `PGBACKREST_IMAGE` still overrides
    it when a different pgBackRest build is in use.
@@ -181,7 +185,7 @@ Do not run a later step if an earlier one fails, and do not skip to the restore.
    `engineering/DEPLOYMENT.md`), so `-e PGBACKREST_REPO1_CIPHER_PASS` alone is not
    enough: the container cannot authenticate to S3 without the key pair. The
    three names above are the same three the restore script forwards to its own
-   container (`pgbackrest-restore.sh`:219).
+   container (`CRED_NAMES`).
 
    **Stop condition.** If the guard prints `PGBACKREST_CONF must be an absolute
    path`, the network lookup finds no container or no network, the container
@@ -203,9 +207,10 @@ Do not run a later step if an earlier one fails, and do not skip to the restore.
    **Stop condition.** If either line is empty, is relative, or names a different
    config path or stanza than the `info` output in step 1, **do not run the
    restore**. `v1-restore` takes these values from its environment and, absent
-   them, silently falls back to the wrapper's defaults
-   (`pgbackrest-restore.sh`:24-40,152-153;
-   `infra/scripts/dev-tool.sh`:557-581,1009-1010), so a mismatch means it would
+   them, silently falls back to the restore script's defaults (`resolve_conf` and
+   the `STANZA` assignment, which defaults `PGBACKREST_STANZA` to `ibex-main`) and
+   to the wrapper's `v1_pgbackrest_conf`, which defaults `PGBACKREST_CONF` to
+   `infra/backup/pgbackrest/pgbackrest.conf`, so a mismatch means it would
    restore a different backup over PostgreSQL.
 4. **Restore the latest backup**, with exactly those values on the command line:
 
@@ -220,76 +225,117 @@ Do not run a later step if an earlier one fails, and do not skip to the restore.
    `make v1-restore` forwards to `dev-tool.sh v1 restore`, which first requires a
    real pgBackRest config, exports the repository credentials from the profile's
    `0600` `.env`, and then runs `pgbackrest-restore.sh`
-   (`infra/scripts/dev-tool.sh`:607-610,710-714; `Makefile`:238-239). The script
-   stops Postgres (`pgbackrest-restore.sh`:528-533), resolves the live volume from
-   Compose metadata (`:535-541`), and runs `pgbackrest restore` inside the compose
-   network with `--delta` (`:685-696`). `--delta` is not optional: pgBackRest
-   refuses a non-empty `pg1-path` and the live data directory is non-empty by
-   definition, so without it the command would abort after Postgres is already
-   stopped (`:197-205`). The script then proves the restore before reporting it:
-   `PG_VERSION` exists on the volume (`:566-571`), Postgres starts (`:573`),
-   and `pg_is_in_recovery()` is false (`:582-595`). It prints
-   `[restore] ok <timestamp>` only after that proof (`:702`) and **leaves the
-   cluster running and verified**.
+   (`v1_backup_env` and `v1_restore` in `infra/scripts/dev-tool.sh`). The script
+   stops Postgres (the `stopping Postgres before restore` block), resolves the live
+   volume from Compose metadata (`resolve_compose_volume`), and runs
+   `pgbackrest restore` inside the compose network with `--delta`
+   (`destructive_restore_args`). `--delta` is not optional: pgBackRest refuses a
+   non-empty `pg1-path` and the live data directory is non-empty by definition, so
+   without it the command would abort after Postgres is already stopped. The script
+   then proves the restore before reporting it: `PG_VERSION` must exist on the
+   volume before the server starts (`verify_destructive_restore_compose`), Postgres
+   starts, and `pg_is_in_recovery()` must be false. It prints
+   `[restore] ok <timestamp>` only after that proof and **leaves the cluster
+   running and verified**.
 
    **Stop condition.** If the restore command on your line differs from the
    values verified in steps 1 and 3, **do not run it**; a relative config path
-   fails inside Docker after PostgreSQL is already stopped
-   (`pgbackrest-restore.sh`:528-533,693).
+   fails inside Docker after PostgreSQL is already stopped (the `stopping
+   Postgres before restore` block and the config mount argument).
 
 **Point-in-time restore is destructive and supported, and every run leaves a
 report.** `make v1-pitr TARGET=2026-11-14T03:00:00Z` restores to that moment.
 `dev-tool.sh v1 pitr` requires the target, exports it as
-`PGBACKREST_RESTORE_TARGET`, and runs the same script (`infra/scripts/dev-tool.sh`;
-`Makefile`:241-242). It also sets `PGBACKREST_RESTORE_REPORT`, so the restore
+`PGBACKREST_RESTORE_TARGET`, and runs the same script (`v1_pitr` in
+`infra/scripts/dev-tool.sh`; `make v1-pitr`). It also sets `PGBACKREST_RESTORE_REPORT`, so the restore
 script writes `pitr-report.json` through the same writer the restore drill uses
 (`infra/scripts/platform/pitr_report.sh` → `restore_drill_report.py`). The path is
 `IBEX_PITR_REPORT`, else `PITR_REPORT=` on the `make` line, else
 `${RESTORE_DRILL_REPORT_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/ibex/restore-drill/pitr-report.json`.
 A run stopped by a precondition still writes a report, with `mechanism:
 "unavailable"` and a non-empty `blocked_by`; the writer refuses that report
-without the reason. Read `postgres.mechanism`, `wal_archive_ok`,
+without the reason. Read `postgres.mechanism`, `restore_target`, `wal_archive_ok`,
 `wal_archive_upload_age_sec`, `wal_archive_timeout_sec`,
-`wal_archive_wal_segment_size`, `wal_archive_older_segments`,
-`wal_archive_backlog`, `rpo_measured_sec`, `target_timestamp`,
-`recovery_target_reached`, `recovery_replay_timestamp`, `cluster_data_bytes` and
-`restored_row_counts` before quoting any number from it.
-`rpo_pass` is true only for `pgbackrest_wal` with an integer RPO bound inside
-300 s, a **drained** archive queue (`wal_archive_backlog: false`), a completed
-restore, and an affirmatively reached target when one was requested. The bound is
-`wal_archive_upload_age_sec + wal_archive_timeout_sec`, not the upload age: with
-`archive_timeout` disabled a segment can finish minutes before its upload
-completes while the next one already holds newer commits, so an upload age on its
-own is a diagnostic. When `archive_timeout` is unset or zero the RPO is `null`
-and `rpo_pass` is false. `wal_archive_backlog: false` means the queue was
-positively confirmed drained — at most one segment ahead, no older segment left
-in `pg_wal`, a known `wal_segment_size`, and no failed push since the last
-success; `null` is "cannot tell" and is refused like `true`. A targeted restore
-whose report has `recovery_target_reached: null` proved nothing about the target,
-and a `wal_archive_backlog: true` report measured an upload, not the recovery
-frontier: neither is an RPO result. If the run could not write its report at
-all, the command exits non-zero and prints `pitr report=NOT WRITTEN (<path>)`;
-a report left by an earlier run is moved to `<path>.previous` before the restore
-starts, so a path is printed only for the report this run wrote. The script
-validates the value as ISO-8601 **with an explicit UTC offset** and normalises it
-to the shape pgBackRest's `--target` parser accepts — the `T` separator becomes a
-space and a `Z` suffix becomes `+00`, because pgBackRest rejects both
-(`pgbackrest-restore.sh`:350-374). A zone-less value is rejected before anything
-parses it: `date`, pgBackRest and PostgreSQL would each read it in a different
-time zone, so the recovery could stop at one instant while the replay check
-compared against another; use `Z`, `+HH`, `+HHMM` or `+HH:MM`. It then restores
-with `--type=time --target=<normalised> --target-action=promote`
-(`:378-389`). It takes the same destructive path as `v1-restore`: stop Postgres,
-`--delta`, `PG_VERSION` before the server starts, and `pg_is_in_recovery()=false`
-before `ok` (`:1018,1038,1197,1259`). On success it also leaves the cluster
-running and verified.
+`wal_archive_wal_segment_size`, `wal_archive_backlog`, `wal_archive_quiesced_at`,
+`rpo_upper_bound_sec`, `target_timestamp`, `recovery_target_reached`,
+`recovery_replay_timestamp`, `cluster_data_bytes` and `restored_row_counts`
+before quoting any number from it.
+
+`rpo_pass` is true only for an **untargeted** `pgbackrest_wal` restore that
+completed, with an integer RPO upper bound inside 300 s. The bound is
+`ceil(wal_archive_quiesced_at − recovery_replay_timestamp)`: the instant the
+primary stopped — nothing new is archived after that, so the recoverable frontier
+is frozen there — minus the instant the restored cluster replayed to. Both are
+measured, and the validator **re-derives** the number from them, so a report
+cannot carry `17` beside a frontier 400 s old. A negative difference is `null`,
+never `0`, and the difference is rounded **up**: a bound must not round toward
+optimism. The gap is wall-clock distance to the newest commit the restore could
+recover, so it includes any idle time between the last write and the stop: on a
+quiet cluster most of the number is idleness, and a 300 s target can be missed
+with no archive fault at all. The archive counters — `wal_archive_ok`,
+`wal_archive_upload_age_sec`, `wal_archive_timeout_sec`,
+`wal_archive_wal_segment_size`, `wal_archive_backlog` — are **diagnostics and
+gate nothing**. The restore is the continuity proof: it replays every segment
+from the backup to the replay point, so a gap either stops recovery or truncates
+the replay timestamp, and the derived number then shows it.
+
+**A targeted restore never carries an RPO.** It proves the target was reached,
+not the archive lag: its replay point is where the operator asked, so the gap to
+the quiesce instant is the target offset plus the restore time. Such a report
+records `rpo_upper_bound_sec: null`, `rpo_pass: false` and
+`postgres_rpo_residual: "targeted_restore_proves_target_not_rpo"`, and stays
+`evidence_eligible` for the restore and the target.
+
+**Tenant isolation is tri-state, and a rehearsal records it as unmeasured.**
+`tenant_isolation_post_restore` is `true` (measured, passed), `false` (the
+cross-tenant check ran and did not pass — a measured failure, refused first and
+unconditionally with `tenant isolation check failed`, before any exemption
+applies) or `null` (not measured in this run). Every PITR report records
+`restore_target` — `scratch` for a volume restored beside the live cluster,
+`host` for the real data directory — but the target is a fact about the run, not
+an exemption. A PITR rehearsal never queries restored tenant data under RLS, so
+it records `null` and the report carries
+`residual: "tenant_isolation_not_measured_pitr"`; the run still exits zero when
+the restore, the target and the frontier are proven. A `null` is accepted in
+three cases only: that PITR rehearsal; a run whose `postgres.mechanism` is
+`unavailable`, which restored nothing and so has nothing to isolate, and which
+carries no tenant-isolation residual because its `blocked_by` already names the
+gap; and an `ALLOW_NO_DB` smoke, which prints
+`WARNING: tenant isolation not proven` and records
+`residual: "tenant_isolation_unproven_no_postgres"`. A `null` that is none of
+those three is refused with `tenant isolation was not measured` — a scheduled
+drill included, because the drill is where isolation is proven.
+
+**Wording.** The report supports "upper bound demonstrated at `<instant>`" and
+"RPO ≤ X, demonstrated `<instant>`". It does **not** support "measured RPO",
+"exposure", "steady-state RPO", "guaranteed" or "the RPO is X": one run measures
+one frontier, not a distribution, and the number is a bound rather than an
+observation.
+
+If the run could not write its report at all, the command exits non-zero and
+prints `pitr report=NOT WRITTEN (<path>)`; a report left by an earlier run is
+moved to `<path>.previous` before the restore starts, so a path is printed only
+for the report this run wrote. The script validates the value as ISO-8601 **with
+an explicit UTC offset** and normalises it to the shape pgBackRest's `--target`
+parser accepts — the `T` separator becomes a space and a `Z` suffix becomes
+`+00`, because pgBackRest rejects both (the `PGBACKREST_RESTORE_TARGET`
+validation block). A zone-less value is rejected before anything parses it:
+`date`, pgBackRest and PostgreSQL would each read it in a different time zone, so
+the recovery could stop at one instant while the replay check compared against
+another; use `Z`, `+HH`, `+HHMM` or `+HH:MM`. It then restores with
+`--type=time --target=<normalised> --target-action=promote` (`restore_args`). It
+takes the same destructive path as `v1-restore`: stop Postgres, `--delta`,
+`PG_VERSION` before the server starts, and `pg_is_in_recovery()=false` before
+`ok` (the `stopping Postgres before restore` block,
+`verify_destructive_restore_compose` / `verify_destructive_restore_host`, and the
+`[restore] ok` line). On success it also leaves the cluster running and verified.
 
 **Rehearse on a scratch volume first.** `make v1-pitr TARGET=… SCRATCH_VOLUME=<name>`
 restores beside the live cluster into a separate volume and stops nothing: the
 script takes the scratch branch, restores without `--delta` because that volume is
 empty, prints the start command for the restored copy, and exits without mounting
-the live data directory (`pgbackrest-restore.sh`:11-13,477-510;
-`Makefile`:241-242). Create the volume first (`docker volume create <name>` or
+the live data directory (the scratch branch in `pgbackrest-restore.sh`).
+Create the volume first (`docker volume create <name>` or
 `podman volume create <name>`). This is the recommended first rehearsal for any
 target you intend to use in an incident, and the only way to prove a timestamp
 without destroying the running database. The script does not stop at "the restore
@@ -309,19 +355,20 @@ of the WAL before the target.
 **Credentials never go on a command line.** `make v1-restore` and `make v1-pitr`
 export `PGBACKREST_REPO1_CIPHER_PASS`, `PGBACKREST_REPO1_S3_KEY` and
 `PGBACKREST_REPO1_S3_KEY_SECRET` from the profile's `0600` `.env`
-(`infra/scripts/dev-tool.sh`:607-610; `infra/scripts/gen-v1-secrets.sh`:536-553). The
+(`v1_backup_env` in `infra/scripts/dev-tool.sh`; the underlying
+`IBEX_OBJECTSTORE_*` values are generated by `infra/scripts/gen-v1-secrets.sh`). The
 script writes them to a `0600` file created with `mktemp` and hands that file to
-the engine with `--env-file`, removing it on exit
-(`pgbackrest-restore.sh`:317-398). It does not use `-e VAR`: with a rootful
-engine (`IBEX_PODMAN_SUDO=1` makes the engine `sudo -n podman`) sudo's
-`env_reset` discards the exported values, and a name-only `-e` then reaches the
-container empty — after Postgres has already been stopped. The script also proves
-delivery *before* that point by starting a probe container the same way and
-failing if any value is missing or altered
-(`pgbackrest-restore.sh`:422-437,524-526), so a delivery failure leaves the
-database running. A direct invocation with `COMPOSE_FILE` pointing at the v1
-profile and nothing exported loads the same three values from the profile `.env`
-itself (`:265-295`). Read the values from the file; do
+the engine with `--env-file`, removing it on exit (`write_credential_env_file`).
+It does not use `-e VAR`: with a rootful engine (`IBEX_PODMAN_SUDO=1` makes the
+engine `sudo -n podman`) sudo's `env_reset` discards the exported values, and a
+name-only `-e` then reaches the container empty — after Postgres has already been
+stopped. The script also proves delivery *before* that point by starting a probe
+container the same way and failing if any value is missing or altered
+(`probe_credential_delivery` and `compose_restore_available`), so a delivery
+failure leaves the database running.
+A direct invocation with `COMPOSE_FILE` pointing at the v1 profile and nothing
+exported loads the same three values from the profile `.env` itself
+(`load_v1_repository_credentials`). Read the values from the file; do
 not paste a credential into a shell command, where a process listing would
 expose it.
 
@@ -329,13 +376,15 @@ expose it.
 
 1. **PostgreSQL is already running and verified; leave the rest of the profile
    down.** Both destructive paths stop Postgres, restore, start it, and require
-   `pg_is_in_recovery()=false` before printing `ok`
-   (`pgbackrest-restore.sh`:528-533,564-598,702). They do **not** stop the
-   application services, which is why [First response](#first-response) step 2
-   stops them before the restore starts. Confirm with `make v1-ps`
-   (`Makefile`:226-227) that `postgres` is running and no application service is.
+   `pg_is_in_recovery()=false` before printing `ok` (the `stopping Postgres
+   before restore` block, `verify_destructive_restore_compose` /
+   `verify_destructive_restore_host`, and the `[restore] ok` line). They do
+   **not** stop the application services, which is why
+   [First response](#first-response) step 2 stops them before the restore
+   starts. Confirm with `make v1-ps` that `postgres` is
+   running and no application service is.
    Do not run `make v1-up` yet: it starts the whole profile and then the smoke
-   request (`Makefile`:174-207), which reopens traffic.
+   request (`make v1-up`), which reopens traffic.
 2. **Check the restored data against the replay contract.** The restore-replay
    integration test states what a restored copy must satisfy: the memory is a
    tombstone (`content = '[forgotten]'`, `status = 'deleted'`,
@@ -399,11 +448,12 @@ the same run into a point-in-time drill and records whether the target was reach
 - The in-container `pgbackrest info` output from Recovery step 1 and the chosen
   backup label/set.
 - The full restore transcript, including the `[restore] ok` line and, for a
-  point-in-time restore, the `[restore] point-in-time target=…` line
-  (`infra/scripts/platform/pgbackrest-restore.sh`:189,702) and the
-  `[restore] recovery state verified: pg_is_in_recovery()=false` line (`:596`).
+  point-in-time restore, the `[restore] point-in-time target=…` and
+  `[restore] ok` lines, and the
+  `[restore] recovery state verified: pg_is_in_recovery()=false` line.
 - `restore-drill-report.json` and `transcript.txt` from the drill
-  (`infra/scripts/platform/restore-drill.sh`:9-10), with `rto_pass`,
+  (`infra/scripts/platform/restore-drill.sh`: the `REPORT_DIR`, `REPORT` and
+  `TRANSCRIPT` assignments), with `rto_pass`,
   `rpo_pass` and the fixture row count. A drill run that could not use
   pgBackRest carries `mechanism: "unavailable"` and a `blocked_by`; that is an
   honest outcome, and it is **not** evidence for a PITR or RPO claim.
