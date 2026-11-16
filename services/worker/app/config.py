@@ -114,6 +114,42 @@ class Settings(BaseSettings):
         gt=0,
         description="Interval for maintenance noop beat sweep",
     )
+    failed_tasks_scrub_days: int = Field(
+        default=7,
+        ge=1,
+        le=365,
+        validation_alias=AliasChoices("IBEX_WORKER_FAILED_TASKS_SCRUB_DAYS"),
+        description=(
+            "Dead-letter age at which args/kwargs/exception_message/traceback "
+            "are overwritten (P1-21); the row keeps its forensic shape"
+        ),
+    )
+    failed_tasks_retention_days: int = Field(
+        default=30,
+        ge=1,
+        le=3650,
+        validation_alias=AliasChoices("IBEX_WORKER_FAILED_TASKS_RETENTION_DAYS"),
+        description="Dead-letter age at which the row is deleted (P1-21)",
+    )
+    idempotency_ledger_retention_hours: int = Field(
+        default=24,
+        ge=1,
+        le=8760,
+        validation_alias=AliasChoices("IBEX_WORKER_IDEMPOTENCY_LEDGER_RETENTION_HOURS"),
+        description=(
+            "Age after finalize at which a replay record is deleted (P2-12); a "
+            "live claim is never removed"
+        ),
+    )
+    usage_facts_retention_months: int = Field(
+        default=13,
+        ge=1,
+        le=120,
+        validation_alias=AliasChoices("IBEX_WORKER_USAGE_FACTS_RETENTION_MONTHS"),
+        description=(
+            "Whole calendar months of ibex.usage_facts kept before the partition is dropped (P2-15)"
+        ),
+    )
     lifecycle_erasure_job_timeout_seconds: float = Field(
         default=900.0,
         gt=0,
@@ -377,6 +413,16 @@ class Settings(BaseSettings):
         if self.result_backend:
             return self.result_backend
         return redis_url_with_db(self.redis_url, self.redis_db_results)
+
+    @model_validator(mode="after")
+    def _retention_windows_are_ordered(self) -> Settings:
+        if self.failed_tasks_scrub_days >= self.failed_tasks_retention_days:
+            msg = (
+                "failed_tasks_scrub_days must be less than failed_tasks_retention_days; "
+                "otherwise a row is deleted before its payload is scrubbed"
+            )
+            raise ValueError(msg)
+        return self
 
     @model_validator(mode="after")
     def _enqueue_metrics_ports_differ(self) -> Settings:

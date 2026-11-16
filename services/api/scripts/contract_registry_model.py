@@ -45,6 +45,7 @@ ACTION_VERBS: Final = frozenset(
         "query",
         "refresh",
         "resolved",
+        "step-up",
         "stream",
         "summary",
         "suspend",

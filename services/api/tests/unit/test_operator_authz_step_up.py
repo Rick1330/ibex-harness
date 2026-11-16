@@ -203,6 +203,7 @@ def test_step_up_header_valid_sets_true() -> None:
     [
         "org_mismatch",
         "subject_mismatch",
+        "subject_unset",
         "expired",
         "both_attrs_unset",
     ],
@@ -216,6 +217,11 @@ def test_step_up_header_denies(case: str) -> None:
     elif case == "subject_mismatch":
         token = _step_up_token(settings, StepUpTokenSpec(org))
         req = _step_up_request(settings, token, session_org=org, session_sub="other-user")
+    elif case == "subject_unset":
+        # The org matches but no subject is bound: the proof names nobody to
+        # bind to, so it is refused rather than accepted for any user.
+        token = _step_up_token(settings, StepUpTokenSpec(org))
+        req = _step_up_request(settings, token, session_org=org, session_sub=None)
     elif case == "expired":
         token = _step_up_token(settings, StepUpTokenSpec(org, ttl=-10))
         req = _step_up_request(settings, token)

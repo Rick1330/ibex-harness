@@ -9,6 +9,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import grpc
 from authclient.channel import AuthCAError, open_auth_channel
@@ -19,6 +20,7 @@ from app.auth.session_refresh_codec import (
     decode_int64_field,
     decode_string_field,
     decode_string_fields,
+    decode_timestamp_field,
     encode_issue_with_refresh,
     encode_string_fields,
 )
@@ -29,6 +31,7 @@ _ISSUE_METHOD = "/ibex.auth.v1.AuthService/IssueOperatorSession"
 _VALIDATE_METHOD = "/ibex.auth.v1.AuthService/ValidateOperatorSession"
 _REVOKE_METHOD = "/ibex.auth.v1.AuthService/RevokeOperatorSession"
 _CONSUME_STEP_UP_METHOD = "/ibex.auth.v1.AuthService/ConsumeStepUp"
+_CREATE_STEP_UP_METHOD = "/ibex.auth.v1.AuthService/CreateStepUpToken"
 _SERVICE_TOKEN_HEADER = "x-ibex-service-token"  # nosec B105 — HTTP metadata key name, not a credential
 _EXPECTED_ORG_HEADER = "x-ibex-expected-org"
 
@@ -86,6 +89,31 @@ class ConsumeStepUpParams:
     session_id: str
     action: str
     permission: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class CreateStepUpParams:
+    """Fields of CreateStepUpTokenRequest that the API, not the body, supplies."""
+
+    subject: str
+    org_id: str
+    session_id: str
+    action: str
+    code: str
+
+
+@dataclass(frozen=True, slots=True)
+class IssuedStepUp:
+    token: str
+    expires_at: datetime | None = None
+
+
+class StepUpAttemptLimitError(AuthFailedError):
+    """The TOTP attempt gate refused this attempt; Auth reports RESOURCE_EXHAUSTED.
+
+    A separate class so the route can answer 429 instead of 401 without
+    re-reading the gRPC status, and without widening what a failed code reveals.
+    """
 
 
 # gRPC metadata is an ordered sequence of (key, value) string pairs.
@@ -286,6 +314,59 @@ async def consume_step_up(rpc: AuthRPC, params: ConsumeStepUpParams) -> None:
         payload=payload,
         expected_org=params.org_id,
     )
+
+
+def _map_step_up_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:
+    """Map an issuance refusal without adding an oracle: one code, one 401."""
+    if exc.code() == grpc.StatusCode.RESOURCE_EXHAUSTED:
+        return StepUpAttemptLimitError("step-up attempt limit exceeded")
+    if exc.code() in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED):
+        return AuthUnavailableError("auth unavailable")
+    if exc.code() == grpc.StatusCode.FAILED_PRECONDITION:
+        return AuthUnavailableError("totp not configured")
+    return AuthFailedError("step-up refused")
+
+
+def _parse_issued_step_up(raw: bytes) -> IssuedStepUp:
+    try:
+        token = decode_string_field(raw, 1)
+        expires_at = decode_timestamp_field(raw, 2)
+    except (AuthCodecError, UnicodeDecodeError) as exc:
+        raise AuthUnavailableError("auth step-up codec error") from exc
+    if not token:
+        raise AuthUnavailableError("auth step-up returned no token")
+    return IssuedStepUp(token=token, expires_at=expires_at)
+
+
+async def create_step_up(
+    rpc: AuthRPC, params: CreateStepUpParams, *, pat: str
+) -> IssuedStepUp:
+    """Verify a TOTP code and mint an action-bound proof for the bearer's own identity.
+
+    Login authenticates as the PAT and the same applies here: AuthService's
+    CreateStepUpToken asserts the caller is the user named in the request, so
+    the call must carry the caller's own credential. A service credential would
+    take the interceptor's service path and leave the caller context unset.
+    """
+    payload = encode_string_fields(
+        {
+            1: params.org_id,
+            2: params.subject,
+            3: params.code,
+            4: params.session_id,
+            5: params.action,
+        }
+    )
+    call = _UnaryCall(
+        method=_CREATE_STEP_UP_METHOD,
+        payload=payload,
+        metadata=(("authorization", f"Bearer {pat}"),),
+    )
+    try:
+        raw = await _unary_with_channel(rpc, call, timeout_message="auth step-up timeout")
+    except grpc.aio.AioRpcError as exc:
+        raise _map_step_up_error(exc) from exc
+    return _parse_issued_step_up(raw)
 
 
 def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:

@@ -90,6 +90,10 @@ Or use Makefile targets: `make worker-dev`, `make worker-beat-dev`, `make test-w
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (none) | OTLP gRPC collector (optional) |
 | `OTEL_SAMPLE_RATIO` | `0.01` | Trace sampling ratio |
 | `IBEX_WORKER_MAINTENANCE_BEAT_SECONDS` | `300` | Beat interval for noop sweep |
+| `IBEX_WORKER_FAILED_TASKS_SCRUB_DAYS` | `7` | Age at which `failed_tasks` payload columns are overwritten (P1-21) |
+| `IBEX_WORKER_FAILED_TASKS_RETENTION_DAYS` | `30` | Age at which the `failed_tasks` row is deleted (P1-21) |
+| `IBEX_WORKER_IDEMPOTENCY_LEDGER_RETENTION_HOURS` | `24` | Age after finalize at which a replay record is deleted (P2-12); live claims are never pruned |
+| `IBEX_WORKER_USAGE_FACTS_RETENTION_MONTHS` | `13` | Whole months of `ibex.usage_facts` kept before the partition is dropped (P2-15) |
 | `IBEX_WORKER_RESULT_EXPIRES_SECONDS` | `3600` | Result TTL when `ignore_result=False` |
 | `IBEX_WORKER_EXTRACTION_PROVIDER` | `openai` | `openai` or `vllm` |
 | `OPENAI_API_KEY` | (none) | Required for `openai` |
@@ -135,6 +139,12 @@ Integration test task `ibex.worker.maintenance.always_fail` exercises the full r
 - `IbexTask` base class holds retry policy; **no** `on_failure` override (signals in `app/observability.py`).
 - `app/task_lifecycle.py` — structured start/complete logging via `task_prerun` / `task_postrun`.
 - `app/observability.py` — OTel spans, Prometheus metrics, dead-letter handler.
+- `app/retention.py` — the `retention_sweep` windows (P1-21 / P2-12 / P2-15). Postgres work goes
+  through three `SECURITY DEFINER` functions owned by `ibex_service` (migration `000076`): the
+  `ibex_worker` login holds no grant on `ibex_core.failed_tasks` or `ibex_core.idempotency_ledger`,
+  so the sweep issues no row-level DML and names no org. `ibex.usage_facts` is trimmed by dropping
+  whole month partitions, which is a recorded exception to "every ClickHouse statement names
+  `org_id`". Only `state='finalized'` ledger rows are removed; a live claim is never pruned.
 
 ## Tests
 

@@ -55,6 +55,8 @@ class ManagedClientOpts:
     enqueue_calls: list[tuple[str, str]] | None = None
     token_manager: FakeTokenManager | None = None
     provider_credential_manager: FakeProviderCredentialManager | None = None
+    environment: str = "development"
+    operator_feature_enabled: bool = True
 
 
 @contextmanager
@@ -70,6 +72,8 @@ def managed_org_client(
             enqueue_calls=opts.enqueue_calls,
             token_manager=opts.token_manager,
             provider_credential_manager=opts.provider_credential_manager,
+            environment=opts.environment,
+            operator_feature_enabled=opts.operator_feature_enabled,
         )
     ) as (client, res, pub):
         override_org_session(client.app)
@@ -103,6 +107,19 @@ def patched_managed_client(
         yield client, res, pub
 
 
+def _hmac_secret_for(environment: str) -> str | None:
+    return "h" * 32 if environment == "development" else None
+
+
+def _ca_file_for(environment: str) -> str | None:
+    """Outside development the settings validators require a CA path.
+
+    The file is never read here: these tests patch the RPC that would build a
+    channel with it, and only the non-empty string is validated at startup.
+    """
+    return None if environment == "development" else "/nonexistent/test-ca.pem"
+
+
 @dataclass(frozen=True)
 class ApiClientOpts:
     token: str = "owner-token"
@@ -111,6 +128,8 @@ class ApiClientOpts:
     enqueue_calls: list[tuple[str, str]] | None = None
     token_manager: FakeTokenManager | None = None
     provider_credential_manager: FakeProviderCredentialManager | None = None
+    environment: str = "development"
+    operator_feature_enabled: bool = True
 
 
 @contextmanager
@@ -127,8 +146,12 @@ def api_client(
 
     settings = Settings(
         database_url=None,
-        operator_feature_enabled=True,
-        environment="development",
+        operator_feature_enabled=cfg.operator_feature_enabled,
+        environment=cfg.environment,
+        # Step-up proofs verify locally with HMAC in development; staging sends
+        # the opaque proof to AuthService instead, so no local key is set there.
+        jwt_hmac_secret=_hmac_secret_for(cfg.environment),
+        auth_grpc_ca_file=_ca_file_for(cfg.environment),
     )
     app = create_app(
         settings=settings,

@@ -4538,6 +4538,54 @@
         "title": "SessionTurnEvidence",
         "type": "object"
       },
+      "StepUpRequest": {
+        "description": "What the caller asks to elevate to, and the TOTP code proving it can.\n\nThe org, subject, and session the proof binds to are never read from here:\nthey come from the verified bearer token.",
+        "properties": {
+          "action": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Action",
+            "type": "string"
+          },
+          "code": {
+            "maxLength": 64,
+            "minLength": 6,
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "code"
+        ],
+        "title": "StepUpRequest",
+        "type": "object"
+      },
+      "StepUpResponse": {
+        "properties": {
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "StepUpResponse",
+        "type": "object"
+      },
       "StoreReceipt": {
         "properties": {
           "status": {
@@ -5877,6 +5925,66 @@
         "summary": "Pause Agent",
         "tags": [
           "agents"
+        ]
+      }
+    },
+    "/v1/auth/step-up": {
+      "post": {
+        "description": "Mint a short-lived proof for one action, bound to the bearer's own identity.\n\nThe caller must already hold the permission the action needs; the proof only\nproves a second factor was presented just now, never a grant the caller did\nnot have.",
+        "operationId": "create_step_up_proof_v1_auth_step_up_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StepUpRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StepUpResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Step Up Proof",
+        "tags": [
+          "auth"
         ]
       }
     },

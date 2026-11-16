@@ -480,6 +480,30 @@ its router enforces; the tenant is `{org_id}` or derived from the token.
 | `GET` | `/v1/tokens/{token_id}` | `management.tokens.get.v1` | `tokens.py` |
 | `DELETE` | `/v1/tokens/{token_id}` | `management.tokens.delete.v1` | `tokens.py` |
 | `GET` | `/v1/tenant/ping` | `management.tenant.ping.v1` | `tenant.py` |
+| `POST` | `/v1/auth/step-up` | `management.auth.step-up.v1` | `step_up.py` |
+
+### POST /v1/auth/step-up
+
+**Mint a step-up proof**
+
+Exchanges a TOTP code for a short-lived, action-bound proof that a high-impact mutation requires in the
+`X-IBEX-Step-Up` header. The request body carries only `action` and `code`; the organization, subject, and session the
+proof binds to are read from the verified bearer token, never from the body. The caller must already hold the
+permission the action needs (`org.delete` requires `ORG_SETTINGS_WRITE`), so a proof never grants authority the caller
+did not have.
+
+| Field | Meaning |
+| --- | --- |
+| `action` | The mutation the proof is for. Closed set; an unknown value is `400 INVALID_REQUEST`. |
+| `code` | The current TOTP code. An invalid code is `401 INVALID_TOKEN`; the attempt gate is `429 RATE_LIMITED`. |
+| `token` (response) | The proof to send as `X-IBEX-Step-Up`. Single-use and short-lived. |
+| `expires_at` (response) | When the proof stops being accepted, when Auth reports it. |
+
+`DELETE /v1/organizations/{org_id}` requires this proof in addition to the bearer: an owner bearer without it is
+refused with `403 INSUFFICIENT_PERMISSIONS` and no deletion job is enqueued. A proof minted for another organization,
+another subject, another session, or another action is refused with the same `403` and the same message, so the
+refusal is not an oracle. `POST /v1/operator/session/login` and the operator cookie surface are unaffected: the
+bearer stays the only credential this route accepts.
 
 ---
 

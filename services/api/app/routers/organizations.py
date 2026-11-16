@@ -6,6 +6,7 @@ from typing import Annotated
 from uuid import UUID
 
 from apierror_py import SERVICE_DEGRADED
+from authclient.permissions import ORG_SETTINGS_WRITE
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,8 +24,11 @@ from app.schemas.organizations import (
     OrgDeletionJobResponse,
 )
 from app.services import organizations as org_service
+from app.step_up import StepUpAction, enforce_step_up
 
 router = APIRouter(prefix="/v1/organizations", tags=["organizations"])
+
+_ORG_DELETE_ACTION = "org.delete"
 
 
 @router.get("/{org_id}")
@@ -73,6 +77,13 @@ async def delete_org(
     request: Request,
 ) -> OrgDeletionJobResponse:
     assert_path_org(token.org_id, org_id)
+    # Destructive and irreversible: the bearer proves the owner, the proof proves
+    # a second factor was presented for this org, this session, and this action.
+    await enforce_step_up(
+        request,
+        token,
+        action=StepUpAction(required_permission=ORG_SETTINGS_WRITE, action=_ORG_DELETE_ACTION),
+    )
     enqueue = request.app.state.api.enqueue_org_deletion
     if enqueue is None:
         raise ApiError(

@@ -28,6 +28,13 @@ from tests.unit.org_user_test_support import (
     ManagedClientOpts,
     managed_org_client,
 )
+from tests.unit.test_organizations_router import (
+    _DELETE_TOKEN_ID,
+    _delete_headers,
+    _owner_with_token,
+    _ProofSpec,
+    _step_up_proof,
+)
 from tests.unit.test_organizations_service import _MapResult, _org
 from tests.unit.test_users_service import _ScalarResult, _user
 
@@ -201,7 +208,19 @@ def test_suspend_requires_publisher() -> None:
 
 
 def test_delete_org_requires_enqueue() -> None:
-    _assert_org_runtime_dependency_503("enqueue_org_deletion", "delete", "")
+    org_id = uuid4()
+    proof = _step_up_proof(
+        _ProofSpec(org_id=org_id, subject="owner-1", session_id=_DELETE_TOKEN_ID)
+    )
+    with managed_org_client(
+        ManagedClientOpts(
+            org_id=org_id, role="owner", result=_owner_with_token(org_id)
+        )
+    ) as (client, _res, _pub):
+        client.app.state.api.enqueue_org_deletion = None
+        resp = client.delete(f"/v1/organizations/{org_id}", headers=_delete_headers(proof))
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == SERVICE_DEGRADED
 
 
 def _assert_org_runtime_dependency_503(attr: str, method: str, path_suffix: str) -> None:

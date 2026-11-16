@@ -1,8 +1,10 @@
-"""Protobuf wire helpers for IssueOperatorSession refresh responses."""
+"""Protobuf wire helpers for operator session refresh and step-up responses."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from authclient.codec import AuthCodecError, encode_varint
 
@@ -67,12 +69,12 @@ def _skip_fixed(buf: bytes, idx: int, size: int) -> int:
     return end
 
 
-def _skip_unknown(buf: bytes, idx: int, wire: int) -> int:
+def _skip_unknown(buf: bytes, idx: int, wire: int, *, max_len: int = _MAX_MESSAGE) -> int:
     if wire == _WIRE_VARINT:
         _, idx = _decode_varint(buf, idx)
         return idx
     if wire == _WIRE_LEN:
-        _, idx = _read_bytes(buf, idx, max_len=_MAX_MESSAGE)
+        _, idx = _read_bytes(buf, idx, max_len=max_len)
         return idx
     size = _FIXED_WIRE_BYTES.get(wire)
     if size is None:
@@ -109,21 +111,85 @@ def _walk_fields(
         idx = nxt
 
 
-def decode_string_field(buf: bytes, field_num: int) -> str | None:
-    """Bounded protobuf string scan; raises AuthCodecError on malformed input."""
-    found: list[str] = []
+@dataclass(frozen=True, slots=True)
+class _FieldRule[T]:
+    """How one field is recognised, bounded, and converted during a scan."""
+
+    wire: int
+    max_len: int
+    too_large: str
+    read: Callable[[bytes, int], tuple[T, int]]
+
+
+def _len_field[T](max_len: int, too_large: str, convert: Callable[[bytes], T]) -> _FieldRule[T]:
+    """Build a rule for a length-delimited field, bounded by ``max_len``."""
+
+    def read(buf: bytes, idx: int) -> tuple[T, int]:
+        raw, idx = _read_bytes(buf, idx, max_len=max_len)
+        return convert(raw), idx
+
+    return _FieldRule(wire=_WIRE_LEN, max_len=max_len, too_large=too_large, read=read)
+
+
+def _first_field[T](buf: bytes, field_num: int, rule: _FieldRule[T]) -> T | None:
+    """Return the first ``field_num`` value converted by ``rule``, or ``None``.
+
+    Every other field is skipped by its wire type under the rule's own limit, so
+    a decoder never accepts a neighbouring field larger than the one it reads.
+    """
+    found: list[T] = []
 
     def visit(fn: int, wt: int, idx: int) -> int | None:
-        if wt != _WIRE_LEN:
-            return _skip_unknown(buf, idx, wt)
-        val, idx = _read_bytes(buf, idx, max_len=_MAX_TOKEN_FIELD)
-        if fn == field_num:
-            found.append(_utf8_string(val))
-            return None
+        if wt != rule.wire or fn != field_num:
+            return _skip_unknown(buf, idx, wt, max_len=rule.max_len)
+        value, idx = rule.read(buf, idx)
+        found.append(value)
+        return None
+
+    _walk_fields(buf, too_large=rule.too_large, visit=visit)
+    return found[0] if found else None
+
+
+def _timestamp_from_message(raw: bytes) -> datetime:
+    """Decode ``google.protobuf.Timestamp`` (seconds=1, nanos=2) to an aware datetime."""
+    seconds = 0
+    nanos = 0
+
+    def visit(fn: int, wt: int, idx: int) -> int | None:
+        nonlocal seconds, nanos
+        if wt != _WIRE_VARINT:
+            return _skip_unknown(raw, idx, wt)
+        val, idx = _decode_varint(raw, idx)
+        if fn == 1:
+            seconds = val
+        elif fn == 2:
+            nanos = val
         return idx
 
-    _walk_fields(buf, too_large="auth refresh response too large", visit=visit)
-    return found[0] if found else None
+    _walk_fields(raw, too_large="auth timestamp too large", visit=visit)
+    if not 0 <= nanos < 1_000_000_000:
+        raise AuthCodecError("timestamp nanoseconds out of range")
+    try:
+        return datetime.fromtimestamp(seconds, UTC).replace(microsecond=nanos // 1000)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise AuthCodecError("timestamp out of range") from exc
+
+
+_STRING_FIELD = _len_field(_MAX_TOKEN_FIELD, "auth refresh response too large", _utf8_string)
+_TIMESTAMP_FIELD = _len_field(
+    _MAX_MESSAGE, "auth step-up response too large", _timestamp_from_message
+)
+_VARINT_FIELD = _FieldRule(
+    wire=_WIRE_VARINT,
+    max_len=_MAX_MESSAGE,
+    too_large="auth lifecycle response too large",
+    read=_decode_varint,
+)
+
+
+def decode_string_field(buf: bytes, field_num: int) -> str | None:
+    """Bounded protobuf string scan; raises AuthCodecError on malformed input."""
+    return _first_field(buf, field_num, _STRING_FIELD)
 
 
 def decode_string_fields(buf: bytes, field_nums: set[int]) -> dict[int, str]:
@@ -142,16 +208,10 @@ def decode_string_fields(buf: bytes, field_nums: set[int]) -> dict[int, str]:
 
 
 def decode_int64_field(buf: bytes, field_num: int) -> int | None:
-    found: list[int] = []
+    """Decode one varint field, or ``None`` when it is absent."""
+    return _first_field(buf, field_num, _VARINT_FIELD)
 
-    def visit(fn: int, wt: int, idx: int) -> int | None:
-        if wt == _WIRE_VARINT:
-            val, idx = _decode_varint(buf, idx)
-            if fn == field_num:
-                found.append(val)
-                return None
-            return idx
-        return _skip_unknown(buf, idx, wt)
 
-    _walk_fields(buf, too_large="auth lifecycle response too large", visit=visit)
-    return found[0] if found else None
+def decode_timestamp_field(buf: bytes, field_num: int) -> datetime | None:
+    """Decode one embedded ``Timestamp`` field, or ``None`` when it is absent."""
+    return _first_field(buf, field_num, _TIMESTAMP_FIELD)

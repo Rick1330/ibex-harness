@@ -31,7 +31,14 @@ class StepUpAction:
 
     required_permission: int
     action: str
-    session_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StepUpBinding:
+    """The identity a step-up proof must carry: the caller, never the request body."""
+
+    subject: str
+    session_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +58,23 @@ def _settings(request: Request) -> Settings:
 
 def _deny_step_up() -> ApiError:
     return ApiError(code=INSUFFICIENT_PERMISSIONS, message=_STEP_UP_REQUIRED)
+
+
+def bearer_binding(token: ValidateResult, session_id: str | None = None) -> StepUpBinding:
+    """Derive the subject and session a proof binds to from the bearer token.
+
+    Issuance and verification both call this, so the two sides cannot disagree
+    about who a proof belongs to. A user token binds to its user id; a token
+    with no user (a PAT) binds to its own token id, which the caller cannot
+    choose. ``session_id`` is the verified operator session when the route has
+    one; otherwise the bearer token's own id stands in, which is what a
+    bearer-only request can actually prove.
+    """
+    subject = token.user_id or token.token_id
+    session = session_id or token.token_id
+    if not subject or not session:
+        raise _deny_step_up()
+    return StepUpBinding(subject=subject, session_id=session)
 
 
 def _verify_step_up_token(raw: str, settings: Settings) -> SessionClaims:
@@ -116,16 +140,13 @@ def _resolve_step_up_proof(
     raw = request.headers.get(STEP_UP_HEADER)
     if not raw:
         raise _deny_step_up()
-    subject = token.user_id or token.token_id
-    session_id = spec.session_id or getattr(request.state, "ibex_session_id", None)
-    if not subject or not session_id:
-        raise _deny_step_up()
+    binding = bearer_binding(token, getattr(request.state, "ibex_session_id", None))
     return _StepUpProof(
         raw=raw,
         settings=_settings(request),
         token=token,
-        subject=subject,
-        session_id=session_id,
+        subject=binding.subject,
+        session_id=binding.session_id,
         action=spec.action,
         required_permission=spec.required_permission,
     )

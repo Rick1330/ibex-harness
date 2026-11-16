@@ -90,7 +90,13 @@ async def test_operator_legal_hold_role_session_closes_before_step_up() -> None:
     enforce.assert_awaited_once()
     action = enforce.await_args.kwargs["action"]
     assert action.required_permission == LEGAL_HOLD_MANAGE
-    assert action.session_id == "session-1"
+    # The proof binds to the verified operator session, which the dependency
+    # hands to enforce_step_up as the token id; the request carries the session
+    # id as a side effect of require_operator_session.
+    bound_token = enforce.await_args.args[1]
+    assert bound_token.token_id == "session-1"
+    assert bound_token.user_id == "user-1"
+    assert bound_token.org_id == operator.org_id
 
 
 @pytest.mark.asyncio
@@ -195,6 +201,19 @@ def test_require_legal_hold_manage_step_up() -> None:
     with pytest.raises(ApiError):
         asyncio.run(with_step_up)
     assert LEGAL_HOLD_MANAGE
+
+
+@pytest.mark.asyncio
+async def test_require_legal_hold_manage_returns_the_token_after_step_up() -> None:
+    """The dependency returns the caller's token once the proof is accepted."""
+    from app.authz import require_legal_hold_manage
+
+    dep = require_legal_hold_manage()
+    token = ValidateResult(org_id=uuid4(), permissions=ADMIN, user_id=str(uuid4()))
+    request = MagicMock()
+    request.state.ibex_step_up_ok = True
+    with patch("app.authz.enforce_step_up", new=AsyncMock()):
+        assert await dep(request=request, token=token) is token
 
 
 def test_assert_operator_permission_gates() -> None:
