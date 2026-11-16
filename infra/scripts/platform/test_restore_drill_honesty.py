@@ -10,6 +10,7 @@ runs a script.
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 from restore_drill_test_support import base_env, mod
 
@@ -62,10 +63,16 @@ class PgBackrestRpoGateTests(unittest.TestCase):
     """rpo_pass is a PITR claim: only a measured, fresh pgBackRest WAL run earns it."""
 
     def test_pgbackrest_wal_with_null_rpo_cannot_pass(self) -> None:
-        # Archiving was proven to work, but no RPO was measured. "Archiving is
-        # on" is not "the RPO target was met", so the claim must stay false.
+        # Archiving was proven to work, but no RPO was measured: the cluster's
+        # archive_timeout was never recorded, so no bound can be derived.
+        # "Archiving is on" is not "the RPO target was met", so the claim must
+        # stay false.
         report = mod.build_report(
-            base_env(PG_MECHANISM="pgbackrest_wal", PG_RPO_MEASURED="", WAL_ARCHIVE_OK="true")
+            base_env(
+                PG_MECHANISM="pgbackrest_wal",
+                WAL_ARCHIVE_OK="true",
+                WAL_ARCHIVE_TIMEOUT_SEC="",
+            )
         )
         self.assertEqual(report["postgres"]["mechanism"], "pgbackrest_wal")
         self.assertIsNone(report["postgres"]["rpo_measured_sec"])
@@ -73,31 +80,33 @@ class PgBackrestRpoGateTests(unittest.TestCase):
 
     def test_pgbackrest_wal_with_measured_rpo_can_pass(self) -> None:
         # The counterpart to the test above: the gate is not permanently closed.
+        # The bound is the 30 s upload age plus the 60 s archive_timeout.
         report = mod.build_report(
             base_env(
                 PG_MECHANISM="pgbackrest_wal",
-                PG_RPO_MEASURED="30",
                 PG_RPO_SEC="300",
                 WAL_ARCHIVE_OK="true",
             )
         )
+        self.assertEqual(report["postgres"]["rpo_measured_sec"], 90)
         self.assertTrue(report["postgres"]["rpo_pass"])
 
     def test_pgbackrest_wal_over_target_fails(self) -> None:
         report = mod.build_report(
             base_env(
                 PG_MECHANISM="pgbackrest_wal",
-                PG_RPO_MEASURED="900",
                 PG_RPO_SEC="300",
                 WAL_ARCHIVE_OK="true",
+                WAL_ARCHIVE_UPLOAD_AGE_SEC="900",
             )
         )
+        self.assertEqual(report["postgres"]["rpo_measured_sec"], 960)
         self.assertFalse(report["postgres"]["rpo_pass"])
 
     def test_pg_dump_fallback_never_claims_rpo_pass(self) -> None:
-        # Even a fast, measured number cannot make a dump a PITR mechanism.
+        # Even a fresh, proven archive cannot make a dump a PITR mechanism.
         report = mod.build_report(
-            base_env(PG_MECHANISM="pg_dump_fallback", PG_RPO_MEASURED="1", WAL_ARCHIVE_OK="true")
+            base_env(PG_MECHANISM="pg_dump_fallback", WAL_ARCHIVE_OK="true")
         )
         self.assertFalse(report["postgres"]["rpo_pass"])
         self.assertEqual(report["postgres_rpo_residual"], "not_pitr_pg_dump_fallback_#869")
@@ -152,10 +161,51 @@ class UnavailableMechanismTests(unittest.TestCase):
             mod.assert_honest(report)
 
     def test_honesty_validator_refuses_rpo_pass_without_a_measurement(self) -> None:
-        report = mod.build_report(base_env(PG_MECHANISM="pgbackrest_wal", PG_RPO_MEASURED=""))
+        report = mod.build_report(
+            base_env(PG_MECHANISM="pgbackrest_wal", WAL_ARCHIVE_TIMEOUT_SEC="")
+        )
+        self.assertIsNone(report["postgres"]["rpo_measured_sec"])
         report["postgres"]["rpo_pass"] = True
         with self.assertRaises(mod.ReportHonestyError):
             mod.assert_honest(report)
+
+
+class ReportContractTests(unittest.TestCase):
+    """Rules the validator applies to a report file it did not produce."""
+
+    def _passing_report(self) -> dict[str, Any]:
+        report = mod.build_report(base_env(PG_MECHANISM="pgbackrest_wal"))
+        self.assertTrue(report["postgres"]["rpo_pass"])
+        return report
+
+    def test_honesty_validator_refuses_a_pass_without_a_completed_restore(self) -> None:
+        # A report written or edited outside the producer can carry the booleans
+        # of a run that failed. The restore has to have completed.
+        report = mod.build_report(
+            base_env(PG_MECHANISM="pgbackrest_wal", PG_RESTORE_OK="false")
+        )
+        report["postgres"]["rpo_pass"] = True
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("completed restore", str(raised.exception))
+
+    def test_honesty_validator_refuses_a_float_measured_rpo(self) -> None:
+        # 900.0 against a 300 s target used to pass: the comparison was skipped
+        # for a non-integer, which read as "not above target".
+        report = self._passing_report()
+        report["postgres"]["rpo_measured_sec"] = 900.0
+        report["postgres"]["rpo_target_sec"] = 300
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("rpo_measured_sec must be integer seconds", str(raised.exception))
+
+    def test_honesty_validator_refuses_a_float_target(self) -> None:
+        report = self._passing_report()
+        report["postgres"]["rpo_measured_sec"] = 12
+        report["postgres"]["rpo_target_sec"] = 300.0
+        with self.assertRaises(mod.ReportHonestyError) as raised:
+            mod.assert_honest(report)
+        self.assertIn("rpo_target_sec must be integer seconds", str(raised.exception))
 
 
 class BuildReportTests(unittest.TestCase):

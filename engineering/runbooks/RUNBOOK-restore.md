@@ -249,23 +249,39 @@ script writes `pitr-report.json` through the same writer the restore drill uses
 A run stopped by a precondition still writes a report, with `mechanism:
 "unavailable"` and a non-empty `blocked_by`; the writer refuses that report
 without the reason. Read `postgres.mechanism`, `wal_archive_ok`,
-`wal_archive_upload_age_sec`, `wal_archive_backlog`, `rpo_measured_sec`,
-`target_timestamp`, `recovery_target_reached`, `recovery_replay_timestamp`,
-`cluster_data_bytes` and `restored_row_counts` before quoting any number from it.
-`rpo_pass` is true only for `pgbackrest_wal` with a measured RPO inside 300 s, a
-**drained** archive queue (`wal_archive_backlog: false`), a completed restore, and
-an affirmatively reached target when one was requested. A targeted restore whose
-report has `recovery_target_reached: null` proved nothing about the target, and a
-`wal_archive_backlog: true` report measured an upload, not the recovery frontier:
-neither is an RPO result. If the run could not write its report at all, the
-command exits non-zero and prints `pitr report=NOT WRITTEN (<path>)`. The script
-validates the value as ISO-8601 and normalises it to the shape pgBackRest's
-`--target` parser accepts — the `T` separator becomes a space and a `Z` suffix
-becomes `+00`, because pgBackRest rejects both (`pgbackrest-restore.sh`:171-190) —
-then restores with `--type=time --target=<normalised> --target-action=promote`
-(`:192-195`). It takes the same destructive path as `v1-restore`: stop Postgres,
+`wal_archive_upload_age_sec`, `wal_archive_timeout_sec`,
+`wal_archive_wal_segment_size`, `wal_archive_older_segments`,
+`wal_archive_backlog`, `rpo_measured_sec`, `target_timestamp`,
+`recovery_target_reached`, `recovery_replay_timestamp`, `cluster_data_bytes` and
+`restored_row_counts` before quoting any number from it.
+`rpo_pass` is true only for `pgbackrest_wal` with an integer RPO bound inside
+300 s, a **drained** archive queue (`wal_archive_backlog: false`), a completed
+restore, and an affirmatively reached target when one was requested. The bound is
+`wal_archive_upload_age_sec + wal_archive_timeout_sec`, not the upload age: with
+`archive_timeout` disabled a segment can finish minutes before its upload
+completes while the next one already holds newer commits, so an upload age on its
+own is a diagnostic. When `archive_timeout` is unset or zero the RPO is `null`
+and `rpo_pass` is false. `wal_archive_backlog: false` means the queue was
+positively confirmed drained — at most one segment ahead, no older segment left
+in `pg_wal`, a known `wal_segment_size`, and no failed push since the last
+success; `null` is "cannot tell" and is refused like `true`. A targeted restore
+whose report has `recovery_target_reached: null` proved nothing about the target,
+and a `wal_archive_backlog: true` report measured an upload, not the recovery
+frontier: neither is an RPO result. If the run could not write its report at
+all, the command exits non-zero and prints `pitr report=NOT WRITTEN (<path>)`;
+a report left by an earlier run is moved to `<path>.previous` before the restore
+starts, so a path is printed only for the report this run wrote. The script
+validates the value as ISO-8601 **with an explicit UTC offset** and normalises it
+to the shape pgBackRest's `--target` parser accepts — the `T` separator becomes a
+space and a `Z` suffix becomes `+00`, because pgBackRest rejects both
+(`pgbackrest-restore.sh`:350-374). A zone-less value is rejected before anything
+parses it: `date`, pgBackRest and PostgreSQL would each read it in a different
+time zone, so the recovery could stop at one instant while the replay check
+compared against another; use `Z`, `+HH`, `+HHMM` or `+HH:MM`. It then restores
+with `--type=time --target=<normalised> --target-action=promote`
+(`:378-389`). It takes the same destructive path as `v1-restore`: stop Postgres,
 `--delta`, `PG_VERSION` before the server starts, and `pg_is_in_recovery()=false`
-before `ok` (`:197-205,528-533,564-598,702`). On success it also leaves the cluster
+before `ok` (`:1018,1038,1197,1259`). On success it also leaves the cluster
 running and verified.
 
 **Rehearse on a scratch volume first.** `make v1-pitr TARGET=… SCRATCH_VOLUME=<name>`

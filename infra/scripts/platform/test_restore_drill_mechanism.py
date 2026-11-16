@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 from typing import NamedTuple
 
-from restore_drill_test_support import DRILL_SH, PITR_RESTORE_SH
+from restore_drill_test_support import DRILL_SH, PITR_RESTORE_SH, PITR_TIME_SH
 
 # A local throwaway database that is never connected to: the mechanism guard and
 # the refusal path both fire before any database access. Not a credential.
@@ -382,6 +382,90 @@ class PitrRestoreScriptTests(unittest.TestCase):
             self.assertIn("scratch restore ok", output)
             self.assertNotEqual(proc.returncode, 0, output)
             self.assertIn("could not write the PITR report", output)
+
+
+def iso_micros(raw: str) -> str:
+    """Call the shipped converter, which is sourced and never executed."""
+    proc = subprocess.run(  # nosec B603 - fixed argv, no shell interpolation of the value
+        ["/bin/bash", "-c", 'source "$1"; iso_micros "$2"', "iso_micros", str(PITR_TIME_SH), raw],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    return proc.stdout.strip()
+
+
+class RecoveryTargetOffsetTests(unittest.TestCase):
+    """A recovery target without a UTC offset has no defined instant."""
+
+    # Every accepted form: `Z`, and the numeric offsets pgBackRest also takes.
+    _WITH_OFFSET = (
+        "2026-11-16T07:42:48Z",
+        "2026-11-16T07:42:48+00",
+        "2026-11-16T07:42:48+0000",
+        "2026-11-16T07:42:48+00:00",
+        "2026-11-16T07:42:48.900-05:30",
+    )
+
+    def test_iso_micros_refuses_a_zoneless_timestamp(self) -> None:
+        # `date -d` would read this in the host's local time.
+        self.assertEqual(iso_micros("2026-11-16T07:42:48"), "")
+
+    def test_iso_micros_parses_every_offset_form(self) -> None:
+        for target in self._WITH_OFFSET:
+            with self.subTest(target=target):
+                self.assertRegex(iso_micros(target), r"^[0-9]+$")
+
+    def test_zoneless_restore_target_is_rejected_before_the_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / "pitr-report.json"
+            proc = run_restore(
+                RestoreRequest(
+                    root=root,
+                    target="2026-11-16T07:42:48",
+                    replay_us=utc_micros("2026-11-16T07:42:47Z"),
+                    report=report,
+                )
+            )
+            output = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 2, output)
+            self.assertIn("explicit UTC offset", output)
+            # Nothing was parsed, restored or stopped.
+            self.assertNotIn("scratch restore ok", output)
+            written = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(written["postgres"]["mechanism"], "unavailable")
+            self.assertTrue(written["blocked_by"])
+
+    def test_zoneless_drill_target_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proc = run_bash(
+                DRILL_SH,
+                drill_env(root, mechanism=None),
+                "--target=2026-11-16T07:42:48",
+            )
+            output = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 2, output)
+            self.assertIn("explicit UTC offset", output)
+
+    def test_offset_forms_pass_the_drill_validator(self) -> None:
+        # The validator must not reject a legitimate offset. Reaching the
+        # mechanism guard is the proof that the target was accepted.
+        for target in self._WITH_OFFSET:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                proc = run_bash(
+                    DRILL_SH,
+                    drill_env(root, mechanism=None),
+                    "--mechanism=pgbackrest",
+                    f"--target={target}",
+                )
+                output = proc.stdout + proc.stderr
+                self.assertNotIn("explicit UTC offset", output)
+                self.assertEqual(proc.returncode, 1, output)
+                self.assertIn("refusing to fall back to pg_dump", output)
 
 
 if __name__ == "__main__":

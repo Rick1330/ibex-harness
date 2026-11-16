@@ -19,12 +19,13 @@ from __future__ import annotations
 import sys
 import unittest
 
+import test_restore_drill_branches as _branches
 import test_restore_drill_honesty as _honesty
 import test_restore_drill_mechanism as _mechanism
 import test_restore_drill_pitr as _pitr
 import test_restore_drill_report_writer as _writer
 
-TEST_MODULES = (_honesty, _mechanism, _pitr, _writer)
+TEST_MODULES = (_branches, _honesty, _mechanism, _pitr, _writer)
 
 
 def load_suite() -> unittest.TestSuite:

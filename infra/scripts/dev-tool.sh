@@ -740,6 +740,26 @@ v1_pitr_blocked() {
     bash "$ROOT_DIR/infra/scripts/platform/pitr_report.sh"
 }
 
+# v1_pitr_clear_previous_report moves a report left by an earlier run out of the
+# way, so the only file at $report afterwards is the one this invocation wrote.
+#
+# The check it replaces compared the report's mtime against the run's start at
+# whole-second precision. A retry that started in the same second as the previous
+# run satisfied that check with the previous run's file and printed its path as
+# though this run had written it. A timestamp cannot identify an invocation; the
+# file's presence after this move can.
+v1_pitr_clear_previous_report() {
+  local report="$1" aside
+  [[ -f "$report" ]] || return 0
+  aside="$report.previous"
+  if ! mv -f -- "$report" "$aside"; then
+    echo "cannot move the previous report at $report aside, so this run's report could not be identified" >&2
+    return 1
+  fi
+  echo "pitr report: moved the previous report to $aside" >&2
+  return 0
+}
+
 # v1_pitr restores to a timestamp. The target is mandatory: without it the
 # restore would recover to the end of WAL and could not be called PITR.
 # IBEX_PITR_SCRATCH_VOLUME restores beside the live cluster instead of over it.
@@ -747,7 +767,7 @@ v1_pitr_blocked() {
 # `make v1-pitr` cannot finish without an artefact that says what happened.
 v1_pitr() {
   local target="${1:-}" scratch="${IBEX_PITR_SCRATCH_VOLUME:-}" report
-  local started status=0
+  local status=0
   if [[ -z "$target" ]]; then
     echo "usage: make v1-pitr TARGET=2026-11-14T03:00:00Z" >&2
     echo "       make v1-pitr TARGET=... SCRATCH_VOLUME=<name> (restores beside the live cluster)" >&2
@@ -755,6 +775,10 @@ v1_pitr() {
   fi
   report="$(v1_pitr_report_path)"
   export IBEX_PITR_REPORT="$report"
+  if ! v1_pitr_clear_previous_report "$report"; then
+    echo "pitr report=NOT WRITTEN ($report)" >&2
+    return 1
+  fi
   if ! v1_pgbackrest_conf >/dev/null; then
     v1_pitr_blocked "the pgBackRest repository config is missing or refused (run make v1-secrets, or point PGBACKREST_CONF at a real file)" "$target"
     return 1
@@ -767,12 +791,13 @@ v1_pitr() {
   PGBACKREST_RESTORE_SCRATCH_VOLUME="$scratch"
   PGBACKREST_RESTORE_REPORT="$report"
   export PGBACKREST_RESTORE_TARGET PGBACKREST_RESTORE_SCRATCH_VOLUME PGBACKREST_RESTORE_REPORT
-  started="$(date +%s)"
   bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh" || status=$?
-  # The path is printed only when this run actually wrote it. A restore whose
-  # evidence could not be written has not produced a report, and naming a file
-  # left by an earlier run would be worse than saying it is missing.
-  if [[ -f "$report" && "$(stat -c %Y "$report" 2>/dev/null || printf 0)" -ge "$started" ]]; then
+  # The path is printed only when this run actually wrote it. The previous
+  # report was moved aside above, so a file at $report now belongs to this
+  # invocation. A restore whose evidence could not be written has not produced a
+  # report, and naming a file left by an earlier run would be worse than saying
+  # it is missing.
+  if [[ -f "$report" ]]; then
     echo "pitr report=$report"
   else
     echo "pitr report=NOT WRITTEN ($report)" >&2

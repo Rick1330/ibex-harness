@@ -60,8 +60,12 @@ case "$DRILL_MECHANISM" in
   auto | pgbackrest | pg_dump) : ;;
   *) echo "[drill] ERROR: mechanism must be auto, pgbackrest or pg_dump (got '$DRILL_MECHANISM')" >&2; exit 2 ;;
 esac
-if [[ -n "$DRILL_TARGET" ]] && ! [[ "$DRILL_TARGET" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[T\ ][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)?$ ]]; then
-  echo "[drill] ERROR: --target must be an ISO8601 timestamp (got '$DRILL_TARGET')" >&2
+# The UTC offset is mandatory. A zone-less timestamp is parsed in the host's
+# local time by `date`, by pgBackRest's --target parser and — differently — by
+# PostgreSQL's own TimeZone during recovery, so the run could stop at one instant
+# while the replay check compares against another.
+if [[ -n "$DRILL_TARGET" ]] && ! [[ "$DRILL_TARGET" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[T\ ][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)$ ]]; then
+  echo "[drill] ERROR: --target must be an ISO8601 timestamp with an explicit UTC offset (Z, +HH, +HHMM or +HH:MM); without one the host's local time decides which instant was asked for (got '$DRILL_TARGET')" >&2
   exit 2
 fi
 echo "[drill] mechanism=$DRILL_MECHANISM target=${DRILL_TARGET:-<none>}"
@@ -366,30 +370,37 @@ PG_BACKUP_OK=false
 PG_RESTORE_OK=false
 PG_BACKUP_SEC=""
 PG_RTO_MEASURED=""
-PG_RPO_MEASURED=""
 
-# WAL archive freshness is the only honest source for Postgres RPO: it is the
-# age of the newest recoverable segment. It is measured *before* the backup,
-# because a backup forces a WAL switch and a measurement taken afterwards would
-# always look fresh — a number that flatters itself is not evidence.
+# The archive state is the only honest source for a Postgres RPO, and it is
+# measured *before* the backup: a backup forces a WAL switch, so a measurement
+# taken afterwards would always look fresh — a number that flatters itself is not
+# evidence. What is recorded is the state, not a claim; the report writer derives
+# the bound from it.
 WAL_ARCHIVE_OK=false
 WAL_ARCHIVE_AGE_SEC=""
-# The upload age is only an RPO while nothing older is still queued, so the
+# The upload age is only a bound while nothing older is still queued, so the
 # queue state is measured with it and travels to the report writer, which
-# refuses the claim when the archive is not drained.
+# refuses the claim when the archive is not provably drained.
 WAL_ARCHIVE_LAST_SEGMENT=""
 WAL_ARCHIVE_CURRENT_SEGMENT=""
 WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE=""
+# The upload age is a diagnostic. The RPO bound the writer derives from it needs
+# the cluster's archive_timeout, and the queue state needs its wal_segment_size
+# and how many older segments are still sitting in pg_wal.
+WAL_ARCHIVE_TIMEOUT_SEC=""
+WAL_ARCHIVE_WAL_SEGMENT_SIZE=""
+WAL_ARCHIVE_OLDER_SEGMENTS=""
 measure_wal_archive() {
-  local row archived last_us last_seg cur_seg last_failed now_us
-  row="$(psql_cmd -Atc "SELECT archived_count || '|' || COALESCE((EXTRACT(EPOCH FROM last_archived_time) * 1000000)::bigint, -1) || '|' || COALESCE(last_archived_wal, '') || '|' || pg_walfile_name(pg_current_wal_lsn()) || '|' || CASE WHEN last_failed_time IS NOT NULL AND (last_archived_time IS NULL OR last_failed_time > last_archived_time) THEN 'true' ELSE 'false' END FROM pg_stat_archiver" 2>/dev/null | tr -d '\r' | tail -n1 || true)"
+  local row archived last_us last_seg cur_seg last_failed archive_timeout
+  local continuity seg_bytes older_segments now_us
+  row="$(psql_cmd -Atc "SELECT archived_count || '|' || COALESCE((EXTRACT(EPOCH FROM last_archived_time) * 1000000)::bigint, -1) || '|' || COALESCE(last_archived_wal, '') || '|' || pg_walfile_name(pg_current_wal_lsn()) || '|' || CASE WHEN last_failed_time IS NOT NULL AND (last_archived_time IS NULL OR last_failed_time > last_archived_time) THEN 'true' ELSE 'false' END || '|' || COALESCE((EXTRACT(EPOCH FROM current_setting('archive_timeout')::interval))::bigint, -1) FROM pg_stat_archiver" 2>/dev/null | tr -d '\r' | tail -n1 || true)"
   if [[ -z "$row" || "$row" != *"|"* ]]; then
     echo "[drill] WAL archive freshness unreadable (pg_stat_archiver)"
     return 0
   fi
   # An empty row is "unmeasured", not a reason to abort: `read` returns 1 at
   # EOF, so the failure is swallowed here and handled by the checks below.
-  IFS='|' read -r archived last_us last_seg cur_seg last_failed <<<"$row" || true
+  IFS='|' read -r archived last_us last_seg cur_seg last_failed archive_timeout <<<"$row" || true
   # '' or a non-digit means the count is unusable, so RPO stays unmeasured. An
   # all-digit value is the valid case and is handled below, so the default arm
   # is a deliberate no-op rather than a silent acceptance.
@@ -405,16 +416,37 @@ measure_wal_archive() {
     echo "[drill] WAL archiving has archived no segment (archived_count=$archived) — RPO unmeasurable"
     return 0
   fi
+  case "$archive_timeout" in
+    '' | *[!0-9]*) archive_timeout="" ;;
+    *) : ;;
+  esac
+  # Adjacency is not continuity: archival order is not guaranteed, so an older
+  # segment still present in pg_wal means the queue has not drained however
+  # close the newest archived segment is. A psql that cannot list pg_wal leaves
+  # this unproven, which the writer refuses rather than reads as drained.
+  continuity="$(psql_cmd -Atc "SELECT pg_size_bytes(current_setting('wal_segment_size')) || '|' || COALESCE((SELECT count(*) FROM pg_ls_waldir() w, pg_stat_archiver a WHERE a.last_archived_wal IS NOT NULL AND w.name ~ '^[0-9A-F]{24}$' AND w.name < a.last_archived_wal)::text, '')" 2>/dev/null | tr -d '\r' | tail -n1 || true)"
+  IFS='|' read -r seg_bytes older_segments <<<"$continuity" || true
+  case "$seg_bytes" in
+    '' | *[!0-9]*) seg_bytes="" ;;
+    *) : ;;
+  esac
+  case "$older_segments" in
+    '' | *[!0-9]*) older_segments="" ;;
+    *) : ;;
+  esac
   WAL_ARCHIVE_OK=true
   now_us="$(date +%s%6N)"
   WAL_ARCHIVE_AGE_SEC=$(( (now_us - last_us) / 1000000 ))
   if (( WAL_ARCHIVE_AGE_SEC < 0 )); then
     WAL_ARCHIVE_AGE_SEC=0
   fi
+  WAL_ARCHIVE_TIMEOUT_SEC="$archive_timeout"
+  WAL_ARCHIVE_WAL_SEGMENT_SIZE="$seg_bytes"
+  WAL_ARCHIVE_OLDER_SEGMENTS="$older_segments"
   WAL_ARCHIVE_LAST_SEGMENT="$last_seg"
   WAL_ARCHIVE_CURRENT_SEGMENT="$cur_seg"
   WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE="$last_failed"
-  echo "[drill] wal_archive_ok=true newest_archived_age_sec=$WAL_ARCHIVE_AGE_SEC last_archived_wal=${last_seg:-unknown} current_wal=${cur_seg:-unknown} failed_since_archive=${last_failed:-unknown}"
+  echo "[drill] wal_archive_ok=true newest_archived_age_sec=$WAL_ARCHIVE_AGE_SEC archive_timeout_sec=${archive_timeout:-unknown} wal_segment_size_bytes=${seg_bytes:-unknown} older_segments_present=${older_segments:-unknown} last_archived_wal=${last_seg:-unknown} current_wal=${cur_seg:-unknown} failed_since_archive=${last_failed:-unknown}"
 }
 measure_wal_archive
 
@@ -628,17 +660,16 @@ fi
 if [[ "$PG_RESTORE_OK" == "true" ]]; then
   PG_RTO_MEASURED="$(floor_sec $((PG_RESTORE_END - PG_RESTORE_START)))"
 fi
-# RPO is the age of the latest recoverable WAL/recovery point — NOT backup duration.
-# pg_dump cannot measure RPO. pgBackRest measures it from the archive freshness
-# observed before the backup; when archiving is not proven fresh the field stays
-# null and rpo_pass stays false, which is the honest answer.
-PG_RPO_MEASURED=""
+# RPO is not computed here. The report writer derives the bound from the archive
+# facts recorded above — the upload age plus the cluster's archive_timeout — and
+# leaves it null when the queue is not provably drained or the timeout is unset,
+# because an upload age on its own is not an RPO. pg_dump cannot measure an RPO
+# at all.
 if [[ -n "$PG_BACKUP_SEC" ]]; then
   echo "[drill] backup_wall_clock_sec=$PG_BACKUP_SEC (not exported as RPO)"
 fi
 if [[ "$PG_USED_PGBACKREST" == "true" && "$WAL_ARCHIVE_OK" == "true" ]]; then
-  PG_RPO_MEASURED="$WAL_ARCHIVE_AGE_SEC"
-  echo "[drill] postgres RPO measured from WAL archive age: ${PG_RPO_MEASURED}s"
+  echo "[drill] WAL archive measured: upload_age_sec=$WAL_ARCHIVE_AGE_SEC archive_timeout_sec=${WAL_ARCHIVE_TIMEOUT_SEC:-unknown} (the report writer derives the RPO bound)"
 else
   echo "[drill] postgres RPO left unmeasured — requires pgBackRest WAL archiving (#869)"
 fi
@@ -743,7 +774,7 @@ if [[ "$PG_BACKUP_OK" == "true" ]]; then
   fi
 fi
 
-export REPORT PG_RPO_SEC PG_RTO_SEC PG_RPO_MEASURED PG_RTO_MEASURED
+export REPORT PG_RPO_SEC PG_RTO_SEC PG_RTO_MEASURED
 export DRILL_KIND=restore-drill DRILL_STARTED_AT
 ENVIRONMENT_CLASS="$(drill_environment_class)"
 export ENVIRONMENT_CLASS
@@ -751,6 +782,7 @@ export WAL_ARCHIVE_OK TARGET_TIMESTAMP="$DRILL_TARGET"
 export WAL_ARCHIVE_UPLOAD_AGE_SEC="$WAL_ARCHIVE_AGE_SEC"
 export WAL_ARCHIVE_LAST_SEGMENT WAL_ARCHIVE_CURRENT_SEGMENT
 export WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE
+export WAL_ARCHIVE_TIMEOUT_SEC WAL_ARCHIVE_WAL_SEGMENT_SIZE WAL_ARCHIVE_OLDER_SEGMENTS
 export RECOVERY_TARGET_REACHED RECOVERY_REPLAY_TIMESTAMP
 export CLUSTER_DATA_BYTES RESTORED_ORGS RESTORED_MEMORIES
 export BLOCKED_BY=""

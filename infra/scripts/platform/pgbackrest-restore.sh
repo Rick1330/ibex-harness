@@ -95,7 +95,12 @@ PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC=""
 PITR_WAL_ARCHIVE_LAST_SEGMENT=""
 PITR_WAL_ARCHIVE_CURRENT_SEGMENT=""
 PITR_WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE=""
-PITR_RPO_MEASURED=""
+# The bound the upload age supports needs the cluster's archive_timeout, and the
+# queue state needs the cluster's own wal_segment_size and pg_wal listing: the
+# age alone is a diagnostic, not an RPO.
+PITR_WAL_ARCHIVE_TIMEOUT_SEC=""
+PITR_WAL_ARCHIVE_WAL_SEGMENT_SIZE=""
+PITR_WAL_ARCHIVE_OLDER_SEGMENTS=""
 # Record the requested target immediately: a run blocked before the target is
 # parsed must still say which recovery point was asked for.
 PITR_TARGET_TIMESTAMP="${PGBACKREST_RESTORE_TARGET:-}"
@@ -175,7 +180,9 @@ emit_pitr_report() {
     PITR_WAL_ARCHIVE_LAST_SEGMENT="$PITR_WAL_ARCHIVE_LAST_SEGMENT" \
     PITR_WAL_ARCHIVE_CURRENT_SEGMENT="$PITR_WAL_ARCHIVE_CURRENT_SEGMENT" \
     PITR_WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE="$PITR_WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE" \
-    PITR_RPO_MEASURED="$PITR_RPO_MEASURED" \
+    PITR_WAL_ARCHIVE_TIMEOUT_SEC="$PITR_WAL_ARCHIVE_TIMEOUT_SEC" \
+    PITR_WAL_ARCHIVE_WAL_SEGMENT_SIZE="$PITR_WAL_ARCHIVE_WAL_SEGMENT_SIZE" \
+    PITR_WAL_ARCHIVE_OLDER_SEGMENTS="$PITR_WAL_ARCHIVE_OLDER_SEGMENTS" \
     PITR_TARGET_TIMESTAMP="$PITR_TARGET_TIMESTAMP" \
     PITR_RECOVERY_TARGET_REACHED="$PITR_RECOVERY_TARGET_REACHED" \
     PITR_RECOVERY_REPLAY_TIMESTAMP="$PITR_RECOVERY_REPLAY_TIMESTAMP" \
@@ -330,16 +337,22 @@ COMPOSE_VOLUME=""
 # validated as an ISO8601 timestamp rather than forwarded verbatim.
 #
 # pgBackRest's --target parser is not ISO8601: it wants `YYYY-MM-DD HH:MM:SS`
-# with optional milliseconds and optional `+HH[:MM]` offset, and rejects the
-# `T` separator and `Z` suffix that an operator types. Validate the ISO8601
-# form, then normalise it to the shape pgBackRest accepts so the documented
-# `2026-11-14T09:01:00Z` input works instead of failing deep in the restore.
+# with optional milliseconds and an offset, and rejects the `T` separator and `Z`
+# suffix that an operator types. Validate the ISO8601 form, then normalise it to
+# the shape pgBackRest accepts so the documented `2026-11-14T09:01:00Z` input
+# works instead of failing deep in the restore.
+#
+# The offset is mandatory. A zone-less timestamp is not an instant: `date` reads
+# it in the host's local time, pgBackRest reads it in the host's local time, and
+# PostgreSQL applies its own TimeZone during recovery, so recovery can stop at
+# one instant while the replay check compares against another — a false pass or a
+# false miss depending on where the host's clock sits.
 iso_target=""
 target_micros=""
 if [[ -n "$RESTORE_TARGET" ]]; then
-  if ! [[ "$RESTORE_TARGET" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[T\ ][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)?$ ]]; then
-    echo "[restore] PGBACKREST_RESTORE_TARGET is not an ISO8601 timestamp: $RESTORE_TARGET" >&2
-    pitr_blocked "PGBACKREST_RESTORE_TARGET is not an ISO8601 timestamp: $RESTORE_TARGET"
+  if ! [[ "$RESTORE_TARGET" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[T\ ][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)$ ]]; then
+    echo "[restore] PGBACKREST_RESTORE_TARGET is not an ISO8601 timestamp with an explicit UTC offset (Z, +HH, +HHMM or +HH:MM): $RESTORE_TARGET" >&2
+    pitr_blocked "PGBACKREST_RESTORE_TARGET is not an ISO8601 timestamp with an explicit UTC offset (Z, +HH, +HHMM or +HH:MM); without one the host's local time decides which instant was asked for: $RESTORE_TARGET"
     exit 2
   fi
   iso_target="$RESTORE_TARGET"
@@ -660,12 +673,17 @@ live_cluster_identity() {
 }
 
 # measure_live_wal_archive records WAL archive freshness before anything is
-# restored. RPO is the age of the newest recoverable segment, and a backup or a
-# restore forces a WAL switch, so measuring it afterwards would always look
-# fresh. When archiving is not proven the RPO field stays null and the report
-# cannot claim an RPO pass.
+# restored. A backup or a restore forces a WAL switch, so measuring it afterwards
+# would always look fresh. When archiving is not proven the RPO field stays null
+# and the report cannot claim an RPO pass.
+#
+# What is recorded is the *measurement*, not a claim: the upload age, the
+# cluster's archive_timeout, its wal_segment_size and how many older segments are
+# still sitting in pg_wal. The report writer derives the bound and refuses it when
+# any of those is unproven.
 measure_live_wal_archive() {
-  local identity cid user db row archived last_us last_seg cur_seg last_failed now_us
+  local identity cid user db row archived last_us last_seg cur_seg last_failed
+  local archive_timeout continuity seg_bytes older_segments now_us
   [[ -n "$PITR_REPORT" ]] || return 0
   identity="$(live_cluster_identity || true)"
   if [[ "$identity" != *"|"*"|"* ]]; then
@@ -676,16 +694,16 @@ measure_live_wal_archive() {
   user="${identity#*|}"
   user="${user%%|*}"
   db="${identity##*|}"
-  # last_archived_time is when an upload *completed*, so it is an RPO only while
-  # nothing older is still queued. The segment names answer that question and
-  # travel with the report: the writer refuses the claim when the queue is not
-  # drained. Microseconds keep the age exact; whole seconds would round it.
+  # last_archived_time is when an upload *completed*, so it is not an RPO on its
+  # own: a commit lands in WAL immediately and reaches the archive within
+  # archive_timeout of its segment being switched, plus that segment's upload
+  # latency. Microseconds keep the age exact; whole seconds would round it.
   row="$("${CLI[@]}" exec "$cid" psql -U "$user" -d "$db" -tAc \
-    "SELECT archived_count || '|' || COALESCE((EXTRACT(EPOCH FROM last_archived_time) * 1000000)::bigint, -1) || '|' || COALESCE(last_archived_wal, '') || '|' || pg_walfile_name(pg_current_wal_lsn()) || '|' || CASE WHEN last_failed_time IS NOT NULL AND (last_archived_time IS NULL OR last_failed_time > last_archived_time) THEN 'true' ELSE 'false' END FROM pg_stat_archiver" \
+    "SELECT archived_count || '|' || COALESCE((EXTRACT(EPOCH FROM last_archived_time) * 1000000)::bigint, -1) || '|' || COALESCE(last_archived_wal, '') || '|' || pg_walfile_name(pg_current_wal_lsn()) || '|' || CASE WHEN last_failed_time IS NOT NULL AND (last_archived_time IS NULL OR last_failed_time > last_archived_time) THEN 'true' ELSE 'false' END || '|' || COALESCE((EXTRACT(EPOCH FROM current_setting('archive_timeout')::interval))::bigint, -1) FROM pg_stat_archiver" \
     2>/dev/null | tr -d '\r' | tail -n1 || true)"
   # An empty row is "unmeasured", not a reason to abort: `read` returns 1 at
   # EOF, so the failure is swallowed here and handled by the checks below.
-  IFS='|' read -r archived last_us last_seg cur_seg last_failed <<<"$row" || true
+  IFS='|' read -r archived last_us last_seg cur_seg last_failed archive_timeout <<<"$row" || true
   # '' or a non-digit means the count is unusable, so RPO stays unmeasured. An
   # all-digit value is the valid case and is handled below, so the default arm
   # is a deliberate no-op rather than a silent acceptance.
@@ -701,17 +719,39 @@ measure_live_wal_archive() {
     echo "[restore] WAL archiving has archived no segment (archived_count=$archived) — RPO unmeasurable"
     return 0
   fi
+  case "$archive_timeout" in
+    '' | *[!0-9]*) archive_timeout="" ;;
+    *) : ;;
+  esac
+  # Adjacency is not continuity: PostgreSQL does not promise archival order, so
+  # an older segment still present in pg_wal means the queue has not drained
+  # however close the newest archived segment is. A psql that cannot list pg_wal
+  # leaves this unproven, which the writer refuses rather than reads as drained.
+  continuity="$("${CLI[@]}" exec "$cid" psql -U "$user" -d "$db" -tAc \
+    "SELECT pg_size_bytes(current_setting('wal_segment_size')) || '|' || COALESCE((SELECT count(*) FROM pg_ls_waldir() w, pg_stat_archiver a WHERE a.last_archived_wal IS NOT NULL AND w.name ~ '^[0-9A-F]{24}$' AND w.name < a.last_archived_wal)::text, '')" \
+    2>/dev/null | tr -d '\r' | tail -n1 || true)"
+  IFS='|' read -r seg_bytes older_segments <<<"$continuity" || true
+  case "$seg_bytes" in
+    '' | *[!0-9]*) seg_bytes="" ;;
+    *) : ;;
+  esac
+  case "$older_segments" in
+    '' | *[!0-9]*) older_segments="" ;;
+    *) : ;;
+  esac
   now_us="$(date +%s%6N)"
   PITR_WAL_ARCHIVE_OK=true
   PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC=$(( (now_us - last_us) / 1000000 ))
   if (( PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC < 0 )); then
     PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC=0
   fi
-  PITR_RPO_MEASURED="$PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC"
+  PITR_WAL_ARCHIVE_TIMEOUT_SEC="$archive_timeout"
+  PITR_WAL_ARCHIVE_WAL_SEGMENT_SIZE="$seg_bytes"
+  PITR_WAL_ARCHIVE_OLDER_SEGMENTS="$older_segments"
   PITR_WAL_ARCHIVE_LAST_SEGMENT="$last_seg"
   PITR_WAL_ARCHIVE_CURRENT_SEGMENT="$cur_seg"
   PITR_WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE="$last_failed"
-  echo "[restore] wal_archive_ok=true newest_archived_age_sec=$PITR_RPO_MEASURED last_archived_wal=${last_seg:-unknown} current_wal=${cur_seg:-unknown} failed_since_archive=${last_failed:-unknown}"
+  echo "[restore] wal_archive_ok=true newest_archived_age_sec=$PITR_WAL_ARCHIVE_UPLOAD_AGE_SEC archive_timeout_sec=${archive_timeout:-unknown} wal_segment_size_bytes=${seg_bytes:-unknown} older_segments_present=${older_segments:-unknown} last_archived_wal=${last_seg:-unknown} current_wal=${cur_seg:-unknown} failed_since_archive=${last_failed:-unknown}"
 }
 
 # recovery_identity prints "<user>|<db>" for a restored cluster.
@@ -1040,12 +1080,22 @@ canonical_dir() {
 # maintenance database, not the data that was restored, and reporting it would
 # flatter the restore with a number that proves nothing.
 record_host_cluster_facts() {
+  local -a psql_cmd=("$@")
   local db=postgres row replay has_ibex
-  has_ibex="$("$@" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'ibex'" 2>/dev/null | tr -d "$PG_WS_TRIM" || true)"
+  # The first argument is the command, and everything after it is a connection
+  # option. Passing the options alone is how this function once ran `-p` as a
+  # command: every query failed silently, the target stayed unproven, and a
+  # recovery that worked was reported as a missed target. A command may be a bare
+  # name or a path; an option is never one.
+  if [[ -z "${psql_cmd[0]:-}" || "${psql_cmd[0]}" == -* ]]; then
+    echo "[restore] FAILED: record_host_cluster_facts needs the psql command as its first argument, got '${psql_cmd[0]:-<empty>}'" >&2
+    return 1
+  fi
+  has_ibex="$("${psql_cmd[@]}" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'ibex'" 2>/dev/null | tr -d "$PG_WS_TRIM" || true)"
   if [[ "$has_ibex" == "1" ]]; then
     db=ibex
   fi
-  row="$("$@" -d "$db" -tAc \
+  row="$("${psql_cmd[@]}" -d "$db" -tAc \
     "SELECT COALESCE((EXTRACT(EPOCH FROM pg_last_xact_replay_timestamp()) * 1000000)::bigint, -1) || '|' || pg_database_size(current_database())" \
     2>/dev/null | tr -d '\r' | tail -n1 || true)"
   if [[ "$row" == *"|"* ]]; then
@@ -1062,12 +1112,12 @@ record_host_cluster_facts() {
     record_recovery_target "$replay"
   fi
   if [[ "$db" == "ibex" ]]; then
-    PITR_RESTORED_ORGS="$("$@" -d "$db" -tAc "SELECT COUNT(*)::text FROM ibex_core.organizations" 2>/dev/null | tr -d "$PG_WS_TRIM" | tail -n1 || true)"
+    PITR_RESTORED_ORGS="$("${psql_cmd[@]}" -d "$db" -tAc "SELECT COUNT(*)::text FROM ibex_core.organizations" 2>/dev/null | tr -d "$PG_WS_TRIM" | tail -n1 || true)"
     case "$PITR_RESTORED_ORGS" in
       '' | *[!0-9]*) PITR_RESTORED_ORGS="" ;;
       *) : ;;
     esac
-    PITR_RESTORED_MEMORIES="$("$@" -d "$db" -tAc "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
+    PITR_RESTORED_MEMORIES="$("${psql_cmd[@]}" -d "$db" -tAc "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
   fi
   echo "[restore] restored cluster bytes=${PITR_CLUSTER_DATA_BYTES:-unknown} orgs=${PITR_RESTORED_ORGS:-unknown} memories=${PITR_RESTORED_MEMORIES:-unknown}"
 }
@@ -1147,8 +1197,13 @@ verify_destructive_restore_host() {
   fi
   echo "[restore] recovery state verified: pg_is_in_recovery()=false (data_directory=$actual_data_dir)"
   # The host branch used to stop here, so every targeted host restore reached
-  # the same success state without anyone reading the replayed transaction.
-  record_host_cluster_facts "${psql_target[@]}"
+  # the same success state without anyone reading the replayed transaction. The
+  # facts are read through the connection proven above: psql first, then the
+  # options it was built from.
+  if ! record_host_cluster_facts psql "${psql_target[@]}"; then
+    echo "[restore] FAILED: the restored cluster's recovery facts could not be read" >&2
+    return 1
+  fi
   return 0
 }
 
