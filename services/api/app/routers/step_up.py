@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from apierror_py import (
+    INSUFFICIENT_PERMISSIONS,
     INVALID_REQUEST,
     INVALID_TOKEN,
     MISSING_TOKEN,
@@ -43,6 +44,7 @@ _STEP_UP_ACTIONS: dict[str, int] = {"org.delete": ORG_SETTINGS_WRITE}
 
 _INVALID_CODE = "invalid step-up code"
 _AUTH_UNAVAILABLE = "auth unavailable"
+_USER_SCOPED = "User-scoped token required"
 
 
 def _step_up_permission(action: str) -> int:
@@ -50,6 +52,20 @@ def _step_up_permission(action: str) -> int:
     if permission is None:
         raise ApiError(code=INVALID_REQUEST, message="unsupported step-up action")
     return permission
+
+
+def _assert_user_caller(token: ValidateResult) -> None:
+    """Refuse a userless bearer here, before AuthService has to.
+
+    AuthService's ``CreateStepUpToken`` asserts the caller is the user named in
+    the request and refuses a caller with no user id. Every action this route
+    vouches for is owner-role gated, and that gate already requires a user, so a
+    userless PAT could never use the proof it asked for. Asking AuthService
+    anyway would report its refusal as an "invalid step-up code" 401; this says
+    what is actually wrong, in the same words ``load_caller_role`` uses.
+    """
+    if not token.user_id:
+        raise ApiError(code=INSUFFICIENT_PERMISSIONS, message=_USER_SCOPED)
 
 
 def _bearer_token(request: Request) -> str:
@@ -96,10 +112,13 @@ async def create_step_up_proof(
 
     The caller must already hold the permission the action needs; the proof only
     proves a second factor was presented just now, never a grant the caller did
-    not have.
+    not have. Only a user-scoped bearer can obtain one: the sole registered
+    action, ``org.delete``, is owner-role gated, and AuthService issues no proof
+    for a caller with no user.
     """
     permission = _step_up_permission(body.action)
     assert_permission(token.permissions, permission)
+    _assert_user_caller(token)
     binding = bearer_binding(token, getattr(request.state, "ibex_session_id", None))
     issued = await _issue_proof(
         request.app.state.settings,

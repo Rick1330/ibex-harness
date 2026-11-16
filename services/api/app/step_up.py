@@ -69,6 +69,13 @@ def bearer_binding(token: ValidateResult, session_id: str | None = None) -> Step
     choose. ``session_id`` is the verified operator session when the route has
     one; otherwise the bearer token's own id stands in, which is what a
     bearer-only request can actually prove.
+
+    The token-id subject is a fail-closed derivation, not a capability. No proof
+    is issued for it: AuthService's ``CreateStepUpToken`` refuses a caller with
+    no user id, and the sole action this API vouches for, ``org.delete``, is
+    owner-role gated — ``load_caller_role`` already requires a user. A userless
+    PAT therefore cannot delete an organization; scripted teardown uses a
+    user-scoped PAT plus TOTP.
     """
     subject = token.user_id or token.token_id
     session = session_id or token.token_id

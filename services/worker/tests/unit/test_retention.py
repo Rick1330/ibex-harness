@@ -154,6 +154,20 @@ def test_sweep_applies_every_window_at_its_own_cutoff() -> None:
     assert partitions.dropped == ["202509"]
 
 
+def test_sweep_runs_the_partition_window_without_a_store() -> None:
+    """No PostgreSQL DSN means no Postgres window, not no sweep at all."""
+    partitions = _FakePartitions(["202509", "202511"])
+
+    report = asyncio.run(
+        run_retention_sweep(store=None, partitions=partitions, policy=_policy(), now=_NOW)
+    )
+
+    assert report.scrubbed == 0
+    assert report.deleted_tasks == 0
+    assert report.deleted_ledger == 0
+    assert partitions.dropped == ["202509"]
+
+
 def test_sweep_reports_nothing_dropped_when_no_partition_is_old_enough() -> None:
     report = _sweep(_FakeStore(), _FakePartitions(["202510", "202511"]))
     assert report.dropped_months == ()
@@ -384,9 +398,88 @@ def _task_settings(**overrides: Any) -> SimpleNamespace:
 
 
 def test_retention_sweep_task_skips_without_a_database_url() -> None:
-    with patch.object(maintenance, "get_settings", return_value=_task_settings(database_url=None)):
+    settings = _task_settings(database_url=None, clickhouse_dsn=None)
+    with patch.object(maintenance, "get_settings", return_value=settings):
         result = maintenance.retention_sweep()
-    assert result == {"status": "skipped", "reason": "missing_dsn"}
+    assert result == {
+        "status": "skipped",
+        "reason": "missing_dsn",
+        "skipped": ["postgres", "clickhouse"],
+    }
+
+
+def test_retention_sweep_task_runs_clickhouse_without_postgres() -> None:
+    """Partition cleanup needs no PostgreSQL connection, so an absent DSN must not skip it."""
+    report = RetentionReport(
+        scrubbed=0, deleted_tasks=0, deleted_ledger=0, dropped_months=("202509",)
+    )
+    sweep = AsyncMock(return_value=report)
+    with (
+        patch.object(
+            maintenance,
+            "get_settings",
+            return_value=_task_settings(database_url=None),
+        ),
+        patch.object(maintenance, "SqlAlchemyRetentionStore") as store_cls,
+        patch.object(maintenance, "run_retention_sweep", sweep),
+    ):
+        result = maintenance.retention_sweep()
+
+    store_cls.assert_not_called()
+    assert sweep.await_args.kwargs["store"] is None
+    assert isinstance(sweep.await_args.kwargs["partitions"], ClickHouseUsageFactsPartitions)
+    assert result == {
+        "status": "ok",
+        "scrubbed": 0,
+        "deleted_tasks": 0,
+        "deleted_ledger": 0,
+        "dropped_months": ["202509"],
+        "skipped": ["postgres"],
+    }
+
+
+def test_retention_sweep_task_runs_postgres_without_clickhouse() -> None:
+    store = MagicMock()
+    store.aclose = AsyncMock()
+    report = RetentionReport(scrubbed=1, deleted_tasks=0, deleted_ledger=0, dropped_months=())
+    with (
+        patch.object(
+            maintenance,
+            "get_settings",
+            return_value=_task_settings(clickhouse_dsn=None),
+        ),
+        patch.object(maintenance, "SqlAlchemyRetentionStore", return_value=store),
+        patch.object(maintenance, "run_retention_sweep", AsyncMock(return_value=report)),
+    ):
+        result = maintenance.retention_sweep()
+
+    assert result["status"] == "ok"
+    assert result["skipped"] == ["clickhouse"]
+    store.aclose.assert_awaited_once()
+
+
+def test_retention_sweep_task_uses_one_event_loop_for_the_sweep_and_the_dispose() -> None:
+    """The pool is bound to its loop: the dispose must run inside the loop that used it."""
+    store = MagicMock()
+    store.aclose = AsyncMock()
+    report = RetentionReport(scrubbed=0, deleted_tasks=0, deleted_ledger=0, dropped_months=())
+    real_run = asyncio.run
+    coroutines: list[Any] = []
+
+    def _counting_run(coro: Any) -> Any:
+        coroutines.append(coro)
+        return real_run(coro)
+
+    with (
+        patch.object(maintenance, "get_settings", return_value=_task_settings()),
+        patch.object(maintenance, "SqlAlchemyRetentionStore", return_value=store),
+        patch.object(maintenance, "run_retention_sweep", AsyncMock(return_value=report)),
+        patch.object(maintenance.asyncio, "run", _counting_run),
+    ):
+        maintenance.retention_sweep()
+
+    assert len(coroutines) == 1
+    store.aclose.assert_awaited_once()
 
 
 def test_retention_sweep_task_runs_both_stores() -> None:
@@ -408,6 +501,7 @@ def test_retention_sweep_task_runs_both_stores() -> None:
         "deleted_tasks": 1,
         "deleted_ledger": 1,
         "dropped_months": ["202509"],
+        "skipped": [],
     }
     store.aclose.assert_awaited_once()
 
@@ -440,4 +534,5 @@ def test_retention_sweep_task_skips_clickhouse_when_it_is_unconfigured() -> None
         result = maintenance.retention_sweep()
 
     assert result["status"] == "ok"
+    assert result["skipped"] == ["clickhouse"]
     assert isinstance(sweep.await_args.kwargs["partitions"], NoopUsageFactsPartitions)

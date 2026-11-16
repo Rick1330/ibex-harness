@@ -376,6 +376,59 @@ async def test_worker_cannot_reach_either_table_without_the_definer(
         await engine.dispose()
 
 
+_RETENTION_CALLS = (
+    (
+        "ibex_core.retention_scrub_failed_tasks(timestamptz)",
+        "SELECT ibex_core.retention_scrub_failed_tasks(TIMESTAMPTZ 'epoch')",
+    ),
+    (
+        "ibex_core.retention_delete_failed_tasks(timestamptz)",
+        "SELECT ibex_core.retention_delete_failed_tasks(TIMESTAMPTZ 'epoch')",
+    ),
+    (
+        "ibex_core.retention_delete_finalized_idempotency(timestamptz)",
+        "SELECT ibex_core.retention_delete_finalized_idempotency(TIMESTAMPTZ 'epoch')",
+    ),
+)
+
+
+async def test_a_tenant_identity_cannot_execute_the_retention_functions(
+    owner_factory: async_sessionmaker,
+    capability_worker_dsn: str,
+) -> None:
+    """The cross-tenant reach is the function owner's, never a tenant grant.
+
+    Migration 000076 records the three bodies as cross-tenant by design. That
+    reach is only acceptable while it is unreachable from a tenant identity:
+    ``ibex_app`` holds no EXECUTE (so PUBLIC holds none either, because
+    ``has_function_privilege`` counts inherited and PUBLIC grants), and a
+    worker session that switches into the tenant role is refused at call time.
+    """
+    async with owner_factory() as session:
+        for function, _call in _RETENTION_CALLS:
+            for role, expected in (("ibex_worker", True), ("ibex_app", False)):
+                granted = (
+                    await session.execute(
+                        _sql("SELECT has_function_privilege(:role, :function, 'EXECUTE')"),
+                        {"role": role, "function": function},
+                    )
+                ).scalar_one()
+                assert granted is expected, (role, function)
+
+    engine = create_engine(Settings(database_url=capability_worker_dsn))
+    try:
+        for function, call in _RETENTION_CALLS:
+            with pytest.raises(DBAPIError) as caught:
+                async with engine.begin() as conn:
+                    await conn.execute(_sql("SET LOCAL ROLE ibex_app"))
+                    # A 1970 cutoff matches no row, so a mistakenly granted call
+                    # still would not change data.
+                    await conn.execute(_sql(call))
+            assert "permission denied" in str(caught.value).lower(), function
+    finally:
+        await engine.dispose()
+
+
 async def test_the_functions_refuse_a_cutoff_in_the_future(
     capability_worker_dsn: str,
 ) -> None:

@@ -12,6 +12,8 @@ from app.retention import (
     ClickHouseUsageFactsPartitions,
     NoopUsageFactsPartitions,
     RetentionPolicy,
+    RetentionReport,
+    RetentionStore,
     SqlAlchemyRetentionStore,
     UsageFactsPartitions,
     run_retention_sweep,
@@ -69,6 +71,38 @@ def _usage_facts_partitions(dsn: str | None) -> UsageFactsPartitions:
     return ClickHouseUsageFactsPartitions(dsn)
 
 
+def _skipped_backends(db_url: str | None, clickhouse_dsn: str | None) -> list[str]:
+    """Name each backend this configuration cannot run, in a stable order.
+
+    The two windows are independent, so "skipped" is per backend: a worker with
+    ClickHouse and no PostgreSQL still drops expired usage partitions, and the
+    result says which half of the sweep did not run.
+    """
+    skipped: list[str] = []
+    for backend, configured in (("postgres", db_url), ("clickhouse", clickhouse_dsn)):
+        if not configured:
+            skipped.append(backend)
+    return skipped
+
+
+async def _sweep_and_close(
+    store: RetentionStore | None,
+    partitions: UsageFactsPartitions,
+    policy: RetentionPolicy,
+) -> RetentionReport:
+    """Run the sweep and dispose the pool in the same event loop.
+
+    The engine's pool binds connections to the loop that created them, so the
+    dispose must happen inside the loop that ran the sweep; a second
+    ``asyncio.run`` would dispose a pool whose loop is already closed.
+    """
+    try:
+        return await run_retention_sweep(store=store, partitions=partitions, policy=policy)
+    finally:
+        if store is not None:
+            await store.aclose()
+
+
 @celery_app.task(
     bind=True,
     base=IbexTask,
@@ -84,32 +118,32 @@ def _usage_facts_partitions(dsn: str | None) -> UsageFactsPartitions:
 def retention_sweep(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
     """Apply the failed-task, idempotency, and usage-facts retention windows.
 
-    Postgres runs first and independently of ClickHouse: a dead-letter row is
-    the higher-risk store, and an unreachable ClickHouse must not postpone it.
+    The two backends are gated independently: a missing PostgreSQL DSN skips the
+    three Postgres windows but must not skip the ClickHouse partition drop, and
+    the reverse. The result names every backend that did not run.
     """
     del self, kwargs
     settings = get_settings()
     db_url = getattr(settings, "database_url", None)
-    if not db_url:
-        logger.info("retention_sweep skipped: missing database url")
-        return {"status": "skipped", "reason": "missing_dsn"}
-    store = SqlAlchemyRetentionStore(db_url)
-    partitions = _usage_facts_partitions(getattr(settings, "clickhouse_dsn", None))
-    try:
-        report = asyncio.run(
-            run_retention_sweep(
-                store=store,
-                partitions=partitions,
-                policy=RetentionPolicy.from_settings(settings),
-            )
+    clickhouse_dsn = getattr(settings, "clickhouse_dsn", None)
+    skipped = _skipped_backends(db_url, clickhouse_dsn)
+    if not db_url and not clickhouse_dsn:
+        logger.info("retention_sweep skipped: no retention backend configured")
+        return {"status": "skipped", "reason": "missing_dsn", "skipped": skipped}
+    store = SqlAlchemyRetentionStore(db_url) if db_url else None
+    report = asyncio.run(
+        _sweep_and_close(
+            store=store,
+            partitions=_usage_facts_partitions(clickhouse_dsn),
+            policy=RetentionPolicy.from_settings(settings),
         )
-    finally:
-        asyncio.run(store.aclose())
+    )
     logger.info(
-        "retention_sweep done scrubbed=%d deleted_tasks=%d deleted_ledger=%d dropped=%s",
+        "retention_sweep done scrubbed=%d deleted_tasks=%d deleted_ledger=%d dropped=%s skipped=%s",
         report.scrubbed,
         report.deleted_tasks,
         report.deleted_ledger,
         ",".join(report.dropped_months) or "-",
+        ",".join(skipped) or "-",
     )
-    return {"status": "ok", **report.as_dict()}
+    return {"status": "ok", **report.as_dict(), "skipped": skipped}
