@@ -122,6 +122,21 @@ jobs:
       - name: Deprecation record guard
         run: python3 services/api/scripts/check_deprecations.py
 
+      # Both guards were reachable only through `make repo-guards`, which shells
+      # into `infra/scripts/dev-tool.sh`; this job enumerates its steps by hand and
+      # never called them, so a PR could add an unpinned org-GUC store or resolve a
+      # waived package below its floor with neither guard running. They are
+      # stdlib-only, offline, and take ~0.1 s, so they belong here with the other
+      # static guards.
+      - name: Tenant pin guard
+        run: python3 infra/scripts/check-tenant-pin.py
+
+      - name: OSV waiver floor guard
+        run: python3 infra/scripts/check-osv-waiver-floor.py
+
+      - name: OSV waiver floor guard regression tests
+        run: python3 infra/scripts/test_check_osv_waiver_floor.py
+
       # G01: the checker fails closed without jsonschema, so it is installed from the
       # hash-locked requirement file into the interpreter that runs it. Warnings are
       # reported, not enforced: as of this change 146 published runs are still unrecorded

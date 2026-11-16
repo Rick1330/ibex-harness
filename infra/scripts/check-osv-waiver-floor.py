@@ -115,23 +115,59 @@ def version_key(version: str) -> tuple[int, int, int, bool]:
     )
 
 
-def _record_key(line: str) -> str | None:
-    """Return the record key a line declares, or None when it declares none.
+def _is_record_indent(line: str) -> bool:
+    """True when the line sits at the indentation pnpm gives a record key.
 
-    pnpm writes a record key at exactly two spaces of indentation and a
-    dependency entry deeper than that. The distinction is the whole point: at
-    six spaces, `nuxt: ^4.6.4` is a range the importer asked for, and reading it
-    as a resolution would compare a range against a floor and pass anything.
+    pnpm writes a record key at exactly two spaces and a dependency entry deeper
+    than that. The distinction is the whole point: at six spaces,
+    `nuxt: ^4.6.4` is a range the importer asked for, and reading it as a
+    resolution would compare a range against a floor and pass anything.
     """
-    if not line.startswith("  ") or line.startswith("   "):
+    if not line.startswith("  "):
+        return False
+    return not line.startswith("   ")
+
+
+def _declares_record_key(stripped: str) -> bool:
+    """True when a stripped line is a `key:` record rather than a dependency entry.
+
+    A record key terminates with `:` and always names a package, so it carries an
+    `@`; the importer's dependency entry (`nuxt: 4.6.4`) carries none.
+    """
+    if not stripped.endswith(":"):
+        return False
+    return "@" in stripped
+
+
+def _is_quoted(key: str) -> bool:
+    """True when pnpm wrapped the key in a matching pair of quotes."""
+    if len(key) <= 1:
+        return False
+    if key[0] not in "'\"":
+        return False
+    return key[-1] == key[0]
+
+
+def _record_key(line: str) -> str | None:
+    """Return the record key a line declares, or None when it declares none."""
+    if not _is_record_indent(line):
         return None
     stripped = line.strip()
-    if not stripped.endswith(":") or "@" not in stripped:
+    if not _declares_record_key(stripped):
         return None
     key = stripped[:-1].strip()
-    if len(key) > 1 and key[0] in "'\"" and key[-1] == key[0]:
-        key = key[1:-1]
+    if _is_quoted(key):
+        return key[1:-1]
     return key
+
+
+def _is_versioned_package(name: str, version: str) -> bool:
+    """True when a split key yielded a package name and a released version."""
+    if not name:
+        return False
+    if not version:
+        return False
+    return VERSION_RE.match(version) is not None
 
 
 def _split_resolution(key: str) -> tuple[str, str] | None:
@@ -146,7 +182,7 @@ def _split_resolution(key: str) -> tuple[str, str] | None:
     """
     head = key.split("(", 1)[0].strip()
     name, _, version = head.rpartition("@")
-    if not name or not version or VERSION_RE.match(version) is None:
+    if not _is_versioned_package(name, version):
         return None
     return name, version
 
