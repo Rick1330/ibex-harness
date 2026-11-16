@@ -3,6 +3,8 @@
 # Measured RPO/RTO vs locked targets — reports honestly on miss / non-PITR.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck source=../lib/pitr_time.sh
+. "$ROOT/infra/scripts/lib/pitr_time.sh"
 cd "$ROOT"
 REPORT_DIR="${RESTORE_DRILL_REPORT_DIR:-/var/lib/ibex/restore-drill}"
 mkdir -p "$REPORT_DIR"
@@ -372,15 +374,22 @@ PG_RPO_MEASURED=""
 # always look fresh — a number that flatters itself is not evidence.
 WAL_ARCHIVE_OK=false
 WAL_ARCHIVE_AGE_SEC=""
+# The upload age is only an RPO while nothing older is still queued, so the
+# queue state is measured with it and travels to the report writer, which
+# refuses the claim when the archive is not drained.
+WAL_ARCHIVE_LAST_SEGMENT=""
+WAL_ARCHIVE_CURRENT_SEGMENT=""
+WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE=""
 measure_wal_archive() {
-  local row archived last_epoch now
-  row="$(psql_cmd -Atc "SELECT archived_count || '|' || COALESCE(EXTRACT(EPOCH FROM last_archived_time)::bigint, -1) FROM pg_stat_archiver" 2>/dev/null | tr -d '\r' | tail -n1 || true)"
+  local row archived last_us last_seg cur_seg last_failed now_us
+  row="$(psql_cmd -Atc "SELECT archived_count || '|' || COALESCE((EXTRACT(EPOCH FROM last_archived_time) * 1000000)::bigint, -1) || '|' || COALESCE(last_archived_wal, '') || '|' || pg_walfile_name(pg_current_wal_lsn()) || '|' || CASE WHEN last_failed_time IS NOT NULL AND (last_archived_time IS NULL OR last_failed_time > last_archived_time) THEN 'true' ELSE 'false' END FROM pg_stat_archiver" 2>/dev/null | tr -d '\r' | tail -n1 || true)"
   if [[ -z "$row" || "$row" != *"|"* ]]; then
     echo "[drill] WAL archive freshness unreadable (pg_stat_archiver)"
     return 0
   fi
-  archived="${row%%|*}"
-  last_epoch="${row##*|}"
+  # An empty row is "unmeasured", not a reason to abort: `read` returns 1 at
+  # EOF, so the failure is swallowed here and handled by the checks below.
+  IFS='|' read -r archived last_us last_seg cur_seg last_failed <<<"$row" || true
   # '' or a non-digit means the count is unusable, so RPO stays unmeasured. An
   # all-digit value is the valid case and is handled below, so the default arm
   # is a deliberate no-op rather than a silent acceptance.
@@ -388,21 +397,24 @@ measure_wal_archive() {
     '' | *[!0-9]*) return 0 ;;
     *) : ;;
   esac
-  case "$last_epoch" in
-    '' | *[!0-9]*) return 0 ;;
+  case "$last_us" in
+    '' | *[!0-9-]*) return 0 ;;
     *) : ;;
   esac
-  if (( archived == 0 || last_epoch <= 0 )); then
+  if (( archived == 0 || last_us <= 0 )); then
     echo "[drill] WAL archiving has archived no segment (archived_count=$archived) — RPO unmeasurable"
     return 0
   fi
   WAL_ARCHIVE_OK=true
-  now="$(date +%s)"
-  WAL_ARCHIVE_AGE_SEC=$(( now - last_epoch ))
+  now_us="$(date +%s%6N)"
+  WAL_ARCHIVE_AGE_SEC=$(( (now_us - last_us) / 1000000 ))
   if (( WAL_ARCHIVE_AGE_SEC < 0 )); then
     WAL_ARCHIVE_AGE_SEC=0
   fi
-  echo "[drill] wal_archive_ok=true newest_archived_age_sec=$WAL_ARCHIVE_AGE_SEC"
+  WAL_ARCHIVE_LAST_SEGMENT="$last_seg"
+  WAL_ARCHIVE_CURRENT_SEGMENT="$cur_seg"
+  WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE="$last_failed"
+  echo "[drill] wal_archive_ok=true newest_archived_age_sec=$WAL_ARCHIVE_AGE_SEC last_archived_wal=${last_seg:-unknown} current_wal=${cur_seg:-unknown} failed_since_archive=${last_failed:-unknown}"
 }
 measure_wal_archive
 
@@ -580,22 +592,25 @@ PG_RESTORE_END=$(date +%s)
 RECOVERY_TARGET_REACHED=""
 RECOVERY_REPLAY_TIMESTAMP=""
 if [[ -n "$DRILL_TARGET" && "$PG_RESTORE_OK" == "true" ]]; then
-  replay_epoch="$(psql_cmd -Atc "SELECT COALESCE(EXTRACT(EPOCH FROM pg_last_xact_replay_timestamp())::bigint, -1)" 2>/dev/null | tr -d '[:space:]' | tail -n1 || true)"
-  target_epoch="$(date -u -d "$DRILL_TARGET" +%s 2>/dev/null || true)"
+  # Microseconds on both sides. Whole seconds round the replay forward and the
+  # target down, so a replay at .800 before a target at .900 used to read as a
+  # miss — and the same rounding can hide a real miss.
+  replay_us="$(psql_cmd -Atc "SELECT COALESCE((EXTRACT(EPOCH FROM pg_last_xact_replay_timestamp()) * 1000000)::bigint, -1)" 2>/dev/null | tr -d '[:space:]' | tail -n1 || true)"
+  target_us="$(iso_micros "$DRILL_TARGET")"
   # Empty or non-numeric clears the epoch; an all-digit (or negative, for the
   # replay timestamp) value is valid and passes through, so the default is a
   # deliberate no-op.
-  case "$replay_epoch" in
-    '' | *[!0-9-]*) replay_epoch="" ;;
+  case "$replay_us" in
+    '' | *[!0-9-]*) replay_us="" ;;
     *) : ;;
   esac
-  case "$target_epoch" in
-    '' | *[!0-9]*) target_epoch="" ;;
+  case "$target_us" in
+    '' | *[!0-9]*) target_us="" ;;
     *) : ;;
   esac
-  if [[ -n "$replay_epoch" && -n "$target_epoch" ]] && (( replay_epoch >= 0 )); then
-    RECOVERY_REPLAY_TIMESTAMP="$(date -u -d "@$replay_epoch" +%Y-%m-%dT%H:%M:%SZ)"
-    if (( replay_epoch <= target_epoch )); then
+  if [[ -n "$replay_us" && -n "$target_us" ]] && (( replay_us >= 0 )); then
+    RECOVERY_REPLAY_TIMESTAMP="$(format_epoch_micros "$replay_us")"
+    if (( replay_us <= target_us )); then
       RECOVERY_TARGET_REACHED=true
       echo "[drill] recovery target reached: replay=${RECOVERY_REPLAY_TIMESTAMP} target=$DRILL_TARGET"
     else
@@ -733,6 +748,9 @@ export DRILL_KIND=restore-drill DRILL_STARTED_AT
 ENVIRONMENT_CLASS="$(drill_environment_class)"
 export ENVIRONMENT_CLASS
 export WAL_ARCHIVE_OK TARGET_TIMESTAMP="$DRILL_TARGET"
+export WAL_ARCHIVE_UPLOAD_AGE_SEC="$WAL_ARCHIVE_AGE_SEC"
+export WAL_ARCHIVE_LAST_SEGMENT WAL_ARCHIVE_CURRENT_SEGMENT
+export WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE
 export RECOVERY_TARGET_REACHED RECOVERY_REPLAY_TIMESTAMP
 export CLUSTER_DATA_BYTES RESTORED_ORGS RESTORED_MEMORIES
 export BLOCKED_BY=""

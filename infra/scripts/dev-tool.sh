@@ -747,6 +747,7 @@ v1_pitr_blocked() {
 # `make v1-pitr` cannot finish without an artefact that says what happened.
 v1_pitr() {
   local target="${1:-}" scratch="${IBEX_PITR_SCRATCH_VOLUME:-}" report
+  local started status=0
   if [[ -z "$target" ]]; then
     echo "usage: make v1-pitr TARGET=2026-11-14T03:00:00Z" >&2
     echo "       make v1-pitr TARGET=... SCRATCH_VOLUME=<name> (restores beside the live cluster)" >&2
@@ -766,8 +767,20 @@ v1_pitr() {
   PGBACKREST_RESTORE_SCRATCH_VOLUME="$scratch"
   PGBACKREST_RESTORE_REPORT="$report"
   export PGBACKREST_RESTORE_TARGET PGBACKREST_RESTORE_SCRATCH_VOLUME PGBACKREST_RESTORE_REPORT
-  bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh"
-  echo "pitr report=$report"
+  started="$(date +%s)"
+  bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh" || status=$?
+  # The path is printed only when this run actually wrote it. A restore whose
+  # evidence could not be written has not produced a report, and naming a file
+  # left by an earlier run would be worse than saying it is missing.
+  if [[ -f "$report" && "$(stat -c %Y "$report" 2>/dev/null || printf 0)" -ge "$started" ]]; then
+    echo "pitr report=$report"
+  else
+    echo "pitr report=NOT WRITTEN ($report)" >&2
+    if (( status == 0 )); then
+      status=1
+    fi
+  fi
+  return "$status"
 }
 
 v1_up() {

@@ -102,6 +102,60 @@ def parse_bool_or_none(raw: str | None) -> bool | None:
     return None
 
 
+# A WAL segment file name is 24 hex digits: timeline, log, segment. The archive
+# is "drained" when the newest archived segment is the one being written or the
+# one before it, because then nothing older is still waiting to be pushed.
+_WAL_SEGMENT_RE = re.compile(r"^[0-9A-Fa-f]{24}$")
+_WAL_SEGMENTS_PER_LOG = 256
+
+
+def _wal_segment_position(name: str | None) -> tuple[int, int, int] | None:
+    """Split a WAL segment file name into (timeline, log, segment)."""
+    value = (name or "").strip()
+    if not _WAL_SEGMENT_RE.match(value):
+        return None
+    return (int(value[0:8], 16), int(value[8:16], 16), int(value[16:24], 16))
+
+
+def wal_archive_backlog(
+    *,
+    last_archived_wal: str | None,
+    current_wal: str | None,
+    last_failed_after_archive: bool | None,
+) -> bool | None:
+    """Is the WAL archive queue provably drained?
+
+    ``last_archived_time`` records when an upload *completed*, not the
+    transaction time the segment it carried covers. While a backlog drains, an
+    old segment uploads now and its age looks like a fresh recovery point, so an
+    RPO read from it can understate the real lag by the whole length of the
+    backlog.
+
+    The queue state is what turns the upload age into a bound. When the newest
+    archived segment is the one being written, or the one before it, nothing
+    older is still queued, so the newest recoverable transaction is at least as
+    recent as that upload: ``now - last_archived_time`` is then an upper bound on
+    the RPO, and passing it does not overstate. A failed push after the last
+    success means the queue is not draining, however fresh the last upload was.
+
+    ``None`` means "cannot tell", and must never be read as "no backlog".
+    """
+    last = _wal_segment_position(last_archived_wal)
+    current = _wal_segment_position(current_wal)
+    if last is None or current is None or last_failed_after_archive is None:
+        return None
+    last_timeline, last_log, last_seg = last
+    current_timeline, current_log, current_seg = current
+    if last_timeline != current_timeline:
+        # Segments on different timelines cannot be compared; a promotion is
+        # exactly when the archive can lag, so fail closed.
+        return True
+    gap = (current_log - last_log) * _WAL_SEGMENTS_PER_LOG + (current_seg - last_seg)
+    if gap > 1:
+        return True
+    return bool(last_failed_after_archive)
+
+
 def optional_text(raw: str | None) -> str | None:
     """Trimmed text, or None when the producer left the variable unset.
 
@@ -126,9 +180,15 @@ def outbox_rpo_pass(*, pending: int | None, max_aggregate_seq: int | None, targe
 def postgres_rpo_pass(ctx: dict[str, Any]) -> bool:
     """pg_dump_fallback is not PITR — never claim RPO pass for that mechanism.
 
-    Expected keys: mechanism, backup_ok, restore_ok, measured, target.
+    A measured age is only an upper bound on the RPO while the archive queue is
+    drained, so ``backlog`` must be exactly ``False``: ``None`` (unproven) is
+    refused for the same reason as ``True``.
+
+    Expected keys: mechanism, backup_ok, restore_ok, measured, target, backlog.
     """
     if ctx.get("mechanism") != "pgbackrest_wal":
+        return False
+    if ctx.get("backlog") is not False:
         return False
     measured = ctx.get("measured")
     measured_sec = measured if isinstance(measured, int) else None
@@ -225,6 +285,27 @@ def _restored_row_counts(e: dict[str, str]) -> dict[str, int | None]:
     }
 
 
+def _wal_archive_facts(e: dict[str, str]) -> dict[str, Any]:
+    """What the producer observed about the archive, and what it proves.
+
+    The upload age is a diagnostic on its own: it is not an RPO until the queue
+    is drained, so it is recorded separately from the claim it can support.
+    """
+    return {
+        "wal_archive_ok": e.get("WAL_ARCHIVE_OK") == "true",
+        "wal_archive_upload_age_sec": parse_int_or_none(
+            e.get("WAL_ARCHIVE_UPLOAD_AGE_SEC", "")
+        ),
+        "wal_archive_backlog": wal_archive_backlog(
+            last_archived_wal=e.get("WAL_ARCHIVE_LAST_SEGMENT"),
+            current_wal=e.get("WAL_ARCHIVE_CURRENT_SEGMENT"),
+            last_failed_after_archive=parse_bool_or_none(
+                e.get("WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE")
+            ),
+        ),
+    }
+
+
 def _postgres_block(e: dict[str, str], *, facts: RunFacts, note: str) -> dict[str, Any]:
     pg_rpo = parse_int_or_none(e.get("PG_RPO_MEASURED", ""))
     pg_rto = parse_int_or_none(e.get("PG_RTO_MEASURED", ""))
@@ -238,6 +319,13 @@ def _postgres_block(e: dict[str, str], *, facts: RunFacts, note: str) -> dict[st
         restore_ok = facts.restore_ok
     rpo_target = target_sec(e, "PG_RPO_SEC")
     rto_target = target_sec(e, "PG_RTO_SEC")
+    archive = _wal_archive_facts(e)
+    # Upload recency is an RPO only while the archive queue is drained; an
+    # undrained or unproven queue leaves the measured RPO null so the field
+    # cannot be quoted as a bound it never was. The observation stays visible in
+    # wal_archive_upload_age_sec.
+    if not archive["wal_archive_ok"] or archive["wal_archive_backlog"] is not False:
+        pg_rpo = None
     rpo_pass = postgres_rpo_pass(
         {
             "backup_ok": backup_ok,
@@ -245,11 +333,14 @@ def _postgres_block(e: dict[str, str], *, facts: RunFacts, note: str) -> dict[st
             "measured": pg_rpo,
             "target": rpo_target,
             "mechanism": facts.mechanism,
+            "backlog": archive["wal_archive_backlog"],
         }
     )
-    # A requested recovery target that was missed means the restore did not land
-    # where it claimed to; that run cannot carry an RPO pass either.
-    if facts.target_reached is False:
+    # A requested recovery target that was missed, or whose result was never
+    # recorded, means the restore did not prove it landed where it claimed to;
+    # that run cannot carry an RPO pass either. "Not measured" is not the same
+    # as "not missed": only an affirmative result clears the gate.
+    if facts.target_requested and facts.target_reached is not True:
         rpo_pass = False
     return {
         "rpo_target_sec": rpo_target,
@@ -261,7 +352,7 @@ def _postgres_block(e: dict[str, str], *, facts: RunFacts, note: str) -> dict[st
         "rpo_pass": rpo_pass,
         "rto_pass": restore_ok and le_pass(pg_rto, rto_target),
         "mechanism": facts.mechanism,
-        "wal_archive_ok": e.get("WAL_ARCHIVE_OK") == "true",
+        **archive,
         "target_timestamp": optional_text(e.get("TARGET_TIMESTAMP")),
         "recovery_target_reached": facts.target_reached,
         "recovery_replay_timestamp": optional_text(e.get("RECOVERY_REPLAY_TIMESTAMP")),
@@ -300,6 +391,7 @@ class RunFacts:
     backup_ok: bool
     restore_ok: bool
     iso_ok: bool
+    target_requested: bool
     target_reached: bool | None
     allow_no_db: bool
 
@@ -312,6 +404,7 @@ def read_run_facts(e: dict[str, str]) -> RunFacts:
         backup_ok=e.get("PG_BACKUP_OK") == "true",
         restore_ok=e.get("PG_RESTORE_OK") == "true",
         iso_ok=e.get("ISO_OK") == "true",
+        target_requested=optional_text(e.get("TARGET_TIMESTAMP")) is not None,
         target_reached=parse_bool_or_none(e.get("RECOVERY_TARGET_REACHED")),
         allow_no_db=e.get("ALLOW_NO_DB") == "1",
     )
@@ -331,8 +424,11 @@ def _evidence_eligible(facts: RunFacts) -> bool:
     if not (facts.backup_ok and facts.restore_ok):
         return False
     if facts.drill_kind == "pitr":
-        return (
-            facts.mechanism == "pgbackrest_wal" and facts.target_reached is not False
+        # A rehearsal that asked for a target is evidence only when the restored
+        # cluster proved it stopped there. An unrecorded result (``None``) is a
+        # target nobody checked, not a target that was met.
+        return facts.mechanism == "pgbackrest_wal" and (
+            not facts.target_requested or facts.target_reached is True
         )
     return facts.iso_ok
 
@@ -372,10 +468,36 @@ def _require_measured_rpo(postgres: dict[str, Any]) -> None:
 
 
 def _require_reached_target(postgres: dict[str, Any]) -> None:
-    """A restore that missed the requested point cannot claim an RPO pass."""
-    if postgres.get("recovery_target_reached") is False:
+    """A restore that missed — or never proved — the target cannot pass.
+
+    Only an affirmative result clears this gate. A report whose target was
+    requested but whose ``recovery_target_reached`` is null or absent is a target
+    nobody checked, and reading that as "not missed" is how a targeted restore
+    with an unproven target used to report success.
+    """
+    if postgres.get("target_timestamp") and postgres.get("recovery_target_reached") is not True:
         raise ReportHonestyError(
-            "rpo_pass cannot be claimed when the recovery target was missed"
+            "rpo_pass cannot be claimed without an affirmative recovery-target result"
+        )
+
+
+def _require_drained_archive(postgres: dict[str, Any]) -> None:
+    """An RPO read from an undrained archive is not an upper bound on the lag."""
+    if postgres.get("wal_archive_backlog") is not False:
+        raise ReportHonestyError(
+            "rpo_pass requires a provably drained WAL archive "
+            "(wal_archive_backlog=false)"
+        )
+
+
+def _require_rpo_within_target(postgres: dict[str, Any]) -> None:
+    """A measured RPO above the target is a miss, not a pass."""
+    measured = postgres.get("rpo_measured_sec")
+    target = postgres.get("rpo_target_sec")
+    if isinstance(measured, int) and isinstance(target, int) and measured > target:
+        raise ReportHonestyError(
+            f"rpo_pass cannot be claimed with a measured RPO of {measured}s "
+            f"above the {target}s target"
         )
 
 
@@ -400,6 +522,8 @@ def assert_honest(report: dict[str, Any]) -> dict[str, Any]:
         _require_pitr_mechanism(mechanism)
         _require_measured_rpo(postgres)
         _require_reached_target(postgres)
+        _require_drained_archive(postgres)
+        _require_rpo_within_target(postgres)
     return report
 
 
@@ -590,6 +714,28 @@ def write_metrics(path: Path, metrics: dict[str, int]) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def write_report(path: Path, report: dict[str, Any]) -> None:
+    """Write the report atomically, and fail loudly when it cannot be written.
+
+    The file is replaced through a temporary sibling so a reader never sees a
+    partial document, and a previous run's report cannot survive as if it
+    described this one. An OSError is turned into a named error and a non-zero
+    exit: a run that cannot produce evidence must not look like one that did.
+    """
+    text = json.dumps(report, indent=2) + "\n"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+    except OSError as error:
+        print(f"ERROR: could not write the report to {path}: {error}", flush=True)
+        raise SystemExit(1) from error
+
+
 def _require_tenant_isolation(report: dict[str, Any], *, allow_no_db: bool, path: Path) -> None:
     if report["tenant_isolation_post_restore"]:
         return
@@ -607,7 +753,7 @@ def _require_tenant_isolation(report: dict[str, Any], *, allow_no_db: bool, path
             flush=True,
         )
         report["residual"] = "tenant_isolation_unproven_no_postgres"
-        path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        write_report(path, report)
         return
     raise SystemExit("tenant isolation check failed")
 
@@ -658,7 +804,7 @@ def _write_drill_metrics(report: dict[str, Any]) -> Path | None:
 def main() -> None:
     report = build_report()
     path = Path(os.environ["REPORT"])
-    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    write_report(path, report)
     print(json.dumps(report, indent=2))
     allow_no_db = os.environ.get("ALLOW_NO_DB") == "1"
     _require_tenant_isolation(report, allow_no_db=allow_no_db, path=path)

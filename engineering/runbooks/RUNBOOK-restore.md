@@ -249,10 +249,16 @@ script writes `pitr-report.json` through the same writer the restore drill uses
 A run stopped by a precondition still writes a report, with `mechanism:
 "unavailable"` and a non-empty `blocked_by`; the writer refuses that report
 without the reason. Read `postgres.mechanism`, `wal_archive_ok`,
-`rpo_measured_sec`, `target_timestamp`, `recovery_target_reached`,
-`recovery_replay_timestamp`, `cluster_data_bytes` and `restored_row_counts` before
-quoting any number from it. `rpo_pass` is true only for `pgbackrest_wal` with a
-measured RPO inside 300 s, a completed restore, and no missed target. The script
+`wal_archive_upload_age_sec`, `wal_archive_backlog`, `rpo_measured_sec`,
+`target_timestamp`, `recovery_target_reached`, `recovery_replay_timestamp`,
+`cluster_data_bytes` and `restored_row_counts` before quoting any number from it.
+`rpo_pass` is true only for `pgbackrest_wal` with a measured RPO inside 300 s, a
+**drained** archive queue (`wal_archive_backlog: false`), a completed restore, and
+an affirmatively reached target when one was requested. A targeted restore whose
+report has `recovery_target_reached: null` proved nothing about the target, and a
+`wal_archive_backlog: true` report measured an upload, not the recovery frontier:
+neither is an RPO result. If the run could not write its report at all, the
+command exits non-zero and prints `pitr report=NOT WRITTEN (<path>)`. The script
 validates the value as ISO-8601 and normalises it to the shape pgBackRest's
 `--target` parser accepts — the `T` separator becomes a space and a `Z` suffix
 becomes `+00`, because pgBackRest rejects both (`pgbackrest-restore.sh`:171-190) —
