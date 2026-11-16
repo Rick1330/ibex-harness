@@ -4,12 +4,15 @@ Artifacts in this directory were produced by a **real** point-in-time restore ag
 `v1-single-node` profile (pgBackRest + S3 repository + continuous WAL archiving), not by
 `ALLOW_NO_DB=1` and not by the `pg_dump` fallback.
 
-> **Status: superseded — regenerate before citing it as RPO evidence.** `pitr-report.json` was written before the
-> archive-queue check existed, so it does not record whether the archive was drained when the freshness number was
-> sampled (`wal_archive_backlog` is absent). `assert_honest` now rejects that report for an RPO claim, because an upload
-> age is only an upper bound on the lag while nothing older is still queued. The restore, the recovery point and the
-> restored data it proves are unchanged; only the RPO claim is unverifiable from this file. Regenerate it with
-> `make v1-pitr TARGET=… SCRATCH_VOLUME=… PITR_REPORT=engineering/evidence/pitr/pitr-report.json` against the same
+> **Status: superseded — regenerate before citing it as RPO evidence.** `pitr-report.json` predates every field the
+> current writer needs to support an RPO claim, so `assert_honest` rejects it for one. It records no archive-queue state
+> (`wal_archive_backlog`), no `wal_archive_timeout_sec`, no `wal_archive_wal_segment_size` and no
+> `wal_archive_older_segments`, and its `rpo_measured_sec: 17` is a bare upload age rather than the bound the writer now
+> derives. Each omission is independently disqualifying: an upload age bounds the lag only while the queue is provably
+> drained, adjacency is not continuity, the log multiplier depends on the cluster's segment size, and the bound is the
+> upload age plus `archive_timeout` — with the timeout unset or zero there is no bound at all. The restore, the recovery
+> point and the restored data it proves are unchanged; only the RPO claim is unverifiable from this file. Regenerate it
+> with `make v1-pitr TARGET=… SCRATCH_VOLUME=… PITR_REPORT=engineering/evidence/pitr/pitr-report.json` against the same
 > profile. Until then, cite this file for the restore and the target, not for the RPO.
 
 | File | Purpose |
@@ -84,15 +87,16 @@ Result (from the transcript):
 |---|---|---|
 | The mechanism was pgBackRest + WAL, not a dump | `postgres.mechanism` | `pgbackrest_wal` |
 | WAL archiving was working, read at the start of the **restore** | `postgres.wal_archive_ok` | `true` |
-| The newest archive upload was 17 s old when the restore started | `postgres.rpo_measured_sec` | `17` (target 300) |
+| The newest archive upload was 17 s old when the restore started | `postgres.rpo_measured_sec` | `17` (target 300) — an upload age, not the bound the current writer derives |
 | The requested recovery point | `postgres.target_timestamp` | `2026-11-16T07:42:48Z` |
 | Recovery stopped at or before it | `postgres.recovery_target_reached`, `recovery_replay_timestamp` | `true`, `2026-11-16T07:42:42Z` |
 | The restored cluster held real data | `postgres.cluster_data_bytes`, `restored_row_counts` | 12,221,463 bytes, 2 organizations, 9 memories |
 | RPO inside the 5-minute target, by that measurement | `postgres.rpo_pass` | `true` — not citable until regenerated (see the status note) |
 
-A report written by the current writer also carries `wal_archive_upload_age_sec` and `wal_archive_backlog`. This
-artefact predates both, so the queue state behind its `17` is not recorded; that is what the status note above means by
-"regenerate before citing it as RPO evidence".
+A report written by the current writer also carries `wal_archive_upload_age_sec`, `wal_archive_timeout_sec`,
+`wal_archive_wal_segment_size`, `wal_archive_older_segments` and `wal_archive_backlog`, and derives `rpo_measured_sec`
+from the first two. This artefact predates all of them, so neither the queue state nor the bound behind its `17` is
+recorded; that is what the status note above means by "regenerate before citing it as RPO evidence".
 
 Row-level check on the restored volume, started separately with `archive_mode=off` after the run:
 
@@ -111,13 +115,16 @@ The row written before the target came back; the row written after it did not. T
 - **No hosted or HA result.** `environment_class` is `local-podman-scratch`. The status ledger's boundary on hosted HA
   and measured p99 SLOs is unchanged by this file.
 - **No steady-state RPO.** `rpo_measured_sec: 17` is the age of the newest archive upload when the restore started,
-  not a distribution. `archive_timeout=60` bounds it on an idle cluster; a sustained-write measurement is a different
-  experiment.
+  not a distribution and not the bound a regenerated report would carry (the upload age plus `archive_timeout`). A
+  sustained-write measurement is a different experiment.
 - **The number is an upper bound, not the frontier itself.** `last_archived_time` records when an upload *completed*,
   not the transaction time the segment carried. It bounds the RPO only while the archive queue is drained, which is why
   a regenerated report records `wal_archive_backlog` beside it and why `rpo_pass` is refused when the queue is not
-  drained: a backlog draining after an outage would otherwise make old data look freshly recoverable. This artefact does
-  not record that state, so its RPO claim is the one thing in it that cannot be re-verified from the file.
+  drained: a backlog draining after an outage would otherwise make old data look freshly recoverable. The current
+  writer establishes that from `wal_archive_backlog`, which itself needs `wal_archive_wal_segment_size` and
+  `wal_archive_older_segments` (adjacency alone does not prove older segments were archived), and it bounds the RPO with
+  `wal_archive_timeout_sec`. This artefact records none of them, so its RPO claim is the one thing in it that cannot be
+  re-verified from the file.
 - **No RTO.** `rto_measured_sec` is null: a PITR rehearsal does not measure detection, drain, restore and verification
   as an RTO, so the report does not invent one.
 - **No tenant-isolation result.** The rehearsal restores into a scratch volume and never queries tenant data under

@@ -17,9 +17,10 @@ path, so the sibling import there is made path-safe rather than relying on
 from __future__ import annotations
 
 import os
-import re
 from dataclasses import dataclass
 from typing import Any
+
+from restore_drill_archive import ArchiveContinuity, is_count, wal_archive_backlog
 
 DEFAULT_MIN_FIXTURE_ROWS = 1000
 
@@ -69,78 +70,6 @@ def parse_bool_or_none(raw: str | None) -> bool | None:
     if value == "false":
         return False
     return None
-
-
-# A WAL segment file name is 24 hex digits: timeline, log, segment. The archive
-# is "drained" when the newest archived segment is the one being written or the
-# one before it, because then nothing older is still waiting to be pushed.
-_WAL_SEGMENT_RE = re.compile(r"^[0-9A-Fa-f]{24}$")
-_WAL_SEGMENTS_PER_LOG = 256
-
-
-def _wal_segment_position(name: str | None) -> tuple[int, int, int] | None:
-    """Split a WAL segment file name into (timeline, log, segment)."""
-    value = (name or "").strip()
-    if not _WAL_SEGMENT_RE.match(value):
-        return None
-    return (int(value[0:8], 16), int(value[8:16], 16), int(value[16:24], 16))
-
-
-def _archive_state_proven(
-    last: tuple[int, int, int] | None,
-    current: tuple[int, int, int] | None,
-    last_failed_after_archive: bool | None,
-) -> bool:
-    """Every input the queue state is read from has to be readable.
-
-    A segment name that does not parse, or a failed-push flag the producer never
-    recorded, leaves the queue state unknown. That is not "no backlog": it is
-    "cannot tell", and the caller must not turn it into a bound.
-    """
-    if last is None:
-        return False
-    if current is None:
-        return False
-    return last_failed_after_archive is not None
-
-
-def wal_archive_backlog(
-    *,
-    last_archived_wal: str | None,
-    current_wal: str | None,
-    last_failed_after_archive: bool | None,
-) -> bool | None:
-    """Is the WAL archive queue provably drained?
-
-    ``last_archived_time`` records when an upload *completed*, not the
-    transaction time the segment it carried covers. While a backlog drains, an
-    old segment uploads now and its age looks like a fresh recovery point, so an
-    RPO read from it can understate the real lag by the whole length of the
-    backlog.
-
-    The queue state is what turns the upload age into a bound. When the newest
-    archived segment is the one being written, or the one before it, nothing
-    older is still queued, so the newest recoverable transaction is at least as
-    recent as that upload: ``now - last_archived_time`` is then an upper bound on
-    the RPO, and passing it does not overstate. A failed push after the last
-    success means the queue is not draining, however fresh the last upload was.
-
-    ``None`` means "cannot tell", and must never be read as "no backlog".
-    """
-    last = _wal_segment_position(last_archived_wal)
-    current = _wal_segment_position(current_wal)
-    if not _archive_state_proven(last, current, last_failed_after_archive):
-        return None
-    last_timeline, last_log, last_seg = last
-    current_timeline, current_log, current_seg = current
-    if last_timeline != current_timeline:
-        # Segments on different timelines cannot be compared; a promotion is
-        # exactly when the archive can lag, so fail closed.
-        return True
-    gap = (current_log - last_log) * _WAL_SEGMENTS_PER_LOG + (current_seg - last_seg)
-    if gap > 1:
-        return True
-    return bool(last_failed_after_archive)
 
 
 def optional_text(raw: str | None) -> str | None:
@@ -272,39 +201,86 @@ def _restored_row_counts(e: dict[str, str]) -> dict[str, int | None]:
     }
 
 
+def _archive_continuity(e: dict[str, str]) -> ArchiveContinuity:
+    """The two measurements that establish continuity beyond adjacency."""
+    return ArchiveContinuity(
+        wal_segment_size=parse_int_or_none(e.get("WAL_ARCHIVE_WAL_SEGMENT_SIZE", "")),
+        older_segments_present=parse_int_or_none(e.get("WAL_ARCHIVE_OLDER_SEGMENTS", "")),
+    )
+
+
 def _wal_archive_facts(e: dict[str, str]) -> dict[str, Any]:
     """What the producer observed about the archive, and what it proves.
 
-    The upload age is a diagnostic on its own: it is not an RPO until the queue
-    is drained, so it is recorded separately from the claim it can support.
+    The upload age and the timeout are diagnostics on their own: neither is an
+    RPO until the queue is drained and the timeout is known, so they are recorded
+    separately from the bound they support.
     """
+    continuity = _archive_continuity(e)
     return {
         "wal_archive_ok": e.get("WAL_ARCHIVE_OK") == "true",
         "wal_archive_upload_age_sec": parse_int_or_none(
             e.get("WAL_ARCHIVE_UPLOAD_AGE_SEC", "")
         ),
+        "wal_archive_timeout_sec": parse_int_or_none(
+            e.get("WAL_ARCHIVE_TIMEOUT_SEC", "")
+        ),
+        "wal_archive_wal_segment_size": continuity.wal_segment_size,
+        "wal_archive_older_segments": continuity.older_segments_present,
         "wal_archive_backlog": wal_archive_backlog(
             last_archived_wal=e.get("WAL_ARCHIVE_LAST_SEGMENT"),
             current_wal=e.get("WAL_ARCHIVE_CURRENT_SEGMENT"),
             last_failed_after_archive=parse_bool_or_none(
                 e.get("WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE")
             ),
+            continuity=continuity,
         ),
     }
 
 
 def _archive_bounds_rpo(archive: dict[str, Any]) -> bool:
-    """Is the archive upload age an upper bound on the RPO?
+    """Is the archive state proven well enough to bound the RPO at all?
 
-    Only a successful archive whose queue is provably drained makes the age a
-    bound. An undrained or unproven queue does not, so the observation is kept
-    as a diagnostic and not carried as the measured RPO.
+    Only a successful archive whose queue is provably drained can bound it. An
+    undrained or unproven queue does not, so the observations are kept as
+    diagnostics and not carried as a measured RPO.
     """
     return bool(archive["wal_archive_ok"]) and archive["wal_archive_backlog"] is False
 
 
+def _rpo_bound(archive: dict[str, Any], mechanism: str) -> int | None:
+    """The RPO bound in seconds, or ``None`` when it cannot be established.
+
+    A dump has no recoverable WAL position, so its report carries no RPO bound
+    even when the live cluster's archive happens to be healthy: the number would
+    describe a mechanism the run did not use.
+
+    ``now - last_archived_time`` is the age of an upload, not a bound on the lag.
+    With ``archive_timeout`` disabled, segment N can finish minutes before its
+    upload completes while segment N+1 already holds newer commits: the queue
+    still looks drained and the upload age looks like a zero-second RPO over data
+    that is not in the archive. A commit lands in WAL immediately and reaches the
+    archive within ``archive_timeout`` of its segment being switched, plus that
+    segment's upload latency, so the honest bound is the upload age plus the
+    timeout.
+
+    With the timeout unset, zero, or unreadable there is no bound. A zero-second
+    RPO is exactly the false claim this refuses to make.
+    """
+    if mechanism != "pgbackrest_wal":
+        return None
+    if not _archive_bounds_rpo(archive):
+        return None
+    upload_age = archive["wal_archive_upload_age_sec"]
+    timeout = archive["wal_archive_timeout_sec"]
+    if not is_count(upload_age):
+        return None
+    if not is_count(timeout) or timeout == 0:
+        return None
+    return upload_age + timeout
+
+
 def _postgres_block(e: dict[str, str], *, facts: RunFacts, note: str) -> dict[str, Any]:
-    pg_rpo = parse_int_or_none(e.get("PG_RPO_MEASURED", ""))
     pg_rto = parse_int_or_none(e.get("PG_RTO_MEASURED", ""))
     if facts.mechanism == "unavailable":
         # Nothing was restored. A report that says so must not also carry the
@@ -317,12 +293,11 @@ def _postgres_block(e: dict[str, str], *, facts: RunFacts, note: str) -> dict[st
     rpo_target = target_sec(e, "PG_RPO_SEC")
     rto_target = target_sec(e, "PG_RTO_SEC")
     archive = _wal_archive_facts(e)
-    # Upload recency is an RPO only while the archive queue is drained; an
-    # undrained or unproven queue leaves the measured RPO null so the field
-    # cannot be quoted as a bound it never was. The observation stays visible in
-    # wal_archive_upload_age_sec.
-    if not _archive_bounds_rpo(archive):
-        pg_rpo = None
+    # The upload age is a diagnostic. The RPO is derived from it and the
+    # cluster's archive_timeout, and is null when either is unproven, so the
+    # field cannot be quoted as a bound it never was. Both observations stay
+    # visible in wal_archive_upload_age_sec and wal_archive_timeout_sec.
+    pg_rpo = _rpo_bound(archive, facts.mechanism)
     rpo_pass = postgres_rpo_pass(
         {
             "backup_ok": backup_ok,
@@ -477,6 +452,19 @@ def _require_measured_rpo(postgres: dict[str, Any]) -> None:
         raise ReportHonestyError("rpo_pass requires a measured RPO")
 
 
+def _require_completed_restore(postgres: dict[str, Any]) -> None:
+    """An RPO measured over a restore that did not complete is not a result.
+
+    The producer always builds ``rpo_pass`` from ``restore_ok``, but a report is
+    a file: one written or edited outside the producer can carry a pass over a
+    restore that failed, and an operator reading it at 03:00 has no way to tell.
+    """
+    if postgres.get("restore_ok") is not True:
+        raise ReportHonestyError(
+            "rpo_pass requires a completed restore (restore_ok=true)"
+        )
+
+
 def _require_reached_target(postgres: dict[str, Any]) -> None:
     """A restore that missed — or never proved — the target cannot pass.
 
@@ -500,25 +488,26 @@ def _require_drained_archive(postgres: dict[str, Any]) -> None:
         )
 
 
-def _rpo_exceeds_target(measured: Any, target: Any) -> bool:
-    """Is a measured RPO above its target?
+def _integer_seconds(value: Any, field: str) -> int:
+    """The contract is integer seconds: a float is rejected, never compared.
 
-    Both sides have to be numbers before they can be compared: an unmeasured RPO
-    or an unset target is not a miss, it is an absent measurement, which the
-    measured-RPO rule already refuses.
+    Skipping the comparison for a non-integer is how ``900.0`` against a 300 s
+    target used to pass: the guard silently returned "not above target" for a
+    value it could not read. A report that carries a float is malformed, and a
+    malformed report is refused rather than half-checked.
     """
-    if not isinstance(measured, int):
-        return False
-    if not isinstance(target, int):
-        return False
-    return measured > target
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ReportHonestyError(
+            f"{field} must be integer seconds, got {value!r}"
+        )
+    return value
 
 
 def _require_rpo_within_target(postgres: dict[str, Any]) -> None:
     """A measured RPO above the target is a miss, not a pass."""
-    measured = postgres.get("rpo_measured_sec")
-    target = postgres.get("rpo_target_sec")
-    if _rpo_exceeds_target(measured, target):
+    measured = _integer_seconds(postgres.get("rpo_measured_sec"), "rpo_measured_sec")
+    target = _integer_seconds(postgres.get("rpo_target_sec"), "rpo_target_sec")
+    if measured > target:
         raise ReportHonestyError(
             f"rpo_pass cannot be claimed with a measured RPO of {measured}s "
             f"above the {target}s target"
@@ -544,6 +533,7 @@ def assert_honest(report: dict[str, Any]) -> dict[str, Any]:
         _require_unavailable_is_not_evidence(report)
     if postgres.get("rpo_pass"):
         _require_pitr_mechanism(mechanism)
+        _require_completed_restore(postgres)
         _require_measured_rpo(postgres)
         _require_reached_target(postgres)
         _require_drained_archive(postgres)

@@ -37,9 +37,14 @@ from typing import Any
 # needs no noqa.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# The schema names the tests and the producer call through this file, plus
-# ``_fixture_rows``, which ``drill_metrics`` uses internally and which stays
-# private (hence absent from ``__all__``).
+# The archive model and the schema names the tests and the producer call through
+# this file, plus ``_fixture_rows``, which ``drill_metrics`` uses internally and
+# which stays private (hence absent from ``__all__``).
+from restore_drill_archive import (
+    ArchiveContinuity,
+    segments_per_log,
+    wal_archive_backlog,
+)
 from restore_drill_report_schema import (
     ReportHonestyError,
     _fixture_rows,
@@ -48,14 +53,15 @@ from restore_drill_report_schema import (
     outbox_rpo_pass,
     parse_int_or_none,
     postgres_rpo_pass,
-    wal_archive_backlog,
 )
 
-# Every public name defined here, plus the seven schema names deliberately
-# re-exported above. A name that is not in this list is not part of the surface.
+# Every public name defined here, plus the ten schema and archive names
+# deliberately re-exported above. A name that is not in this list is not part of
+# the surface.
 __all__ = [
     "DEFAULT_METRICS_FILENAME",
     "DEFAULT_STATE_DIR",
+    "ArchiveContinuity",
     "ReportHonestyError",
     "assert_honest",
     "build_report",
@@ -67,6 +73,7 @@ __all__ = [
     "postgres_rpo_pass",
     "read_last_success",
     "render_metrics",
+    "segments_per_log",
     "wal_archive_backlog",
     "write_metrics",
     "write_report",

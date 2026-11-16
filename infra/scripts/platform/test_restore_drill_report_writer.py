@@ -12,11 +12,13 @@ import contextlib
 import io
 import json
 import os
+import subprocess  # nosec B404 - the wrapper test runs the shipped function; argv is fixed
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
-from restore_drill_test_support import base_env, mod
+from restore_drill_test_support import DEV_TOOL_SH, base_env, mod
 
 
 class ReportWriterTests(unittest.TestCase):
@@ -64,6 +66,104 @@ class ReportWriterTests(unittest.TestCase):
                 os.environ.clear()
                 os.environ.update(saved)
             self.assertNotEqual(raised.exception.code, 0)
+
+
+# A stand-in for `pgbackrest-restore.sh` inside a throwaway ROOT_DIR: it either
+# writes the report the wrapper looks for, or leaves the path empty. The wrapper
+# under test is the shipped `v1_pitr`, not a copy of it.
+_STUB_RESTORE = """#!/usr/bin/env bash
+{write}
+exit {status}
+"""
+
+_WRITE_REPORT = 'printf \'{{"drill_started_at": "%s"}}\n\' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PGBACKREST_RESTORE_REPORT"'
+
+
+def pitr_wrapper(root: Path, *, writes: bool, status: int) -> dict[str, str]:
+    """Build a ROOT_DIR the shipped v1_pitr can run against, and its environment."""
+    conf = root / "infra" / "backup" / "pgbackrest" / "pgbackrest.conf"
+    conf.parent.mkdir(parents=True)
+    conf.write_text("[global]\nrepo1-type=s3\n", encoding="utf-8")
+    (conf.parent / "pgbackrest.conf.example").write_text("[global]\n", encoding="utf-8")
+    lib = root / "infra" / "scripts" / "lib"
+    lib.mkdir(parents=True)
+    (lib / "dotenv.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
+    restore = root / "infra" / "scripts" / "platform" / "pgbackrest-restore.sh"
+    restore.parent.mkdir(parents=True)
+    write = _WRITE_REPORT if writes else ":"
+    restore.write_text(
+        _STUB_RESTORE.format(write=write, status=status), encoding="utf-8"
+    )
+    env_file = root / "profile.env"
+    env_file.write_text("", encoding="utf-8")
+    env = {**os.environ, "V1_ENV": str(env_file), "IBEX_CONTAINER_CLI": "true"}
+    env.pop("IBEX_PITR_REPORT", None)
+    return env
+
+
+def run_v1_pitr(root: Path, env: dict[str, str], report: Path, target: str) -> subprocess.CompletedProcess:
+    """Source the shipped wrapper, point it at ``root``, and run one v1_pitr."""
+    script = 'source "$1" help >/dev/null; ROOT_DIR="$2"; IBEX_PITR_REPORT="$3"; v1_pitr "$4"'
+    return subprocess.run(  # nosec B603 - fixed argv, no shell interpolation
+        [
+            "/bin/bash",
+            "-c",
+            script,
+            "v1_pitr",
+            str(DEV_TOOL_SH),
+            str(root),
+            str(report),
+            target,
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+class PitrReportIdentityTests(unittest.TestCase):
+    """The wrapper prints a report path only for the report this run wrote."""
+
+    _TARGET = "2026-11-16T07:42:48Z"
+
+    def test_a_stale_report_in_the_same_second_is_not_reported_as_written(self) -> None:
+        # The defect: mtime and the run's start are both whole seconds, so an
+        # earlier report left in place satisfied the check when the retry started
+        # in the same second, and its path was printed as this run's report.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / "pitr-report.json"
+            report.write_text('{"evidence_eligible": true}\n', encoding="utf-8")
+            # A timestamp at or after this run's start is the ambiguity the
+            # wrapper used to read as "this run wrote it". One second ahead makes
+            # the old check deterministic instead of a race on the clock tick.
+            ahead = time.time() + 1
+            os.utime(report, (ahead, ahead))
+            proc = run_v1_pitr(
+                root, pitr_wrapper(root, writes=False, status=1), report, self._TARGET
+            )
+            output = proc.stdout + proc.stderr
+            self.assertNotEqual(proc.returncode, 0, output)
+            self.assertIn(f"pitr report=NOT WRITTEN ({report})", output)
+            self.assertNotIn(f"pitr report={report}", output)
+            # The previous report is kept, under a name that cannot be mistaken
+            # for this run's evidence.
+            self.assertFalse(report.exists())
+            self.assertTrue((root / "pitr-report.json.previous").exists())
+
+    def test_a_report_this_run_wrote_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / "pitr-report.json"
+            proc = run_v1_pitr(
+                root, pitr_wrapper(root, writes=True, status=0), report, self._TARGET
+            )
+            output = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 0, output)
+            self.assertIn(f"pitr report={report}", output)
+            self.assertTrue(report.exists())
 
 
 class DrillMetricsTests(unittest.TestCase):

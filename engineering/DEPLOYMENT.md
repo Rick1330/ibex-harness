@@ -283,8 +283,9 @@ restore — a missing repository config, an unresolvable runtime, a missing scra
 `mechanism: "unavailable"` and a non-empty `blocked_by`. A run that fails *after* the restore started writes the same
 reason under `blocked_by` with the mechanism it actually used. The writer refuses an `unavailable` report without that
 reason, refuses `rpo_pass` for any mechanism other than `pgbackrest_wal`, and refuses `rpo_pass` when the measured RPO is
-null, above the target, or read from an archive queue that was not provably drained, or when a requested recovery target
-was not affirmatively reached — an empty result is a target nobody checked, not a target that was met. The report is
+null, not an integer number of seconds, above the target, or read from an archive queue that was not provably drained,
+when the restore did not complete, or when a requested recovery target was not affirmatively reached — an empty result is
+a target nobody checked, not a target that was met. The report is
 written atomically, and a run whose report cannot be written exits non-zero: a run that cannot produce evidence must not
 look like one that did. A PITR report does not advance `ibex_restore_drill_last_success_unixtime`: that gauge means the
 scheduled drill ran, and a rehearsal must not mask a drill that stopped.
@@ -298,9 +299,12 @@ scheduled drill ran, and a rehearsal must not mask a drill that stopped.
 | `blocked_by` | Names what stopped the run. Always set when `mechanism` is `unavailable`; also set when a restore that had started failed, with the mechanism it actually used |
 | `postgres.mechanism` | `pgbackrest_wal`, `pg_dump_fallback`, `unavailable`, or `unmeasured` |
 | `postgres.wal_archive_ok` | `pg_stat_archiver` showed at least one archived segment with a `last_archived_time`; read at the start of the run — before the drill's backup, and before the restore for a PITR rehearsal |
-| `postgres.wal_archive_upload_age_sec` | Age of the newest archive **upload** when it was sampled. An observation, not a claim: upload completion is not the transaction time the segment carried |
-| `postgres.wal_archive_backlog` | Whether the archive queue was drained at that moment (`false`), was not (`true`), or could not be told (`null`). Computed from `last_archived_wal`, `pg_walfile_name(pg_current_wal_lsn())` and a failed push after the last success |
-| `postgres.rpo_measured_sec` | The upload age, but only when the queue was drained: then it is an upper bound on the RPO. Null when archiving was not proven or the queue was not drained |
+| `postgres.wal_archive_upload_age_sec` | Age of the newest archive **upload** when it was sampled. A diagnostic, not a claim: upload completion is not the transaction time the segment carried |
+| `postgres.wal_archive_timeout_sec` | The live cluster's `archive_timeout`, read with the archive facts. The RPO bound needs it: a commit reaches the archive within that window of its segment being switched, plus the segment's upload latency |
+| `postgres.wal_archive_wal_segment_size` | The cluster's `wal_segment_size` in bytes, which sets how many segment files one WAL log id holds (`2^32 / size`: 4096 at 1 MiB, 256 at 16 MiB, 64 at 64 MiB). Null when it was not measured |
+| `postgres.wal_archive_older_segments` | How many segments older than `last_archived_wal` were still present in `pg_wal`. Adjacency is not continuity — archival order is not guaranteed — so any older segment still queued means the archive has not drained. Null when the listing could not be read |
+| `postgres.wal_archive_backlog` | Whether the archive queue was provably drained at that moment (`false`), was not (`true`), or could not be told (`null`). `false` requires the writer to be at most one segment ahead, no older segment left in `pg_wal`, a known segment size, and no failed push after the last success |
+| `postgres.rpo_measured_sec` | The RPO **bound**: the upload age plus `archive_timeout`, carried only for `pgbackrest_wal` with a provably drained queue and a known, non-zero timeout. Null when any of those is unproven — a zero-second bound over unarchived data is not a result |
 | `postgres.target_timestamp` | The recovery target the run asked for, or null |
 | `postgres.recovery_target_reached` | Whether the restored cluster's last replayed transaction was at or before that target; null when no target was requested |
 | `postgres.recovery_replay_timestamp` | That last replayed transaction, read from the restored cluster |

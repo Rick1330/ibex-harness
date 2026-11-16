@@ -11,11 +11,25 @@
 # Sourced by infra/scripts/platform/pgbackrest-restore.sh and
 # infra/scripts/platform/restore-drill.sh; never executed directly.
 
+# iso_has_utc_offset reports whether an ISO8601 timestamp states the instant's
+# offset explicitly: `Z`, or a numeric `±HH`, `±HHMM` or `±HH:MM`.
+#
+# A zone-less timestamp is not an instant. `date -d` reads it in the host's local
+# time, pgBackRest reads it in the host's local time, and PostgreSQL applies its
+# own `TimeZone` while recovering, so the backup selection, the recovery target
+# and the replay comparison can each land on a different moment — a false pass or
+# a false miss depending on where the host's clock sits. Both producers therefore
+# require the offset before anything parses the value.
+iso_has_utc_offset() {
+  [[ "$1" =~ (Z|[+-][0-9]{2}(:?[0-9]{2})?)$ ]]
+}
+
 # iso_micros prints an ISO8601 timestamp as integer microseconds since the
-# epoch, or nothing when the value cannot be parsed. The caller decides what an
-# empty answer means; this function never guesses one.
+# epoch, or nothing when the value cannot be parsed or carries no UTC offset. The
+# caller decides what an empty answer means; this function never guesses one.
 iso_micros() {
   local micros
+  iso_has_utc_offset "$1" || return 0
   micros="$(date -u -d "$1" +%s%6N 2>/dev/null || true)"
   case "$micros" in
     '' | *[!0-9]*) return 0 ;;

@@ -17,6 +17,8 @@ PLATFORM_DIR = Path(__file__).resolve().parent
 REPORT_PY = PLATFORM_DIR / "restore_drill_report.py"
 DRILL_SH = PLATFORM_DIR / "restore-drill.sh"
 PITR_RESTORE_SH = PLATFORM_DIR / "pgbackrest-restore.sh"
+PITR_TIME_SH = PLATFORM_DIR.parent / "lib" / "pitr_time.sh"
+DEV_TOOL_SH = PLATFORM_DIR.parent / "dev-tool.sh"
 
 _spec = importlib.util.spec_from_file_location("restore_drill_report", REPORT_PY)
 if _spec is None or _spec.loader is None:
@@ -42,12 +44,16 @@ def base_env(**overrides: str) -> dict[str, str]:
         "PG_MECHANISM": "pg_dump_fallback",
         "PG_BACKUP_OK": "true",
         "PG_RESTORE_OK": "true",
-        "PG_RPO_MEASURED": "",
         "PG_RTO_MEASURED": "3",
         # A drained archive: the newest archived segment is the one before the
-        # one being written, and no push has failed since the last success.
+        # one being written, no older segment is left in pg_wal, no push has
+        # failed since the last success, and archive_timeout is the 60 s the
+        # profile sets. The RPO bound is derived from these facts.
         "WAL_ARCHIVE_OK": "true",
         "WAL_ARCHIVE_UPLOAD_AGE_SEC": "30",
+        "WAL_ARCHIVE_TIMEOUT_SEC": "60",
+        "WAL_ARCHIVE_WAL_SEGMENT_SIZE": "16777216",
+        "WAL_ARCHIVE_OLDER_SEGMENTS": "0",
         "WAL_ARCHIVE_LAST_SEGMENT": "000000010000000000000011",
         "WAL_ARCHIVE_CURRENT_SEGMENT": "000000010000000000000012",
         "WAL_ARCHIVE_LAST_FAILED_AFTER_ARCHIVE": "false",
