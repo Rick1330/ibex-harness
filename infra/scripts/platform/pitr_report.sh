@@ -4,7 +4,8 @@
 # `make v1-pitr` and pgbackrest-restore.sh both call this, so the artefact a
 # committed report comes from is the same writer the operator sees at 03:00 and
 # the two paths cannot drift. The schema and its honesty rules live in
-# restore_drill_report.py; this file only maps the PITR_* variables onto it.
+# restore_drill_report.py and its restore_drill_report_schema.py sibling; this
+# file only maps the PITR_* variables onto them.
 #
 # A PITR report never advances ibex_restore_drill_last_success_unixtime: that
 # gauge means "the scheduled drill succeeded", and a rehearsal must not mask a
