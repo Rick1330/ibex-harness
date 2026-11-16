@@ -12,6 +12,13 @@ beside the number.
 The functions take what the producer measured and return ``True``, ``False`` or
 ``None``. ``None`` means "cannot tell" and must never be read as "no backlog":
 the caller is a report that refuses to claim more than the run proved.
+
+No producer measures the ``pg_wal`` older-segment count: PostgreSQL retains
+already-archived segments there until recycling, so a positive count of segments
+older than ``last_archived_wal`` does not mean they are pending archival, and a
+healthy run reported a backlog until those files were recycled. Every report
+therefore records ``wal_archive_backlog: null``, and the arithmetic below is the
+specification of the input a correct measurement would have to supply.
 """
 
 from __future__ import annotations
@@ -74,6 +81,9 @@ class ArchiveContinuity:
     keep the queue "not provably drained" until recycling removes them. That
     withholds the RPO claim rather than overstating it, which is the right
     direction: an old timeline's WAL is part of the recoverable history.
+
+    Neither producer supplies this count (see the module docstring), so a report
+    built from a producer's environment records ``wal_archive_backlog: null``.
     """
 
     wal_segment_size: int | None

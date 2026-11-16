@@ -214,33 +214,28 @@ def _restored_row_counts(e: dict[str, str]) -> dict[str, int | None]:
     }
 
 
-def _archive_continuity(e: dict[str, str]) -> ArchiveContinuity:
-    """The two measurements that establish continuity beyond adjacency."""
-    return ArchiveContinuity(
-        wal_segment_size=parse_int_or_none(e.get("WAL_ARCHIVE_WAL_SEGMENT_SIZE", "")),
-        older_segments_present=parse_int_or_none(e.get("WAL_ARCHIVE_OLDER_SEGMENTS", "")),
-    )
-
-
 def _wal_archive_facts(e: dict[str, str]) -> dict[str, Any]:
     """What the producer observed about the archive. Diagnostics only.
 
-    None of these gates the RPO. The restore replays every segment from the
+    None of these gates the RPO: the restore replays every segment from the
     backup to the replay point, so a gap either stops recovery or truncates the
-    replay timestamp, and the derived bound shows it. The counters are recorded
-    for diagnosis: ``pg_wal`` holds retained-but-archived segments, and
-    ``wal_archive_ok`` is sampled before the backup, so a freshly initialised
-    stanza reads ``false`` for a run that demonstrably worked.
+    replay timestamp, and the derived bound shows it. ``wal_archive_backlog`` is
+    null when the producer supplies no continuity inputs, which is what both
+    shipped producers do — PostgreSQL retains already-archived segments in
+    ``pg_wal`` until recycling, so the count cannot say whether any is still
+    pending. The field is still computed when the inputs are present
+    (``WAL_ARCHIVE_OLDER_SEGMENTS`` and the segment names); nothing gates on the
+    result. ``wal_archive_ok`` is sampled before the backup, so a fresh stanza
+    reads ``false`` for a run that worked.
     """
-    continuity = _archive_continuity(e)
+    continuity = ArchiveContinuity(
+        wal_segment_size=parse_int_or_none(e.get("WAL_ARCHIVE_WAL_SEGMENT_SIZE", "")),
+        older_segments_present=parse_int_or_none(e.get("WAL_ARCHIVE_OLDER_SEGMENTS", "")),
+    )
     return {
         "wal_archive_ok": e.get("WAL_ARCHIVE_OK") == "true",
-        "wal_archive_upload_age_sec": parse_int_or_none(
-            e.get("WAL_ARCHIVE_UPLOAD_AGE_SEC", "")
-        ),
-        "wal_archive_timeout_sec": parse_int_or_none(
-            e.get("WAL_ARCHIVE_TIMEOUT_SEC", "")
-        ),
+        "wal_archive_upload_age_sec": parse_int_or_none(e.get("WAL_ARCHIVE_UPLOAD_AGE_SEC", "")),
+        "wal_archive_timeout_sec": parse_int_or_none(e.get("WAL_ARCHIVE_TIMEOUT_SEC", "")),
         "wal_archive_wal_segment_size": continuity.wal_segment_size,
         "wal_archive_backlog": wal_archive_backlog(
             last_archived_wal=e.get("WAL_ARCHIVE_LAST_SEGMENT"),
@@ -313,22 +308,28 @@ def _restore_outcome(facts: RunFacts) -> tuple[bool, bool]:
     return facts.backup_ok, facts.restore_ok
 
 
+def _demonstrates_rpo_bound(facts: RunFacts, completed: bool) -> bool:
+    """A bound exists only for a WAL-path, untargeted, completed run."""
+    if facts.mechanism != "pgbackrest_wal" or facts.target_requested:
+        # A targeted restore proves the target, not an RPO.
+        return False
+    return completed
+
+
 def _postgres_block(e: dict[str, str], *, facts: RunFacts, note: str) -> dict[str, Any]:
     pg_rto = parse_int_or_none(e.get("PG_RTO_MEASURED", ""))
     backup_ok, restore_ok = _restore_outcome(facts)
     rpo_target = target_sec(e, "PG_RPO_SEC")
     rto_target = target_sec(e, "PG_RTO_SEC")
     archive = _wal_archive_facts(e)
-    # The RPO is what the restore demonstrated between the instant archiving
-    # stopped and the instant the restored cluster replayed to: null when either
-    # instant is missing, so the field cannot be quoted as a bound the run did
-    # not establish.
+    # The RPO is what the restore demonstrated between the instant archiving stopped
+    # and the instant the restored cluster replayed to: null when either instant is
+    # missing, so the field cannot be quoted as a bound the run did not establish.
     quiesced_at = optional_text(e.get("WAL_ARCHIVE_QUIESCED_AT"))
     replay_at = optional_text(e.get("RECOVERY_REPLAY_TIMESTAMP"))
-    # A dump has no recoverable WAL position and a targeted restore proves the
-    # target rather than an RPO: neither carries a number.
+    completed = backup_ok and restore_ok
     bound = None
-    if facts.mechanism == "pgbackrest_wal" and not facts.target_requested:
+    if _demonstrates_rpo_bound(facts, completed):
         bound = rpo_upper_bound(quiesced_at, replay_at)
     rpo_pass = postgres_rpo_pass(
         {
@@ -488,15 +489,18 @@ def _require_untargeted_restore(postgres: dict[str, Any]) -> None:
         )
 
 
-def _require_completed_restore(postgres: dict[str, Any]) -> None:
-    """An RPO measured over a restore that did not complete is not a result.
+def _require_completed_run(postgres: dict[str, Any]) -> None:
+    """An RPO measured over a run that did not complete is not a result.
 
-    The producer always builds ``rpo_pass`` from ``restore_ok``, but a report is
-    a file: one written or edited outside the producer can carry a pass over a
-    restore that failed, and an operator reading it at 03:00 has no way to tell.
+    ``postgres_rpo_pass`` requires both ``backup_ok`` and ``restore_ok``, so a
+    report carrying a pass — or a bound — over either a failed restore or a
+    failed backup is a combination the producer cannot emit. One predicate for
+    both facts keeps the validator from being weaker than the producer.
     """
     if postgres.get("restore_ok") is not True:
         raise ReportHonestyError("rpo_pass requires a completed restore (restore_ok=true)")
+    if postgres.get("backup_ok") is not True:
+        raise ReportHonestyError("rpo_pass requires a completed backup (backup_ok=true)")
 
 
 def _require_instant(value: Any, field: str) -> None:
@@ -583,16 +587,16 @@ def assert_honest(report: dict[str, Any]) -> dict[str, Any]:
     if postgres.get("rpo_pass"):
         _require_pitr_mechanism(mechanism)
         _require_untargeted_restore(postgres)
-        _require_completed_restore(postgres)
+        _require_completed_run(postgres)
         _require_frontier_facts(postgres)
         _require_rpo_derived(postgres)
         _require_rpo_within_target(postgres)
     elif postgres.get("rpo_upper_bound_sec") is not None:
-        # A number with no pass must still be internally consistent: it has to
-        # be the one the recorded frontier produces, on the mechanism that can
-        # produce it, for a run that was not targeted.
+        # A number with no pass must still be internally consistent: the one the
+        # recorded frontier produces, for an untargeted run that completed.
         _require_pitr_mechanism(mechanism)
         _require_untargeted_restore(postgres)
+        _require_completed_run(postgres)
         _require_frontier_facts(postgres)
         _require_rpo_derived(postgres)
     return report
@@ -621,9 +625,7 @@ def _store_blocks(e: dict[str, str]) -> dict[str, Any]:
             "rpo_measured_sec": parse_int_or_none(e.get("CH_RPO_MEASURED", "")),
             "rto_measured_sec": parse_int_or_none(e.get("CH_RTO_MEASURED", "")),
             "reachable": e.get("CH_REACHABLE") == "true",
-            "note": (
-                "reachability timing only when measured; unmeasured fields are null"
-            ),
+            "note": "reachability timing only when measured; unmeasured fields are null",
         },
         "redis": {
             "backup": False,
