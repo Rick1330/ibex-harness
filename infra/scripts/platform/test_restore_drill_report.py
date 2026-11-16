@@ -7,7 +7,7 @@ import importlib.util
 import json
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404 - the drill tests must run the real script; argv is fixed and there is no shell
 import sys
 import tempfile
 import unittest
@@ -429,7 +429,8 @@ class DrillMechanismFallbackTests(unittest.TestCase):
             }
             env.pop("IBEX_DRILL_MECHANISM", None)
             env.pop("POSTGRES_CONTAINER", None)
-            proc = subprocess.run(
+            # Fixed argv, no shell: the only variable is the script path this test owns.
+            proc = subprocess.run(  # nosec B603
                 ["/bin/bash", str(_DRILL_SH), "--mechanism=pgbackrest"],
                 env=env,
                 capture_output=True,
