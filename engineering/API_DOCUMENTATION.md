@@ -495,15 +495,21 @@ did not have.
 | Field | Meaning |
 | --- | --- |
 | `action` | The mutation the proof is for. Closed set; an unknown value is `400 INVALID_REQUEST`. |
-| `code` | The current TOTP code. An invalid code is `401 INVALID_TOKEN`; the attempt gate is `429 RATE_LIMITED`. |
+| `code` | The current TOTP code. An invalid code is `401 INVALID_TOKEN`; the attempt gate is `429 RATE_LIMITED`; an Auth outage is `503 SERVICE_DEGRADED`, so a correct code typed during a blip is not reported as wrong. |
 | `token` (response) | The proof to send as `X-IBEX-Step-Up`. Single-use and short-lived. |
 | `expires_at` (response) | When the proof stops being accepted, when Auth reports it. |
+
+The bearer must be **user-scoped**. A token with no user id (a userless PAT) is refused with
+`403 INSUFFICIENT_PERMISSIONS` and `User-scoped token required` before Auth is called: the only registered action is
+owner-role gated, and AuthService issues no proof for a caller with no user. Scripted teardown uses a user-scoped PAT
+plus TOTP, not a userless PAT.
 
 `DELETE /v1/organizations/{org_id}` requires this proof in addition to the bearer: an owner bearer without it is
 refused with `403 INSUFFICIENT_PERMISSIONS` and no deletion job is enqueued. A proof minted for another organization,
 another subject, another session, or another action is refused with the same `403` and the same message, so the
-refusal is not an oracle. `POST /v1/operator/session/login` and the operator cookie surface are unaffected: the
-bearer stays the only credential this route accepts.
+refusal is not an oracle. The route is owner-role gated, so its bearer is user-scoped for the same reason issuance
+is. `POST /v1/operator/session/login` and the operator cookie surface are unaffected: the bearer stays the only
+credential this route accepts.
 
 ---
 

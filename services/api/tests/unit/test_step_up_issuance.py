@@ -86,6 +86,9 @@ async def test_create_step_up_tolerates_a_response_without_an_expiry() -> None:
         (grpc.StatusCode.RESOURCE_EXHAUSTED, StepUpAttemptLimitError, "attempt limit"),
         (grpc.StatusCode.UNAVAILABLE, AuthUnavailableError, "auth unavailable"),
         (grpc.StatusCode.DEADLINE_EXCEEDED, AuthUnavailableError, "auth unavailable"),
+        # An AuthService outage is a retryable dependency error, not a wrong code.
+        (grpc.StatusCode.INTERNAL, AuthUnavailableError, "auth unavailable"),
+        (grpc.StatusCode.UNKNOWN, AuthUnavailableError, "auth unavailable"),
         (grpc.StatusCode.FAILED_PRECONDITION, AuthUnavailableError, "totp not configured"),
         (grpc.StatusCode.UNAUTHENTICATED, AuthFailedError, "step-up refused"),
         (grpc.StatusCode.PERMISSION_DENIED, AuthFailedError, "step-up refused"),

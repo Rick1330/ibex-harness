@@ -5930,7 +5930,7 @@
     },
     "/v1/auth/step-up": {
       "post": {
-        "description": "Mint a short-lived proof for one action, bound to the bearer's own identity.\n\nThe caller must already hold the permission the action needs; the proof only\nproves a second factor was presented just now, never a grant the caller did\nnot have.",
+        "description": "Mint a short-lived proof for one action, bound to the bearer's own identity.\n\nThe caller must already hold the permission the action needs; the proof only\nproves a second factor was presented just now, never a grant the caller did\nnot have. Only a user-scoped bearer can obtain one: the sole registered\naction, ``org.delete``, is owner-role gated, and AuthService issues no proof\nfor a caller with no user.",
         "operationId": "create_step_up_proof_v1_auth_step_up_post",
         "parameters": [
           {

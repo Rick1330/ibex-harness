@@ -21,6 +21,16 @@
 -- `services/worker/app/retention.py` dropping whole `usage_facts` partitions,
 -- which is a recorded exception to "every ClickHouse statement names org_id"
 -- (a partition covers every tenant, and dropping it is the retention policy).
+--
+-- The three definer bodies are deliberately cross-tenant too, and that is the
+-- second recorded exception to AGENTS.md §4.1's "filter org_id explicitly",
+-- alongside the ClickHouse partition drop above. Retention is a store-wide
+-- policy: `failed_tasks.org_id` is nullable so a dead-letter row belongs to no
+-- tenant in particular, a per-tenant loop would need a tenant list the worker
+-- does not have, and one sweep must not depend on a per-tenant schedule. The
+-- exception is confined to these function bodies: no tenant identity holds
+-- EXECUTE on them (only `ibex_worker` does), and the sweep itself names no org.
+-- A new statement that reaches across tenants must not be added here.
 
 SET LOCAL lock_timeout = '5s';
 
@@ -29,6 +39,9 @@ SET LOCAL lock_timeout = '5s';
 -- Overwrites the payload-bearing columns of every dead-letter row older than
 -- the scrub window. Idempotent by construction: an already-scrubbed row is
 -- excluded, so a second run matches nothing and reports zero.
+--
+-- Cross-tenant by design (recorded exception, see the header): one pass
+-- overwrites the payload of every tenant's expired row.
 --
 -- `failed_at` is the only time column, and it is set once at insert, so the
 -- scrub cannot race a later write that would repopulate the columns.
@@ -75,6 +88,9 @@ REVOKE ALL ON FUNCTION ibex_core.retention_scrub_failed_tasks(timestamptz) FROM 
 -- Drops dead-letter rows past the retention window. `org_id` is nullable and
 -- the table has no RLS: one sweep covers every tenant, which is the point of a
 -- dead-letter store.
+--
+-- Cross-tenant by design (recorded exception, see the header): there is no
+-- org predicate, and adding one would strand every row with a NULL org_id.
 -- ================================================================
 CREATE OR REPLACE FUNCTION ibex_core.retention_delete_failed_tasks(p_before timestamptz)
 RETURNS bigint
@@ -113,6 +129,9 @@ REVOKE ALL ON FUNCTION ibex_core.retention_delete_failed_tasks(timestamptz) FROM
 --
 -- There is no finalized_at column; `updated_at` is the finalize instant, set by
 -- Finalize and never advanced again for a finalized row.
+--
+-- Cross-tenant by design (recorded exception, see the header): the ledger is
+-- pruned for every tenant in one pass, and only finalized rows are eligible.
 -- ================================================================
 CREATE OR REPLACE FUNCTION ibex_core.retention_delete_finalized_idempotency(p_before timestamptz)
 RETURNS bigint

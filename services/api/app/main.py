@@ -242,6 +242,10 @@ def _mount_middleware(
             "Content-Type",
             "X-Request-ID",
             "X-CSRF-Token",
+            # The org-deletion step-up proof. A browser names every non-simple
+            # header in its preflight, so leaving this out rejects the DELETE
+            # before the handler can ask for the proof.
+            "X-IBEX-Step-Up",
             "Last-Event-ID",
             "Accept",
         ],

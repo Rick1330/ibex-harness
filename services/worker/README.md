@@ -142,9 +142,15 @@ Integration test task `ibex.worker.maintenance.always_fail` exercises the full r
 - `app/retention.py` — the `retention_sweep` windows (P1-21 / P2-12 / P2-15). Postgres work goes
   through three `SECURITY DEFINER` functions owned by `ibex_service` (migration `000076`): the
   `ibex_worker` login holds no grant on `ibex_core.failed_tasks` or `ibex_core.idempotency_ledger`,
-  so the sweep issues no row-level DML and names no org. `ibex.usage_facts` is trimmed by dropping
-  whole month partitions, which is a recorded exception to "every ClickHouse statement names
-  `org_id`". Only `state='finalized'` ledger rows are removed; a live claim is never pruned.
+  so the sweep issues no row-level DML and names no org. Only `state='finalized'` ledger rows are
+  removed; a live claim is never pruned.
+  The two backends are gated independently: with `CLICKHOUSE_DSN` set and no PostgreSQL DSN the
+  partition window still runs, and the task result names each backend it skipped in `skipped`.
+  Cross-tenant reach is recorded in two places: the ClickHouse partition drop (a partition covers
+  every tenant) and the three Postgres definer bodies (retention is store-wide, `failed_tasks.org_id`
+  is nullable, and no tenant identity holds `EXECUTE`). Both are the recorded exceptions to
+  "filter `org_id` explicitly"; a tenant cannot call the Postgres functions, and an integration test
+  asserts that.
 
 ## Tests
 

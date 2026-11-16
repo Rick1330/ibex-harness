@@ -426,12 +426,47 @@ def test_delete_org_refuses_misbound_or_expired_proof(spec: dict[str, object]) -
 
 
 def test_delete_org_binds_a_userless_token_to_its_own_id() -> None:
-    """A PAT has no user id; the proof binds to the token id the caller cannot choose."""
+    """The binding derivation for a userless token, with the role gate stubbed out.
+
+    A PAT has no user id, so the proof binds to the token id the caller cannot
+    choose. This pins the derivation, not a capability: the real role gate
+    refuses a userless caller before step-up is reached (the next test), and no
+    proof is issued for one.
+    """
     org_id = uuid4()
     proof = _step_up_proof(
         _ProofSpec(org_id=org_id, subject=_DELETE_TOKEN_ID, session_id=_DELETE_TOKEN_ID)
     )
     _accepted_delete(org_id, proof, user_id=None)
+
+
+def test_delete_org_refuses_a_userless_token_at_the_role_gate() -> None:
+    """A userless PAT never reaches the step-up check.
+
+    ``RequireOwnerOrgSettings`` depends on ``load_caller_role``, which requires a
+    user id, so ``org.delete`` is not reachable with a bearer-only identity. The
+    userless branch of the binding is therefore not a deletion capability.
+    """
+    org_id = uuid4()
+    calls: list[tuple[str, str]] = []
+
+    with api_client(
+        ApiClientOpts(
+            token="owner-token",
+            result=_owner_with_token(org_id, user_id=None),
+            enqueue_calls=calls,
+        )
+    ) as (client, _res, _pub):
+        override_org_session(client.app)
+        resp = client.delete(
+            f"/v1/organizations/{org_id}",
+            headers=_delete_headers("unused-proof"),
+        )
+
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
+    assert resp.json()["error"]["message"] == "User-scoped token required"
+    assert calls == []
 
 
 def test_delete_org_rejects_a_replayed_proof() -> None:

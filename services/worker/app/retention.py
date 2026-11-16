@@ -19,7 +19,15 @@ Three windows, one sweep, because they share a schedule and a failure mode:
 The Postgres side calls one SECURITY DEFINER function per window (migration
 000076). ``ibex_worker`` holds no grant on either table and is NOINHERIT, so the
 function owner is what makes the sweep cross-tenant; the sweep itself issues no
-row-level DML and names no org.
+row-level DML and names no org. That is the second recorded exception to
+"every Postgres statement filters ``org_id`` explicitly" (AGENTS.md §4.1),
+alongside the ClickHouse partition drop above: retention is a store-wide policy,
+``failed_tasks.org_id`` is nullable, and no tenant identity holds EXECUTE on the
+functions. It is confined to those definer bodies; nothing else may take it.
+
+The two backends are gated independently. A worker may run with ClickHouse and
+no PostgreSQL (or the reverse), and a missing DSN for one must not postpone the
+window the other still enforces.
 """
 
 from __future__ import annotations
@@ -221,20 +229,36 @@ def partitions_to_drop(months: Iterable[str], cutoff: str) -> list[str]:
     return sorted(selected)
 
 
-async def run_retention_sweep(
-    *,
-    store: RetentionStore,
-    partitions: UsageFactsPartitions,
-    policy: RetentionPolicy,
-    now: datetime | None = None,
-) -> RetentionReport:
-    """Apply every window once. Safe to repeat: each step matches only unpurged rows."""
-    at = now or datetime.now(UTC)
+async def _postgres_windows(
+    store: RetentionStore, at: datetime, policy: RetentionPolicy
+) -> tuple[int, int, int]:
     # Scrub first: a row past both windows is deleted anyway, but content must
     # be gone even if the delete fails.
     scrubbed = await store.scrub_failed_tasks(at - policy.scrub_after)
     deleted_tasks = await store.delete_failed_tasks(at - policy.delete_after)
     deleted_ledger = await store.delete_finalized_ledger(at - policy.ledger_after)
+    return scrubbed, deleted_tasks, deleted_ledger
+
+
+async def run_retention_sweep(
+    *,
+    store: RetentionStore | None,
+    partitions: UsageFactsPartitions,
+    policy: RetentionPolicy,
+    now: datetime | None = None,
+) -> RetentionReport:
+    """Apply every configured window once. Safe to repeat: each step matches only unpurged rows.
+
+    ``store`` is ``None`` when no PostgreSQL DSN is configured. The ClickHouse
+    window does not depend on it, so an absent database must not postpone a
+    partition drop; the three Postgres counts are then zero and the caller
+    reports that backend as skipped rather than as a clean run.
+    """
+    at = now or datetime.now(UTC)
+    if store is None:
+        scrubbed = deleted_tasks = deleted_ledger = 0
+    else:
+        scrubbed, deleted_tasks, deleted_ledger = await _postgres_windows(store, at, policy)
     dropped = tuple(
         partitions_to_drop(partitions.list_months(), month_cutoff(at, policy.keep_months))
     )

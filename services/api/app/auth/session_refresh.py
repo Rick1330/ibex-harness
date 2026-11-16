@@ -317,14 +317,26 @@ async def consume_step_up(rpc: AuthRPC, params: ConsumeStepUpParams) -> None:
 
 
 def _map_step_up_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:
-    """Map an issuance refusal without adding an oracle: one code, one 401."""
-    if exc.code() == grpc.StatusCode.RESOURCE_EXHAUSTED:
+    """Map an issuance failure without adding an oracle: a refusal is one 401.
+
+    Only the statuses AuthService uses to refuse the caller or the code itself
+    are a failed step-up. Everything else — ``INTERNAL``, ``UNKNOWN``,
+    ``UNAVAILABLE``, ``DEADLINE_EXCEEDED`` — is a degraded dependency: a caller
+    who typed the correct code during an Auth blip must be told to retry, not
+    told the code is wrong.
+    """
+    code = exc.code()
+    if code == grpc.StatusCode.RESOURCE_EXHAUSTED:
         return StepUpAttemptLimitError("step-up attempt limit exceeded")
-    if exc.code() in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED):
-        return AuthUnavailableError("auth unavailable")
-    if exc.code() == grpc.StatusCode.FAILED_PRECONDITION:
+    if code == grpc.StatusCode.FAILED_PRECONDITION:
         return AuthUnavailableError("totp not configured")
-    return AuthFailedError("step-up refused")
+    if code in (
+        grpc.StatusCode.UNAUTHENTICATED,
+        grpc.StatusCode.PERMISSION_DENIED,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ):
+        return AuthFailedError("step-up refused")
+    return AuthUnavailableError("auth unavailable")
 
 
 def _parse_issued_step_up(raw: bytes) -> IssuedStepUp:

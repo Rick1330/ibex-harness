@@ -21,6 +21,7 @@ from app.auth.client import AuthFailedError, AuthUnavailableError, ValidateResul
 from app.auth.session_refresh import IssuedStepUp, StepUpAttemptLimitError
 from app.errors import ApiError
 from app.routers.step_up import _bearer_token
+from app.step_up import bearer_binding
 from tests.unit.org_user_test_support import ApiClientOpts, api_client, bearer_headers
 
 _TOKEN = "owner-token"
@@ -85,15 +86,33 @@ def test_issue_step_up_binds_the_proof_to_the_verified_bearer() -> None:
 
 
 def test_issue_step_up_binds_a_userless_token_to_its_own_id() -> None:
+    """``bearer_binding`` derives both fields from the token id a caller cannot choose.
+
+    Issuance refuses a userless caller (the next test), so this pins the
+    derivation itself rather than a proof anyone can obtain with a PAT.
+    """
+    binding = bearer_binding(_result(user_id=None, token_id="tok-pat"))
+
+    assert binding.subject == "tok-pat"
+    assert binding.session_id == "tok-pat"
+
+
+def test_issue_step_up_refuses_a_userless_token_before_calling_auth() -> None:
+    """AuthService issues no proof for a caller with no user id; say so as a 403.
+
+    The only registered action is owner-role gated, and that gate requires a
+    user, so a userless PAT could never use the proof. Letting the call through
+    would surface AuthService's refusal as an invalid-step-up-code 401.
+    """
     rpc = AsyncMock(return_value=_issued())
 
     with patch("app.routers.step_up.create_step_up", new=rpc):
         resp = _post(_result(user_id=None, token_id="tok-pat"))
 
-    assert resp.status_code == 200
-    params = rpc.await_args.args[1]
-    assert params.subject == "tok-pat"
-    assert params.session_id == "tok-pat"
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
+    assert resp.json()["error"]["message"] == "User-scoped token required"
+    rpc.assert_not_awaited()
 
 
 def test_issue_step_up_refuses_an_unknown_action_without_calling_auth() -> None:
