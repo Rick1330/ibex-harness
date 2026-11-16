@@ -110,6 +110,11 @@ workflows:
 deps:
   - 'go.mod'
   - 'go.sum'
+  # osv-scanner reads this ignore policy from the working directory, so osv-scan's
+  # result depends on it. It matched no filter, so a PR editing only the policy
+  # skipped the scan that enforces it. Note the cost: `deps` also sets full=true in
+  # detect-changes, so a policy-only edit runs the whole matrix.
+  - 'osv-scanner.toml'
   - 'pnpm-lock.yaml'
 benchmarks:
   - 'benchmarks/**'
