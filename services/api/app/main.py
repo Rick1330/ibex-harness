@@ -79,6 +79,7 @@ from app.routers.platform import router as platform_router
 from app.routers.providers import router as providers_router
 from app.routers.rate_limits import router as rate_limits_router
 from app.routers.session import router as session_router
+from app.routers.step_up import router as step_up_router
 from app.routers.tenant import router as tenant_router
 from app.routers.tokens import router as tokens_router
 from app.routers.usage_query import router as usage_query_router
@@ -200,6 +201,7 @@ def _mount_routers(application: FastAPI) -> None:
         legal_holds_router,
         capture_policies_router,
         session_router,
+        step_up_router,
         operator_events_router,
         operator_evidence_router,
         operator_evidence_deletions_router,

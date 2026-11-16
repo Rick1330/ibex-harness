@@ -6,6 +6,7 @@ TASK_EMBEDDING_NOOP = "ibex.worker.embedding.noop"
 TASK_MCP_AUDIT_NOOP = "ibex.worker.mcp_audit.noop"
 TASK_MAINTENANCE_NOOP_SWEEP = "ibex.worker.maintenance.noop_sweep"
 TASK_MAINTENANCE_ALWAYS_FAIL = "ibex.worker.maintenance.always_fail"
+TASK_MAINTENANCE_RETENTION_SWEEP = "ibex.worker.maintenance.retention_sweep"
 TASK_RESULT_PROBE = "ibex.worker.maintenance.result_probe"
 TASK_ORG_DELETE_ORGANIZATION = "ibex.worker.org.delete_organization"
 TASK_LIFECYCLE_ERASE_MEMORY = "ibex.worker.lifecycle.erase_memory"
@@ -20,6 +21,7 @@ ALL_TASK_NAMES: tuple[str, ...] = (
     TASK_MCP_AUDIT_NOOP,
     TASK_MAINTENANCE_NOOP_SWEEP,
     TASK_MAINTENANCE_ALWAYS_FAIL,
+    TASK_MAINTENANCE_RETENTION_SWEEP,
     TASK_RESULT_PROBE,
     TASK_ORG_DELETE_ORGANIZATION,
     TASK_LIFECYCLE_ERASE_MEMORY,

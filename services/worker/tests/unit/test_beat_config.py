@@ -10,6 +10,7 @@ from app.task_names import (
     TASK_BUDGET_RESERVATION_SWEEP,
     TASK_BUDGET_SPENT_ROLLUP,
     TASK_MAINTENANCE_NOOP_SWEEP,
+    TASK_MAINTENANCE_RETENTION_SWEEP,
     TASK_RECONCILE_USAGE_ACTUALS,
 )
 
@@ -34,3 +35,8 @@ def test_beat_schedule_registered() -> None:
     assert schedule["budget-spent-rollup"]["task"] == TASK_BUDGET_SPENT_ROLLUP
     assert schedule["budget-reservation-sweep"]["task"] == TASK_BUDGET_RESERVATION_SWEEP
     assert schedule["budget-reservation-sweep"]["options"]["queue"] == "maintenance"
+    # Retention runs on every deployment: the Postgres windows do not depend on
+    # ClickHouse, so the entry is unconditional.
+    assert schedule["retention-sweep"]["task"] == TASK_MAINTENANCE_RETENTION_SWEEP
+    assert schedule["retention-sweep"]["options"]["queue"] == "maintenance"
+    assert schedule["retention-sweep"]["schedule"].run_every == timedelta(seconds=120)

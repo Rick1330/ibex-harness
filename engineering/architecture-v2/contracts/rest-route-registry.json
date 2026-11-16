@@ -482,6 +482,14 @@
       "evidence": "services/api/app/routers/agents.py"
     },
     {
+      "key": "POST /v1/auth/step-up",
+      "contract_id": "management.auth.step-up.v1",
+      "owner": "api",
+      "stability": "stable",
+      "status": "shipped",
+      "evidence": "services/api/app/routers/step_up.py"
+    },
+    {
       "key": "POST /v1/operator/session/login",
       "contract_id": "operator.session.login.v1",
       "owner": "api",

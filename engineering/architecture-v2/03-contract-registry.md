@@ -93,6 +93,7 @@ Every route mounted by `services/api` has exactly one row in [`contracts/rest-ro
 | `management.agents.activate.v1` | `POST /v1/agents/{agent_id}/activate` | stable |
 | `management.agents.archive.v1` | `POST /v1/agents/{agent_id}/archive` | stable |
 | `management.agents.pause.v1` | `POST /v1/agents/{agent_id}/pause` | stable |
+| `management.auth.step-up.v1` | `POST /v1/auth/step-up` | stable |
 | `operator.session.login.v1` | `POST /v1/operator/session/login` | beta |
 | `operator.session.logout.v1` | `POST /v1/operator/session/logout` | beta |
 | `operator.session.refresh.v1` | `POST /v1/operator/session/refresh` | beta |

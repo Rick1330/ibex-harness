@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,6 +16,7 @@ from app.auth.session_refresh import (
     ConsumeStepUpParams,
     RevokeSessionParams,
     _decode_string_field,
+    _identity,
     consume_step_up,
     encode_issue_with_refresh,
     issue_operator_session,
@@ -29,29 +29,14 @@ from app.auth.session_refresh_codec import (
     decode_string_fields,
     encode_string_fields,
 )
-
-
-def _proto_string(field_num: int, value: str) -> bytes:
-    raw = value.encode("utf-8")
-    return encode_varint((field_num << 3) | 2) + encode_varint(len(raw)) + raw
-
-
-def _proto_varint(field_num: int, value: int) -> bytes:
-    return encode_varint((field_num << 3) | 0) + encode_varint(value)
-
-
-def _rpc(addr: str = "127.0.0.1:50051", token: str = "", timeout: float = 5.0) -> AuthRPC:
-    return AuthRPC(addr, token, timeout)
-
-
-def _session_token(org_id: str = "org") -> str:
-    """JWT-shaped session token carrying only the claim the client reads.
-
-    The lifecycle client names the org it is acting for by reading this claim;
-    AuthService is what verifies the signature and compares the two.
-    """
-    payload = base64.urlsafe_b64encode(json.dumps({"org_id": org_id}).encode()).rstrip(b"=")
-    return f"e30.{payload.decode()}.sig"
+from tests.unit.session_refresh_test_support import (
+    _assert_rpc_raises,
+    _patch_channel,
+    _proto_string,
+    _proto_varint,
+    _rpc,
+    _session_token,
+)
 
 
 def test_encode_issue_with_refresh_multi_byte() -> None:
@@ -101,35 +86,6 @@ def test_decode_string_field_skips_fixed64() -> None:
 def test_decode_string_field_rejects_unsupported_wire() -> None:
     with pytest.raises(AuthCodecError, match="unsupported wire type"):
         _decode_string_field(bytes([0x0F]), 1)
-
-
-def _patch_channel(stub: AsyncMock):
-    channel = MagicMock()
-    channel.unary_unary.return_value = stub
-
-    @asynccontextmanager
-    async def _cm(_addr: str, _ca_file: str = ""):
-        yield channel
-
-    # session_refresh delegates transport selection to the shared factory.
-    return patch("app.auth.session_refresh.open_auth_channel", side_effect=_cm)
-
-
-async def _assert_rpc_raises(
-    stub: AsyncMock,
-    awaitable,
-    exc_type: type[BaseException],
-    match: str,
-) -> BaseException:
-    """Await under channel patch with a single throwable in pytest.raises (S5914)."""
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(exc_type, match=match) as caught:
-            await awaitable
-        return caught.value
-    finally:
-        patcher.stop()
 
 
 @pytest.mark.asyncio
@@ -624,3 +580,26 @@ async def test_validate_operator_session_refuses_a_token_without_an_org() -> Non
         "no org",
     )
     stub.assert_not_awaited()
+
+
+def test_identity_serializer_passes_protobuf_bytes_through() -> None:
+    """The codec owns encoding, so the transport serializer must not re-encode."""
+    payload = _proto_string(1, "access")
+    assert _identity(payload) == payload
+
+
+def test_decode_int64_field_skips_a_preceding_varint_field() -> None:
+    buf = _proto_varint(2, 5) + _proto_varint(3, 9)
+    assert decode_int64_field(buf, 3) == 9
+    assert decode_int64_field(buf, 4) is None
+
+
+@pytest.mark.asyncio
+async def test_issue_operator_session_maps_transient_error_to_unavailable() -> None:
+    stub = AsyncMock(side_effect=grpc.aio.AioRpcError(grpc.StatusCode.UNAVAILABLE, details="boom"))
+    await _assert_rpc_raises(
+        stub,
+        issue_operator_session(_rpc("127.0.0.1:50051"), pat="pat"),
+        AuthUnavailableError,
+        "unavailable",
+    )

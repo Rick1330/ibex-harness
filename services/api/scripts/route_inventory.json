@@ -189,6 +189,19 @@
     "source": "services/api/app/routers/agents.py"
   },
   {
+    "endpoint": "app.routers.step_up.create_step_up_proof",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_step_up_proof",
+    "path": "/v1/auth/step-up",
+    "response_model": "<class 'app.schemas.step_up.StepUpResponse'>",
+    "security": [
+      "app.deps.require_token"
+    ],
+    "source": "services/api/app/routers/step_up.py"
+  },
+  {
     "endpoint": "app.routers.operator_agents.operator_agent_list",
     "methods": [
       "GET"

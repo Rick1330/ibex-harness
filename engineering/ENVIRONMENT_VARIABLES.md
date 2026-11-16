@@ -591,6 +591,10 @@ worker unless explicitly aliased in a future milestone.
 | `IBEX_EXTRACTION_REDIS_URL` | No | falls back to `REDIS_URL` | Shared Redis base for **both** derived broker and result URLs | Not broker-only |
 | `IBEX_WORKER_REDIS_URL` | No | falls back to `REDIS_URL` | Alias of shared Redis base | Same derivation as `REDIS_URL` |
 | `IBEX_WORKER_MAINTENANCE_BEAT_SECONDS` | No | `300` | Beat interval for maintenance noop sweep | Tunable in tests |
+| `IBEX_WORKER_FAILED_TASKS_SCRUB_DAYS` | No | `7` | Age at which `failed_tasks` payload columns (`args`, `kwargs`, `exception_message`, `traceback`) are overwritten with `[scrubbed]`/`[]`/`{}` (P1-21) | Row keeps its forensic shape; must be less than the retention window |
+| `IBEX_WORKER_FAILED_TASKS_RETENTION_DAYS` | No | `30` | Age at which the `failed_tasks` row is deleted (P1-21) | |
+| `IBEX_WORKER_IDEMPOTENCY_LEDGER_RETENTION_HOURS` | No | `24` | Age after finalize at which an `idempotency_ledger` row is deleted (P2-12) | Only `state='finalized'` rows are removed; a live claim is never pruned |
+| `IBEX_WORKER_USAGE_FACTS_RETENTION_MONTHS` | No | `13` | Whole calendar months of `ibex.usage_facts` kept before the month partition is dropped (P2-15) | Needs `CLICKHOUSE_DSN`; the Postgres windows run without it |
 | `IBEX_WORKER_RESULT_EXPIRES_SECONDS` | No | `3600` | Result TTL when `ignore_result=False` | Global default ignores results |
 | `IBEX_WORKER_WORKER_CONCURRENCY` | No | `4` | Worker concurrency | Compose/Makefile may override |
 | `IBEX_WORKER_WORKER_HOSTNAME` | No | `ibex-worker@%h` | Celery nodename for inspect/health | `%h` = hostname |

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import app.tasks  # noqa: F401 — register tasks on module celery_app
 from app.celery_app import celery_app
 from app.task_names import (
@@ -24,6 +26,11 @@ def test_stub_tasks_return_payloads() -> None:
 
 def test_maintenance_noop_sweep_returns_payload() -> None:
     assert maintenance.noop_sweep.run() == {"status": "noop"}
+
+
+def test_always_fail_raises_for_the_dead_letter_probe() -> None:
+    with pytest.raises(maintenance.ForcedFailureError, match="forced failure"):
+        maintenance.always_fail.run()
 
 
 def test_registered_tasks_bind_expected_queues() -> None:

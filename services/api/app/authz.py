@@ -211,7 +211,6 @@ def require_operator_legal_hold_manage() -> Callable[..., OperatorSessionAuthori
             action=StepUpAction(
                 required_permission=LEGAL_HOLD_MANAGE,
                 action="legal_hold.manage",
-                session_id=operator.session_id,
             ),
         )
         return operator
@@ -237,7 +236,9 @@ def require_legal_hold_manage() -> Callable[..., ValidateResult]:
             ValidateResult,
             Depends(require_roles(AdminRoles, required_permission=LEGAL_HOLD_MANAGE)),
         ],
-        operator_session: Annotated[
+        # The operator session is a dependency for its side effect: verifying it
+        # sets request.state.ibex_session_id, which is what the proof binds to.
+        _operator_session: Annotated[
             OperatorSessionAuthorization | None, Depends(_maybe_operator_session)
         ] = None,
     ) -> ValidateResult:
@@ -247,7 +248,6 @@ def require_legal_hold_manage() -> Callable[..., ValidateResult]:
             action=StepUpAction(
                 required_permission=LEGAL_HOLD_MANAGE,
                 action="legal_hold.manage",
-                session_id=operator_session.session_id if operator_session else None,
             ),
         )
         return token
@@ -313,7 +313,9 @@ def require_operator_permission(required: int) -> Callable[..., ValidateResult]:
     async def _dep(
         request: Request,
         token: Annotated[ValidateResult, Depends(require_token)],
-        operator_session: Annotated[
+        # Kept for its side effect: verifying the operator session sets
+        # request.state.ibex_session_id, which is what the proof binds to.
+        _operator_session: Annotated[
             OperatorSessionAuthorization | None, Depends(_maybe_operator_session)
         ] = None,
     ) -> ValidateResult:
@@ -330,7 +332,6 @@ def require_operator_permission(required: int) -> Callable[..., ValidateResult]:
                 action=StepUpAction(
                     required_permission=required,
                     action=f"operator.permission.{required}",
-                    session_id=operator_session.session_id if operator_session else None,
                 ),
             )
         return token

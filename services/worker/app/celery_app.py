@@ -17,6 +17,7 @@ from app.task_names import (
     TASK_LIFECYCLE_ERASE_MEMORY,
     TASK_MAINTENANCE_ALWAYS_FAIL,
     TASK_MAINTENANCE_NOOP_SWEEP,
+    TASK_MAINTENANCE_RETENTION_SWEEP,
     TASK_MCP_AUDIT_NOOP,
     TASK_ORG_DELETE_ORGANIZATION,
     TASK_RECONCILE_USAGE_ACTUALS,
@@ -32,6 +33,7 @@ TASK_ROUTES: dict[str, dict[str, str]] = {
     TASK_MCP_AUDIT_NOOP: {"queue": "mcp_audit"},
     TASK_MAINTENANCE_NOOP_SWEEP: {"queue": "maintenance"},
     TASK_MAINTENANCE_ALWAYS_FAIL: {"queue": "maintenance"},
+    TASK_MAINTENANCE_RETENTION_SWEEP: {"queue": "maintenance"},
     TASK_RESULT_PROBE: {"queue": "maintenance"},
     TASK_ORG_DELETE_ORGANIZATION: {"queue": "maintenance"},
     TASK_LIFECYCLE_ERASE_MEMORY: {"queue": "maintenance"},
@@ -112,6 +114,15 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
             # Same cadence as the reservation reaper: an undelivered erasure is
             # work that has to converge, and a slower beat only delays the retry
             # the outbox row already scheduled for itself.
+            # Retention is a window, not a deadline: a slow beat only delays
+            # the scrub, and the sweep is idempotent, so the shared cadence is
+            # enough. It runs on every deployment, including one with no
+            # ClickHouse DSN (the Postgres windows still apply).
+            "retention-sweep": {
+                "task": TASK_MAINTENANCE_RETENTION_SWEEP,
+                "schedule": schedule(run_every=cfg.maintenance_beat_seconds),
+                "options": {"queue": "maintenance"},
+            },
             "lifecycle-erase-memory": {
                 "task": TASK_LIFECYCLE_ERASE_MEMORY,
                 "schedule": schedule(run_every=cfg.maintenance_beat_seconds),
