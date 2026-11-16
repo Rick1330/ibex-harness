@@ -11,6 +11,10 @@ TRANSCRIPT="$REPORT_DIR/transcript.txt"
 # Fresh transcript per run (do not append prior smoke runs into evidence).
 : >"$TRANSCRIPT"
 
+# Integer-only match for a COUNT()/size value read back with psql -Atc. Defined
+# once because every scalar count is filtered with the same pattern.
+UINT_RE='^[0-9]+$'
+
 # O03: an RTO measured on a two-row fixture is not evidence. The fixture is
 # generated before the backup and the restored row count is recorded in the
 # report, so a one-second RTO can never be presented as a real restore time.
@@ -352,7 +356,7 @@ SQL
     echo "[drill] ERROR: fixture insert failed" >&2
     exit 1
   fi
-  FIXTURE_ROWS_ACTUAL="$(psql_cmd -Atc "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories WHERE org_id IN ('$ORG_A'::uuid, '$ORG_B'::uuid)" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
+  FIXTURE_ROWS_ACTUAL="$(psql_cmd -Atc "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories WHERE org_id IN ('$ORG_A'::uuid, '$ORG_B'::uuid)" 2>/dev/null | grep -E "$UINT_RE" | tail -n1 || true)"
   echo "[drill] fixture rows verified=${FIXTURE_ROWS_ACTUAL:-unknown}"
 fi
 
@@ -377,8 +381,17 @@ measure_wal_archive() {
   fi
   archived="${row%%|*}"
   last_epoch="${row##*|}"
-  case "$archived" in '' | *[!0-9]*) return 0 ;; esac
-  case "$last_epoch" in '' | *[!0-9]*) return 0 ;; esac
+  # '' or a non-digit means the count is unusable, so RPO stays unmeasured. An
+  # all-digit value is the valid case and is handled below, so the default arm
+  # is a deliberate no-op rather than a silent acceptance.
+  case "$archived" in
+    '' | *[!0-9]*) return 0 ;;
+    *) : ;;
+  esac
+  case "$last_epoch" in
+    '' | *[!0-9]*) return 0 ;;
+    *) : ;;
+  esac
   if (( archived == 0 || last_epoch <= 0 )); then
     echo "[drill] WAL archiving has archived no segment (archived_count=$archived) — RPO unmeasurable"
     return 0
@@ -569,8 +582,17 @@ RECOVERY_REPLAY_TIMESTAMP=""
 if [[ -n "$DRILL_TARGET" && "$PG_RESTORE_OK" == "true" ]]; then
   replay_epoch="$(psql_cmd -Atc "SELECT COALESCE(EXTRACT(EPOCH FROM pg_last_xact_replay_timestamp())::bigint, -1)" 2>/dev/null | tr -d '[:space:]' | tail -n1 || true)"
   target_epoch="$(date -u -d "$DRILL_TARGET" +%s 2>/dev/null || true)"
-  case "$replay_epoch" in '' | *[!0-9-]*) replay_epoch="" ;; esac
-  case "$target_epoch" in '' | *[!0-9]*) target_epoch="" ;; esac
+  # Empty or non-numeric clears the epoch; an all-digit (or negative, for the
+  # replay timestamp) value is valid and passes through, so the default is a
+  # deliberate no-op.
+  case "$replay_epoch" in
+    '' | *[!0-9-]*) replay_epoch="" ;;
+    *) : ;;
+  esac
+  case "$target_epoch" in
+    '' | *[!0-9]*) target_epoch="" ;;
+    *) : ;;
+  esac
   if [[ -n "$replay_epoch" && -n "$target_epoch" ]] && (( replay_epoch >= 0 )); then
     RECOVERY_REPLAY_TIMESTAMP="$(date -u -d "@$replay_epoch" +%Y-%m-%dT%H:%M:%SZ)"
     if (( replay_epoch <= target_epoch )); then
@@ -624,7 +646,7 @@ SET LOCAL ROLE ibex_app;
 SELECT set_config('app.current_org_id', '$org_guc', true);
 SELECT COUNT(*)::text FROM ibex_core.organizations WHERE id='$target_id'::uuid;
 COMMIT;
-" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true
+" 2>/dev/null | grep -E "$UINT_RE" | tail -n1 || true
   }
   ISO_A_OWN="$(rls_count "$ORG_A" "$ORG_A")"
   ISO_A_CROSS="$(rls_count "$ORG_A" "$ORG_B")"
@@ -644,15 +666,15 @@ CLUSTER_DATA_BYTES=""
 RESTORED_ORGS=""
 RESTORED_MEMORIES=""
 if [[ "$PG_RESTORE_OK" == "true" && "${ALLOW_NO_DB:-0}" != "1" ]]; then
-  CLUSTER_DATA_BYTES="$(psql_cmd -Atc "SELECT pg_database_size(current_database())" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
-  RESTORED_ORGS="$(psql_cmd -Atc "SELECT COUNT(*)::text FROM ibex_core.organizations" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
-  RESTORED_MEMORIES="$(psql_cmd -Atc "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
+  CLUSTER_DATA_BYTES="$(psql_cmd -Atc "SELECT pg_database_size(current_database())" 2>/dev/null | grep -E "$UINT_RE" | tail -n1 || true)"
+  RESTORED_ORGS="$(psql_cmd -Atc "SELECT COUNT(*)::text FROM ibex_core.organizations" 2>/dev/null | grep -E "$UINT_RE" | tail -n1 || true)"
+  RESTORED_MEMORIES="$(psql_cmd -Atc "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories" 2>/dev/null | grep -E "$UINT_RE" | tail -n1 || true)"
   echo "[drill] restored cluster bytes=${CLUSTER_DATA_BYTES:-unknown} orgs=${RESTORED_ORGS:-unknown} memories=${RESTORED_MEMORIES:-unknown}"
 fi
 
 FIXTURE_ROWS_RESTORED=""
 if [[ "${ALLOW_NO_DB:-0}" != "1" && -n "$FIXTURE_ROWS_ACTUAL" ]]; then
-  FIXTURE_ROWS_RESTORED="$(psql_cmd -Atc "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories WHERE org_id IN ('$ORG_A'::uuid, '$ORG_B'::uuid)" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
+  FIXTURE_ROWS_RESTORED="$(psql_cmd -Atc "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories WHERE org_id IN ('$ORG_A'::uuid, '$ORG_B'::uuid)" 2>/dev/null | grep -E "$UINT_RE" | tail -n1 || true)"
   echo "[drill] post-restore fixture rows=${FIXTURE_ROWS_RESTORED:-unknown}"
 fi
 

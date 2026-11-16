@@ -21,6 +21,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
+# Whitespace class for trimming a single psql -tA value. Defined once because
+# every scalar read back from the cluster trims with the same pattern.
+PG_WS_TRIM='[:space:]'
+
 resolve_conf() {
   if [[ -n "${PGBACKREST_CONF:-}" && ! -f "${PGBACKREST_CONF}" ]]; then
     echo "[restore] PGBACKREST_CONF set but file missing: $PGBACKREST_CONF" >&2
@@ -615,8 +619,17 @@ measure_live_wal_archive() {
   fi
   archived="${row%%|*}"
   last_epoch="${row##*|}"
-  case "$archived" in '' | *[!0-9]*) return 0 ;; esac
-  case "$last_epoch" in '' | *[!0-9]*) return 0 ;; esac
+  # '' or a non-digit means the count is unusable, so RPO stays unmeasured. An
+  # all-digit value is the valid case and is handled below, so the default arm
+  # is a deliberate no-op rather than a silent acceptance.
+  case "$archived" in
+    '' | *[!0-9]*) return 0 ;;
+    *) : ;;
+  esac
+  case "$last_epoch" in
+    '' | *[!0-9]*) return 0 ;;
+    *) : ;;
+  esac
   if (( archived == 0 || last_epoch <= 0 )); then
     echo "[restore] WAL archiving has archived no segment (archived_count=$archived) — RPO unmeasurable"
     return 0
@@ -649,8 +662,18 @@ record_cluster_facts() {
   if [[ "$row" == *"|"* ]]; then
     replay="${row%%|*}"
     PITR_CLUSTER_DATA_BYTES="${row##*|}"
-    case "$PITR_CLUSTER_DATA_BYTES" in '' | *[!0-9]*) PITR_CLUSTER_DATA_BYTES="" ;; esac
-    case "$replay" in '' | *[!0-9-]*) replay="" ;; esac
+    # Clear the byte count when it is empty or non-numeric. An all-digit value is
+    # the valid case and passes through unchanged, so the default is a no-op.
+    case "$PITR_CLUSTER_DATA_BYTES" in
+      '' | *[!0-9]*) PITR_CLUSTER_DATA_BYTES="" ;;
+      *) : ;;
+    esac
+    # Same rule for the replay epoch, which may legitimately be negative (-1
+    # means "no replayed transaction yet"), so the pattern also allows '-'.
+    case "$replay" in
+      '' | *[!0-9-]*) replay="" ;;
+      *) : ;;
+    esac
     if [[ -n "$replay" ]] && (( replay >= 0 )); then
       PITR_RECOVERY_REPLAY_TIMESTAMP="$(date -u -d "@$replay" +%Y-%m-%dT%H:%M:%SZ)"
       if [[ -n "$target_epoch" ]]; then
@@ -665,8 +688,13 @@ record_cluster_facts() {
     fi
   fi
   PITR_RESTORED_ORGS="$("${CLI[@]}" exec "$container" psql -U "$user" -d "$db" -tAc \
-    "SELECT COUNT(*)::text FROM ibex_core.organizations" 2>/dev/null | tr -d '[:space:]' | tail -n1 || true)"
-  case "$PITR_RESTORED_ORGS" in '' | *[!0-9]*) PITR_RESTORED_ORGS="" ;; esac
+    "SELECT COUNT(*)::text FROM ibex_core.organizations" 2>/dev/null | tr -d "$PG_WS_TRIM" | tail -n1 || true)"
+  # Empty or non-numeric clears the org count; an all-digit value is valid and
+  # left as-is, so the default arm is a deliberate no-op.
+  case "$PITR_RESTORED_ORGS" in
+    '' | *[!0-9]*) PITR_RESTORED_ORGS="" ;;
+    *) : ;;
+  esac
   PITR_RESTORED_MEMORIES="$("${CLI[@]}" exec "$container" psql -U "$user" -d "$db" -tAc \
     "SET app.is_service_account = 'true'; SELECT COUNT(*)::text FROM ibex_core.memories" \
     2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true)"
@@ -697,7 +725,7 @@ start_pitr_verify_container() {
   [[ -n "$user" ]] || user=postgres
   [[ -n "$db" ]] || db=postgres
   for _ in $(seq 1 120); do
-    if [[ "$("${CLI[@]}" exec "$PITR_VERIFY_CONTAINER" psql -U "$user" -d "$db" -tAc 'select pg_is_in_recovery()' 2>/dev/null | tr -d '[:space:]' || true)" == "f" ]]; then
+    if [[ "$("${CLI[@]}" exec "$PITR_VERIFY_CONTAINER" psql -U "$user" -d "$db" -tAc 'select pg_is_in_recovery()' 2>/dev/null | tr -d "$PG_WS_TRIM" || true)" == "f" ]]; then
       ready=true
       break
     fi
@@ -786,11 +814,9 @@ compose_restore_available() {
 # check that the `-e VAR` form could not make: under a rootful engine the
 # container came up with empty values and the restore died after Postgres was
 # stopped.
-if compose_restore_available; then
-  if ! probe_credential_delivery "$IMAGE"; then
-    pitr_blocked "the container engine did not deliver the repository credentials intact to a probe container; nothing has been stopped"
-    exit 1
-  fi
+if compose_restore_available && ! probe_credential_delivery "$IMAGE"; then
+  pitr_blocked "the container engine did not deliver the repository credentials intact to a probe container; nothing has been stopped"
+  exit 1
 fi
 
 echo "[restore] stopping Postgres before restore"
@@ -850,7 +876,7 @@ verify_destructive_restore_compose() {
   for _ in $(seq 1 120); do
     # POSTGRES_USER is the superuser created by the image; the container has it
     # in its environment, so the query never needs a value from this script.
-    in_recovery="$("${CLI[@]}" exec "$cid" sh -c 'psql -U "$POSTGRES_USER" -d postgres -tAc "select pg_is_in_recovery()"' 2>/dev/null | tr -d '[:space:]' || true)"
+    in_recovery="$("${CLI[@]}" exec "$cid" sh -c 'psql -U "$POSTGRES_USER" -d postgres -tAc "select pg_is_in_recovery()"' 2>/dev/null | tr -d "$PG_WS_TRIM" || true)"
     if [[ "$in_recovery" == "f" ]]; then
       break
     fi
@@ -909,7 +935,7 @@ verify_destructive_restore_host() {
     echo "[restore] FAILED: $pidfile is missing after pg_ctl start; cannot identify the restored server" >&2
     return 1
   fi
-  pg_port="$(sed -n '4p' "$pidfile" | tr -d '[:space:]')"
+  pg_port="$(sed -n '4p' "$pidfile" | tr -d "$PG_WS_TRIM")"
   pg_socket="$(sed -n '5p' "$pidfile" | tr -d '\r')"
   if [[ -z "$pg_port" ]]; then
     echo "[restore] FAILED: could not read the port from $pidfile" >&2
@@ -927,7 +953,7 @@ verify_destructive_restore_host() {
     psql_target+=(-h 127.0.0.1)
   fi
   for _ in $(seq 1 120); do
-    in_recovery="$(psql "${psql_target[@]}" -d postgres -tAc 'select pg_is_in_recovery()' 2>/dev/null | tr -d '[:space:]' || true)"
+    in_recovery="$(psql "${psql_target[@]}" -d postgres -tAc 'select pg_is_in_recovery()' 2>/dev/null | tr -d "$PG_WS_TRIM" || true)"
     if [[ "$in_recovery" == "f" ]]; then
       break
     fi
