@@ -238,8 +238,8 @@ v1-backup-init: ## Create/verify the pgBackRest stanza and repository (idempoten
 v1-restore: ## Restore the latest pgBackRest backup into the v1-single-node profile
 	@"$(BASH)" "$(DEV_TOOL)" v1 restore
 
-v1-pitr: ## Restore to a timestamp (TARGET=<ISO8601>; SCRATCH_VOLUME=<name> restores beside the live cluster)
-	@IBEX_PITR_SCRATCH_VOLUME="$(SCRATCH_VOLUME)" "$(BASH)" "$(DEV_TOOL)" v1 pitr "$(TARGET)"
+v1-pitr: ## Restore to a timestamp (TARGET=<ISO8601>; SCRATCH_VOLUME=<name> restores beside the live cluster; PITR_REPORT=<path>)
+	@IBEX_PITR_SCRATCH_VOLUME="$(SCRATCH_VOLUME)" IBEX_PITR_REPORT="$(PITR_REPORT)" "$(BASH)" "$(DEV_TOOL)" v1 pitr "$(TARGET)"
 
 observability-up: ## Start local LGTM observability stack (Prometheus/Grafana/Tempo/Loki)
 	@"$(BASH)" infra/scripts/observability-up.sh

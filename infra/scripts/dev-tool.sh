@@ -713,22 +713,61 @@ v1_restore() {
   bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh"
 }
 
+# v1_pitr_report_path resolves the report a PITR run must leave behind. It sits
+# next to the drill's report directory but defaults to the per-user state dir,
+# because a non-root operator cannot write /var/lib/ibex. IBEX_PITR_REPORT (or
+# `make v1-pitr PITR_REPORT=...`) points it at an evidence directory instead.
+v1_pitr_report_path() {
+  if [[ -n "${IBEX_PITR_REPORT:-}" ]]; then
+    printf '%s\n' "$IBEX_PITR_REPORT"
+    return 0
+  fi
+  printf '%s/ibex/restore-drill/pitr-report.json\n' "${RESTORE_DRILL_REPORT_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}"
+}
+
+# v1_pitr_blocked writes the honest artefact for a run that never reached the
+# restore. A missing report is not a pass; a report that says "unavailable,
+# blocked by X" is, and the writer refuses one without that reason.
+v1_pitr_blocked() {
+  local reason="$1" target="$2"
+  echo "PITR unavailable: $reason" >&2
+  PITR_REPORT="$(v1_pitr_report_path)" \
+    PITR_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    PITR_ENVIRONMENT_CLASS="${IBEX_DRILL_ENVIRONMENT_CLASS:-local-${IBEX_RUNTIME:-auto}-pitr}" \
+    PITR_MECHANISM=unavailable \
+    PITR_TARGET_TIMESTAMP="$target" \
+    PITR_BLOCKED_BY="$reason" \
+    bash "$ROOT_DIR/infra/scripts/platform/pitr_report.sh"
+}
+
 # v1_pitr restores to a timestamp. The target is mandatory: without it the
 # restore would recover to the end of WAL and could not be called PITR.
 # IBEX_PITR_SCRATCH_VOLUME restores beside the live cluster instead of over it.
+# Every outcome writes a report through the same writer the drill uses, so
+# `make v1-pitr` cannot finish without an artefact that says what happened.
 v1_pitr() {
-  local target="${1:-}" scratch="${IBEX_PITR_SCRATCH_VOLUME:-}"
+  local target="${1:-}" scratch="${IBEX_PITR_SCRATCH_VOLUME:-}" report
   if [[ -z "$target" ]]; then
     echo "usage: make v1-pitr TARGET=2026-11-14T03:00:00Z" >&2
     echo "       make v1-pitr TARGET=... SCRATCH_VOLUME=<name> (restores beside the live cluster)" >&2
     return 2
   fi
-  v1_pgbackrest_conf >/dev/null || return 1
-  v1_restore_env || return 1
+  report="$(v1_pitr_report_path)"
+  export IBEX_PITR_REPORT="$report"
+  if ! v1_pgbackrest_conf >/dev/null; then
+    v1_pitr_blocked "the pgBackRest repository config is missing or refused (run make v1-secrets, or point PGBACKREST_CONF at a real file)" "$target"
+    return 1
+  fi
+  if ! v1_restore_env; then
+    v1_pitr_blocked "the container runtime or profile environment for the v1 profile could not be resolved" "$target"
+    return 1
+  fi
   PGBACKREST_RESTORE_TARGET="$target"
   PGBACKREST_RESTORE_SCRATCH_VOLUME="$scratch"
-  export PGBACKREST_RESTORE_TARGET PGBACKREST_RESTORE_SCRATCH_VOLUME
+  PGBACKREST_RESTORE_REPORT="$report"
+  export PGBACKREST_RESTORE_TARGET PGBACKREST_RESTORE_SCRATCH_VOLUME PGBACKREST_RESTORE_REPORT
   bash "$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh"
+  echo "pitr report=$report"
 }
 
 v1_up() {

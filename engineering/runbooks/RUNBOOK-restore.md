@@ -237,10 +237,22 @@ Do not run a later step if an earlier one fails, and do not skip to the restore.
    fails inside Docker after PostgreSQL is already stopped
    (`pgbackrest-restore.sh`:528-533,693).
 
-**Point-in-time restore is destructive and supported.** `make v1-pitr
-TARGET=2026-11-14T03:00:00Z` restores to that moment. `dev-tool.sh v1 pitr`
-requires the target, exports it as `PGBACKREST_RESTORE_TARGET`, and runs the same
-script (`infra/scripts/dev-tool.sh`:719-732; `Makefile`:241-242). The script
+**Point-in-time restore is destructive and supported, and every run leaves a
+report.** `make v1-pitr TARGET=2026-11-14T03:00:00Z` restores to that moment.
+`dev-tool.sh v1 pitr` requires the target, exports it as
+`PGBACKREST_RESTORE_TARGET`, and runs the same script (`infra/scripts/dev-tool.sh`;
+`Makefile`:241-242). It also sets `PGBACKREST_RESTORE_REPORT`, so the restore
+script writes `pitr-report.json` through the same writer the restore drill uses
+(`infra/scripts/platform/pitr_report.sh` → `restore_drill_report.py`). The path is
+`IBEX_PITR_REPORT`, else `PITR_REPORT=` on the `make` line, else
+`${RESTORE_DRILL_REPORT_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/ibex/restore-drill/pitr-report.json`.
+A run stopped by a precondition still writes a report, with `mechanism:
+"unavailable"` and a non-empty `blocked_by`; the writer refuses that report
+without the reason. Read `postgres.mechanism`, `wal_archive_ok`,
+`rpo_measured_sec`, `target_timestamp`, `recovery_target_reached`,
+`recovery_replay_timestamp`, `cluster_data_bytes` and `restored_row_counts` before
+quoting any number from it. `rpo_pass` is true only for `pgbackrest_wal` with a
+measured RPO inside 300 s, a completed restore, and no missed target. The script
 validates the value as ISO-8601 and normalises it to the shape pgBackRest's
 `--target` parser accepts — the `T` separator becomes a space and a `Z` suffix
 becomes `+00`, because pgBackRest rejects both (`pgbackrest-restore.sh`:171-190) —
@@ -258,9 +270,19 @@ the live data directory (`pgbackrest-restore.sh`:11-13,477-510;
 `Makefile`:241-242). Create the volume first (`docker volume create <name>` or
 `podman volume create <name>`). This is the recommended first rehearsal for any
 target you intend to use in an incident, and the only way to prove a timestamp
-without destroying the running database. The scratch copy is left **stopped**: the
-script prints the command that starts it with `archive_mode=off`, so the restored
-timeline cannot write into the live repository (`:501-504`).
+without destroying the running database. The script does not stop at "the restore
+returned 0": it starts the restored copy itself with `archive_mode=off` — the same
+command it prints for the operator — waits for it to leave recovery, reads
+`pg_last_xact_replay_timestamp()`, compares it with the target, records the size
+and row counts, and removes that verification container again. The scratch copy is
+left **stopped**, so the restored timeline cannot write into the live repository,
+and the printed command still starts it if you want to inspect it by hand. If the
+recovery target is past the end of the archived WAL, PostgreSQL refuses to promote
+(`recovery ended before configured recovery target was reached`), the script prints
+the server log and exits non-zero instead of reporting a successful PITR. Pick a
+target that has transactions **after** it in the archived WAL: a target later than
+the last archived transaction cannot be reached, because recovery reaches the end
+of the WAL before the target.
 
 **Credentials never go on a command line.** `make v1-restore` and `make v1-pitr`
 export `PGBACKREST_REPO1_CIPHER_PASS`, `PGBACKREST_REPO1_S3_KEY` and
@@ -332,6 +354,15 @@ expose it.
 5. Only after steps 1–4 pass, start the profile (`make v1-up`) and confirm
    `/ready` on each service.
 
+**Forcing the drill onto the PITR path.** `infra/scripts/platform/restore-drill.sh
+--mechanism=pgbackrest` (or `IBEX_DRILL_MECHANISM=pgbackrest`) makes the pgBackRest
+branch mandatory. If the host has no `pgbackrest` binary, no repository config, or
+a Postgres bound to `POSTGRES_CONTAINER` rather than the compose volume, the drill
+fails before seeding anything, writes an `unavailable` report naming the blocker,
+and exits non-zero. It never falls back to `pg_dump`; a `pg_dump` run is not PITR
+and must not be reported as one. `--target=<ISO8601>` (`IBEX_DRILL_TARGET`) turns
+the same run into a point-in-time drill and records whether the target was reached.
+
 ## Escalation
 
 - Escalate to infrastructure when the repository itself is unavailable or the
@@ -351,5 +382,16 @@ expose it.
   `[restore] recovery state verified: pg_is_in_recovery()=false` line (`:596`).
 - `restore-drill-report.json` and `transcript.txt` from the drill
   (`infra/scripts/platform/restore-drill.sh`:9-10), with `rto_pass`,
-  `rpo_pass` and the fixture row count.
+  `rpo_pass` and the fixture row count. A drill run that could not use
+  pgBackRest carries `mechanism: "unavailable"` and a `blocked_by`; that is an
+  honest outcome, and it is **not** evidence for a PITR or RPO claim.
+- `pitr-report.json` from `make v1-pitr` (or `make v1-pitr PITR_REPORT=<path>`),
+  with `mechanism`, `target_timestamp`, `recovery_target_reached`,
+  `recovery_replay_timestamp`, `cluster_data_bytes` and `restored_row_counts`.
+  A committed report is one run in one environment: `environment_class` says
+  which, and a local result is not a hosted one.
+- The row-level check around the target: a row written **before** the target is
+  present in the restored cluster and a row written **after** it is absent. That
+  pair is what discriminates a real PITR from a restore of the latest backup;
+  `restored_row_counts` alone does not.
 - The post-restore `/ready` bodies and the replay assertions above.

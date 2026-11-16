@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-_REPORT_PY = Path(__file__).resolve().parent / "restore_drill_report.py"
+_PLATFORM_DIR = Path(__file__).resolve().parent
+_REPORT_PY = _PLATFORM_DIR / "restore_drill_report.py"
+_DRILL_SH = _PLATFORM_DIR / "restore-drill.sh"
 _spec = importlib.util.spec_from_file_location("restore_drill_report", _REPORT_PY)
 if _spec is None or _spec.loader is None:
     raise ImportError(f"cannot load restore_drill_report from {_REPORT_PY}")
@@ -89,6 +95,154 @@ class PostgresRpoHonestyTests(unittest.TestCase):
                     }
                 )
                 self.assertEqual(got, expect)
+
+
+class PgBackrestRpoGateTests(unittest.TestCase):
+    """rpo_pass is a PITR claim: only a measured, fresh pgBackRest WAL run earns it."""
+
+    def test_pgbackrest_wal_with_null_rpo_cannot_pass(self) -> None:
+        # Archiving was proven to work, but no RPO was measured. "Archiving is
+        # on" is not "the RPO target was met", so the claim must stay false.
+        report = _mod.build_report(
+            _base_env(PG_MECHANISM="pgbackrest_wal", PG_RPO_MEASURED="", WAL_ARCHIVE_OK="true")
+        )
+        self.assertEqual(report["postgres"]["mechanism"], "pgbackrest_wal")
+        self.assertIsNone(report["postgres"]["rpo_measured_sec"])
+        self.assertFalse(report["postgres"]["rpo_pass"])
+
+    def test_pgbackrest_wal_with_measured_rpo_can_pass(self) -> None:
+        # The counterpart to the test above: the gate is not permanently closed.
+        report = _mod.build_report(
+            _base_env(
+                PG_MECHANISM="pgbackrest_wal",
+                PG_RPO_MEASURED="30",
+                PG_RPO_SEC="300",
+                WAL_ARCHIVE_OK="true",
+            )
+        )
+        self.assertTrue(report["postgres"]["rpo_pass"])
+
+    def test_pgbackrest_wal_over_target_fails(self) -> None:
+        report = _mod.build_report(
+            _base_env(
+                PG_MECHANISM="pgbackrest_wal",
+                PG_RPO_MEASURED="900",
+                PG_RPO_SEC="300",
+                WAL_ARCHIVE_OK="true",
+            )
+        )
+        self.assertFalse(report["postgres"]["rpo_pass"])
+
+    def test_pg_dump_fallback_never_claims_rpo_pass(self) -> None:
+        # Even a fast, measured number cannot make a dump a PITR mechanism.
+        report = _mod.build_report(
+            _base_env(PG_MECHANISM="pg_dump_fallback", PG_RPO_MEASURED="1", WAL_ARCHIVE_OK="true")
+        )
+        self.assertFalse(report["postgres"]["rpo_pass"])
+        self.assertEqual(report["postgres_rpo_residual"], "not_pitr_pg_dump_fallback_#869")
+
+
+class PitrReportTests(unittest.TestCase):
+    """A point-in-time rehearsal reports the target it asked for and reached."""
+
+    def _pitr_env(self, **overrides: str) -> dict[str, str]:
+        env = _base_env(
+            DRILL_KIND="pitr",
+            PG_MECHANISM="pgbackrest_wal",
+            PG_RPO_MEASURED="45",
+            WAL_ARCHIVE_OK="true",
+            TARGET_TIMESTAMP="2026-11-16T10:00:00Z",
+            RECOVERY_TARGET_REACHED="true",
+            RECOVERY_REPLAY_TIMESTAMP="2026-11-16T09:59:58Z",
+            CLUSTER_DATA_BYTES="1048576",
+            RESTORED_ORGS="3",
+            RESTORED_MEMORIES="50000",
+            ISO_OK="false",
+        )
+        env.update(overrides)
+        return env
+
+    def test_reached_target_is_recorded_and_eligible(self) -> None:
+        report = _mod.build_report(self._pitr_env())
+        self.assertEqual(report["drill_kind"], "pitr")
+        self.assertEqual(report["postgres"]["target_timestamp"], "2026-11-16T10:00:00Z")
+        self.assertTrue(report["postgres"]["recovery_target_reached"])
+        self.assertEqual(report["postgres"]["recovery_replay_timestamp"], "2026-11-16T09:59:58Z")
+        self.assertEqual(report["postgres"]["cluster_data_bytes"], 1048576)
+        self.assertEqual(report["postgres"]["restored_row_counts"]["memories"], 50000)
+        self.assertTrue(report["postgres"]["rpo_pass"])
+        # A scratch rehearsal never proves tenant isolation; it must not need to.
+        self.assertFalse(report["tenant_isolation_post_restore"])
+        self.assertTrue(report["evidence_eligible"])
+
+    def test_missed_target_cannot_pass(self) -> None:
+        report = _mod.build_report(
+            self._pitr_env(RECOVERY_TARGET_REACHED="false", RECOVERY_REPLAY_TIMESTAMP="2026-11-16T10:00:09Z")
+        )
+        self.assertFalse(report["postgres"]["recovery_target_reached"])
+        self.assertFalse(report["postgres"]["rpo_pass"])
+        self.assertFalse(report["evidence_eligible"])
+
+    def test_no_target_requested_is_not_a_reached_target(self) -> None:
+        report = _mod.build_report(
+            self._pitr_env(TARGET_TIMESTAMP="", RECOVERY_TARGET_REACHED="", RECOVERY_REPLAY_TIMESTAMP="")
+        )
+        self.assertIsNone(report["postgres"]["target_timestamp"])
+        self.assertIsNone(report["postgres"]["recovery_target_reached"])
+
+
+class UnavailableMechanismTests(unittest.TestCase):
+    """PITR that cannot run must say why, and must never claim a pass."""
+
+    def _unavailable_env(self, **overrides: str) -> dict[str, str]:
+        env = _base_env(
+            PG_MECHANISM="unavailable",
+            PG_BACKUP_OK="false",
+            PG_RESTORE_OK="false",
+            PG_RTO_MEASURED="",
+            BLOCKED_BY="the pgbackrest binary is not installed on this host",
+        )
+        env.update(overrides)
+        return env
+
+    def test_unavailable_without_blocked_by_is_rejected(self) -> None:
+        for empty in ("", "   "):
+            with (
+                self.subTest(blocked_by=repr(empty)),
+                self.assertRaises(_mod.ReportHonestyError),
+            ):
+                _mod.build_report(self._unavailable_env(BLOCKED_BY=empty))
+
+    def test_unavailable_with_reason_claims_nothing(self) -> None:
+        report = _mod.build_report(self._unavailable_env())
+        self.assertEqual(report["postgres"]["mechanism"], "unavailable")
+        self.assertEqual(report["blocked_by"], "the pgbackrest binary is not installed on this host")
+        self.assertFalse(report["postgres"]["rpo_pass"])
+        self.assertFalse(report["postgres"]["rto_pass"])
+        self.assertFalse(report["evidence_eligible"])
+        self.assertEqual(report["postgres_rpo_residual"], "pitr_unavailable")
+
+    def test_unavailable_cannot_carry_a_restore_result(self) -> None:
+        # A producer that passes restore_ok=true for a run that never restored
+        # must not be able to turn the report into a pass.
+        report = _mod.build_report(
+            self._unavailable_env(PG_BACKUP_OK="true", PG_RESTORE_OK="true", PG_RTO_MEASURED="1")
+        )
+        self.assertFalse(report["postgres"]["restore_ok"])
+        self.assertFalse(report["postgres"]["rto_pass"])
+        self.assertFalse(report["postgres"]["rpo_pass"])
+
+    def test_honesty_validator_refuses_a_fallback_rpo_pass(self) -> None:
+        report = _mod.build_report(_base_env())
+        report["postgres"]["rpo_pass"] = True
+        with self.assertRaises(_mod.ReportHonestyError):
+            _mod.assert_honest(report)
+
+    def test_honesty_validator_refuses_rpo_pass_without_a_measurement(self) -> None:
+        report = _mod.build_report(_base_env(PG_MECHANISM="pgbackrest_wal", PG_RPO_MEASURED=""))
+        report["postgres"]["rpo_pass"] = True
+        with self.assertRaises(_mod.ReportHonestyError):
+            _mod.assert_honest(report)
 
 
 class BuildReportTests(unittest.TestCase):
@@ -230,6 +384,106 @@ class DrillMetricsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "absent.prom"
             self.assertIsNone(_mod.read_last_success(path))
+
+
+class DrillMechanismFallbackTests(unittest.TestCase):
+    """`--mechanism=pgbackrest` must fail, not degrade into pg_dump."""
+
+    # Commands the drill needs before it reaches the mechanism guard. pgbackrest
+    # is deliberately absent from the directory, which is the condition under
+    # test; nothing here is a stub of the script's own logic.
+    _PATH_COMMANDS = (
+        "bash",
+        "cat",
+        "date",
+        "dirname",
+        "grep",
+        "mkdir",
+        "python3",
+        "seq",
+        "sleep",
+        "tail",
+        "tee",
+        "tr",
+    )
+
+    def test_pgbackrest_mechanism_fails_loudly_when_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bindir = root / "bin"
+            bindir.mkdir()
+            for name in self._PATH_COMMANDS:
+                found = shutil.which(name)
+                if found:
+                    os.symlink(found, bindir / name)
+            report_dir = root / "reports"
+            env = {
+                **os.environ,
+                "PATH": str(bindir),
+                "RESTORE_DRILL_REPORT_DIR": str(report_dir),
+                "IBEX_DRILL_METRICS_PATH": str(root / "metrics.prom"),
+                "IBEX_DRILL_ENVIRONMENT_CLASS": "test-harness",
+                "SKIP_COMPOSE": "1",
+                # Never connected to: the guard fires before any database access.
+                "POSTGRES_DSN": "postgres://drill:drill@127.0.0.1:1/drill?sslmode=disable",
+            }
+            env.pop("IBEX_DRILL_MECHANISM", None)
+            env.pop("POSTGRES_CONTAINER", None)
+            proc = subprocess.run(
+                ["/bin/bash", str(_DRILL_SH), "--mechanism=pgbackrest"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            output = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 1, output)
+            self.assertIn("refusing to fall back to pg_dump", output)
+            self.assertIn("pgbackrest binary is not installed", output)
+            # It failed before touching a database: no seeding, no data loss.
+            self.assertNotIn("seeding org markers", output)
+            written = json.loads((report_dir / "restore-drill-report.json").read_text())
+            self.assertEqual(written["postgres"]["mechanism"], "unavailable")
+            self.assertTrue(written["blocked_by"])
+            self.assertFalse(written["postgres"]["rpo_pass"])
+            self.assertFalse(written["evidence_eligible"])
+            self.assertEqual(written["environment_class"], "test-harness")
+
+    def test_env_equivalent_selects_the_same_path(self) -> None:
+        # The env form and the flag form must select the same mechanism.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bindir = root / "bin"
+            bindir.mkdir()
+            for name in self._PATH_COMMANDS:
+                found = shutil.which(name)
+                if found:
+                    os.symlink(found, bindir / name)
+            report_dir = root / "reports"
+            env = {
+                **os.environ,
+                "PATH": str(bindir),
+                "RESTORE_DRILL_REPORT_DIR": str(report_dir),
+                "IBEX_DRILL_METRICS_PATH": str(root / "metrics.prom"),
+                "IBEX_DRILL_MECHANISM": "pgbackrest",
+                "SKIP_COMPOSE": "1",
+                "POSTGRES_DSN": "postgres://drill:drill@127.0.0.1:1/drill?sslmode=disable",
+            }
+            env.pop("POSTGRES_CONTAINER", None)
+            proc = subprocess.run(
+                ["/bin/bash", str(_DRILL_SH)],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            output = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 1, output)
+            self.assertIn("refusing to fall back to pg_dump", output)
+            written = json.loads((report_dir / "restore-drill-report.json").read_text())
+            self.assertEqual(written["postgres"]["mechanism"], "unavailable")
 
 
 if __name__ == "__main__":
