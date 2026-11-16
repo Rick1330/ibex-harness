@@ -207,11 +207,10 @@ class UnavailableMechanismTests(unittest.TestCase):
 
     def test_unavailable_without_blocked_by_is_rejected(self) -> None:
         for empty in ("", "   "):
-            with (
-                self.subTest(blocked_by=repr(empty)),
-                self.assertRaises(_mod.ReportHonestyError),
-            ):
-                _mod.build_report(self._unavailable_env(BLOCKED_BY=empty))
+            env = self._unavailable_env(BLOCKED_BY=empty)
+            with self.subTest(blocked_by=repr(empty)):
+                with self.assertRaises(_mod.ReportHonestyError):
+                    _mod.build_report(env)
 
     def test_unavailable_with_reason_claims_nothing(self) -> None:
         report = _mod.build_report(self._unavailable_env())
@@ -472,7 +471,8 @@ class DrillMechanismFallbackTests(unittest.TestCase):
                 "POSTGRES_DSN": "postgres://drill:drill@127.0.0.1:1/drill?sslmode=disable",
             }
             env.pop("POSTGRES_CONTAINER", None)
-            proc = subprocess.run(
+            # Fixed argv, no shell: the only variable is the script path this test owns.
+            proc = subprocess.run(  # nosec B603
                 ["/bin/bash", str(_DRILL_SH)],
                 env=env,
                 capture_output=True,
