@@ -131,15 +131,141 @@ if [[ "$issue_state" == "CLOSED" ]]; then
   exit 1
 fi
 
-issue_body="$(gh issue view "$issue_num" --repo "$REPO" --json body -q .body | tr -d '\r')"
-issue_comments="$(gh api "repos/${REPO}/issues/${issue_num}/comments" --jq '[.[].body] | join("\n")' 2>/dev/null || true)"
-issue_text="${issue_body}"$'\n'"${issue_comments}"
+# The link may be recorded as a comment, so the comments are read too. That read
+# used to swallow its own failure: `|| true` turned a rate limit, a 5xx, or a
+# token-scope error into an empty string, and the gate then blamed the data with
+# "must reference PR #N" while the reference was there (PRs #1239, #1243, #1256).
+# A failed read is a failure of this check, and it has to say so.
+#
+# Two failures have to stay distinct, and both are retried three times two seconds
+# apart, because neither is the data's fault:
+#
+#   1. the read itself failed -- a rate limit, a 5xx, a dropped connection;
+#   2. the read succeeded but the comment had not propagated yet. GitHub does not
+#      guarantee read-after-write for a comment created seconds earlier, so a 200
+#      can legitimately omit it. Retrying the *comparison* is what covers that;
+#      retrying only the read would still report a reference that exists as
+#      missing.
+#
+# One loop drives both, so an attempt is exactly one read plus one comparison:
+# three reads when the reference is genuinely absent, one when it is there.
+COMMENT_ATTEMPTS=3
+COMMENT_RETRY_SECONDS=2
 
-if ! grep -qiE "(pull/${PR_NUMBER}([^0-9]|$)|PR[[:space:]]*#${PR_NUMBER}([^0-9]|$)|#${PR_NUMBER}([^0-9]|$))" <<<"$issue_text"; then
-  echo "Issue #$issue_num must reference PR #$PR_NUMBER (e.g. Implementation PR: #${PR_NUMBER})"
-  echo "Add it to the issue body or a comment so the tracker links both ways."
-  exit 1
-fi
+# Rate limiting is retryable here but not for the issue read above: the GraphQL
+# issue query answers "could not resolve" for a rate-limited request, which would
+# be read as a missing issue, while the REST comments call fails with a 403/429
+# that says what happened.
+is_retryable_comment_failure() {
+  case "$1" in
+    *"rate limit"* | *"Rate limit"* | *"429"*)
+      return 0
+      ;;
+  esac
+  is_transient_gh_failure "$1"
+}
+
+# Read the issue's comments once. Exit 0 with the joined bodies on success, 1 when
+# the failure is retryable, 2 when it is not; a failure prints the gh error so the
+# caller can quote it.
+read_comments_once() {
+  local issue="$1" comments error
+  local error_file
+  error_file="$(mktemp)"
+  if comments="$(gh api "repos/${REPO}/issues/${issue}/comments" \
+    --jq '[.[].body] | join("\n")' 2>"$error_file")"; then
+    rm -f "$error_file"
+    printf '%s' "$comments"
+    return 0
+  fi
+  error="$(cat "$error_file")"
+  rm -f "$error_file"
+  printf '%s' "$error"
+  if is_retryable_comment_failure "$error"; then
+    return 1
+  fi
+  return 2
+}
+
+# True when the issue text names the PR in any shape the tracker accepts.
+text_names_pr() {
+  grep -qiE "(pull/${PR_NUMBER}([^0-9]|$)|PR[[:space:]]*#${PR_NUMBER}([^0-9]|$)|#${PR_NUMBER}([^0-9]|$))" <<<"$1"
+}
+
+# Does the issue body or its comments name the PR? One read and one comparison per
+# attempt. Exit 0 found, 1 absent from every answer that could be read, 2 no answer
+# could be read (retryable failures exhausted, payload is the last error), 3 no
+# answer could be read and the failure is not retryable (payload is that error).
+reference_is_recorded() {
+  local issue="$1" body="$2" attempt output status
+  local read_ok=0 fatal=0 last_error=""
+  for ((attempt = 1; attempt <= COMMENT_ATTEMPTS; attempt++)); do
+    if output="$(read_comments_once "$issue")"; then
+      status=0
+    else
+      status=$?
+    fi
+    case "$status" in
+      0)
+        read_ok=1
+        if text_names_pr "${body}"$'\n'"${output}"; then
+          return 0
+        fi
+        ;;
+      2)
+        # A non-retryable failure will not clear with time, so the loop stops. A
+        # readable answer already collected still outranks it: the reference was
+        # genuinely absent from that answer.
+        fatal=1
+        last_error="$output"
+        break
+        ;;
+      *)
+        last_error="$output"
+        ;;
+    esac
+    if [[ "$attempt" -lt "$COMMENT_ATTEMPTS" ]]; then
+      sleep "$COMMENT_RETRY_SECONDS"
+    fi
+  done
+  if [[ "$read_ok" -eq 1 ]]; then
+    return 1
+  fi
+  printf '%s' "$last_error"
+  if [[ "$fatal" -eq 1 ]]; then
+    return 3
+  fi
+  return 2
+}
+
+issue_body="$(gh issue view "$issue_num" --repo "$REPO" --json body -q .body | tr -d '\r')"
+
+set +e
+reference_error="$(reference_is_recorded "$issue_num" "$issue_body")"
+reference_status=$?
+set -e
+
+case "$reference_status" in
+  0) ;;
+  1)
+    echo "Issue #$issue_num must reference PR #$PR_NUMBER (e.g. Implementation PR: #${PR_NUMBER})"
+    echo "Add it to the issue body or a comment so the tracker links both ways."
+    exit 1
+    ;;
+  3)
+    echo "Could not read the comments on issue #$issue_num: $reference_error"
+    echo "That is not a retryable error, so it was not retried."
+    echo "This is a read failure, not a missing reference: the link may well be there."
+    exit 1
+    ;;
+  *)
+    echo "Could not read the comments on issue #$issue_num after $COMMENT_ATTEMPTS attempts."
+    echo "Last GitHub API error: $reference_error"
+    echo "This is a read failure, not a missing reference: the link may well be there."
+    echo "Re-run this job once the API is reachable."
+    exit 1
+    ;;
+esac
 
 if grep -qiE '^##[[:space:]]+Problem' <<<"$issue_body"; then
   for section in 'Proposed solution' 'Acceptance criteria'; do

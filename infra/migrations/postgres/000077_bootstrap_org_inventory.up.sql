@@ -48,7 +48,7 @@ AS $$
     -- Ordered by slug, the one column 000069 grants to `ibex_service`, so the
     -- body needs no further column privilege. The order is only there to make
     -- the refusal text stable across runs.
-    ORDER BY o.slug;
+    ORDER BY o.slug ASC;
 $$;
 
 ALTER FUNCTION ibex_core.bootstrap_list_org_slugs() OWNER TO ibex_service;

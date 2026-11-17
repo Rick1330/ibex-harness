@@ -248,6 +248,39 @@ func TestPrintBootstrapResultAlreadyBootstrapped(t *testing.T) {
 	}
 }
 
+// TestPrintBootstrapResultMemoryTokenVariants covers the two memory-token
+// summaries: a first run reports the token it minted, and a rerun reports the
+// reconciliation of the managed row instead.
+func TestPrintBootstrapResultMemoryTokenVariants(t *testing.T) {
+	t.Run("first run", func(t *testing.T) {
+		var out strings.Builder
+		if err := printBootstrapResult(&out, bootstrapResult{
+			OrgID:              uuid.New(),
+			PATPath:            "/run/ibex/bootstrap.pat",
+			MemoryTokenManaged: true,
+		}); err != nil {
+			t.Fatalf("printBootstrapResult: %v", err)
+		}
+		if !strings.Contains(out.String(), "Memory token:") {
+			t.Fatalf("summary missing the memory token line: %s", out.String())
+		}
+	})
+
+	t.Run("already bootstrapped", func(t *testing.T) {
+		var out strings.Builder
+		if err := printBootstrapResult(&out, bootstrapResult{
+			AlreadyBootstrapped: true,
+			OrgID:               uuid.New(),
+			MemoryTokenManaged:  true,
+		}); err != nil {
+			t.Fatalf("printBootstrapResult: %v", err)
+		}
+		if !strings.Contains(out.String(), "memory service token:") {
+			t.Fatalf("summary missing the reconciliation line: %s", out.String())
+		}
+	})
+}
+
 func TestWriteRestrictedFileReplacesPermissiveFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, bootstrapPATName)
