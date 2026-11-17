@@ -276,7 +276,7 @@ Each row is closed by a change that exists in this tree; per the stage closure r
 | P1-07 | Release tags are lightweight and unsigned; no tag protection | 27:98 | owner decision (D-A) | 27:98 |
 | P1-08 | The release manifest is not schema-validated or signed at upload | 27:99 | product | 27:99 |
 | P1-09 | No per-image SBOM; signatures are produced and never verified | 27:100 | product | 27:100 |
-| P1-10 | Memory/embedder run `apt-get upgrade` at build time | 27:101 | product | 27:101 |
+| P1-10 | The blanket in-build `apt-get upgrade` ran in seven images, not two; it is removed from all seven and the base digests are recorded. Two builds of the same commit still produce different digests, so the row stays open | 27:101 | product | 27:101 |
 | P1-26 | v2 ranking numbers never reach the site | 27:116 | benchmark stack | 27:116 |
 | P1-27 | `full_graph == hybrid_rerank`; the gate exists, the corpus equality is unresolved | 27:117; 34:29-30 | benchmark stack | 27:117 |
 | P1-33 | The reranker is unnamed/unpinned; the gated row runs `stub/lexical-overlap@1` | 27:123 | benchmark stack | 27:123 |

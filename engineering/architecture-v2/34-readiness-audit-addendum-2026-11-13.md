@@ -105,7 +105,7 @@ One line each. Blocker classes: **owner decision**, **credential**, **workflow/b
 | W7.1 | Version Release has never run green (`31-v1-release-plan-2026-11-09.md`:154) | credential |
 | W7.2 | Tags are lightweight and unsigned, no tag protection (`31-v1-release-plan-2026-11-09.md`:155) | owner decision (D-A) |
 | W7.3 | Manifest is neither schema-validated nor signed at upload; no per-image SBOM; no `cosign verify` (`31-v1-release-plan-2026-11-09.md`:156) | product |
-| W7.4 | `apt-get upgrade` at build time in memory/embedder (`31-v1-release-plan-2026-11-09.md`:157) | product |
+| W7.4 | `apt-get upgrade` at build time in seven images, not only memory/embedder (`31-v1-release-plan-2026-11-09.md`:157); removed, but the same-commit digest test is still unmet | product |
 | W7.5 | No `v1-smoke` target or job exists — `v1-smoke` appears only in `31-v1-release-plan-2026-11-09.md`:158 and :200 | workflow/branch-protection |
 
 ### Tenancy and security

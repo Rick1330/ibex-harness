@@ -495,6 +495,11 @@ All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-python` /
 
 Recommended baseline images:
 
+> This list is **policy, not the record**. It has drifted from the tree before (it names `golang:1.21` and
+> `distroless`, neither of which is used). The digests actually pinned by every `FROM` are in
+> [`quality/base-images.md`](quality/base-images.md); where the two disagree, that file describes what ships and this
+> list is the thing to correct.
+
 - Go build: `golang:1.21` (builder stage)
 - Go runtime: `gcr.io/distroless/static-debian11` (runtime stage)
 - Python runtime: `python:3.11-slim` (or distroless python if feasible)
