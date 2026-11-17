@@ -321,6 +321,11 @@ v1_edge_ca() {
 # payload is static and non-sensitive, but it travels the same path as the
 # token-bearing call, so there is one code path to review.
 #
+# A sixth argument is a file to dump the response headers into (`curl -D`). The
+# chat arm reads the proxy's X-IBEX-Context-* outcome headers from it, because a
+# status alone cannot say whether context assembly ran: the proxy is fail-open
+# and serves the completion anyway when assembly degrades.
+#
 # The bootstrap PAT is an admin credential, so it must not appear in curl's
 # argv: OpenCode (and any process monitor) logs argv. The bearer header is
 # written to a 0600 curl config file and passed with --config; only the file
@@ -333,13 +338,14 @@ v1_edge_ca() {
 # assertion below reports it as a failed probe, and v1_smoke's own loop decides
 # whether to try again — the smoke never dies inside curl.
 v1_smoke_http() {
-  local url="$1" token="$2" agent="$3" body="$4" payload="${5:-}"
+  local url="$1" token="$2" agent="$3" body="$4" payload="${5:-}" headers="${6:-}"
   local -a args=(
     --cacert "$(v1_edge_ca)" -sS
     --connect-timeout 5 --max-time 20
     -o "$body" -w '%{http_code}'
   )
   local cfg="" status
+  [[ -n "$headers" ]] && args+=(-D "$headers")
   if [[ -n "$token" ]]; then
     cfg="$(mktemp "${TMPDIR:-/tmp}/ibex-v1-smoke-curl.XXXXXX")"
     chmod 0600 "$cfg"
@@ -403,8 +409,51 @@ sys.exit(0 if role == "assistant" else 1)
 PY
 }
 
+# v1_smoke_context_fallback classifies the chat response's
+# X-IBEX-Context-Fallback header. The header is the outcome signal a status
+# cannot carry: context assembly is fail-open by design and the proxy answers
+# the completion directive-only when the Assemble RPC degrades or comes back
+# empty (services/proxy/internal/http/chat_context_assemble.go:149-157), so a
+# 200 proves the chat completes and nothing about assembly.
+#
+# Exit 0: present and "false" — the RPC ran and did not degrade.
+# Exit 1: present and "true" — the RPC fail-opened; the completion was served
+#         without assembled context.
+# Exit 2: absent — Assemble was never attempted, so nothing is proven. The
+#         writer returns early while Attempted is false (:359-363), which covers
+#         assembly disabled, a Skip-Memory request, a request with no verified
+#         principal, and one too incomplete to assemble. The profile takes none
+#         of those paths, so absent fails the caller instead of passing blindly.
+# Exit 3: present with a value other than true/false — the header contract
+#         changed, and this check must not read a drifting value as a pass.
+v1_smoke_context_fallback() {
+  local headers="$1"
+  python3 - "$headers" <<'PY'
+import sys
+from pathlib import Path
+
+try:
+    raw = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+except OSError:
+    sys.exit(2)
+values = []
+for line in raw.splitlines():
+    name, sep, value = line.partition(":")
+    if sep and name.strip().lower() == "x-ibex-context-fallback":
+        values.append(value.strip().lower())
+if not values:
+    sys.exit(2)
+if "true" in values:
+    sys.exit(1)
+sys.exit(0 if all(value == "false" for value in values) else 3)
+PY
+}
+
 # v1_smoke_assert proves the profile serves an authenticated request on the chat
 # path — not only the auth-probe — and that the two negative paths stay closed.
+# The chat arm accepts a 200 only when the response reports a non-degraded
+# context assembly, because the proxy is fail-open and a 200 alone would pass
+# while assembly was skipped or degraded.
 # It returns 1 instead of exiting so the self-test can assert a failure.
 v1_smoke_assert() {
   local base="$1" org="$2" agent="$3" pat="$4" body="$5" status wrong_org
@@ -422,11 +471,36 @@ v1_smoke_assert() {
   # The chat path itself. The org is implicit in the token, so there is no org
   # path segment; the agent header selects the agent the request is attributed
   # to, and the request stays non-streaming so the body is JSON.
-  local payload="$body.chat-request.json"
+  #
+  # A 200 does not prove context assembly ran. The proxy is fail-open on that
+  # path, so a degraded or timed-out assembly still answers the completion
+  # (services/proxy/internal/http/chat_context_assemble.go:149-157), which is
+  # why the three X-IBEX-Context-* headers exist. They are written only when the
+  # Assemble RPC was actually attempted (:359-371), so their absence means the
+  # assembly path was skipped rather than that it succeeded quietly.
+  #
+  # The profile enables assembly (IBEX_CONTEXT_ENABLED: "true",
+  # infra/compose/v1-single-node/compose.yml:359), routes chat through the agent
+  # verifier that binds the verified principal
+  # (services/proxy/internal/http/router_protected.go:168), and wraps every
+  # request in a real OTel span
+  # (services/proxy/internal/http/router.go:242), so the attempted path is the
+  # only one a well-formed chat request can take here. A missing header is
+  # therefore a failure: an unproven assembly is not a passing one. `true` is
+  # also a failure — the chat path completed by degrading, and the gate says
+  # the profile serves the request without that.
+  local payload="$body.chat-request.json" headers="$body.chat-headers.txt" hrc=0
   printf '%s' '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' >"$payload"
-  status="$(v1_smoke_http "$base/v1/chat/completions" "$pat" "$agent" "$body" "$payload" || true)"
+  status="$(v1_smoke_http "$base/v1/chat/completions" "$pat" "$agent" "$body" "$payload" "$headers" || true)"
   [[ "$status" == "200" ]] || { echo "chat completion with the bootstrap PAT returned $status, want 200" >&2; return 1; }
   v1_smoke_body_chat "$body" || { echo "chat completion body is not one assistant message (choices[0].message.role)" >&2; return 1; }
+  v1_smoke_context_fallback "$headers" || hrc=$?
+  case "$hrc" in
+    0) ;;
+    1) echo "chat completion degraded context assembly (X-IBEX-Context-Fallback: true); the proxy fail-opened to directive-only messages" >&2; return 1 ;;
+    2) echo "chat response carried no X-IBEX-Context-Fallback header: context assembly was not attempted, so a 200 does not prove the assembly path ran" >&2; return 1 ;;
+    *) echo "chat response carries an unexpected X-IBEX-Context-Fallback value; want true or false" >&2; return 1 ;;
+  esac
   return 0
 }
 
@@ -434,7 +508,7 @@ v1_smoke_assert() {
 # static /_edge/health string. It reads the one-time bootstrap PAT (mode 600),
 # resolves the org and agent ids from the profile database, then asserts the
 # authenticated auth-probe, the 401/403 negatives, and one authenticated chat
-# completion.
+# completion that did not degrade context assembly.
 #
 # A skip is exit 4, never 0: no readable bootstrap PAT means the authenticated
 # half of the gate was not exercised, and a caller must not be able to read that
@@ -504,7 +578,7 @@ v1_smoke() {
   echo "PASS: v1 auth-probe 200 through the edge with the bootstrap PAT (org_id matches $org)"
   echo "PASS: v1 auth-probe 401 without a token"
   echo "PASS: v1 auth-probe 403 for a different org path"
-  echo "PASS: v1 chat completion 200 through the edge (choices[0].message.role is assistant)"
+  echo "PASS: v1 chat completion 200 through the edge (choices[0].message.role is assistant, X-IBEX-Context-Fallback is false)"
   return 0
 }
 
@@ -513,10 +587,13 @@ v1_smoke() {
 # is the only test of that parser, so every way the chat check can pass
 # something the gate must reject has an arm here: a non-200, a 200 whose
 # choices[0].message.role is not assistant, a 200 with an empty choices list, a
-# 200 whose body is a JSON array rather than an object, and a 200 whose body is
-# not JSON. The accepted completion body is the one the mock
-# provider returns (packages/provider/mockllm/provider.go: mockJSONBody), so the
-# parser is tested against what the profile serves in its current posture.
+# 200 whose body is a JSON array rather than an object, a 200 whose body is not
+# JSON, and the three assembly outcomes a 200 can carry. The last group is the
+# point of the header assertion: a completion is not a pass when the proxy says
+# assembly did not run (`true`) or says nothing at all (no header). The accepted
+# completion body is the one the mock provider returns
+# (packages/provider/mockllm/provider.go: mockJSONBody), so the parser is tested
+# against what the profile serves in its current posture.
 v1_smoke_selftest() {
   local org="11111111-1111-4111-8111-111111111111"
   local agent="22222222-2222-4222-8222-222222222222"
@@ -533,11 +610,28 @@ v1_smoke_selftest() {
   # case differs from the accepted one by a single value rather than by a copied
   # curl replacement. The token is read from the 0600 config file, which is the
   # path v1_smoke_http actually uses.
+  #
+  # The chat headers mirror what the proxy writes (chat_context_assemble.go:364-370):
+  # the accepted arm carries all three X-IBEX-Context-* headers with fallback
+  # `false`, which is what a healthy assembly on the profile produces.
+  stub_chat_headers() {
+    local status="$1"
+    printf 'HTTP/1.1 %s X\r\n' "$status"
+    case "$stub_chat" in
+      fallback-absent) printf 'X-IBEX-Memories-Injected: 0\r\nX-IBEX-Context-Tokens: 12\r\n' ;;
+      fallback-true) printf 'X-IBEX-Memories-Injected: 0\r\nX-IBEX-Context-Tokens: 0\r\nX-IBEX-Context-Fallback: true\r\n' ;;
+      fallback-unexpected) printf 'X-IBEX-Context-Fallback: degraded\r\n' ;;
+      *) printf 'X-IBEX-Memories-Injected: 0\r\nX-IBEX-Context-Tokens: 12\r\nX-IBEX-Context-Fallback: false\r\n' ;;
+    esac
+    printf '\r\n'
+  }
+
   stub_curl() {
-    local out="" url="" token="" cfg="" status=200 body=""
+    local out="" url="" token="" cfg="" hdr="" status=200 body=""
     while (( $# )); do
       case "$1" in
         -o) out="$2"; shift 2 ;;
+        -D) hdr="$2"; shift 2 ;;
         --cacert|-w|--connect-timeout|--max-time) shift 2 ;;
         --config) cfg="$2"; shift 2 ;;
         -X|--data-binary|-H) shift 2 ;;
@@ -561,6 +655,7 @@ v1_smoke_selftest() {
           *) body="$stub_chat_body" ;;
         esac
       fi
+      [[ -n "$hdr" ]] && stub_chat_headers "$status" >"$hdr"
     else
       case "$stub_chat" in
         wrong-org) body='{"org_id":"33333333-3333-4333-8333-333333333333"}' ;;
@@ -580,7 +675,7 @@ v1_smoke_selftest() {
     curl() { stub_curl "$@"; }
     v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json"
   ); then
-    echo "PASS: v1-smoke self-test accepts a 200+matching-org auth-probe, its 401 and 403, and one assistant completion"
+    echo "PASS: v1-smoke self-test accepts a 200+matching-org auth-probe, its 401 and 403, and one assistant completion with X-IBEX-Context-Fallback: false"
   else
     echo "FAIL: v1-smoke self-test rejected a well-formed stub" >&2
     return 1
@@ -613,6 +708,12 @@ v1_smoke_selftest() {
   assert_rejected "a 200 chat body that is a JSON array, not an object" || return 1
   stub_chat="malformed"
   assert_rejected "a 200 chat body that is not valid JSON" || return 1
+  stub_chat="fallback-true"
+  assert_rejected "a 200 chat completion that reports X-IBEX-Context-Fallback: true (assembly degraded)" || return 1
+  stub_chat="fallback-absent"
+  assert_rejected "a 200 chat completion that carries no X-IBEX-Context-Fallback header (assembly unproven)" || return 1
+  stub_chat="fallback-unexpected"
+  assert_rejected "a 200 chat completion whose X-IBEX-Context-Fallback is neither true nor false" || return 1
   return 0
 }
 
