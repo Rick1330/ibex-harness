@@ -54,12 +54,13 @@ mkdir -p "$STUB_BIN"
 # The non-zero status makes a regressed guard fail the run the way a refusal
 # does, so only the call log tells the two apart.
 write_client_stub() {
-  cat >"$STUB_BIN/$1" <<'STUB'
+  local target="$STUB_BIN/$1"
+  cat >"$target" <<'STUB'
 #!/usr/bin/env bash
 printf '%s %s\n' "${0##*/}" "$*" >>"${CLIENT_STUB_LOG:?}"
 exit 1
 STUB
-  chmod 0755 "$STUB_BIN/$1"
+  chmod 0755 "$target"
 }
 write_client_stub psql
 write_client_stub docker
