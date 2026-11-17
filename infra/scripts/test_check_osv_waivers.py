@@ -12,6 +12,8 @@ import textwrap
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).with_name("check-osv-waivers.py")
 SPEC = importlib.util.spec_from_file_location("check_osv_waivers", SCRIPT)
@@ -274,7 +276,13 @@ class MainTests(unittest.TestCase):
 
     def _run(self, *extra: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
+        with (
+            # The fixtures live in a scratch tree, so that tree is the checkout
+            # for the containment rule; the real repository is not written to.
+            patch.object(check_osv_waivers, "REPO_ROOT", Path(self._tmp.name)),
+            redirect_stdout(out),
+            redirect_stderr(err),
+        ):
             code = check_osv_waivers.main(
                 [
                     "--config",
@@ -328,6 +336,50 @@ class MainTests(unittest.TestCase):
         code, _, err = self._run()
         self.assertEqual(code, 2)
         self.assertIn("no '### 9.0.1a", err)
+
+    def test_a_path_outside_the_checkout_is_refused(self) -> None:
+        # The containment rule is what stops a CLI argument from reading an
+        # arbitrary file; validate-release-manifest.py applies the same one.
+        self._write()
+        with tempfile.TemporaryDirectory() as outside:
+            code, _, err = self._run("--table", str(Path(outside) / "DEPENDENCIES.md"))
+        self.assertEqual(code, 2, err)
+        self.assertIn("must resolve inside", err)
+
+    def test_the_default_date_is_the_utc_date(self) -> None:
+        # A date-based gate read from local time fires a day early or a day late
+        # depending on the runner, so the default must come from UTC. The stub
+        # clock records the timezone it is asked for, which is the claim; the
+        # wide window makes the report print the date it actually used.
+        self._write()
+        fixed = datetime.datetime(2026, 11, 17, 23, 30, tzinfo=datetime.UTC)
+        asked: list[datetime.tzinfo] = []
+
+        class _Clock:
+            def now(self, tz: datetime.tzinfo) -> datetime.datetime:
+                asked.append(tz)
+                return fixed
+
+        with patch.object(
+            check_osv_waivers,
+            "datetime",
+            SimpleNamespace(datetime=_Clock(), date=datetime.date, UTC=datetime.UTC),
+        ):
+            code, _, err = self._run("--lead-days", "200")
+
+        self.assertEqual(code, 1)
+        self.assertEqual(asked, [datetime.UTC])
+        self.assertIn("(2026-11-17)", err)
+
+    def test_the_today_override_agrees_with_the_default(self) -> None:
+        # `--today` must stay the same type and meaning as the default, or the
+        # window would be computed from two different kinds of value.
+        parsed = check_osv_waivers._parse_args(["--today", "2026-11-17"]).today
+        self.assertIs(type(parsed), datetime.date)
+        self._write()
+        code, _, err = self._run("--today", "2026-11-17", "--lead-days", "200")
+        self.assertEqual(code, 1)
+        self.assertIn("(2026-11-17)", err)
 
 
 class RepositoryRecordTests(unittest.TestCase):

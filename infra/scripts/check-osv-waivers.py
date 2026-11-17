@@ -37,14 +37,19 @@ re-audit the waiver's `reason` describes. Removing the waiver (because the
 dependency was upgraded) is the other exit, and it needs both files edited too
 -- which is what the parity check enforces.
 
-Exit 1 on drift or a waiver inside the window, 2 when an input cannot be read or
-parsed, 0 otherwise.
+Exit 1 on drift or a waiver inside the window, 2 when an input cannot be read,
+parsed, or resolves outside this checkout, 0 otherwise.
+
+Both path arguments are resolved and refused unless they land inside this
+checkout, the same rule `validate-release-manifest.py` applies to its own
+arguments: the policy and the table are repository files, so a path that escapes
+the tree is a bad input, not a file to read.
 
 Usage:
     python3 infra/scripts/check-osv-waivers.py
     python3 infra/scripts/check-osv-waivers.py --today 2026-11-20
-    python3 infra/scripts/check-osv-waivers.py --config /tmp/osv-scanner.toml \\
-        --table /tmp/DEPENDENCIES.md
+    python3 infra/scripts/check-osv-waivers.py --config ./osv-scanner.toml \\
+        --table ./engineering/DEPENDENCIES.md
 """
 
 from __future__ import annotations
@@ -95,17 +100,43 @@ class TableRow:
     line_number: int
 
 
-def load_toml_waivers(path: pathlib.Path) -> list[Waiver]:
-    """Return every `[[IgnoredVulns]]` entry with a usable id and expiry."""
+@dataclass(frozen=True)
+class Report:
+    """One check's outcome: the header a failure prints, its notes, its problems."""
+
+    header: str
+    notes: tuple[str, ...]
+    problems: tuple[str, ...]
+
+
+def _contained_path(raw: pathlib.Path, label: str) -> pathlib.Path:
+    """Resolve a CLI path and refuse anything outside this checkout.
+
+    The policy and the table are repository files, so the only legitimate inputs
+    live there. Resolving first means a relative path, a symlink pointing out of
+    the tree, and an absolute path outside it are all judged by where they land,
+    not by how they are spelled.
+    """
+    resolved = raw.resolve()
+    if not resolved.is_relative_to(REPO_ROOT):
+        raise InputError(f"{label} {raw} must resolve inside {REPO_ROOT}")
+    return resolved
+
+
+def _read_toml_document(path: pathlib.Path) -> dict:
+    """Read and parse one TOML document, reporting I/O and syntax as InputError."""
     try:
         raw = path.read_bytes()
     except OSError as error:
         raise InputError(f"cannot read {path}: {error}") from error
     try:
-        document = tomllib.loads(raw.decode("utf-8"))
+        return tomllib.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
         raise InputError(f"cannot parse {path}: {error}") from error
 
+
+def _ignored_vuln_entries(document: dict, path: pathlib.Path) -> list[object]:
+    """Return the `IgnoredVulns` array, or an empty list when it is absent."""
     entries = document.get("IgnoredVulns")
     if entries is None:
         # Absent is legitimate (no waivers) and distinct from a document that
@@ -113,21 +144,32 @@ def load_toml_waivers(path: pathlib.Path) -> list[Waiver]:
         return []
     if not isinstance(entries, list):
         raise InputError(f"{path}: IgnoredVulns must be an array of tables")
+    return entries
 
-    waivers: list[Waiver] = []
-    for index, entry in enumerate(entries, start=1):
-        if not isinstance(entry, dict):
-            raise InputError(f"{path}: IgnoredVulns entry {index} is not a table")
-        advisory = str(entry.get("id", "")).strip()
-        expires = entry.get("ignoreUntil")
-        if not advisory:
-            raise InputError(f"{path}: IgnoredVulns entry {index} has no id")
-        if not isinstance(expires, datetime.date):
-            # A missing or unquoted date would make the entry permanent without
-            # anyone deciding that, which is the opposite of the policy.
-            raise InputError(f"{path}: waiver {advisory} has no date-valued ignoreUntil")
-        waivers.append(Waiver(advisory=advisory.upper(), expires=expires))
-    return waivers
+
+def _waiver_from_entry(entry: object, index: int, path: pathlib.Path) -> Waiver:
+    """Read one `[[IgnoredVulns]]` entry, refusing one the check cannot use."""
+    if not isinstance(entry, dict):
+        raise InputError(f"{path}: IgnoredVulns entry {index} is not a table")
+    advisory = str(entry.get("id", "")).strip()
+    expires = entry.get("ignoreUntil")
+    if not advisory:
+        raise InputError(f"{path}: IgnoredVulns entry {index} has no id")
+    if not isinstance(expires, datetime.date):
+        # A missing or unquoted date would make the entry permanent without
+        # anyone deciding that, which is the opposite of the policy.
+        raise InputError(f"{path}: waiver {advisory} has no date-valued ignoreUntil")
+    return Waiver(advisory=advisory.upper(), expires=expires)
+
+
+def load_toml_waivers(path: pathlib.Path) -> list[Waiver]:
+    """Return every `[[IgnoredVulns]]` entry with a usable id and expiry."""
+    document = _read_toml_document(path)
+    entries = _ignored_vuln_entries(document, path)
+    return [
+        _waiver_from_entry(entry, index, path)
+        for index, entry in enumerate(entries, start=1)
+    ]
 
 
 def _table_lines(path: pathlib.Path) -> list[tuple[int, str]]:
@@ -178,8 +220,32 @@ def _parse_expiry(cell: str) -> datetime.date | None:
         return None
 
 
-def parse_table(path: pathlib.Path) -> list[TableRow]:
-    """Return the waiver rows: their advisory ids and recorded expiry."""
+def _require_expiry_column(cells: list[str], number: int, path: pathlib.Path) -> None:
+    """Refuse a header that no longer carries the `Expires` column."""
+    if EXPIRY_COLUMN not in cells:
+        raise InputError(
+            f"{path}:{number}: waiver table has no {EXPIRY_COLUMN!r} column"
+        )
+
+
+def _row_from_cells(cells: list[str], number: int, path: pathlib.Path) -> TableRow:
+    """Read one data row, refusing a row that names no advisory."""
+    advisories = tuple(
+        match.group(0).upper() for match in ADVISORY_RE.finditer(cells[0])
+    )
+    if not advisories:
+        raise InputError(
+            f"{path}:{number}: waiver row names no GHSA advisory: {cells[0]!r}"
+        )
+    return TableRow(
+        advisories=advisories,
+        expires=_parse_expiry(cells[-1]),
+        line_number=number,
+    )
+
+
+def _table_rows(path: pathlib.Path) -> list[TableRow]:
+    """Return the section's data rows, reading the header once."""
     rows: list[TableRow] = []
     saw_header = False
     for number, line in _table_lines(path):
@@ -190,26 +256,18 @@ def parse_table(path: pathlib.Path) -> list[TableRow]:
             # The first row is the header; if the column moved, the positions
             # this parser relies on are gone and reading on would compare the
             # wrong cell.
-            if EXPIRY_COLUMN not in cells:
-                raise InputError(
-                    f"{path}:{number}: waiver table has no {EXPIRY_COLUMN!r} column"
-                )
+            _require_expiry_column(cells, number, path)
             saw_header = True
             continue
         if _is_separator(cells):
             continue
-        advisories = tuple(match.group(0).upper() for match in ADVISORY_RE.finditer(cells[0]))
-        if not advisories:
-            raise InputError(
-                f"{path}:{number}: waiver row names no GHSA advisory: {cells[0]!r}"
-            )
-        rows.append(
-            TableRow(
-                advisories=advisories,
-                expires=_parse_expiry(cells[-1]),
-                line_number=number,
-            )
-        )
+        rows.append(_row_from_cells(cells, number, path))
+    return rows
+
+
+def parse_table(path: pathlib.Path) -> list[TableRow]:
+    """Return the waiver rows: their advisory ids and recorded expiry."""
+    rows = _table_rows(path)
     if not rows:
         raise InputError(f"{path}: the waiver table has no rows")
     return rows
@@ -318,17 +376,45 @@ def _renewal_hint() -> str:
     )
 
 
-def _report(notes: list[str], problems: list[str], header: str) -> None:
-    if problems:
-        print(f"check-osv-waivers: {header}", file=sys.stderr)
-        for problem in problems:
+def _report(report: Report) -> None:
+    """Print a check's problems to stderr, or its notes to stdout when it passed."""
+    if report.problems:
+        print(f"check-osv-waivers: {report.header}", file=sys.stderr)
+        for problem in report.problems:
             print(f"  {problem}", file=sys.stderr)
         return
-    for note in notes:
+    for note in report.notes:
         print(f"check-osv-waivers: {note}")
 
 
-def main(argv: list[str] | None = None) -> int:
+def check_all(
+    waivers: list[Waiver], rows: list[TableRow], today: datetime.date, lead_days: int
+) -> list[Report]:
+    """Run every check and return its outcome, so main only reports and decides."""
+    parity_notes, parity_problems = check_parity(waivers, rows)
+    date_notes, date_problems = check_recorded_dates(waivers, rows)
+    expiry_notes, expiry_problems = check_expiry(waivers, today, lead_days)
+    return [
+        Report(
+            header="the ignored advisories and the recorded waivers disagree:",
+            notes=tuple(parity_notes),
+            problems=tuple(parity_problems),
+        ),
+        Report(
+            header="the waiver record carries two different expiry dates:",
+            notes=tuple(date_notes),
+            problems=tuple(date_problems),
+        ),
+        Report(
+            header=f"a waiver expires within {lead_days} days ({today.isoformat()}):",
+            notes=tuple(expiry_notes),
+            problems=tuple(expiry_problems),
+        ),
+    ]
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    """Parse the command line: two contained paths, a date, and the lead window."""
     parser = argparse.ArgumentParser(
         description="Fail when the OSV waiver record drifts or nears expiry.",
     )
@@ -337,8 +423,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--today",
         type=datetime.date.fromisoformat,
-        default=datetime.date.today(),
-        help="reference date for the expiry window (default: today)",
+        # UTC, not local time: this is a date-based gate, and a local "today"
+        # would let the alarm fire a day early or a day late depending on the
+        # runner's timezone. CI and an operator's machine must agree.
+        default=datetime.datetime.now(datetime.UTC).date(),
+        help="reference date for the expiry window (default: today, UTC)",
     )
     parser.add_argument(
         "--lead-days",
@@ -346,36 +435,24 @@ def main(argv: list[str] | None = None) -> int:
         default=EXPIRY_LEAD_DAYS,
         help=f"warn this many days before expiry (default: {EXPIRY_LEAD_DAYS})",
     )
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
 
     try:
-        waivers = load_toml_waivers(args.config)
-        rows = parse_table(args.table)
+        waivers = load_toml_waivers(_contained_path(args.config, "--config"))
+        rows = parse_table(_contained_path(args.table, "--table"))
     except InputError as error:
         print(f"check-osv-waivers: {error}", file=sys.stderr)
         return 2
 
-    parity_notes, parity_problems = check_parity(waivers, rows)
-    date_notes, date_problems = check_recorded_dates(waivers, rows)
-    expiry_notes, expiry_problems = check_expiry(waivers, args.today, args.lead_days)
+    reports = check_all(waivers, rows, args.today, args.lead_days)
+    for report in reports:
+        _report(report)
 
-    _report(
-        parity_notes,
-        parity_problems,
-        "the ignored advisories and the recorded waivers disagree:",
-    )
-    _report(
-        date_notes,
-        date_problems,
-        "the waiver record carries two different expiry dates:",
-    )
-    _report(
-        expiry_notes,
-        expiry_problems,
-        f"a waiver expires within {args.lead_days} days ({args.today.isoformat()}):",
-    )
-
-    if parity_problems or date_problems or expiry_problems:
+    if any(report.problems for report in reports):
         print(_renewal_hint(), file=sys.stderr)
         return 1
     print(

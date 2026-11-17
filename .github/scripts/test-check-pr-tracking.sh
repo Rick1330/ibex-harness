@@ -51,7 +51,33 @@ if [[ "$cmd" == "issue" && "$sub" == "view" ]]; then
 fi
 
 if [[ "$cmd" == "api" ]]; then
-  printf '[]'
+  calls=$(cat "$dir/api_calls" 2>/dev/null || echo 0)
+  calls=$((calls + 1))
+  printf '%s' "$calls" > "$dir/api_calls"
+  api_mode=$(cat "$dir/api_mode" 2>/dev/null || echo ok)
+  if [[ "$api_mode" == "fatal" ]]; then
+    printf 'gh: Resource not accessible by integration (HTTP 403)\n' >&2
+    exit 1
+  fi
+  if [[ "$api_mode" == "down" ]]; then
+    printf 'gh: Service Unavailable (HTTP 503)\n' >&2
+    exit 1
+  fi
+  if [[ "$api_mode" == "transient" ]]; then
+    limit=$(cat "$dir/api_transient_attempts")
+    if ((calls <= limit)); then
+      printf 'gh: Server Error (HTTP 502)\n' >&2
+      exit 1
+    fi
+  fi
+  if [[ "$api_mode" == "stale" ]] && ((calls == 1)); then
+    # A 200 that predates the comment: GitHub has not propagated it yet, so the
+    # first successful read returns nothing and the second one carries it.
+    exit 0
+  fi
+  # The real call projects the comments through --jq and prints the joined
+  # bodies, so the fixture holds the text gh would print, not the raw array.
+  cat "$dir/comments" 2>/dev/null || true
   exit 0
 fi
 
@@ -74,9 +100,12 @@ reset_case() {
   rm -rf "$WORK/case"
   mkdir -p "$WORK/case"
   printf 'ok' > "$WORK/case/mode"
+  printf 'ok' > "$WORK/case/api_mode"
   printf '0' > "$WORK/case/transient_attempts"
+  printf '0' > "$WORK/case/api_transient_attempts"
   printf 'OPEN' > "$WORK/case/state"
   printf '## Problem\n\nTracked.\n\n## Proposed solution\n\nDo the thing.\n\n## Acceptance criteria\n\n- Done.\n\nImplementation PR: #7\n' > "$WORK/case/issue_body"
+  : > "$WORK/case/comments"
 }
 
 run() {
@@ -105,7 +134,8 @@ expect() {
     failures=$((failures + 1))
     return
   fi
-  printf 'ok   %s (exit %s, %s issue read(s))\n' "$name" "$status" "$calls"
+  printf 'ok   %s (exit %s, %s issue read(s), %s comment read(s))\n' \
+    "$name" "$status" "$calls" "$(cat "$WORK/case/api_calls" 2>/dev/null || echo 0)"
 }
 
 expect_issue_calls() {
@@ -114,6 +144,16 @@ expect_issue_calls() {
   calls="$(cat "$WORK/case/issue_calls" 2>/dev/null || echo 0)"
   if [[ "$calls" -ne "$expected" ]]; then
     printf 'FAIL %s: %s issue read(s), expected %s\n' "$name" "$calls" "$expected"
+    failures=$((failures + 1))
+  fi
+}
+
+expect_api_calls() {
+  local name="$1" expected="$2"
+  local calls
+  calls="$(cat "$WORK/case/api_calls" 2>/dev/null || echo 0)"
+  if [[ "$calls" -ne "$expected" ]]; then
+    printf 'FAIL %s: %s comment read(s), expected %s\n' "$name" "$calls" "$expected"
     failures=$((failures + 1))
   fi
 }
@@ -153,10 +193,70 @@ reset_case
 printf 'CLOSED' > "$WORK/case/state"
 expect "closed issue is rejected" 1 "already closed"
 
-# 7. The bidirectional link is still enforced.
+# 7. The bidirectional link is still enforced when the comments read succeeds and
+# neither the body nor the comments name the PR. The comparison is retried, so a
+# genuinely missing reference costs three reads before it is reported.
 reset_case
 printf 'Issue body without a PR reference\n' > "$WORK/case/issue_body"
+printf 'A comment that names no pull request either.\n' > "$WORK/case/comments"
 expect "issue must reference the PR" 1 "must reference PR #7"
+expect_api_calls "issue must reference the PR" 3
+
+# 8. The reference lives only in a comment: the joined comment text is read, so the
+# gate passes on the first comparison. This is the shape that was reported as
+# missing on PRs #1239, #1243, and #1256.
+reset_case
+printf '## Problem\n\nTracked.\n\n## Proposed solution\n\nDo the thing.\n\n## Acceptance criteria\n\n- Done.\n' > "$WORK/case/issue_body"
+printf 'Implementation PR: #7\n' > "$WORK/case/comments"
+expect "reference in a comment passes" 0 "tracks issue #42"
+expect_api_calls "reference in a comment passes" 1
+
+# 8a. Read-after-write: the first read is a 200 that predates the comment, so the
+# reference is absent from a readable answer. The second comparison finds it and
+# the gate passes -- retrying the read alone would still have reported it missing.
+reset_case
+printf '## Problem\n\nTracked.\n\n## Proposed solution\n\nDo the thing.\n\n## Acceptance criteria\n\n- Done.\n' > "$WORK/case/issue_body"
+printf 'stale' > "$WORK/case/api_mode"
+printf 'Implementation PR: #7\n' > "$WORK/case/comments"
+expect "reference appears on the second read" 0 "tracks issue #42"
+expect_api_calls "reference appears on the second read" 2
+
+# 9. A non-retryable comment read failure must not be reported as a missing
+# reference: the link may be there and the check simply could not see it.
+reset_case
+printf 'fatal' > "$WORK/case/api_mode"
+expect "unreadable comments are reported as unreadable" 1 "Could not read the comments on issue #42"
+expect_api_calls "unreadable comments are reported as unreadable" 1
+if grep -qF "must reference PR #7" "$WORK/out"; then
+  printf 'FAIL unreadable comments are reported as unreadable: blamed the data\n'
+  sed 's/^/  | /' "$WORK/out"
+  failures=$((failures + 1))
+fi
+
+# 10. A transient comment read failure is retried and passes on recovery.
+reset_case
+printf 'transient' > "$WORK/case/api_mode"
+printf '2' > "$WORK/case/api_transient_attempts"
+printf 'Implementation PR: #7\n' > "$WORK/case/comments"
+expect "comment read recovers after transient failures" 0 "tracks issue #42"
+expect_api_calls "comment read recovers after transient failures" 3
+
+# 11. Three transient comment read failures exhaust the retries and name the API
+# failure, still without blaming the data.
+reset_case
+printf 'down' > "$WORK/case/api_mode"
+expect "exhausted comment retries name the API failure" 1 "Could not read the comments on issue #42 after 3 attempts"
+expect_api_calls "exhausted comment retries name the API failure" 3
+if ! grep -qF "HTTP 503" "$WORK/out"; then
+  printf 'FAIL exhausted comment retries name the API failure: output missing the API error\n'
+  sed 's/^/  | /' "$WORK/out"
+  failures=$((failures + 1))
+fi
+if grep -qF "must reference PR #7" "$WORK/out"; then
+  printf 'FAIL exhausted comment retries name the API failure: blamed the data\n'
+  sed 's/^/  | /' "$WORK/out"
+  failures=$((failures + 1))
+fi
 
 if [[ "$failures" -ne 0 ]]; then
   printf '\n%s check-pr-tracking test(s) failed\n' "$failures"
