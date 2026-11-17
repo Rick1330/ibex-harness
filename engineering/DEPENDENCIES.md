@@ -380,7 +380,14 @@ Avoid:
 
 ### 9.0 Unified scanning (active)
 
-- **OSV Scanner** (`osv-scan` in `.github/workflows/ci.yml`): recursive scan of `go.sum` and future lockfiles; fails on CRITICAL/HIGH; SARIF to GitHub Security.
+- **OSV Scanner** (`osv-scan` in `.github/workflows/ci.yml`): one invocation over `pnpm-lock.yaml` and every
+  `uv.lock` (fifteen of them, listed explicitly); fails on CRITICAL/HIGH; SARIF to GitHub Security. Go module
+  vulnerabilities are covered by `govulncheck` instead (reachable-code analysis, ADR-0008), so `go.sum` is not passed
+  to this job.
+- **Why the Python lockfiles are listed:** before this, `--lockfile pnpm-lock.yaml` was the only input — Trivy scans
+  images and the filesystem, bandit is SAST, and `govulncheck` is Go-only — so no Python manifest was ever scanned and
+  a Python CVE could reach a release unnoticed. A local run of the same fifteen-lockfile invocation (2026-11-17)
+  reported no advisory; the cost is ~12 s against the OSV API.
 - **Dependabot** (`.github/dependabot.yml`): `github-actions` + root `gomod` at `/` (weekly),
   plus **`pip` for `/services/memory`** (enabled for m3.C.1 / `uv.lock`). Automated dependency
   PRs are the primary CVE remediation between CI runs.
@@ -411,14 +418,34 @@ Every entry needs a linked issue (`#1077`) and an expiry date. The expiry is the
 `osv-scanner.toml` (`ignoreUntil`); keep the two in step, because past that date `osv-scan` reports the advisory again
 and `ci-gate-security` blocks. Re-check on expiry; do not extend silently.
 
+`infra/scripts/check-osv-waivers.py` (run by `make repo-guards` and by the CI `repo-guards` job) enforces the record
+mechanically, in both directions: it fails when an id is in `osv-scanner.toml` and not in this table, when an id is
+here and no longer ignored, when a row's date disagrees with its `ignoreUntil`, and when any waiver expires within
+**21 days** (three working weeks: long enough for a dependency PR to be reviewed and merged or for the re-waive
+decision to be taken, short enough that the alarm is still an alarm). The whole point is that the 21-day window turns
+the expiry cliff into a planned task: on the expiry date itself `ci-gate-security` starts failing every mergeable PR,
+including ones with nothing to do with dependencies, because the gate is aggregate.
+
+Renewal is an edit, not code: re-audit the advisory as its `reason` describes, then set the same new date in
+`osv-scanner.toml` (`ignoreUntil`) and in that row's `Expires` cell. Closing the waiver — the correct outcome when the
+dependency has moved past the advisory — means deleting both entries, which the parity check requires.
+
+**Last re-audit: 2026-11-17**, with `osv-scanner` 2.3.8 against the committed `pnpm-lock.yaml`. Every remaining
+advisory still fires (the scan prints each one as a filtered advisory), so all six dates moved to 2027-03-01 — one
+quarter, the shortest interval that covers a release cycle for conditions only upstream can change.
+`GHSA-gcqx-w48m-w2h4` (deepmerge) was **closed, not renewed**: GitHub withdrew it on 2026-11-16
+(`api.osv.dev/v1/vulns/GHSA-gcqx-w48m-w2h4` reports `withdrawn: 2026-11-16T18:55:38Z`), so the scanner no longer
+reports it and the ignore had become a suppression that suppressed nothing. The new guard is what surfaced that: the
+scanner reported the entry as an unused ignore while the table still recorded it.
+
 | Advisory | Package | Severity | Reachability | Disposition | Expires |
 | --- | --- | --- | --- | --- | --- |
-| GHSA-gcqx-w48m-w2h4 (prototype poisoning) | `deepmerge` 4.3.1 | Low | Build only (`@rollup/plugin-node-resolve` merging repo-owned rollup config) | No patched release exists (`patched_versions: <0.0.0`). Not reachable with untrusted input: the merged objects are the repository's own build config. Track upstream. | 2026-12-01 |
-| GHSA-mrhx-c7xc-m3w5 (memory exhaustion) | `zod` 3.25.76 | High | Build only, via `docus → @nuxt/content` | Patched `zod` is `>=4.6.6`; `@nuxt/content` 3.x pins zod 3. Adoption requires a `docus`/`@nuxt/content` major. Not reachable at runtime: the public site is static output and has no request-time validation path. | 2026-12-01 |
-| GHSA-f3x9-2chm-73c8 (encoded slash in the request path) | `nuxt`, `@nuxt/nitro-server` 4.6.4 | Medium | Runtime, in the Console Nitro server artifact; no hosted Console (ADR-0088) | 4.x fixed upstream in 4.6.4; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (`introduced >= 3.0.0`, no `fixed` event), which this repository does not use. Tracked in #1238. | 2026-12-01 |
-| GHSA-96x6-fvhx-49hg (unhandled server-render error exposes message and data) | `nuxt` 4.6.4 | Medium | Runtime, in the Console Nitro server artifact; no hosted Console (ADR-0088) | 4.x fixed upstream in 4.6.4; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (`introduced >= 3.0.0`, no `fixed` event), which this repository does not use. Tracked in #1238. | 2026-12-01 |
-| GHSA-hf59-9xwc-2g4p (colliding island props share one `/__nuxt_island` path) | `nuxt`, `@nuxt/nitro-server` 4.6.4 | Low | Runtime, in the Console Nitro server artifact; no hosted Console (ADR-0088) | 4.x fixed upstream in 4.6.4; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (`introduced >= 3.21.6`, no `fixed` event), which this repository does not use. Tracked in #1238. | 2026-12-01 |
-| GHSA-vjh5-4x84-xrqp (case-variant paths skip server-side route rules) | `nuxt`, `@nuxt/nitro-server` 4.6.4 | Medium | Runtime, in the Console Nitro server artifact; no hosted Console (ADR-0088) | 4.x fixed upstream in 4.6.2; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (`introduced >= 3.0.0`, no `fixed` event), which this repository does not use. Introduced by #1029, the PR that added this filter. | 2026-12-01 |
+| GHSA-fc5q-39xc-vjpf (ReDoS in `picomatch`, CVE-2026-112366, CVSS 8.7) | `picomatch` 2.3.2, 4.0.7 | High | Build tooling only: `vite`, `rollup` via `unplugin`/`@rollup/plugin-*`/`rollup-plugin-visualizer`, `unplugin`, `vite-plugin-checker`, `tinyglobby`, `micromatch`, and `vue-router` 5's build-time unplugin | OSV reports `last_affected: 4.0.7` and no `fixed` event, so there is no fixed release to move to. Absent from the deployed artifact: a fresh `pnpm --filter @ibex/console build` (2026-11-17) shows no `picomatch`/`fdir` under `services/console/.output`, and `site/.output/public` has no occurrence. Remove this waiver the moment a runtime dependency ships it. | 2027-03-01 |
+| GHSA-mrhx-c7xc-m3w5 (memory exhaustion) | `zod` 3.25.76 | High | Build only, via `docus → @nuxt/content` | Patched `zod` is `>=4.6.6`; `@nuxt/content` 3.x pins zod 3. Adoption requires a `docus`/`@nuxt/content` major. Not reachable at runtime: the public site is static output and has no request-time validation path. | 2027-03-01 |
+| GHSA-f3x9-2chm-73c8 (encoded slash in the request path) | `nuxt`, `@nuxt/nitro-server` 4.6.4 | Medium | Runtime, in the Console Nitro server artifact; no hosted Console (ADR-0088) | 4.x fixed upstream in 4.6.4; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (`introduced >= 3.0.0`, no `fixed` event), which this repository does not use. Tracked in #1238. | 2027-03-01 |
+| GHSA-96x6-fvhx-49hg (unhandled server-render error exposes message and data) | `nuxt` 4.6.4 | Medium | Runtime, in the Console Nitro server artifact; no hosted Console (ADR-0088) | 4.x fixed upstream in 4.6.4; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (`introduced >= 3.0.0`, no `fixed` event), which this repository does not use. Tracked in #1238. | 2027-03-01 |
+| GHSA-hf59-9xwc-2g4p (colliding island props share one `/__nuxt_island` path) | `nuxt`, `@nuxt/nitro-server` 4.6.4 | Low | Runtime, in the Console Nitro server artifact; no hosted Console (ADR-0088) | 4.x fixed upstream in 4.6.4; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (`introduced >= 3.21.6`, no `fixed` event), which this repository does not use. Tracked in #1238. | 2027-03-01 |
+| GHSA-vjh5-4x84-xrqp (case-variant paths skip server-side route rules) | `nuxt`, `@nuxt/nitro-server` 4.6.4 | Medium | Runtime, in the Console Nitro server artifact; no hosted Console (ADR-0088) | 4.x fixed upstream in 4.6.2; this lock resolves 4.6.4. OSV still matches via its open-ended 3.x range (`introduced >= 3.0.0`, no `fixed` event), which this repository does not use. Introduced by #1029, the PR that added this filter. | 2027-03-01 |
 
 The four Nuxt rows are enforced, not only dated: `IgnoredVulns` is advisory-scoped, so each entry would
 suppress its advisory for the 3.x range as well. `infra/scripts/check-osv-waiver-floor.py` (run by

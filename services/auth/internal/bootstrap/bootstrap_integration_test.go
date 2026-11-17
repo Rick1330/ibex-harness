@@ -80,6 +80,11 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 		PATName:     "Bootstrap PAT",
 		PATFile:     filepath.Join(t.TempDir(), "bootstrap.pat"),
 		MemoryToken: generatePAT(t),
+		// The compose test database is shared by the whole integration suite and
+		// already holds other suites' organizations, so every fixture here is a
+		// deliberate second tenant. TestBootstrapIntegrationRefusesSecondOrganization
+		// clears the flag to exercise the guard itself.
+		AllowSecondOrg: true,
 	}
 	t.Cleanup(func() { cleanupBootstrapOrg(t, db, cfg.OrgSlug) })
 	return &bootstrapFixture{t: t, db: db, cfg: cfg}
@@ -128,6 +133,9 @@ func (f *bootstrapFixture) verifyCrossTenant() {
 	other.OrgSlug = uuid.NewString()
 	other.UserEmail = "other-owner@example.com"
 	other.MemoryToken = generatePAT(f.t)
+	// The deliberate second tenant: the guard refuses exactly this unless the
+	// operator says it is intended.
+	other.AllowSecondOrg = true
 	f.t.Cleanup(func() { cleanupBootstrapOrg(f.t, f.db, other.OrgSlug) })
 
 	otherResult, err := bootstrap(context.Background(), f.db, other)
@@ -643,6 +651,10 @@ func newEntrypointFixture(t *testing.T, orgName string) entrypointFixture {
 		"IBEX_BOOTSTRAP_AGENT_NAME": "Default Agent",
 		"IBEX_BOOTSTRAP_AGENT_SLUG": "default",
 		"IBEX_BOOTSTRAP_PAT_NAME":   "Bootstrap PAT",
+		// The shared compose test database already holds other suites'
+		// organizations, so the entrypoint fixture is a deliberate second tenant;
+		// IBEX_BOOTSTRAP_ALLOW_SECOND_ORG is what makes that explicit.
+		"IBEX_BOOTSTRAP_ALLOW_SECOND_ORG": "true",
 	}
 	return entrypointFixture{env: env, patFile: patFile, db: db, slug: slug}
 }
@@ -844,6 +856,59 @@ func TestBootstrapIntegrationRejectsSoftDeletedSlug(t *testing.T) {
 	}
 }
 
+// TestBootstrapIntegrationRefusesSecondOrganization proves P2-13 against a real
+// database: on an installation that already has an organization, a run whose
+// slug is different mints nothing until IBEX_BOOTSTRAP_ALLOW_SECOND_ORG is set.
+func TestBootstrapIntegrationRefusesSecondOrganization(t *testing.T) {
+	f := newBootstrapFixture(t)
+	first := f.run()
+
+	second := f.cfg
+	second.OrgSlug = uuid.NewString()
+	second.UserEmail = "second-owner@example.com"
+	second.MemoryToken = generatePAT(t)
+	// The fixture sets the flag because the suite shares one database; the guard
+	// is what this test is about, so it runs with the flag cleared.
+	second.AllowSecondOrg = false
+	t.Cleanup(func() { cleanupBootstrapOrg(t, f.db, second.OrgSlug) })
+
+	_, err := bootstrap(context.Background(), f.db, second)
+	if err == nil || !strings.Contains(err.Error(), "IBEX_BOOTSTRAP_ALLOW_SECOND_ORG=true") {
+		t.Fatalf("second-organization bootstrap error = %v, want the guard refusal", err)
+	}
+	if orgs := countOrganizations(t, f.db, second.OrgSlug); orgs != 0 {
+		t.Fatalf("refused run created %d organization(s) with slug %q, want 0", orgs, second.OrgSlug)
+	}
+
+	second.AllowSecondOrg = true
+	allowed, err := bootstrap(context.Background(), f.db, second)
+	if err != nil {
+		t.Fatalf("bootstrap with IBEX_BOOTSTRAP_ALLOW_SECOND_ORG=true: %v", err)
+	}
+	if allowed.AlreadyBootstrapped {
+		t.Fatal("the allowed second organization was reported as already bootstrapped")
+	}
+	if orgs := countOrganizations(t, f.db, second.OrgSlug); orgs != 1 {
+		t.Fatalf("allowed run created %d organizations with slug %q, want 1", orgs, second.OrgSlug)
+	}
+	if first.OrgID == allowed.OrgID {
+		t.Fatal("the second organization reused the first organization's id")
+	}
+}
+
+// countOrganizations counts non-deleted organizations with one slug.
+func countOrganizations(t *testing.T, db *sql.DB, slug string) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM ibex_core.organizations WHERE slug = $1 AND deleted_at IS NULL`,
+		slug,
+	).Scan(&count); err != nil {
+		t.Fatalf("count organizations: %v", err)
+	}
+	return count
+}
+
 // TestBootstrapIntegrationClosedDatabase covers the transaction-start failure.
 func TestBootstrapIntegrationClosedDatabase(t *testing.T) {
 	f := newBootstrapFixture(t)
@@ -939,6 +1004,8 @@ func TestBootstrapIntegrationAsBootstrapLogin(t *testing.T) {
 		PATName:     "Bootstrap PAT",
 		PATFile:     filepath.Join(t.TempDir(), "bootstrap.pat"),
 		MemoryToken: generatePAT(t),
+		// Shared test database: this run is a deliberate second tenant.
+		AllowSecondOrg: true,
 	}
 	t.Cleanup(func() { cleanupBootstrapOrg(t, ownerDB, cfg.OrgSlug) })
 
@@ -1016,6 +1083,9 @@ func TestBootstrapIntegrationRunFailsWhenPATCannotBeWritten(t *testing.T) {
 		"IBEX_BOOTSTRAP_AGENT_NAME": "Default Agent",
 		"IBEX_BOOTSTRAP_AGENT_SLUG": "default",
 		"IBEX_BOOTSTRAP_PAT_NAME":   "Bootstrap PAT",
+		// The shared test database is not empty, so this fixture is a deliberate
+		// second tenant and must say so before it reaches its own failure path.
+		"IBEX_BOOTSTRAP_ALLOW_SECOND_ORG": "true",
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -1057,15 +1127,16 @@ func TestBootstrapIntegrationRunFailsWhenSummaryCannotBeWritten(t *testing.T) {
 	t.Cleanup(func() { cleanupBootstrapOrg(t, db, slug) })
 
 	env := map[string]string{
-		"POSTGRES_DSN":              dsn,
-		"IBEX_BOOTSTRAP_PAT_FILE":   filepath.Join(t.TempDir(), "bootstrap.pat"),
-		"IBEX_BOOTSTRAP_ORG_NAME":   "Bootstrap Summary Failure",
-		"IBEX_BOOTSTRAP_ORG_SLUG":   slug,
-		"IBEX_BOOTSTRAP_USER_EMAIL": "out-owner@example.com",
-		"IBEX_BOOTSTRAP_USER_NAME":  "Owner",
-		"IBEX_BOOTSTRAP_AGENT_NAME": "Default Agent",
-		"IBEX_BOOTSTRAP_AGENT_SLUG": "default",
-		"IBEX_BOOTSTRAP_PAT_NAME":   "Bootstrap PAT",
+		"POSTGRES_DSN":                    dsn,
+		"IBEX_BOOTSTRAP_PAT_FILE":         filepath.Join(t.TempDir(), "bootstrap.pat"),
+		"IBEX_BOOTSTRAP_ORG_NAME":         "Bootstrap Summary Failure",
+		"IBEX_BOOTSTRAP_ORG_SLUG":         slug,
+		"IBEX_BOOTSTRAP_USER_EMAIL":       "out-owner@example.com",
+		"IBEX_BOOTSTRAP_USER_NAME":        "Owner",
+		"IBEX_BOOTSTRAP_AGENT_NAME":       "Default Agent",
+		"IBEX_BOOTSTRAP_AGENT_SLUG":       "default",
+		"IBEX_BOOTSTRAP_PAT_NAME":         "Bootstrap PAT",
+		"IBEX_BOOTSTRAP_ALLOW_SECOND_ORG": "true",
 	}
 
 	var stderr bytes.Buffer

@@ -80,7 +80,13 @@ profile a 1.0 claim may cite. Kubernetes, Helm and HA are outside the profile (Â
 
 **One operator entry point.** `make v1-secrets` generates `infra/compose/v1-single-node/.env` (mode `0600`), the
 files under `infra/compose/v1-single-node/secrets/` (directory `0700`; the container copies are `0444` so uid 10001 can
-read them), and the `bootstrap/` directory (`0700`) that receives the one-time admin PAT. The `.env` also carries the
+read them), and the `bootstrap/` directory (`0700`) that receives the one-time admin PAT. That directory also carries
+`secrets/redis.conf`: the Redis server configuration, regenerated on every run from `REDIS_PASSWORD`, mounted
+read-only at `/run/secrets/redis.conf`. The password is a `requirepass` directive there rather than a
+`--requirepass` argument, so it does not appear in the container's command line (`podman inspect`, `/proc/*/cmdline`);
+`docker compose config` and `podman inspect` show the path only. `secrets/redis.conf` is therefore a required input to
+`docker compose up` â€” an install created before it existed must rerun `make v1-secrets` (or the whole profile, via
+`make v1-up`, which runs the generator first). The `.env` also carries the
 four capability-login passwords `IBEX_RUNTIME_DB_PASSWORD`, `IBEX_AUTH_DB_PASSWORD`, `IBEX_WORKER_DB_PASSWORD` and
 `IBEX_BOOTSTRAP_DB_PASSWORD`; `migrate provision` is their only writer. `make v1-up` rebuilds the
 application images, starts the profile, waits until every required service reports healthy (up to TEI's two-hour

@@ -10,7 +10,7 @@ from fastapi import Request
 
 from app.auth.client import AuthFailedError, AuthUnavailableError
 from app.auth.session_refresh import AuthRPC, ValidatedSession, validate_operator_session
-from app.config import Settings
+from app.config import Settings, secret_or_none
 from app.errors import ApiError
 from app.session_stub import (
     SESSION_KIND_ACCESS,
@@ -44,7 +44,7 @@ def _access_cookie(request: Request, settings: Settings) -> str:
 def _require_operator_feature(settings: Settings) -> None:
     if not settings.operator_feature_enabled:
         raise ApiError(code=SERVICE_DEGRADED, message="operator feature disabled")
-    if not settings.jwt_hmac_secret and not settings.jwt_public_keys_pem:
+    if not secret_or_none(settings.jwt_hmac_secret) and not settings.jwt_public_keys_pem:
         raise ApiError(code=SERVICE_DEGRADED, message="session verification key not configured")
 
 
@@ -53,7 +53,7 @@ def _verified_local_session(raw: str, settings: Settings) -> OperatorSessionAuth
         claims = verify_token_opts(
             raw,
             TokenVerifyOpts(
-                secret=settings.jwt_hmac_secret,
+                secret=secret_or_none(settings.jwt_hmac_secret),
                 issuer=settings.jwt_issuer,
                 audience=settings.jwt_audience,
                 expect_kind=SESSION_KIND_ACCESS,

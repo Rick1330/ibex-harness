@@ -8,11 +8,12 @@ from uuid import UUID, uuid4
 import pytest
 from apierror_py import INSUFFICIENT_PERMISSIONS, SERVICE_DEGRADED
 from authclient.permissions import OPERATOR_RAW_READ, SECRET_USE
+from pydantic import SecretStr
 from starlette.applications import Starlette
 from starlette.requests import Request
 
 from app.authz import assert_operator_permission
-from app.config import Settings
+from app.config import Settings, secret_or_none
 from app.errors import ApiError
 from app.session_stub import (
     SESSION_KIND_STEP_UP,
@@ -27,7 +28,7 @@ def _settings(**overrides: object) -> Settings:
         "operator_feature_enabled": True,
         "operator_allow_raw_read": True,
         "operator_allow_secret_use": True,
-        "jwt_hmac_secret": "h" * 32,
+        "jwt_hmac_secret": SecretStr("h" * 32),
         "jwt_issuer": "ibex-harness",
         "jwt_audience": "ibex-dashboard",
     }
@@ -66,7 +67,7 @@ class StepUpTokenSpec:
 def _step_up_token(settings: Settings, spec: StepUpTokenSpec) -> str:
     return issue_token_opts(
         TokenIssueOpts(
-            secret=settings.jwt_hmac_secret or "h" * 32,
+            secret=secret_or_none(settings.jwt_hmac_secret) or "h" * 32,
             issuer=settings.jwt_issuer,
             audience=settings.jwt_audience,
             org_id=spec.org_id,
@@ -265,7 +266,7 @@ async def test_enforce_step_up_rejects_unbound_or_underprivileged_local_tokens(
     )
     raw = issue_token_opts(
         TokenIssueOpts(
-            secret=token_settings.jwt_hmac_secret,
+            secret=secret_or_none(token_settings.jwt_hmac_secret),
             issuer=token_settings.jwt_issuer,
             audience=token_settings.jwt_audience,
             org_id=claims.org_id,

@@ -155,6 +155,30 @@ def test_production_transport_security_fails_closed_without_host() -> None:
     assert settings.allowed_hosts == []
 
 
+def test_production_accepts_configured_aliases_beyond_the_resource_url() -> None:
+    # P1-14: the derived host comes from resource_url; IBEX_MCP_ALLOWED_HOSTS
+    # adds the aliases an operator reaches the gateway by.
+    settings = _transport_security(
+        allow_test_hosts=False,
+        resource_url="https://mcp.example.com/mcp",
+        allowed_hosts=("gateway.internal", "mcp.example.com:*"),
+        allowed_origins=("https://console.example.com",),
+    )
+    assert settings.enable_dns_rebinding_protection is True
+    assert settings.allowed_hosts == [
+        "mcp.example.com",
+        "mcp.example.com:*",
+        "gateway.internal",
+    ]
+    assert settings.allowed_origins == ["https://console.example.com"]
+
+
+def test_production_with_no_host_at_all_fails_closed() -> None:
+    settings = _transport_security(allow_test_hosts=False, resource_url="", allowed_hosts=())
+    assert settings.enable_dns_rebinding_protection is True
+    assert settings.allowed_hosts == []
+
+
 def test_allowed_hosts_handles_ports_and_ipv6() -> None:
     assert _allowed_hosts("https://MCP.example.com:8443/mcp") == [
         "mcp.example.com:8443",

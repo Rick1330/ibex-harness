@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
-from app.config import Settings
+from app.config import Settings, secret_or_none
 from tests.unit.operator.conftest import HMAC_SECRET, operator_settings
 
 _PEM = "-----BEGIN PUBLIC KEY-----\nconfigured-key-material\n-----END PUBLIC KEY-----\n"
@@ -112,7 +112,31 @@ def test_non_development_operator_profile_rejects_each_missing_security_control(
 
 def test_hmac_secret_accepts_long_value() -> None:
     s = operator_settings(jwt_hmac_secret=HMAC_SECRET)
-    assert s.jwt_hmac_secret == HMAC_SECRET
+    assert isinstance(s.jwt_hmac_secret, SecretStr)
+    assert s.jwt_hmac_secret.get_secret_value() == HMAC_SECRET
+
+
+def test_an_empty_secret_string_is_treated_as_unset() -> None:
+    # `bool(SecretStr(""))` is True because the object exists, so a truthiness
+    # test on the field would treat an empty environment value as configured.
+    # secret_or_none keeps the pre-SecretStr meaning of "unset or empty".
+    assert secret_or_none(None) is None
+    assert secret_or_none(SecretStr("")) is None
+    assert secret_or_none(SecretStr("value")) == "value"
+
+
+def test_operator_secrets_are_redacted_in_the_model_repr() -> None:
+    # repr() is what a log line, a traceback, or an error report carries. Both
+    # fields used to be `str | None`, so either value printed in full the moment
+    # anything logged the settings object.
+    hmac = "h" * 32
+    csrf = "csrf-secret-for-the-repr-test-32b"
+    s = operator_settings(jwt_hmac_secret=hmac, dashboard_csrf_secret=csrf)
+    rendered = repr(s)
+    assert isinstance(s.jwt_hmac_secret, SecretStr)
+    assert isinstance(s.dashboard_csrf_secret, SecretStr)
+    assert hmac not in rendered
+    assert csrf not in rendered
 
 
 def test_cookie_samesite_non_string_passthrough() -> None:

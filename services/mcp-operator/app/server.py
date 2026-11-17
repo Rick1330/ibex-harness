@@ -35,6 +35,8 @@ class McpServerWiring:
     registry: ToolRegistry
     allow_test_hosts: bool = True
     resource_url: str = ""
+    allowed_hosts: tuple[str, ...] = ()
+    allowed_origins: tuple[str, ...] = ()
 
 
 def build_mcp_server(wiring: McpServerWiring) -> FastMCP:
@@ -46,6 +48,8 @@ def build_mcp_server(wiring: McpServerWiring) -> FastMCP:
         transport_security=_transport_security(
             allow_test_hosts=wiring.allow_test_hosts,
             resource_url=wiring.resource_url,
+            allowed_hosts=wiring.allowed_hosts,
+            allowed_origins=wiring.allowed_origins,
         ),
     )
     _register_tools(mcp, wiring.enforcer)
@@ -158,7 +162,11 @@ async def _invoke(enforcer: GatewayEnforcer, tool_name: str, raw: dict[str, Any]
 
 
 def _transport_security(
-    *, allow_test_hosts: bool, resource_url: str = ""
+    *,
+    allow_test_hosts: bool,
+    resource_url: str = "",
+    allowed_hosts: tuple[str, ...] = (),
+    allowed_origins: tuple[str, ...] = (),
 ) -> TransportSecuritySettings:
     if allow_test_hosts:
         return TransportSecuritySettings(
@@ -170,10 +178,16 @@ def _transport_security(
                 "http://testserver",
             ],
         )
+    # The advertised resource URL is the primary host; IBEX_MCP_ALLOWED_HOSTS
+    # adds the aliases an operator reaches the gateway by. Both are empty when
+    # neither is configured, and an empty list rejects every request (421):
+    # fail-closed, so an unconfigured protected deployment is undeployable on
+    # purpose until a host is named.
+    hosts = [*_allowed_hosts(resource_url), *allowed_hosts]
     return TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
-        allowed_hosts=_allowed_hosts(resource_url),
-        allowed_origins=[],
+        allowed_hosts=list(dict.fromkeys(hosts)),
+        allowed_origins=list(allowed_origins),
     )
 
 

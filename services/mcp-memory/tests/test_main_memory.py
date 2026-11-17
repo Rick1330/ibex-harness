@@ -7,6 +7,7 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
+from app import main
 from app.agent_verifier import AllowAllAgentVerifier
 from app.audit import MemoryAuditSink
 from app.auth import StaticTokenValidator, ValidateResult
@@ -127,3 +128,36 @@ def test_create_app_closes_owned_redis_limiter() -> None:
         assert client.get("/health").status_code == 200
         assert isinstance(application.state.mcp.rate_limiter, RedisMcpLimiter)
     # Lifespan exit path closes owned RedisMcpLimiter (no exception).
+
+
+def test_create_app_passes_the_configured_allow_list_to_the_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # P1-14: the config field is only useful if create_app forwards it. The unit
+    # tests on _transport_security cannot see a missing argument here, and the
+    # symptom of one is production answering 421 to every request.
+    captured: dict[str, object] = {}
+    real_build = main.build_mcp_server
+
+    def spy(wiring, **kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return real_build(wiring, **kwargs)
+
+    monkeypatch.setattr(main, "build_mcp_server", spy)
+    application = create_app(
+        settings=_settings(
+            env="production",
+            redis_url="redis://redis:6379/0",
+            auth_grpc_ca_file="/etc/ibex/auth-grpc-ca.pem",
+            resource_url="https://mcp.example.com/mcp",
+            auth_server_url="https://auth.example.com",
+            allowed_hosts="mcp.example.com,mcp.example.com:8443",
+            allowed_origins="https://console.example.com",
+        ),
+        deps=_deps(),
+    )
+    with TestClient(application) as client:
+        assert client.get("/health").status_code == 200
+    assert captured["allow_test_hosts"] is False
+    assert captured["allowed_hosts"] == ("mcp.example.com", "mcp.example.com:8443")
+    assert captured["allowed_origins"] == ("https://console.example.com",)

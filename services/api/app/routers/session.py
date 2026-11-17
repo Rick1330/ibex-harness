@@ -26,7 +26,7 @@ from app.auth.session_refresh import (
     revoke_operator_session,
     validate_operator_session,
 )
-from app.config import Settings
+from app.config import Settings, secret_or_none
 from app.deps import get_validator
 from app.errors import ApiError, ResponseOpts, envelope_response
 from app.reqid import require_current
@@ -102,7 +102,7 @@ def _non_dev_missing_public_keys(settings: Settings) -> bool:
 def _dev_missing_all_verify_material(settings: Settings) -> bool:
     return (
         settings.environment == "development"
-        and not settings.jwt_hmac_secret
+        and not secret_or_none(settings.jwt_hmac_secret)
         and not settings.jwt_public_keys_pem
     )
 
@@ -164,13 +164,14 @@ def _require_hmac(settings: Settings) -> str:
             code=SERVICE_DEGRADED,
             message="provisional HMAC operator sessions are disabled outside development",
         )
-    if not settings.jwt_hmac_secret:
+    secret = secret_or_none(settings.jwt_hmac_secret)
+    if not secret:
         raise ApiError(
             code=SERVICE_DEGRADED,
             message="provisional session signing secret not configured",
             detail="set JWT_HMAC_SECRET for 4.P.0 stub",
         )
-    return settings.jwt_hmac_secret
+    return secret
 
 
 def _cookie_security(settings: Settings) -> tuple[bool, str]:
@@ -292,7 +293,7 @@ def _apply_session_cookies(
 
 
 def _mint_and_set_csrf(response: Response, *, settings: Settings, secret: str) -> str:
-    csrf_secret = settings.dashboard_csrf_secret or secret
+    csrf_secret = secret_or_none(settings.dashboard_csrf_secret) or secret
     csrf = mint_csrf_token(secret=csrf_secret)
     _set_csrf_cookie(response, csrf=csrf, settings=settings)
     return csrf
@@ -335,7 +336,7 @@ async def _login_via_auth(
         response, settings=settings, access=pair.access_token, refresh=pair.refresh_token
     )
     csrf = _mint_and_set_csrf(
-        response, settings=settings, secret=settings.dashboard_csrf_secret or ""
+        response, settings=settings, secret=secret_or_none(settings.dashboard_csrf_secret) or ""
     )
     return {"status": "ok", "provisional": False, "org_id": str(result.org_id), "csrf_token": csrf}
 
@@ -413,9 +414,10 @@ async def _refresh_pair_from_auth(settings: Settings, refresh_token: str):
 
 
 def _maybe_mint_csrf(response: Response, settings: Settings) -> str:
-    if not settings.dashboard_csrf_secret:
+    secret = secret_or_none(settings.dashboard_csrf_secret)
+    if not secret:
         return ""
-    csrf = mint_csrf_token(secret=settings.dashboard_csrf_secret)
+    csrf = mint_csrf_token(secret=secret)
     _set_csrf_cookie(response, csrf=csrf, settings=settings)
     return csrf
 
@@ -625,7 +627,9 @@ async def me(
         return await _me_bearer(request)
     if settings.environment != "development":
         return await _me_auth(raw, settings)
-    secret = settings.jwt_hmac_secret if settings.environment == "development" else None
+    secret = (
+        secret_or_none(settings.jwt_hmac_secret) if settings.environment == "development" else None
+    )
     return _me_cookie(raw, settings=settings, secret=secret)
 
 

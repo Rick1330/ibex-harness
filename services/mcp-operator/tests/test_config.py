@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 import pytest
@@ -106,3 +107,30 @@ def test_enabled_protected_profile_requires_auth_ca() -> None:
     with pytest.raises(ValueError, match="IBEX_AUTH_GRPC_CA_FILE"):
         Settings(**kwargs, auth_grpc_ca_file="   ")
     Settings(**kwargs, auth_grpc_ca_file="/etc/ibex/auth-grpc-ca.pem")
+
+
+def test_unset_env_warns_about_the_relaxed_posture(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.delenv("IBEX_ENV", raising=False)
+    monkeypatch.delenv("IBEX_MCP_OPERATOR_ENV", raising=False)
+    settings = Settings(enabled=False)
+    assert settings.env == "development"
+    assert settings.env_was_explicit is False
+    with caplog.at_level(logging.WARNING, logger="app.config"):
+        settings.warn_if_env_defaulted(logging.getLogger("app.config"))
+    assert any("IBEX_ENV is not set" in record.getMessage() for record in caplog.records)
+
+
+def test_explicit_env_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    settings = Settings(enabled=False, env="development")
+    assert settings.env_was_explicit is True
+    with caplog.at_level(logging.WARNING, logger="app.config"):
+        settings.warn_if_env_defaulted(logging.getLogger("app.config"))
+    assert caplog.records == []
+
+
+def test_allowed_hosts_parse_as_a_comma_separated_list() -> None:
+    settings = Settings(enabled=False, allowed_hosts=" a.example , b.example ,")
+    assert settings.allowed_host_list == ("a.example", "b.example")
+    assert Settings(enabled=False).allowed_origin_list == ()
