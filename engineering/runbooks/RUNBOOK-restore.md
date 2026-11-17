@@ -280,10 +280,11 @@ producers write, because neither measures the continuity input: PostgreSQL
 retains already-archived segments in `pg_wal` until recycling, so a count of
 segments older than `last_archived_wal` does not mean they are pending archival.
 The writer still computes the field from the environment
-(`WAL_ARCHIVE_OLDER_SEGMENTS`), and nothing gates on it. The restore is the
-continuity proof: it replays every segment from the backup to the replay point,
-so a gap either stops recovery or truncates the replay timestamp, and the
-derived number then shows it.
+(`WAL_ARCHIVE_OLDER_SEGMENTS`), and nothing gates on it. What a restore
+demonstrates is narrower: the WAL needed to reach its recovered frontier was
+present and replayable, which is why a gap either stops recovery or truncates
+the replay timestamp and the derived number then shows it. It does not show the
+queue is drained, or that the archive is continuous past that frontier.
 
 **A targeted restore never carries an RPO.** It proves the target was reached,
 not the archive lag: its replay point is where the operator asked, so the gap to
