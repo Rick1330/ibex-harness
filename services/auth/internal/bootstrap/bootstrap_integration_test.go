@@ -7,12 +7,10 @@ import (
 	"database/sql"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/packages/crypto"
 	"github.com/google/uuid"
 )
@@ -56,32 +54,17 @@ type bootstrapFixture struct {
 
 func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 	t.Helper()
-	dsn, cleanup := testutil.SetupPostgres(t)
-	t.Cleanup(cleanup)
+	db, dsn := openIntegrationDB(t)
 
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	cfg := newBootstrapConfig(t, dsn, uuid.NewString(), "owner@example.com")
+	cfg.OrgName = "Bootstrap Integration"
+	cfg.MemoryToken = generatePAT(t)
+	// The compose test database is shared by the whole integration suite and
+	// already holds other suites' organizations, so every fixture here is a
+	// deliberate second tenant. TestBootstrapIntegrationRefusesSecondOrganization
+	// clears the flag to exercise the guard itself.
+	cfg.AllowSecondOrg = true
 
-	cfg := bootstrapConfig{
-		PostgresDSN: dsn,
-		OrgName:     "Bootstrap Integration",
-		OrgSlug:     uuid.NewString(),
-		UserEmail:   "owner@example.com",
-		UserName:    "Owner",
-		AgentName:   "Default Agent",
-		AgentSlug:   "default",
-		PATName:     "Bootstrap PAT",
-		PATFile:     filepath.Join(t.TempDir(), "bootstrap.pat"),
-		MemoryToken: generatePAT(t),
-		// The compose test database is shared by the whole integration suite and
-		// already holds other suites' organizations, so every fixture here is a
-		// deliberate second tenant. TestBootstrapIntegrationRefusesSecondOrganization
-		// clears the flag to exercise the guard itself.
-		AllowSecondOrg: true,
-	}
 	t.Cleanup(func() { cleanupBootstrapOrg(t, db, cfg.OrgSlug) })
 	return &bootstrapFixture{t: t, db: db, cfg: cfg}
 }
