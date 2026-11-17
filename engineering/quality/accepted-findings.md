@@ -17,6 +17,19 @@ the reason stops holding, delete its row and say so in the change that removes i
 
 ---
 
+## Disposition summary
+
+| Tool | Findings | Disposition |
+|---|---|---|
+| SonarQube | 15 | Accepted — see `plsql:S1192` below |
+| Codacy (Opengrep and Pylint) | 42 | 1 fixed, 37 excluded by file, 4 accepted — see "Codacy `Error` findings" below |
+
+The Codacy set closes as **1 fixed**, **37 excluded with reason**, and **4 accepted**, which accounts
+for all 42 findings. The split between "excluded" and "accepted" is per tool, and the reason for it
+is recorded in that section.
+
+---
+
 ## `plsql:S1192` — duplicated string literal in migration SQL (15 open findings)
 
 The rule asks that a repeated string literal be replaced by a named constant. In these files that remedy either does
@@ -121,3 +134,113 @@ rule governs; they are accepted on the sub-class 1 ground alone.
 Revisit this record if migrations stop being immutable (for example a squash or a baseline reset), or if Sonar's
 profile stops flagging `S1192` for SQL. In the first case rows 1, 2, 4, and 6 become fixable with a `CONSTANT` and the
 remaining rows should be re-checked against the rewritten files; in the second the whole section can be closed.
+
+---
+
+## Codacy `Error` findings (42 findings: 1 fixed, 37 excluded by file, 4 accepted)
+
+Codacy reports 42 `Error`-severity findings on `main`. Grouped by rule:
+
+| Rule | Tool | Findings |
+|---|---|---|
+| `Semgrep_go_sql_rule-concat-sqli` | Opengrep | 39 |
+| `Semgrep_python.django.security.injection.raw-html-format.raw-html-format` | Opengrep | 1 |
+| `Semgrep_codacy.bash.security.hard-coded-password` | Opengrep | 1 |
+| `PyLintPython3_E1120` | Pylint | 1 |
+
+| Disposition | Findings | Files | Mechanism |
+|---|---|---|---|
+| Fixed | 1 | 1 | rule-scoped `# pylint: disable` at the call site |
+| Excluded by file | 37 | 17 | `opengrep.exclude_paths` in `.codacy.yml` |
+| Accepted | 4 | 4 | recorded in this section |
+| **Total** | **42** | | |
+
+### Why this split differs from the Sonar section
+
+Codacy's only exclusion mechanism is the whole file, so a finding is either fixed, excluded with the
+rest of its file, or accepted here. The 37 fixture findings cost nothing to exclude: each is inside a
+`_test.go` file that is compiled only under `go test`, so excluding the file removes the false
+positives and no production signal. The four remaining findings sit in files that carry production
+behaviour, and excluding any of them would blind Opengrep to every other line of that file — a real
+finding added later to `store.go`, `ledger.go`, `budget.py`, or `pgcapability.sh` would never be
+reported. Those four are therefore accepted here rather than excluded, and the fixture list in
+`.codacy.yml` is enumerated file by file rather than written as `**/*_test.go` so a future real
+finding in an unrelated test file is still reported.
+
+### Fixed: `services/mcp-memory/app/stdio_main.py:49` — Pylint `E1120`
+
+Pylint reports "No value for argument `enforcer` in constructor call" on `McpServerWiring(...)`. This
+is the documented false positive from `AGENTS.md`: both MCP services define a top-level `app.server`
+module, and a repo-root analysis resolves `from app.server import McpServerWiring` to the *other*
+service's wiring class, which takes `enforcer` and `registry`. This service's class takes `audit`,
+`memory_client`, `agent_verifier`, and `rate_limiter`, and the call passes exactly those. Fixed with
+the same rule-scoped, documented disable that `services/mcp-memory/app/descriptors.py:42` and
+`services/mcp-operator/app/descriptors.py:52` already carry.
+
+### Accepted 1: `packages/evidenceoutbox/store.go:550` — `concat-sqli`
+
+The flagged call is `tx.ExecContext(ctx, <statement>, rowID, w.OrgID, …, raw, digest, …)` in
+`enqueueOutbox`. The statement is a backtick string literal containing `$1`–`$11`; every value is a
+bound argument and nothing is concatenated into the SQL text. The taint path the rule follows is
+inside the payload, not the query: `addProducerMetadata` (same file) builds the payload with
+`fmt.Sprintf("%q", class)`, which taints the bytes returned by `marshalOutboxPayload`, and those
+bytes are passed as the `$8::jsonb` argument.
+
+What would change the answer: the payload bytes or any other value being formatted into the
+statement text instead of bound, or the rule ceasing to treat a bound argument as a sink.
+
+### Accepted 2: `packages/idempotency/ledger.go:135` — `concat-sqli`
+
+Same rule, same mechanism. The flagged call is
+`tx.QueryRowContext(ctx, insertLedgerSQL, p.OrgID, p.AgentID, key, requestHash, fmt.Sprintf("%f seconds", …))`.
+`insertLedgerSQL` is a package-level constant with `$1`–`$5` placeholders; the only rule source on the
+line is the lease interval formatted with `fmt.Sprintf` and passed as the `$5::interval` argument.
+
+Codacy reports this as a fourth non-test finding under the same rule. It is the same false positive,
+so it is accepted rather than left open or excluded.
+
+What would change the answer: the lease interval, the key, or the request hash being formatted into
+the statement text instead of bound.
+
+### Accepted 3: `services/context/app/budget.py:121` — `raw-html-format`
+
+The flagged line is `return f'<ibex_memory nonce="{nonce}">'` in `_memory_open_tag_for_estimate`. Its
+only caller is `_framing_sentence_for_estimate`, whose only caller is `_framing_overhead_text`, which
+is reached from `BudgetCalculator.calculate` with `nonce = representative_nonce(request.nonce_bytes)`.
+`representative_nonce` (line 89) returns `"A" * length` with `length` derived from `nonce_bytes`
+clamped to `MAX_NONCE_BYTES`: a configuration integer, never request content. The string is a token
+estimator's placeholder and is never served to a browser.
+
+What would change the answer: a caller passing request-derived text as `nonce`, or this helper being
+reused to build HTML that is actually rendered.
+
+### Accepted 4: `infra/scripts/lib/pgcapability.sh:68` — `hard-coded-password`
+
+The flagged line is `local password="${3:-}"`, the empty default for the optional third argument of
+`capability_dsn`. No literal credential is assigned: the value is either the caller's override or,
+on the next branch, the output of `capability_password`. Every production caller
+(`infra/scripts/*.sh`, `benchmarks/scripts/start_proxy_stack.sh`) passes two arguments; the third is
+used only by `infra/tests/pgcapability/test_pgcapability.py` to test percent-encoding of a hostile
+verifier.
+
+The existing `nosemgrep` comment is on line 71 and suppresses the `capability_password` call on line
+72, not this assignment on line 68, so it does not cover this finding.
+
+What would change the answer: a literal password being assigned at this line, or the `${3:-}` override
+becoming reachable from a production caller.
+
+### Residual risk
+
+- Four production sites keep reporting an `Error` for as long as the rule keeps firing, because they
+  are accepted rather than excluded. That is deliberate — any *new* Opengrep finding in those files is
+  still reported — but it means the Codacy `Error` total never reaches zero, so a rise in the total
+  has to be read against this record rather than against zero.
+- The 17 excluded files are re-analysed only if they are removed from the list. A real finding added
+  to one of those fixtures would be invisible until someone re-reads this record.
+
+### Re-audit trigger
+
+Revisit this record if Opengrep's `concat-sqli` rule stops treating bound arguments as sinks, if
+`representative_nonce` stops being the only source of the framing nonce, if `capability_dsn` gains a
+caller that passes a literal password, or if any of the 17 excluded fixture files is edited to
+execute non-fixture SQL.
