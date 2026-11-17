@@ -206,7 +206,7 @@ Each row is closed by a change that exists in this tree; per the stage closure r
 | P1-17 | No service-token rotation; `DEPLOYMENT.md` claims 24 h overlap the code lacks | 27:108 | code | 27:108 |
 | P1-18 | `osv-scanner.toml` ignores a nitro advisory absent from the waiver table | 27:109 | owner decision | 27:109 |
 | P1-21 | `failed_tasks` has no RLS/prune and stores args/tracebacks that can embed content | 27:111 | code | 27:111 |
-| P1-22 | No v0.1.9→head upgrade path or rehearsal | 27:112 | code | 27:112 |
+| P1-22 | The migration span now has an executed rehearsal. `TestUpgradeRehearsal_V019ToHead` applies `v0.1.9` → head → `v0.1.9` → head with seeded two-tenant data and asserts the schema version, row survival, tombstone state, the `000040` digest backfill, both token-prefix indexes, the token→tenant resolution and the constraint validation set. `TestUnit_ReleasedMigrationSetImmutable` pins the released set, so the rehearsal cannot silently stop rehearsing a release. Both run in `db-migrate-smoke`, which gates through `ci-gate-go`. **Still open: no released-tag binary is exercised, no application starts against the upgraded schema, and neither concurrency, `CREATE INDEX CONCURRENTLY` under load, nor a ClickHouse upgrade is covered.** The rollback leg stops at 39 and deletes the tombstoned row first, because `000045`'s down guard refuses once lifecycle state exists, so it is not a clean rollback of that irreversible family; a full down to 0 is not exercised here and remains impossible in this cluster, because the capability roles are cluster-global and `DROP ROLE` fails with 2BP01 while another database still uses them | `infra/migrations/postgres/migrate_upgrade_rehearsal_integration_test.go`:81-122; `infra/migrations/postgres/migrate_released_set_test.go`:35-41; `infra/migrations/postgres/testdata/released/v0.1.9.sha256`; `.github/workflows/ci.yml`:604,661-666,3271-3281,3330 | code | 27:112 |
 | P1-23 | Down migrations are unproven (no up→down→up cycle) | 27:113 | code | 27:113 |
 | P1-24 | Object-store copies are not proven purged; no bucket lifecycle rule | 27:114 | code | 27:114 |
 | P2-06 | `JWT_KEYSET_GRACE_SECONDS` is read by no code; rotation has no runbook | 27:153 | code | 27:153 |
@@ -340,7 +340,7 @@ NEW: `O01`–`O08` (8), `W6.3` (1), `W4.6` (1), `R05` (1), `D4` (1), `D11` (1) �
 
 **Stage 3 (41 rows: 5 closed, 36 remaining).**
 Remaining: `P0-06` `P0-21`; `P1-14` `P1-15` `P1-16` `P1-17` `P1-18` `P1-21` `P1-22` `P1-23` `P1-24`; `P2-06` `P2-07` `P2-09` `P2-13` `P2-14` `P2-15` `P2-22`; `GAP-002` `GAP-005` `GAP-006` `GAP-007` `GAP-009`; `S01` `S02` `S04` `S05` `S06` `S07` `S08` `S09` `S10` `S11` `S13` `S14`; `D6` (36).
-Closed in §5.1: `P1-12` `P1-13` `S03` `P2-08` (4 rows that existed at `55a62bc4`) plus `S12` (1 row added by this pass and closed by the same change) — 5. `S13` is reopened by the 2026-11-14 review and sits in §5.2.
+Closed in §5.1: `P1-12` `P1-13` `S03` `P2-08` (4 rows that existed at `55a62bc4`) plus `S12` (1 row added by this pass and closed by the same change) — 5. `S13` is reopened by the 2026-11-14 review and sits in §5.2. `P1-22` is **partially** closed: the migration-level rehearsal and the released-set pin exist, but no released-tag binary, application start, concurrency, ClickHouse upgrade or clean irreversible-family rollback does, so the row stays here with its residual.
 P0: `P0-06` `P0-21` (2).
 P1: `P1-14` `P1-15` `P1-16` `P1-17` `P1-18` `P1-21` `P1-22` `P1-23` `P1-24` (9).
 P2: `P2-06` `P2-07` `P2-09` `P2-13` `P2-14` `P2-15` `P2-22` (7).
