@@ -1318,6 +1318,62 @@ jobs:
           cosign sign --yes "${REPO}/worker@${{ needs.push-worker.outputs.digest }}"
 
 
+  # notify is `if: always()` because it must report a run that published nothing,
+  # which makes a green notify meaningless as evidence. This job is the terminal
+  # status for every path that is expected to publish: it fails when a publish job
+  # did not succeed, including the case where every publish job was skipped.
+  publish-gate:
+    name: publish-gate
+    needs:
+      - resolve-tag
+      - push-auth
+      - push-proxy
+      - push-embedder
+      - push-mcp-memory
+      - push-memory
+      - push-api
+      - push-worker
+    # pull_request runs are scan-only. workflow_run runs where resolve-tag was
+    # skipped publish nothing by design, so they stay outside this gate.
+    if: always() && github.event_name != 'pull_request' && needs.resolve-tag.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - name: Require every image to be pushed
+        env:
+          PUSH_AUTH: ${{ needs.push-auth.result }}
+          PUSH_PROXY: ${{ needs.push-proxy.result }}
+          PUSH_EMBEDDER: ${{ needs.push-embedder.result }}
+          PUSH_MCP_MEMORY: ${{ needs.push-mcp-memory.result }}
+          PUSH_MEMORY: ${{ needs.push-memory.result }}
+          PUSH_API: ${{ needs.push-api.result }}
+          PUSH_WORKER: ${{ needs.push-worker.result }}
+        run: |
+          set -euo pipefail
+          failed=()
+          for pair in \
+            "auth=${PUSH_AUTH}" \
+            "proxy=${PUSH_PROXY}" \
+            "embedder=${PUSH_EMBEDDER}" \
+            "mcp-memory=${PUSH_MCP_MEMORY}" \
+            "memory=${PUSH_MEMORY}" \
+            "api=${PUSH_API}" \
+            "worker=${PUSH_WORKER}"; do
+            if [ "${pair#*=}" != "success" ]; then
+              failed+=("${pair%%=*}=${pair#*=}")
+            fi
+          done
+          if [ "${#failed[@]}" -ne 0 ]; then
+            echo "::error::docker-publish did not publish: ${failed[*]}"
+            exit 1
+          fi
+          echo "every publish job succeeded"
+
   notify:
     name: notify
     needs:
