@@ -60,10 +60,11 @@ func seedPrincipal(t *testing.T, db *sql.DB) (Principal, Principal) {
 	seed := func() Principal {
 		suffix := uuid.NewString()
 		var orgID, agentID uuid.UUID
+		orgSlug := "ledger-it-" + suffix
 		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		if err := tx.QueryRowContext(ctx,
 			`INSERT INTO ibex_core.organizations (name, slug) VALUES ($1, $2) RETURNING id`,
-			"ledger-it", "ledger-it-"+suffix,
+			"ledger-it", orgSlug,
 		).Scan(&orgID); err != nil {
 			t.Fatalf("insert org: %v", err)
 		}

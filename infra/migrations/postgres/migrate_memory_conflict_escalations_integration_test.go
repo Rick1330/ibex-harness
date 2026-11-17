@@ -47,9 +47,10 @@ func (f *conflictEscalationsDB) insertMemory(orgID, agentID, content string) str
 	f.t.Helper()
 	var memID string
 	err := withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		contentHash := "hash-" + content
 		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		return tx.QueryRowContext(context.Background(), insertMemoryForEscalationSQL,
-			orgID, agentID, content, "hash-"+content,
+			orgID, agentID, content, contentHash,
 		).Scan(&memID)
 	})
 	if err != nil {

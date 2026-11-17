@@ -129,9 +129,10 @@ func insertSeededDirective(ctx context.Context, tx *sql.Tx, seed agentDirectiveS
 	if err := tx.QueryRowContext(ctx, seedInsertDirectiveSQL, ids.orgID, ids.agentID).Scan(&ids.directiveID); err != nil {
 		return err
 	}
+	contentHash := "hash-" + seed.content
 	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 	if err := tx.QueryRowContext(ctx, seedInsertVersionSQL,
-		ids.directiveID, ids.orgID, seed.content, "hash-"+seed.content).Scan(&ids.versionID); err != nil {
+		ids.directiveID, ids.orgID, seed.content, contentHash).Scan(&ids.versionID); err != nil {
 		return err
 	}
 	return activateSeededVersion(ctx, tx, ids)

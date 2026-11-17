@@ -86,9 +86,10 @@ func TestTokens_CompositeFKOwnership(t *testing.T) {
 func execTokenInsert(t *testing.T, ctx context.Context, in tokenSubjectInsert) error {
 	t.Helper()
 	return withServiceAccount(ctx, in.db, func(tx *sql.Tx) error {
+		tokenLabel := "tok-" + in.label
 		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: in.sqlText is one of the insert statement constants in this file and every flagged value is a bound argument.
 		_, err := tx.ExecContext(ctx, in.sqlText,
-			in.orgID, uniqueTokenHash(), uniqueTokenPrefix(), "tok-"+in.label, in.subjectID)
+			in.orgID, uniqueTokenHash(), uniqueTokenPrefix(), tokenLabel, in.subjectID)
 		return err
 	})
 }

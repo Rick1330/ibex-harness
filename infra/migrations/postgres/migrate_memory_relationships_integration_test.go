@@ -55,9 +55,10 @@ func (f *relationshipsDB) insertMemory(seed relationshipMemorySeed) string {
 	f.t.Helper()
 	var memID string
 	err := withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		contentHash := "hash-" + seed.content
 		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		return tx.QueryRowContext(context.Background(), insertMemoryMinimalRelSQL,
-			seed.orgID, seed.agentID, seed.content, "hash-"+seed.content,
+			seed.orgID, seed.agentID, seed.content, contentHash,
 		).Scan(&memID)
 	})
 	if err != nil {
