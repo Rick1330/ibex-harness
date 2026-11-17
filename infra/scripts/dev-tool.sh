@@ -316,6 +316,11 @@ v1_edge_ca() {
 # lets the self-test replace `curl` with a stub and exercise the parsing and
 # status assertions without a running profile.
 #
+# A fifth argument makes the call a POST whose request body is that file: it is
+# how the chat check sends its JSON payload without putting it in argv. The
+# payload is static and non-sensitive, but it travels the same path as the
+# token-bearing call, so there is one code path to review.
+#
 # The bootstrap PAT is an admin credential, so it must not appear in curl's
 # argv: OpenCode (and any process monitor) logs argv. The bearer header is
 # written to a 0600 curl config file and passed with --config; only the file
@@ -328,7 +333,7 @@ v1_edge_ca() {
 # assertion below reports it as a failed probe, and v1_smoke's own loop decides
 # whether to try again — the smoke never dies inside curl.
 v1_smoke_http() {
-  local url="$1" token="$2" agent="$3" body="$4"
+  local url="$1" token="$2" agent="$3" body="$4" payload="${5:-}"
   local -a args=(
     --cacert "$(v1_edge_ca)" -sS
     --connect-timeout 5 --max-time 20
@@ -342,6 +347,9 @@ v1_smoke_http() {
     args+=(--config "$cfg")
   fi
   [[ -n "$agent" ]] && args+=(-H "X-IBEX-Agent-ID: $agent")
+  if [[ -n "$payload" ]]; then
+    args+=(-X POST -H "Content-Type: application/json" --data-binary "@$payload")
+  fi
   status="$(curl "${args[@]}" "$url" || true)"
   [[ -n "$cfg" ]] && rm -f "$cfg"
   printf '%s' "$status"
@@ -365,9 +373,39 @@ sys.exit(0 if actual == expected else 1)
 PY
 }
 
-# v1_smoke_assert proves the profile serves an authenticated request, and that
-# the two negative paths stay closed. It returns 1 instead of exiting so the
-# self-test can assert a failure.
+# v1_smoke_body_chat asserts the one thing the exit gate's chat check means: the
+# edge answered a completion with a single assistant message. It is deliberately
+# narrower than "any 2xx" and narrower than a schema check: an error envelope
+# carrying 200, an SSE frame, an empty choices list and an unparseable body all
+# fail. The mock provider's non-stream body is that shape
+# (packages/provider/mockllm/provider.go: mockJSONBody), and the proxy re-encodes
+# the response through packages/responsepipeline without dropping the message.
+v1_smoke_body_chat() {
+  local body="$1"
+  python3 - "$body" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        payload = json.load(handle)
+except (OSError, ValueError):
+    sys.exit(1)
+if not isinstance(payload, dict):
+    sys.exit(1)
+choices = payload.get("choices")
+if not isinstance(choices, list) or not choices:
+    sys.exit(1)
+first = choices[0]
+message = first.get("message") if isinstance(first, dict) else None
+role = message.get("role") if isinstance(message, dict) else None
+sys.exit(0 if role == "assistant" else 1)
+PY
+}
+
+# v1_smoke_assert proves the profile serves an authenticated request on the chat
+# path — not only the auth-probe — and that the two negative paths stay closed.
+# It returns 1 instead of exiting so the self-test can assert a failure.
 v1_smoke_assert() {
   local base="$1" org="$2" agent="$3" pat="$4" body="$5" status wrong_org
   status="$(v1_smoke_http "$base/v1/orgs/$org/auth-probe" "$pat" "$agent" "$body" || true)"
@@ -380,15 +418,30 @@ v1_smoke_assert() {
   wrong_org="$(python3 -c 'import uuid; print(uuid.uuid4())')"
   status="$(v1_smoke_http "$base/v1/orgs/$wrong_org/auth-probe" "$pat" "$agent" "$body" || true)"
   [[ "$status" == "403" ]] || { echo "auth-probe for a different org returned $status, want 403" >&2; return 1; }
+
+  # The chat path itself. The org is implicit in the token, so there is no org
+  # path segment; the agent header selects the agent the request is attributed
+  # to, and the request stays non-streaming so the body is JSON.
+  local payload="$body.chat-request.json"
+  printf '%s' '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' >"$payload"
+  status="$(v1_smoke_http "$base/v1/chat/completions" "$pat" "$agent" "$body" "$payload" || true)"
+  [[ "$status" == "200" ]] || { echo "chat completion with the bootstrap PAT returned $status, want 200" >&2; return 1; }
+  v1_smoke_body_chat "$body" || { echo "chat completion body is not one assistant message (choices[0].message.role)" >&2; return 1; }
   return 0
 }
 
 # v1_smoke is the O06 proof: an authenticated edge request through Caddy, not a
 # static /_edge/health string. It reads the one-time bootstrap PAT (mode 600),
-# resolves the org and agent ids from the profile database, then asserts 200 +
-# matching org and the 401/403 negatives. --from-up turns an absent, already
-# consumed PAT into a loud SKIP so a re-run of `make v1-up` stays usable; the
-# standalone `make v1-smoke` treats it as a failure.
+# resolves the org and agent ids from the profile database, then asserts the
+# authenticated auth-probe, the 401/403 negatives, and one authenticated chat
+# completion.
+#
+# A skip is exit 4, never 0: no readable bootstrap PAT means the authenticated
+# half of the gate was not exercised, and a caller must not be able to read that
+# as a pass. The code is distinct from 1 (a probe ran and failed) and from 2
+# (usage). `make v1-smoke` fails on 4; `make v1-up` maps that one code to a
+# printed warning so a re-run whose one-time PAT was already consumed still
+# starts the profile, and propagates every other failure unchanged.
 v1_smoke() {
   local from_up=0
   if [[ "${1:-}" == "--from-up" ]]; then
@@ -412,10 +465,10 @@ v1_smoke() {
   if (( rc != 0 )); then
     if (( from_up )); then
       echo "SKIP: bootstrap PAT absent (the one-time credential was already consumed); authenticated v1 liveness is unproven on this run. Run 'make v1-smoke' with the PAT restored to prove it." >&2
-      return 0
+    else
+      echo "SKIP: cannot prove v1 liveness: no readable bootstrap PAT. Restore the one-time PAT under infra/compose/v1-single-node/bootstrap/ (or re-provision it with 'make v1-provision') and re-run 'make v1-smoke'." >&2
     fi
-    echo "cannot prove v1 liveness: no readable bootstrap PAT" >&2
-    return 1
+    return 4
   fi
   # The org/agent lookup and the edge port default to the profile .env. An
   # explicit triple lets the smoke run without it, but a missing .env with any
@@ -451,34 +504,43 @@ v1_smoke() {
   echo "PASS: v1 auth-probe 200 through the edge with the bootstrap PAT (org_id matches $org)"
   echo "PASS: v1 auth-probe 401 without a token"
   echo "PASS: v1 auth-probe 403 for a different org path"
+  echo "PASS: v1 chat completion 200 through the edge (choices[0].message.role is assistant)"
   return 0
 }
 
 # v1_smoke_selftest exercises v1_smoke_assert against a stub curl, so the
-# parsing and status assertions are tested even when no profile is running.
+# parsing and status assertions are tested even when no profile is running. It
+# is the only test of that parser, so every way the chat check can pass
+# something the gate must reject has an arm here: a non-200, a 200 whose
+# choices[0].message.role is not assistant, a 200 with an empty choices list, a
+# 200 whose body is a JSON array rather than an object, and a 200 whose body is
+# not JSON. The accepted completion body is the one the mock
+# provider returns (packages/provider/mockllm/provider.go: mockJSONBody), so the
+# parser is tested against what the profile serves in its current posture.
 v1_smoke_selftest() {
   local org="11111111-1111-4111-8111-111111111111"
   local agent="22222222-2222-4222-8222-222222222222"
   local pat="ibex_pat_selftest"
+  local stub_chat="ok"
+  local stub_chat_body='{"id":"mock","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
   V1_SMOKE_SELFTEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/ibex-v1-smoke-selftest.XXXXXX")"
   # The trap runs at script exit, after this function's locals are gone, so the
   # directory is held in a global and the expansion is guarded.
   trap 'rm -rf "${V1_SMOKE_SELFTEST_TMP:-}"' EXIT
   local tmp="$V1_SMOKE_SELFTEST_TMP"
 
+  # One stub answers both probes. `stub_chat` selects the arm, so each negative
+  # case differs from the accepted one by a single value rather than by a copied
+  # curl replacement. The token is read from the 0600 config file, which is the
+  # path v1_smoke_http actually uses.
   stub_curl() {
-    local out="" url="" token="" cfg=""
+    local out="" url="" token="" cfg="" status=200 body=""
     while (( $# )); do
       case "$1" in
         -o) out="$2"; shift 2 ;;
         --cacert|-w|--connect-timeout|--max-time) shift 2 ;;
         --config) cfg="$2"; shift 2 ;;
-        -H)
-          case "$2" in
-            "Authorization: Bearer "*) token="${2#Authorization: Bearer }" ;;
-            *) : ;;
-          esac
-          shift 2 ;;
+        -X|--data-binary|-H) shift 2 ;;
         -sS) shift ;;
         *) url="$1"; shift ;;
       esac
@@ -486,11 +548,29 @@ v1_smoke_selftest() {
     if [[ -n "$cfg" ]]; then
       token="$(sed -n 's/^header = "Authorization: Bearer \(.*\)"$/\1/p' "$cfg")"
     fi
-    local status=200 body="{\"org_id\":\"$org\"}"
-    if [[ "$url" != *"/orgs/$org/auth-probe" ]]; then
-      status=403; body='{"error":"forbidden"}'
-    elif [[ -z "$token" ]]; then
-      status=401; body='{"error":"missing token"}'
+    if [[ "$url" == *"/v1/chat/completions" ]]; then
+      if [[ -z "$token" ]]; then
+        status=401; body='{"error":{"code":"MISSING_TOKEN"}}'
+      else
+        case "$stub_chat" in
+          non-200) status=500; body='{"error":{"code":"INTERNAL_ERROR"}}' ;;
+          wrong-role) body='{"id":"mock","object":"chat.completion","choices":[{"index":0,"message":{"role":"user","content":"ok"}}]}' ;;
+          no-choices) body='{"id":"mock","object":"chat.completion","choices":[]}' ;;
+          not-an-object) body='[]' ;;
+          malformed) body='{"id":"mock","object":"chat.completion","choices":[' ;;
+          *) body="$stub_chat_body" ;;
+        esac
+      fi
+    else
+      case "$stub_chat" in
+        wrong-org) body='{"org_id":"33333333-3333-4333-8333-333333333333"}' ;;
+        *) body="{\"org_id\":\"$org\"}" ;;
+      esac
+      if [[ "$url" != *"/orgs/$org/auth-probe" ]]; then
+        status=403; body='{"error":"forbidden"}'
+      elif [[ -z "$token" ]]; then
+        status=401; body='{"error":"missing token"}'
+      fi
     fi
     [[ -n "$out" ]] && printf '%s' "$body" >"$out"
     printf '%s' "$status"
@@ -500,34 +580,39 @@ v1_smoke_selftest() {
     curl() { stub_curl "$@"; }
     v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json"
   ); then
-    echo "PASS: v1-smoke self-test accepts a 200+matching-org, 401 and 403 stub"
+    echo "PASS: v1-smoke self-test accepts a 200+matching-org auth-probe, its 401 and 403, and one assistant completion"
   else
     echo "FAIL: v1-smoke self-test rejected a well-formed stub" >&2
     return 1
   fi
 
-  if (
-    curl() {
-      local out="" url=""
-      while (( $# )); do
-        case "$1" in
-          -o) out="$2"; shift 2 ;;
-          --cacert|-w|--connect-timeout|--max-time) shift 2 ;;
-          --config) shift 2 ;;
-          -H) shift 2 ;;
-          -sS) shift ;;
-          *) url="$1"; shift ;;
-        esac
-      done
-      [[ -n "$out" ]] && printf '%s' '{"org_id":"33333333-3333-4333-8333-333333333333"}' >"$out"
-      printf '200'
-    }
-    v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json"
-  ) 2>/dev/null; then
-    echo "FAIL: v1-smoke self-test accepted a body whose org_id does not match" >&2
-    return 1
-  fi
-  echo "PASS: v1-smoke self-test rejects a mismatched org_id body"
+  # A negative arm passes only when the assertion fails. An accepted stub here
+  # is the defect: the parser would let the gate pass on something it must
+  # reject.
+  assert_rejected() {
+    local label="$1"
+    if (
+      curl() { stub_curl "$@"; }
+      v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json"
+    ) 2>/dev/null; then
+      echo "FAIL: v1-smoke self-test accepted $label" >&2
+      return 1
+    fi
+    echo "PASS: v1-smoke self-test rejects $label"
+  }
+
+  stub_chat="wrong-org"
+  assert_rejected "a mismatched org_id body" || return 1
+  stub_chat="non-200"
+  assert_rejected "a chat completion whose status is not 200" || return 1
+  stub_chat="wrong-role"
+  assert_rejected "a 200 chat body whose choices[0].message.role is not assistant" || return 1
+  stub_chat="no-choices"
+  assert_rejected "a 200 chat body with an empty choices list" || return 1
+  stub_chat="not-an-object"
+  assert_rejected "a 200 chat body that is a JSON array, not an object" || return 1
+  stub_chat="malformed"
+  assert_rejected "a 200 chat body that is not valid JSON" || return 1
   return 0
 }
 
