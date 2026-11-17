@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from app.config import Settings, get_settings
@@ -162,4 +164,37 @@ def test_protected_profile_requires_auth_ca(monkeypatch: pytest.MonkeyPatch) -> 
         env="staging",
         redis_url="redis://redis:6379/0",
         auth_grpc_ca_file="/etc/ibex/auth-grpc-ca.pem",
+    )
+
+
+def test_unset_env_warns_about_the_relaxed_posture(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # P1-14/S11: an unset IBEX_ENV silently selects development. The default
+    # stays, but the relaxation has to be visible in the first log lines.
+    monkeypatch.delenv("IBEX_ENV", raising=False)
+    monkeypatch.delenv("IBEX_MCP_ENV", raising=False)
+    settings = Settings()
+    assert settings.env == "development"
+    assert settings.env_was_explicit is False
+    with caplog.at_level(logging.WARNING, logger="app.config"):
+        settings.warn_if_env_defaulted(logging.getLogger("app.config"))
+    assert any("IBEX_ENV is not set" in record.getMessage() for record in caplog.records)
+    assert any("DNS-rebinding" in record.getMessage() for record in caplog.records)
+
+
+def test_explicit_env_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    settings = Settings(env="development")
+    assert settings.env_was_explicit is True
+    with caplog.at_level(logging.WARNING, logger="app.config"):
+        settings.warn_if_env_defaulted(logging.getLogger("app.config"))
+    assert caplog.records == []
+
+
+def test_allowed_hosts_parse_as_a_comma_separated_list() -> None:
+    settings = Settings(allowed_hosts=" mcp.example.com , mcp.example.com:8443 ,")
+    assert settings.allowed_host_list == ("mcp.example.com", "mcp.example.com:8443")
+    assert Settings().allowed_host_list == ()
+    assert Settings(allowed_origins="https://console.example.com").allowed_origin_list == (
+        "https://console.example.com",
     )

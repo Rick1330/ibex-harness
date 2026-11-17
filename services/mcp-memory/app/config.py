@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 from functools import lru_cache
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -16,6 +17,25 @@ TRANSPORT_HTTP = "streamable_http"
 TRANSPORT_STDIO = "stdio"
 _ALLOWED_TRANSPORTS = frozenset({TRANSPORT_HTTP, TRANSPORT_STDIO})
 _LOOPBACK_DNS = frozenset({"localhost"})
+
+# An unset IBEX_ENV is a silent posture decision: `env` falls back to
+# development, which disables DNS-rebinding protection for the test hosts,
+# accepts loopback discovery URLs, and drops the AuthService CA requirement. The
+# fallback is kept (every local run and the whole unit suite start without the
+# variable, and a refusal would turn a documented default into an outage); what
+# was missing is the signal, so startup logs it once at WARNING.
+_ENV_FALLBACK_WARNING = (
+    "IBEX_ENV is not set; falling back to 'development'. This relaxes three "
+    "controls: DNS-rebinding protection is disabled (test hosts are accepted), "
+    "loopback discovery URLs are allowed, and no AuthService CA is required, so "
+    "the gRPC connection may be plaintext. Set IBEX_ENV=staging or production "
+    "for anything another host can reach."
+)
+
+
+def parse_name_list(raw: str) -> tuple[str, ...]:
+    """Split a comma-separated allow-list, dropping blanks and keeping order."""
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
 class Settings(BaseSettings):
@@ -68,10 +88,49 @@ class Settings(BaseSettings):
     )
     rate_limit_rpm: int = Field(default=120, ge=1, le=1_000_000)
     rate_limit_org_overrides: str = Field(default="")
+    # P1-14: with DNS-rebinding protection on and an empty allow-list the SDK
+    # rejects every request with 421. Outside development the profile needs an
+    # explicit list, so there is a supported way to run protected without
+    # opening the check. Entries are Host-header values: `mcp.example.com` for
+    # the default port, `mcp.example.com:8443` for an explicit one (the SDK also
+    # accepts a `host:*` wildcard-port form).
+    #
+    # The default stays empty outside development on purpose: an unconfigured
+    # protected deployment rejects every request, which is the fail-closed
+    # posture this service had before. It is undeployable by design until the
+    # operator lists a host, and that is recorded, not a bug.
+    allowed_hosts: str = Field(
+        default="",
+        validation_alias=AliasChoices("IBEX_MCP_ALLOWED_HOSTS", "IBEX_MCP_ALLOWED_HOSTS_CSV"),
+        description="Comma-separated Host allow-list for DNS-rebinding protection",
+    )
+    allowed_origins: str = Field(
+        default="",
+        validation_alias=AliasChoices("IBEX_MCP_ALLOWED_ORIGINS", "IBEX_MCP_ALLOWED_ORIGINS_CSV"),
+        description="Comma-separated Origin allow-list for DNS-rebinding protection",
+    )
 
     @property
     def rate_limit_org_override_map(self) -> dict[UUID, int]:
         return parse_org_rpm_overrides(self.rate_limit_org_overrides)
+
+    @property
+    def allowed_host_list(self) -> tuple[str, ...]:
+        return parse_name_list(self.allowed_hosts)
+
+    @property
+    def allowed_origin_list(self) -> tuple[str, ...]:
+        return parse_name_list(self.allowed_origins)
+
+    @property
+    def env_was_explicit(self) -> bool:
+        """True when IBEX_ENV was supplied rather than defaulted."""
+        return "env" in self.model_fields_set
+
+    def warn_if_env_defaulted(self, log: logging.Logger) -> None:
+        """Log the relaxed posture once when IBEX_ENV was not supplied."""
+        if not self.env_was_explicit:
+            log.warning(_ENV_FALLBACK_WARNING)
 
     @field_validator("transport")
     @classmethod

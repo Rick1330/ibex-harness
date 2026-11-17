@@ -35,6 +35,7 @@ def build_stdio_runtime(settings: Settings) -> _StdioRuntime:
             base_url=settings.memory_http_url,
             timeout_seconds=settings.memory_timeout_ms / 1000.0,
         )
+    settings.warn_if_env_defaulted(logger)
     limiter = build_mcp_rate_limiter(
         redis_url=settings.redis_url,
         default_rpm=settings.rate_limit_rpm,

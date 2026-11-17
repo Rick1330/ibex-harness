@@ -27,6 +27,10 @@ var errInjected = errors.New("injected database fault")
 type faultRow struct {
 	columns []string
 	values  []driver.Value
+	// noRows makes the query return an empty result set. A row with no values is
+	// not the same thing: the driver would hand the destination an unwritten
+	// slot and the Scan would fail.
+	noRows bool
 }
 
 type faultConfig struct {
@@ -126,7 +130,7 @@ func (r *faultRows) Next(dest []driver.Value) error {
 		return nil
 	}
 	row, ok := fault.rowAt(r.index)
-	if !ok {
+	if !ok || row.noRows {
 		return io.EOF
 	}
 	r.sent = true
@@ -200,14 +204,36 @@ func beginFaultTx(t *testing.T, db *sql.DB) *sql.Tx {
 	return tx
 }
 
-// firstRunRows is the row set a clean first-run bootstrap reads: the new
-// organization, the identity, and the memory-service outcome.
+// firstRunRows is the row set a clean first-run bootstrap reads: no existing
+// organization (the second-org guard), the new organization, the identity, and
+// the memory-service outcome.
 func firstRunRows() []faultRow {
+	return append([]faultRow{emptyInventoryRow()}, firstRunCreationRows()...)
+}
+
+// firstRunCreationRows is firstRunRows without the inventory read, for the
+// helpers that start after the guard.
+func firstRunCreationRows() []faultRow {
 	return []faultRow{
 		organizationRow(true, nil),
 		identityRow(),
 		serviceTokenRow(outcomeInserted, uuid.NewString()),
 	}
+}
+
+// emptyInventoryRow is a bootstrap_list_org_slugs result with no organization:
+// the fresh-installation case the guard must allow.
+func emptyInventoryRow() faultRow {
+	return faultRow{columns: []string{"slug"}, noRows: true}
+}
+
+// inventoryRow is a bootstrap_list_org_slugs result naming existing slugs.
+func inventoryRow(slugs ...string) faultRow {
+	values := make([]driver.Value, 0, len(slugs))
+	for _, slug := range slugs {
+		values = append(values, slug)
+	}
+	return faultRow{columns: []string{"slug"}, values: values}
 }
 
 // organizationRow is the bootstrap_upsert_organization result for a newly
@@ -285,8 +311,13 @@ func TestBootstrapErrorPropagation(t *testing.T) {
 			want: "commit bootstrap transaction",
 		},
 		{
-			name: "organization read fails",
+			name: "inventory read fails",
 			f:    faultConfig{query: errInjected},
+			want: "list organizations",
+		},
+		{
+			name: "organization read fails",
+			f:    faultConfig{query: errInjected, queryAfter: 1, rows: firstRunRows()},
 			want: "insert organization",
 		},
 	}
@@ -302,7 +333,9 @@ func TestBootstrapErrorPropagation(t *testing.T) {
 }
 
 func TestBootstrapInTxPropagatesOrganizationFailure(t *testing.T) {
-	db := openFaultDB(t, faultConfig{query: errInjected})
+	// queryAfter 1 skips the inventory read so the organization statement is the
+	// one that fails.
+	db := openFaultDB(t, faultConfig{query: errInjected, queryAfter: 1, rows: firstRunRows()})
 	tx := beginFaultTx(t, db)
 	_, err := bootstrapInTx(context.Background(), tx, testConfig(t))
 	if err == nil || !strings.Contains(err.Error(), "insert organization") {
@@ -310,6 +343,85 @@ func TestBootstrapInTxPropagatesOrganizationFailure(t *testing.T) {
 	}
 	if !errors.Is(err, errInjected) {
 		t.Fatalf("bootstrapInTx error = %v, want the injected fault in its chain", err)
+	}
+}
+
+// TestGuardSecondOrganization covers P2-13: a rerun with a different slug on an
+// installation that already has one must not mint a second owner credential.
+func TestGuardSecondOrganization(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     bootstrapConfig
+		rows    []faultRow
+		wantErr string
+	}{
+		{
+			name: "fresh installation is allowed",
+			cfg:  testConfig(t),
+			rows: []faultRow{emptyInventoryRow()},
+		},
+		{
+			name: "the existing slug is allowed",
+			cfg:  testConfig(t),
+			rows: []faultRow{inventoryRow("fault-injection")},
+		},
+		{
+			name: "a different slug is refused",
+			cfg:  testConfig(t),
+			rows: []faultRow{inventoryRow("ibex")},
+			wantErr: `refusing to create organization "fault-injection": this ` +
+				`installation already has organization "ibex"`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := beginFaultTx(t, openFaultDB(t, faultConfig{rows: tc.rows}))
+			err := guardSecondOrganization(context.Background(), tx, tc.cfg)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("guard refused an allowed case: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("guard error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestDescribeSlugs(t *testing.T) {
+	if got := describeSlugs([]string{"ibex"}); got != `organization "ibex"` {
+		t.Fatalf("describeSlugs(one) = %q", got)
+	}
+	if got := describeSlugs([]string{"alpha", "ibex"}); got != `organizations "alpha", "ibex"` {
+		t.Fatalf("describeSlugs(two) = %q", got)
+	}
+}
+
+// TestGuardSecondOrganizationAllowFlag proves the only way past the refusal is
+// the explicit operator statement.
+func TestGuardSecondOrganizationAllowFlag(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.AllowSecondOrg = true
+	tx := beginFaultTx(t, openFaultDB(t, faultConfig{rows: []faultRow{inventoryRow("ibex")}}))
+	if err := guardSecondOrganization(context.Background(), tx, cfg); err != nil {
+		t.Fatalf("guard refused with IBEX_BOOTSTRAP_ALLOW_SECOND_ORG=true: %v", err)
+	}
+}
+
+// TestBootstrapInTxRefusesSecondOrganization is the same refusal through the
+// entrypoint the command uses, so a future reordering of bootstrapInTx that
+// skipped the guard would fail here.
+func TestBootstrapInTxRefusesSecondOrganization(t *testing.T) {
+	db := openFaultDB(t, faultConfig{rows: []faultRow{inventoryRow("ibex")}})
+	tx := beginFaultTx(t, db)
+	_, err := bootstrapInTx(context.Background(), tx, testConfig(t))
+	if err == nil || !strings.Contains(err.Error(), "IBEX_BOOTSTRAP_ALLOW_SECOND_ORG=true") {
+		t.Fatalf("bootstrapInTx error = %v, want a second-organization refusal", err)
+	}
+	if execCalls != 0 {
+		t.Fatalf("refused run performed %d writes, want none", execCalls)
 	}
 }
 

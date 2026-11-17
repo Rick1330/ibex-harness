@@ -26,7 +26,8 @@ var capabilityRoles = []string{
 	"ibex_app", "ibex_runtime", "ibex_worker", "ibex_bootstrap", "ibex_purge", "ibex_auth",
 }
 
-// bootstrapDefiners are the six SECURITY DEFINER functions 000069 creates. The
+// bootstrapDefiners are the SECURITY DEFINER functions 000069 creates, plus the
+// 000077 inventory read the second-organization guard uses. The
 // default model policy has no definer of its own: it is written by
 // bootstrap_upsert_organization, in the statement that creates the organization.
 // They are on this matrix for the same reason the five readers are: EXECUTE on a
@@ -34,6 +35,7 @@ var capabilityRoles = []string{
 // exactly one role.
 var bootstrapDefiners = []string{
 	"ibex_core.bootstrap_upsert_organization(uuid, text, text)",
+	"ibex_core.bootstrap_list_org_slugs()",
 	"ibex_core.bootstrap_lock_organization(uuid)",
 	"ibex_core.bootstrap_lookup_subjects(uuid)",
 	"ibex_core.bootstrap_create_identity(uuid, uuid, text, text, uuid, text, text)",
@@ -41,7 +43,7 @@ var bootstrapDefiners = []string{
 	"ibex_core.bootstrap_upsert_service_token(uuid, text, text, bigint)",
 }
 
-// bootstrapDefinerGrants is the matrix rows for the six definers: only
+// bootstrapDefinerGrants is the matrix rows for every bootstrap definer: only
 // ibex_bootstrap may execute them.
 func bootstrapDefinerGrants() []readerGrant {
 	grants := make([]readerGrant, 0, len(bootstrapDefiners))

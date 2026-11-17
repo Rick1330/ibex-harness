@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,6 +71,12 @@ type bootstrapConfig struct {
 	// accepts for internal context/worker calls. It is inserted as a
 	// type=service_token row with MemoryRead|MemoryWrite.
 	MemoryToken string
+	// AllowSecondOrg is the operator's explicit statement that a second owner
+	// credential on an installation that already has an organization is
+	// intended. Without it the command refuses, because a rerun with a different
+	// IBEX_BOOTSTRAP_ORG_SLUG is far more likely to be a mistake than a
+	// deliberate second tenant.
+	AllowSecondOrg bool
 }
 
 type bootstrapResult struct {
@@ -128,6 +135,11 @@ const (
 	upsertOrganizationSQL = `
 		SELECT created, org_id, deleted_at
 		FROM ibex_core.bootstrap_upsert_organization($1, $2, $3)`
+	// listOrganizationSlugsSQL is the installation inventory the second-org
+	// guard reads (000077). One column, non-deleted organizations only.
+	listOrganizationSlugsSQL = `
+		SELECT slug
+		FROM ibex_core.bootstrap_list_org_slugs()`
 	// lockOrganizationSQL returns whether a non-deleted row was locked.
 	lockOrganizationSQL = `SELECT ibex_core.bootstrap_lock_organization($1)`
 	lookupSubjectsSQL   = `
@@ -283,6 +295,8 @@ func loadBootstrapConfig(getenv func(string) string) (bootstrapConfig, error) {
 		PATName:     envOrDefault(getenv, "IBEX_BOOTSTRAP_PAT_NAME", defaultPATName),
 		PATFile:     strings.TrimSpace(getenv("IBEX_BOOTSTRAP_PAT_FILE")),
 		MemoryToken: strings.TrimSpace(getenv("IBEX_MEMORY_API_TOKEN")),
+
+		AllowSecondOrg: envBool(getenv, "IBEX_BOOTSTRAP_ALLOW_SECOND_ORG"),
 	}
 	if err := cfg.validate(); err != nil {
 		return bootstrapConfig{}, err
@@ -295,6 +309,13 @@ func envOrDefault(getenv func(string) string, key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// envBool reads a flag that widens what the command may do. Only "true" enables
+// it: a typo, an empty value, or any other spelling leaves the guard armed,
+// which is the safe direction for a permission.
+func envBool(getenv func(string) string, key string) bool {
+	return strings.EqualFold(strings.TrimSpace(getenv(key)), "true")
 }
 
 func (c bootstrapConfig) validate() error {
@@ -380,8 +401,12 @@ func bootstrap(ctx context.Context, db *sql.DB, cfg bootstrapConfig) (bootstrapR
 }
 
 // bootstrapInTx decides between a first-run identity and an existing-org
-// reconcile. It never creates a second organization or rotates the PAT.
+// reconcile. It never creates a second organization or rotates the PAT, and it
+// refuses outright when the installation already has a different organization.
 func bootstrapInTx(ctx context.Context, tx *sql.Tx, cfg bootstrapConfig) (bootstrapResult, error) {
+	if err := guardSecondOrganization(ctx, tx, cfg); err != nil {
+		return bootstrapResult{}, err
+	}
 	orgID := uuid.New()
 	result, err := insertOrganization(ctx, tx, orgInput{id: orgID, cfg: cfg})
 	if err != nil {
@@ -408,6 +433,74 @@ func reconcileExisting(
 	}
 	result.MemoryTokenManaged = true
 	return result, nil
+}
+
+// guardSecondOrganization refuses to mint an owner credential for a slug the
+// installation does not already have.
+//
+// The guard exists because the command is idempotent per slug, not per
+// installation: before it, a rerun with a different IBEX_BOOTSTRAP_ORG_SLUG
+// created a second organization, a second owner user, and a second admin PAT on
+// an installation that already had all three. Reusing the existing slug is
+// still allowed (that is the reconcile path), and so is creating the first
+// organization on a fresh database.
+func guardSecondOrganization(ctx context.Context, tx *sql.Tx, cfg bootstrapConfig) error {
+	slugs, err := listOrganizationSlugs(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if len(slugs) == 0 || cfg.AllowSecondOrg {
+		return nil
+	}
+	for _, slug := range slugs {
+		if slug == cfg.OrgSlug {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"refusing to create organization %q: this installation already has %s; "+
+			"rerun with that IBEX_BOOTSTRAP_ORG_SLUG to reconcile it, or set "+
+			"IBEX_BOOTSTRAP_ALLOW_SECOND_ORG=true if a second owner credential is intended",
+		cfg.OrgSlug, describeSlugs(slugs),
+	)
+}
+
+// listOrganizationSlugs reads the installation's non-deleted organization slugs
+// through the bootstrap definer (000077). The login holds no table privilege, so
+// this read is the only way the command can see another tenant at all.
+func listOrganizationSlugs(ctx context.Context, tx *sql.Tx) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, listOrganizationSlugsSQL)
+	if err != nil {
+		return nil, fmt.Errorf("list organizations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var slugs []string
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, fmt.Errorf("list organizations: %w", err)
+		}
+		slugs = append(slugs, slug)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list organizations: %w", err)
+	}
+	return slugs, nil
+}
+
+// describeSlugs names the existing organizations for the refusal text. Slugs are
+// operator-chosen names, not secrets, and quoting them keeps an empty or
+// whitespace slug visible instead of dropping it from the message.
+func describeSlugs(slugs []string) string {
+	quoted := make([]string, 0, len(slugs))
+	for _, slug := range slugs {
+		quoted = append(quoted, strconv.Quote(slug))
+	}
+	if len(quoted) == 1 {
+		return "organization " + quoted[0]
+	}
+	return "organizations " + strings.Join(quoted, ", ")
 }
 
 // createIdentity writes the first-run user, agent, PAT, and memory token. The

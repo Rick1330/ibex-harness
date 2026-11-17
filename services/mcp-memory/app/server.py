@@ -73,6 +73,8 @@ def build_mcp_server(
     wiring: McpServerWiring,
     *,
     allow_test_hosts: bool = True,
+    allowed_hosts: tuple[str, ...] = (),
+    allowed_origins: tuple[str, ...] = (),
 ) -> FastMCP:
     limiter = wiring.rate_limiter or NoopMcpLimiter()
     bound = McpServerWiring(
@@ -93,7 +95,11 @@ def build_mcp_server(
         # (explicitly out of scope for 3.5.E.1 — document in milestone MDX).
         stateless_http=True,
         json_response=True,
-        transport_security=_transport_security(allow_test_hosts=allow_test_hosts),
+        transport_security=_transport_security(
+            allow_test_hosts=allow_test_hosts,
+            allowed_hosts=allowed_hosts,
+            allowed_origins=allowed_origins,
+        ),
     )
     _register_search_tool(mcp, bound)
     _register_write_tool(mcp, bound)
@@ -254,7 +260,12 @@ def _forbid_undeclared_tool_args(mcp: FastMCP) -> None:
         tool.parameters = schema
 
 
-def _transport_security(*, allow_test_hosts: bool) -> TransportSecuritySettings:
+def _transport_security(
+    *,
+    allow_test_hosts: bool,
+    allowed_hosts: tuple[str, ...] = (),
+    allowed_origins: tuple[str, ...] = (),
+) -> TransportSecuritySettings:
     if allow_test_hosts:
         return TransportSecuritySettings(
             enable_dns_rebinding_protection=False,
@@ -265,10 +276,14 @@ def _transport_security(*, allow_test_hosts: bool) -> TransportSecuritySettings:
                 "http://testserver",
             ],
         )
+    # P1-14: protection stays on outside development, and the allow-list comes
+    # from IBEX_MCP_ALLOWED_HOSTS. An empty list therefore rejects every request
+    # with 421: that is fail-closed, and a protected deployment without a
+    # configured host is undeployable on purpose until an operator lists one.
     return TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
-        allowed_hosts=[],
-        allowed_origins=[],
+        allowed_hosts=list(allowed_hosts),
+        allowed_origins=list(allowed_origins),
     )
 
 

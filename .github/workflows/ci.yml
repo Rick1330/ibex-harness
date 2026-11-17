@@ -142,6 +142,25 @@ jobs:
       - name: OSV waiver floor guard regression tests
         run: python3 infra/scripts/test_check_osv_waiver_floor.py
 
+      # P1-18: the waiver table in engineering/DEPENDENCIES.md is edited by hand
+      # and nothing compared it to osv-scanner.toml, so picomatch
+      # (GHSA-fc5q-39xc-vjpf) was ignored in CI with no recorded disposition. The
+      # same script fails 21 days before any waiver expires: past that date
+      # ci-gate-security blocks every mergeable PR at once, and nothing warned
+      # beforehand. The steps are duplicated here rather than routed through
+      # `make repo-guards` because this job enumerates its steps by hand.
+      - name: OSV waiver record guard
+        run: python3 infra/scripts/check-osv-waivers.py
+
+      - name: OSV waiver record guard regression tests
+        run: python3 infra/scripts/test_check_osv_waivers.py
+
+      # P2-13: db-seed.sh refuses IBEX_ENV=production and a non-local host before
+      # it reaches psql, and neither refusal had a test. This runs the guards
+      # without a database; the control case stops at a closed port.
+      - name: db-seed refusal guard regression tests
+        run: bash infra/scripts/test-db-seed-refusals.sh
+
       # G01: the checker fails closed without jsonschema, so it is installed from the
       # hash-locked requirement file into the interpreter that runs it. Warnings are
       # reported, not enforced: as of this change 146 published runs are still unrecorded
@@ -2436,14 +2455,53 @@ jobs:
       actions: read
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
     with:
-      # OSV scans JS lockfiles only. Go module vulnerabilities are enforced by
-      # the govulncheck job (reachable-code analysis). GO-2026-5932 is a
-      # module-level openpgp advisory with no fixed version; OSV flags
-      # golang.org/x/crypto even when only argon2 is imported and call analysis
-      # cannot mark it unexecuted. See ADR-0008.
+      # OSV scans the JS lockfile and every Python lockfile. Go module
+      # vulnerabilities are enforced by the govulncheck job (reachable-code
+      # analysis). GO-2026-5932 is a module-level openpgp advisory with no fixed
+      # version; OSV flags golang.org/x/crypto even when only argon2 is imported
+      # and call analysis cannot mark it unexecuted. See ADR-0008.
+      #
+      # Python was not covered at all before this: `--lockfile pnpm-lock.yaml`
+      # was the only input, so none of the fifteen `uv.lock` files was ever
+      # scanned -- Trivy checks images and the filesystem, bandit is SAST, and
+      # govulncheck is Go. A Python CVE could reach a release unnoticed. One
+      # invocation covers all of them (`--lockfile` is repeatable, and exits on
+      # the first failing scan), which costs ~12 s against the OSV API; the list
+      # is spelled out rather than `--recursive` so go.sum stays out of this job
+      # for the ADR-0008 reason above.
       scan-args: |-
         --lockfile
         pnpm-lock.yaml
+        --lockfile
+        infra/tests/idempotency-conformance/uv.lock
+        --lockfile
+        packages/apierror_py/uv.lock
+        --lockfile
+        packages/authclient/uv.lock
+        --lockfile
+        packages/ibex_async_db/uv.lock
+        --lockfile
+        packages/ibex_idempotency/uv.lock
+        --lockfile
+        packages/mcp_gateway/uv.lock
+        --lockfile
+        packages/mcp_runtime/uv.lock
+        --lockfile
+        packages/mcp_tool_descriptors/uv.lock
+        --lockfile
+        services/api/uv.lock
+        --lockfile
+        services/context/uv.lock
+        --lockfile
+        services/embedder/uv.lock
+        --lockfile
+        services/mcp-memory/uv.lock
+        --lockfile
+        services/mcp-operator/uv.lock
+        --lockfile
+        services/memory/uv.lock
+        --lockfile
+        services/worker/uv.lock
 
   site-build:
     name: site-build

@@ -6,11 +6,26 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 CookieSameSite = Literal["lax", "strict", "none"]
 _MIN_HMAC_SECRET_BYTES = 32
+
+
+def secret_or_none(value: SecretStr | None) -> str | None:
+    """Return an optional secret field's plaintext, or None when unset.
+
+    A `SecretStr` is an object, so `if not settings.jwt_hmac_secret` is always
+    false once the field is set, even when the environment supplied an empty
+    string. Every call site that used to test the `str | None` for truthiness
+    goes through this function instead, which keeps the "unset or empty means
+    unconfigured" behaviour the pre-`SecretStr` code had.
+    """
+    if value is None:
+        return None
+    plain = value.get_secret_value()
+    return plain or None
 
 
 class Settings(BaseSettings):
@@ -117,7 +132,7 @@ class Settings(BaseSettings):
     )
     # Provisional HS256 secret for 4.P.0 stub only. 4.P.1 moves issuance to auth (RS256).
     # Do not alias JWT_PRIVATE_KEY_PEM — PEM must never be used as HMAC material.
-    jwt_hmac_secret: str | None = Field(
+    jwt_hmac_secret: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("JWT_HMAC_SECRET", "IBEX_API_JWT_HMAC_SECRET"),
         description="Provisional HMAC secret for operator session JWTs (≥32 bytes when set)",
@@ -151,7 +166,7 @@ class Settings(BaseSettings):
             "DASHBOARD_REFRESH_COOKIE_NAME", "IBEX_API_DASHBOARD_REFRESH_COOKIE_NAME"
         ),
     )
-    dashboard_csrf_secret: str | None = Field(
+    dashboard_csrf_secret: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("DASHBOARD_CSRF_SECRET", "IBEX_API_DASHBOARD_CSRF_SECRET"),
         description="HMAC key material for CSRF double-submit tokens",
@@ -251,10 +266,10 @@ class Settings(BaseSettings):
 
     @field_validator("jwt_hmac_secret", mode="after")
     @classmethod
-    def _require_hmac_length(cls, value: str | None) -> str | None:
+    def _require_hmac_length(cls, value: SecretStr | None) -> SecretStr | None:
         if value is None:
             return None
-        if len(value.encode("utf-8")) < _MIN_HMAC_SECRET_BYTES:
+        if len(value.get_secret_value().encode("utf-8")) < _MIN_HMAC_SECRET_BYTES:
             raise ValueError(
                 f"JWT_HMAC_SECRET must be at least {_MIN_HMAC_SECRET_BYTES} bytes when set"
             )
@@ -415,7 +430,10 @@ def _require_non_dev_operator_material(settings: Settings) -> None:
             "DASHBOARD_JWT_PUBLIC_KEYS_PEM is required outside development",
         ),
         (settings.redis_url, "REDIS_URL is required for non-development operator sessions"),
-        (settings.dashboard_csrf_secret, "DASHBOARD_CSRF_SECRET is required outside development"),
+        (
+            secret_or_none(settings.dashboard_csrf_secret),
+            "DASHBOARD_CSRF_SECRET is required outside development",
+        ),
     )
     for value, message in required:
         if not value:

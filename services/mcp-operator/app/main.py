@@ -70,6 +70,9 @@ def create_app(
     cfg = settings or get_settings()
     injected = deps or CreateAppDeps()
     configure_logging()
+    # After configure_logging: the relaxed-posture warning must reach the same
+    # handler as every other startup line, not the last-resort stderr fallback.
+    cfg.warn_if_env_defaulted(logger)
     configure_tracing(cfg.otel_endpoint)
     state = AppState(enabled=cfg.enabled)
     audit = AsyncAuditEmitter(
@@ -154,6 +157,8 @@ def _build_mcp_app(deps: _McpBuildConfig) -> Any | None:
             registry=registry,
             allow_test_hosts=deps.cfg.env != "production",
             resource_url=deps.cfg.resource_url,
+            allowed_hosts=deps.cfg.allowed_host_list,
+            allowed_origins=deps.cfg.allowed_origin_list,
         )
     )
 

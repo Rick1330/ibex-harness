@@ -8,6 +8,7 @@ public-URL requirements because it exposes no surface.
 from __future__ import annotations
 
 import ipaddress
+import logging
 from functools import lru_cache
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -19,6 +20,22 @@ from app.ratelimit import parse_org_rpm_overrides
 
 _LOOPBACK_DNS = frozenset({"localhost"})
 _PROTECTED_ENVS = frozenset({"staging", "production"})
+
+# Same reasoning as services/mcp-memory/app/config.py: the default is kept
+# because every local run and the unit suite start without IBEX_ENV, and what
+# was missing is the signal that the posture relaxed.
+_ENV_FALLBACK_WARNING = (
+    "IBEX_ENV is not set; falling back to 'development'. This relaxes three "
+    "controls: DNS-rebinding protection is disabled (test hosts are accepted), "
+    "loopback discovery URLs are allowed, and no AuthService CA is required, so "
+    "the gRPC connection may be plaintext. Set IBEX_ENV=staging or production "
+    "for anything another host can reach."
+)
+
+
+def parse_name_list(raw: str) -> tuple[str, ...]:
+    """Split a comma-separated allow-list, dropping blanks and keeping order."""
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
 class Settings(BaseSettings):
@@ -61,6 +78,23 @@ class Settings(BaseSettings):
     )
     rate_limit_rpm: int = Field(default=120, ge=1, le=1_000_000)
     rate_limit_org_overrides: str = Field(default="")
+    # P1-14: extra Host/Origin values for DNS-rebinding protection. The gateway
+    # already derives its own host from resource_url; this list adds aliases an
+    # operator reaches it by (a second DNS name, an IPv6 literal, a port the
+    # proxy preserves). It defaults to empty, and the derived host is what makes
+    # a configured deployment work.
+    allowed_hosts: str = Field(
+        default="",
+        validation_alias=AliasChoices("IBEX_MCP_ALLOWED_HOSTS", "IBEX_MCP_OPERATOR_ALLOWED_HOSTS"),
+        description="Comma-separated extra Host values for DNS-rebinding protection",
+    )
+    allowed_origins: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "IBEX_MCP_ALLOWED_ORIGINS", "IBEX_MCP_OPERATOR_ALLOWED_ORIGINS"
+        ),
+        description="Comma-separated Origin values for DNS-rebinding protection",
+    )
     clickhouse_url: str = Field(default="")
     audit_queue_size: int = Field(default=1024, ge=1, le=100_000)
     otel_endpoint: str = Field(
@@ -77,6 +111,24 @@ class Settings(BaseSettings):
     @property
     def protected_profile(self) -> bool:
         return self.env in _PROTECTED_ENVS
+
+    @property
+    def allowed_host_list(self) -> tuple[str, ...]:
+        return parse_name_list(self.allowed_hosts)
+
+    @property
+    def allowed_origin_list(self) -> tuple[str, ...]:
+        return parse_name_list(self.allowed_origins)
+
+    @property
+    def env_was_explicit(self) -> bool:
+        """True when IBEX_ENV was supplied rather than defaulted."""
+        return "env" in self.model_fields_set
+
+    def warn_if_env_defaulted(self, log: logging.Logger) -> None:
+        """Log the relaxed posture once when IBEX_ENV was not supplied."""
+        if not self.env_was_explicit:
+            log.warning(_ENV_FALLBACK_WARNING)
 
     @field_validator("env")
     @classmethod

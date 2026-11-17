@@ -156,6 +156,33 @@ func TestLoadBootstrapConfigValidation(t *testing.T) {
 	}
 }
 
+func TestLoadBootstrapConfigSecondOrgFlag(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{"true", true},
+		{"TRUE", true},
+		{" true ", true},
+		{"1", false},
+		{"yes", false},
+		{"", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.value, func(t *testing.T) {
+			cfg, err := loadBootstrapConfig(mapGetenv(patFileEnv(t, map[string]string{
+				"IBEX_BOOTSTRAP_ALLOW_SECOND_ORG": tc.value,
+			})))
+			if err != nil {
+				t.Fatalf("loadBootstrapConfig: %v", err)
+			}
+			if cfg.AllowSecondOrg != tc.want {
+				t.Fatalf("AllowSecondOrg = %v for %q, want %v", cfg.AllowSecondOrg, tc.value, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadBootstrapConfigAcceptsMemoryServiceToken(t *testing.T) {
 	memoryToken := "ibex_pat_11111111-1111-1111-1111-111111111111_" + strings.Repeat("a", 43)
 	cfg, err := loadBootstrapConfig(mapGetenv(patFileEnv(t, map[string]string{

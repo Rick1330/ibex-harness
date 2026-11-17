@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 from apierror_py import INVALID_TOKEN, SERVICE_DEGRADED
+from pydantic import SecretStr
 from starlette.applications import Starlette
 from starlette.requests import Request
 
@@ -45,7 +46,9 @@ def _settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "environment": "development",
         "operator_feature_enabled": True,
-        "jwt_hmac_secret": "h" * 32,
+        # model_construct skips validation, so the fixture supplies the field's
+        # declared type: a plain str would reach secret_or_none un-wrapped.
+        "jwt_hmac_secret": SecretStr("h" * 32),
         "jwt_public_keys_pem": None,
         "jwt_issuer": "ibex-harness",
         "jwt_audience": "ibex-dashboard",

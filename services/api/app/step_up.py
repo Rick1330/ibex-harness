@@ -11,7 +11,7 @@ from fastapi import Depends, Request
 from app.auth.client import ValidateResult
 from app.auth.errors import AuthFailedError, AuthUnavailableError
 from app.auth.session_refresh import AuthRPC, ConsumeStepUpParams, consume_step_up
-from app.config import Settings
+from app.config import Settings, secret_or_none
 from app.errors import ApiError
 from app.session_stub import (
     SESSION_KIND_STEP_UP,
@@ -89,7 +89,11 @@ def _verify_step_up_token(raw: str, settings: Settings) -> SessionClaims:
         return verify_token_opts(
             raw.strip(),
             TokenVerifyOpts(
-                secret=settings.jwt_hmac_secret if settings.environment == "development" else None,
+                secret=(
+                    secret_or_none(settings.jwt_hmac_secret)
+                    if settings.environment == "development"
+                    else None
+                ),
                 issuer=settings.jwt_issuer,
                 audience=settings.jwt_audience,
                 expect_kind=SESSION_KIND_STEP_UP,

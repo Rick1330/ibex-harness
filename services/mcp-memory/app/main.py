@@ -62,6 +62,7 @@ def create_app(
     deps: CreateAppDeps | None = None,
 ) -> FastAPI:
     cfg = settings or get_settings()
+    cfg.warn_if_env_defaulted(logger)
     injected = deps or CreateAppDeps()
     state = AppState()
     sink = injected.audit_sink or build_audit_sink(cfg.clickhouse_url)
@@ -77,6 +78,8 @@ def create_app(
             rate_limiter=limiter,
         ),
         allow_test_hosts=cfg.env != "production",
+        allowed_hosts=cfg.allowed_host_list,
+        allowed_origins=cfg.allowed_origin_list,
     )
     runtime = _Runtime(
         state=state,

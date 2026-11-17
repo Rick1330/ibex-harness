@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from authclient.permissions import OPERATOR_METADATA_READ
+from pydantic import SecretStr
 
 from app.session_stub import SESSION_KIND_ACCESS, SessionClaims
 
@@ -39,7 +40,7 @@ def authed_request(
     req.app.state.settings = MagicMock(
         operator_feature_enabled=feature,
         environment="development",
-        jwt_hmac_secret="sekrit",
+        jwt_hmac_secret=SecretStr("sekrit"),
         jwt_public_keys_pem=None,
         jwt_issuer="ibex",
         jwt_audience="ibex-dashboard",

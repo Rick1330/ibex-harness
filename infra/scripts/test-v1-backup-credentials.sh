@@ -27,6 +27,10 @@
 #   7. Every escape the repository's dotenv reader decodes is emitted on a
 #      rewrite, including the carriage return that would otherwise split the
 #      retained passphrase across two lines.
+#   8. The Redis password is the directive of a generated config file the
+#      profile mounts, and the compose file carries neither `--requirepass` nor
+#      a healthcheck `-a <value>`: the secret must never be a container
+#      command-line argument that `podman inspect` and /proc print.
 #
 # Every path is redirected: IBEX_V1_ENV_FILE, IBEX_V1_SECRETS_DIR,
 # IBEX_V1_CERTS_DIR and IBEX_V1_PGBACKREST_CONF keep the generator out of the
@@ -41,6 +45,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GEN="$ROOT_DIR/infra/scripts/gen-v1-secrets.sh"
 RESTORE="$ROOT_DIR/infra/scripts/platform/pgbackrest-restore.sh"
 DOTENV="$ROOT_DIR/infra/scripts/lib/dotenv.py"
+COMPOSE="$ROOT_DIR/infra/compose/v1-single-node/compose.yml"
 
 PASSED=0
 pass() {
@@ -124,6 +129,47 @@ if [[ -n "$(find "$dir/env" -maxdepth 1 -name '.env.new.*' -print -quit)" ]]; th
   fail "--force: a staged .env temporary file was left behind"
 fi
 pass "--force keeps the existing repository passphrase"
+
+# --- case 2b: the Redis password is a config directive, not an argv flag ---
+#
+# `command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]` put the
+# password in Config.Cmd: `podman inspect` printed it and /proc/1/cmdline
+# exposed it to every process in the container. The password is now the
+# `requirepass` directive of a generated file the profile mounts, and the
+# healthcheck authenticates through REDISCLI_AUTH instead of `-a <value>`.
+
+dir="$WORK/redis"
+gen_env "$dir"
+if ! bash "$GEN" >"$dir/out.log" 2>&1; then
+  cat "$dir/out.log" >&2
+  fail "redis config: generator exited non-zero"
+fi
+redis_conf="$IBEX_V1_SECRETS_DIR/redis.conf"
+[[ -f "$redis_conf" ]] || fail "redis config: secrets/redis.conf was not generated"
+[[ "$(stat -c %a "$redis_conf")" == "444" ]] \
+  || fail "redis config: the container copy is not mode 444 like every other secret"
+redis_password="$(env_read REDIS_PASSWORD)"
+[[ -n "$redis_password" ]] || fail "redis config: no REDIS_PASSWORD was generated"
+[[ "$(grep -c '^requirepass ' "$redis_conf")" == "1" ]] \
+  || fail "redis config: expected exactly one requirepass directive"
+[[ "$(sed -n 's/^requirepass //p' "$redis_conf")" == "$redis_password" ]] \
+  || fail "redis config: the directive does not carry the .env password"
+if grep -qF -- "$redis_password" "$dir/out.log"; then
+  fail "redis config: the generator printed the password"
+fi
+# Comment lines are excluded: this file's own explanation names the flags it
+# forbids, and the check is about the directives Compose executes.
+if grep -v '^[[:space:]]*#' "$COMPOSE" | grep -q -- '--requirepass'; then
+  fail "redis config: the compose command line still carries --requirepass"
+fi
+grep -q 'REDISCLI_AUTH' "$COMPOSE" \
+  || fail "redis config: the healthcheck has no REDISCLI_AUTH environment"
+if grep -v '^[[:space:]]*#' "$COMPOSE" | grep -q -- 'redis-cli --no-auth-warning -a'; then
+  fail "redis config: the healthcheck still passes the password with -a"
+fi
+grep -q 'redis.conf:' "$COMPOSE" \
+  || fail "redis config: compose does not declare the redis.conf secret"
+pass "the Redis password is a mounted config directive and never an argv flag"
 
 # --- case 3: explicit rotation without the override is refused -------------
 

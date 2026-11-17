@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.config import Settings
+from app.config import Settings, secret_or_none
 from app.session_stub import verify_csrf_token
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
@@ -94,7 +94,7 @@ class CSRFMiddleware:
             await _csrf_json("origin_failed", "origin is not allowed", 403)(scope, receive, send)
             return
 
-        secret = self._settings.dashboard_csrf_secret
+        secret = secret_or_none(self._settings.dashboard_csrf_secret)
         if not secret:
             await _csrf_json(
                 "csrf_misconfigured", "CSRF secret not configured", 503
