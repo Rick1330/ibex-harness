@@ -134,14 +134,14 @@ func pinnedNameSet(pinned []releasedFile) map[string]bool {
 }
 
 // embeddedNameSet collects every embedded .sql basename whose version prefix is
-// at most max.
-func embeddedNameSet(entries []os.DirEntry, max int) map[string]bool {
+// at most maxVersion.
+func embeddedNameSet(entries []os.DirEntry, maxVersion int) map[string]bool {
 	set := make(map[string]bool)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
-		if version, ok := nameVersion(entry.Name()); ok && version <= max {
+		if version, ok := nameVersion(entry.Name()); ok && version <= maxVersion {
 			set[entry.Name()] = true
 		}
 	}
@@ -181,15 +181,16 @@ func assertReleasedVersionsContiguous(t *testing.T, entries []os.DirEntry, last 
 	}
 }
 
-// embeddedUpVersions returns the sorted up-migration versions at or below max.
-func embeddedUpVersions(entries []os.DirEntry, max int) []int {
+// embeddedUpVersions returns the sorted up-migration versions at or below
+// maxVersion.
+func embeddedUpVersions(entries []os.DirEntry, maxVersion int) []int {
 	var versions []int
 	for _, entry := range entries {
 		match := upMigrationPattern.FindStringSubmatch(entry.Name())
 		if match == nil {
 			continue
 		}
-		if version, err := strconv.Atoi(match[1]); err == nil && version <= max {
+		if version, err := strconv.Atoi(match[1]); err == nil && version <= maxVersion {
 			versions = append(versions, version)
 		}
 	}
