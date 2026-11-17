@@ -516,6 +516,13 @@ v1_smoke_assert() {
 # (usage). `make v1-smoke` fails on 4; `make v1-up` maps that one code to a
 # printed warning so a re-run whose one-time PAT was already consumed still
 # starts the profile, and propagates every other failure unchanged.
+#
+# A malformed retry budget is exit 5, never 4: a zero or non-numeric
+# IBEX_V1_SMOKE_ATTEMPTS means the gate was misconfigured, which is not the same
+# thing as "no PAT was found". 5 is unused elsewhere in this script (1 is a
+# probe failure, 2 usage, 3 is v1_bootstrap_pat_read's internal "absent", 4 the
+# skip), and `make v1-up` does not map it, so a broken budget fails the start
+# instead of warning past it.
 v1_smoke() {
   local from_up=0
   if [[ "${1:-}" == "--from-up" ]]; then
@@ -523,6 +530,16 @@ v1_smoke() {
     shift
   fi
   local attempts="${IBEX_V1_SMOKE_ATTEMPTS:-15}" i rc=3 pat="" org="" agent="" port base
+  # Validate the budget before either retry loop runs. With a zero budget
+  # `for ((i = 1; i <= 0; i++))` never executes, rc keeps its 3 ("PAT absent")
+  # initial value, and the function returned the skip code 4 even when a
+  # readable PAT was sitting on disk: a broken configuration read as "no PAT".
+  # A non-numeric value was worse — `set -u` made the arithmetic treat it as an
+  # unset variable and bash exited 1, the code a real probe failure uses.
+  if [[ ! "$attempts" =~ ^[0-9]+$ ]] || (( 10#$attempts < 1 )); then
+    echo "IBEX_V1_SMOKE_ATTEMPTS must be a positive whole number (got '$attempts'); it is the retry budget for the bootstrap PAT and for the org/agent lookup, so a non-positive budget can never reach the checks: this is a configuration error, not a skip" >&2
+    return 5
+  fi
   for ((i = 1; i <= attempts; i++)); do
     # The assignment inherits the function's status; `|| rc=$?` keeps `set -e`
     # from exiting on the expected "file absent" (3) result.
@@ -594,6 +611,11 @@ v1_smoke() {
 # completion body is the one the mock provider returns
 # (packages/provider/mockllm/provider.go: mockJSONBody), so the parser is tested
 # against what the profile serves in its current posture.
+#
+# Two further arms cover the retry budget that gates those checks: a zero and a
+# non-numeric IBEX_V1_SMOKE_ATTEMPTS must both return the configuration-error
+# code 5 rather than the skip code 4, with a readable PAT stubbed in place so
+# the arm cannot pass by finding no PAT.
 v1_smoke_selftest() {
   local org="11111111-1111-4111-8111-111111111111"
   local agent="22222222-2222-4222-8222-222222222222"
@@ -714,6 +736,31 @@ v1_smoke_selftest() {
   assert_rejected "a 200 chat completion that carries no X-IBEX-Context-Fallback header (assembly unproven)" || return 1
   stub_chat="fallback-unexpected"
   assert_rejected "a 200 chat completion whose X-IBEX-Context-Fallback is neither true nor false" || return 1
+
+  # The retry budget is validated before the first loop, so a zero or
+  # non-numeric IBEX_V1_SMOKE_ATTEMPTS is a configuration error (exit 5), not
+  # the skip code 4. Before that check existed, attempts=0 left rc at 3 and the
+  # function returned 4, so `make v1-up` printed a warning for a broken
+  # configuration; a non-numeric value exited 1 out of bash arithmetic, the code
+  # a real probe failure uses.
+  #
+  # The PAT read is stubbed to succeed on purpose: the arm proves the
+  # configuration error wins over a readable PAT, which is the reported case
+  # (a zero budget skipped even when the PAT was present).
+  assert_smoke_config_error() {
+    local label="$1" value="$2" got=0
+    (
+      v1_bootstrap_pat_read() { printf '%s\n' "$pat"; }
+      IBEX_V1_SMOKE_ATTEMPTS="$value" v1_smoke
+    ) >/dev/null 2>&1 || got=$?
+    if (( got != 5 )); then
+      echo "FAIL: v1-smoke self-test returned $got for $label, want 5 (configuration error)" >&2
+      return 1
+    fi
+    echo "PASS: v1-smoke self-test returns 5 (configuration error) for $label"
+  }
+  assert_smoke_config_error "IBEX_V1_SMOKE_ATTEMPTS=0 with a readable PAT" 0 || return 1
+  assert_smoke_config_error "a non-numeric IBEX_V1_SMOKE_ATTEMPTS (nope)" nope || return 1
   return 0
 }
 

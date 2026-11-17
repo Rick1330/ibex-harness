@@ -22,6 +22,28 @@ id = "GHSA-gcqx-w48m-w2h4"
 ignoreUntil = 2026-12-01
 reason = "No upstream fixed release; carried by @rollup/plugin-node-resolve at build time and absent from the deployed Nitro output. Revisit when a fixed release exists."
 
+# picomatch ReDoS advisory (GHSA-fc5q-39xc-vjpf, CVE-2026-112366, CVSS 8.7).
+# OSV reports `last_affected: 4.0.7` and no `fixed` event, so there is no
+# upstream fixed release to move to; this lock resolves both affected versions
+# (2.3.2 and 4.0.7). Every pull-in site in pnpm-lock.yaml is build tooling —
+# vite, rollup (via unplugin / @rollup/plugin-* / rollup-plugin-visualizer),
+# unplugin, vite-plugin-checker, tinyglobby, micromatch, and vue-router 5's
+# build-time unplugin dependency — and no runtime module imports it.
+#
+# Verified against a fresh `pnpm --filter @ibex/console build` (2026-11-17):
+# `find services/console/.output -name '*picomatch*' -o -name 'fdir*'` returns
+# nothing, `.output/server/node_modules` contains neither package, and the only
+# occurrence of the string in the artifact is the `picomatch` entry in
+# vue-router's copied package.json, which is manifest metadata Nitro writes next
+# to an externalized module, not installed code. The deployed static site
+# (`site/.output/public`) contains no occurrence at all. A package that reaches
+# the artifact must not be ignored, so this filter is removed the moment a
+# runtime dependency starts shipping picomatch.
+[[IgnoredVulns]]
+id = "GHSA-fc5q-39xc-vjpf"
+ignoreUntil = 2026-12-01
+reason = "No upstream fixed release (OSV: last_affected 4.0.7, no fixed event); carried by build tooling only (vite, rollup via unplugin, unplugin, vite-plugin-checker, tinyglobby, micromatch) and absent from the deployed Nitro output, verified by find/grep on a fresh console build. Re-audit when picomatch publishes a release past 4.0.7, when OSV records a fixed event, or if any runtime dependency starts shipping picomatch into the artifact."
+
 # nuxt / nitro-server case-variant route-rule advisory (GHSA-vjh5-4x84-xrqp,
 # CVE-2026-114132). The 4.x line was fixed upstream in 4.6.2, and this lock now
 # resolves nuxt and @nuxt/nitro-server 4.6.4, so the code actually installed is
