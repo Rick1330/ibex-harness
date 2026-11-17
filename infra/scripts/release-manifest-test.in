@@ -6,6 +6,11 @@
 # installed by the api-test job that runs this standalone infra script.
 # Security: resolved from a hash-locked requirements file with --no-build; no
 # setup scripts execute and every wheel hash is verified.
-# Maintenance/size impact: jsonschema plus five transitive wheels, installed
+# Maintenance/size impact: jsonschema plus its transitive wheels, installed
 # only for this test step; no runtime image or service dependency changes.
+#
+# rfc3339-validator is what jsonschema uses to assert `format: date-time`
+# (draft 2020-12). Without it the checker for that keyword is not registered and
+# a malformed `generated_at` passes validation as an annotation.
 jsonschema==4.26.0
+rfc3339-validator==0.1.4
