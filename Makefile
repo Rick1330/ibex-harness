@@ -202,9 +202,17 @@ v1-up: ## Start the v1-single-node supported profile and wait for every service
 	@"$(BASH)" "$(DEV_TOOL)" v1 backup-init --soft
 	@"$(BASH)" "$(DEV_TOOL)" v1 url
 	@# O06: the URL check only proves the edge answers a static string. Follow it
-	@# with an authenticated request. A re-run whose one-time PAT was already
-	@# consumed prints SKIP rather than failing the start; make v1-smoke is strict.
-	@"$(BASH)" "$(DEV_TOOL)" v1 smoke --from-up
+	@# with an authenticated request. `v1 smoke` exits 4 when it skipped because
+	@# the one-time PAT was already consumed; that single code is mapped here to a
+	@# printed warning so a re-run of the start stays usable. Every other failure
+	@# (1 = the profile was probed and failed) propagates. make v1-smoke runs the
+	@# same check strictly and fails on 4, so a skip is never a silent pass.
+	@rc=0; "$(BASH)" "$(DEV_TOOL)" v1 smoke --from-up || rc=$$?; \
+	 if [ "$$rc" = 4 ]; then \
+	   echo 'WARNING: authenticated v1 liveness is UNPROVEN on this run (smoke skipped: no readable bootstrap PAT). Restore the PAT and run make v1-smoke to prove it.'; \
+	   exit 0; \
+	 fi; \
+	 exit $$rc
 
 v1-bootstrap-pat: ## Print the one-time bootstrap PAT from the host bind mount
 	@"$(BASH)" "$(DEV_TOOL)" v1 bootstrap-pat
