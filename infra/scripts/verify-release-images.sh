@@ -42,6 +42,13 @@ while [[ $# -gt 0 ]]; do
         --tag) tag="$1" ;;
         --services) services_csv="$1" ;;
         --registry) registry="$1" ;;
+        # Unreachable while the arm above admits exactly these three options.
+        # It fails closed so that adding an option in one place only cannot
+        # silently drop its value and carry on with an empty tag or service set.
+        *)
+          printf '::error::verify-release-images: unhandled option: %s\n' "$opt" >&2
+          exit 2
+          ;;
       esac
       ;;
     -h|--help) usage; exit 0 ;;

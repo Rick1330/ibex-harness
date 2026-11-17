@@ -10,6 +10,10 @@ that requirement set:
     uv run --no-project --no-build \
       --with-requirements infra/scripts/release-manifest-test-requirements.txt \
       python3 infra/scripts/validate-release-manifest.py release-manifest.json
+
+The manifest and schema paths must resolve inside this checkout, the same rule
+``release-manifest.py`` applies to its own path arguments; a manifest staged
+elsewhere has to be copied in first.
 """
 
 from __future__ import annotations
@@ -23,6 +27,22 @@ from typing import Any
 import jsonschema
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "release-manifest.schema.json"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _contained_path(raw: str) -> Path:
+    """Resolve a CLI path and refuse anything outside this checkout.
+
+    The manifest is generated into the checkout by the release workflow, so the
+    only legitimate inputs live there. Resolving first means a relative path, a
+    symlink pointing out of the tree, and an absolute path outside it are all
+    judged by where they land, not by how they are spelled.
+    """
+    resolved = Path(raw).resolve()
+    if not resolved.is_relative_to(REPO_ROOT):
+        msg = f"{raw} must resolve inside {REPO_ROOT}"
+        raise ValueError(msg)
+    return resolved
 
 
 def _load(path: Path) -> Any:
@@ -56,10 +76,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--schema", default=str(SCHEMA_PATH))
     args = parser.parse_args(argv)
 
-    schema_path = Path(args.schema)
     try:
+        schema_path = _contained_path(args.schema)
         schema = _load(schema_path)
-        manifest = _load(Path(args.manifest))
+        manifest = _load(_contained_path(args.manifest))
         errors = _errors(schema, manifest)
     except ValueError as exc:
         print(f"release-manifest: {exc}", file=sys.stderr)
