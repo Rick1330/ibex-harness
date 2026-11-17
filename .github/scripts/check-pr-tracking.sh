@@ -12,7 +12,7 @@ if [[ -z "$PR_NUMBER" || -z "$REPO" ]]; then
 fi
 
 if ! command -v gh >/dev/null 2>&1; then
-  echo "gh CLI required for PR tracking check"
+  echo "gh CLI required for PR tracking check" >&2
   exit 1
 fi
 
@@ -38,19 +38,19 @@ if [[ "$head_ref" == release-please--* \
 fi
 
 if [[ -z "$body" ]]; then
-  echo "PR #$PR_NUMBER has an empty body; fill .github/pull_request_template.md"
+  echo "PR #$PR_NUMBER has an empty body; fill .github/pull_request_template.md" >&2
   exit 1
 fi
 
 if ! grep -qiE '(closes|fixes|resolves)[[:space:]]+#[0-9]+' <<<"$body"; then
-  echo "PR #$PR_NUMBER must include a GitHub close keyword in the body, e.g. Closes #123"
-  echo "See CONTRIBUTING.md (Issue-tracked pull requests)."
+  echo "PR #$PR_NUMBER must include a GitHub close keyword in the body, e.g. Closes #123" >&2
+  echo "See CONTRIBUTING.md (Issue-tracked pull requests)." >&2
   exit 1
 fi
 
 issue_num="$(grep -oiE '(closes|fixes|resolves)[[:space:]]+#[0-9]+' <<<"$body" | head -1 | grep -oE '[0-9]+')"
 if [[ -z "$issue_num" ]]; then
-  echo "Could not parse issue number from close keyword"
+  echo "Could not parse issue number from close keyword" >&2
   exit 1
 fi
 
@@ -109,25 +109,25 @@ set -e
 case "$read_status" in
   0) ;;
   2)
-    echo "Could not read linked issue #$issue_num: ${issue_state#FATAL:}"
-    echo "That is not a transient error, so it was not retried."
+    echo "Could not read linked issue #$issue_num: ${issue_state#FATAL:}" >&2
+    echo "That is not a transient error, so it was not retried." >&2
     exit 1
     ;;
   *)
-    echo "Could not read linked issue #$issue_num after 3 attempts."
-    echo "GitHub kept returning transient errors (5xx, timeout, or transport)."
-    echo "That is not evidence that the issue is missing — re-run this job."
+    echo "Could not read linked issue #$issue_num after 3 attempts." >&2
+    echo "GitHub kept returning transient errors (5xx, timeout, or transport)." >&2
+    echo "That is not evidence that the issue is missing — re-run this job." >&2
     exit 1
     ;;
 esac
 
 if [[ -z "$issue_state" ]]; then
-  echo "Linked issue #$issue_num does not exist"
+  echo "Linked issue #$issue_num does not exist" >&2
   exit 1
 fi
 
 if [[ "$issue_state" == "CLOSED" ]]; then
-  echo "Linked issue #$issue_num is already closed; open a new issue or re-open before linking"
+  echo "Linked issue #$issue_num is already closed; open a new issue or re-open before linking" >&2
   exit 1
 fi
 
@@ -173,12 +173,13 @@ comment_retry_delay() {
 # be read as a missing issue, while the REST comments call fails with a 403/429
 # that says what happened.
 is_retryable_comment_failure() {
-  case "$1" in
+  local error="$1"
+  case "$error" in
     *"rate limit"* | *"Rate limit"* | *"429"*)
       return 0
       ;;
   esac
-  is_transient_gh_failure "$1"
+  is_transient_gh_failure "$error"
 }
 
 # Read the issue's comments once. Exit 0 with the joined bodies on success, 1 when
@@ -205,17 +206,30 @@ read_comments_once() {
 
 # True when the issue text names the PR in any shape the tracker accepts.
 text_names_pr() {
-  grep -qiE "(pull/${PR_NUMBER}([^0-9]|$)|PR[[:space:]]*#${PR_NUMBER}([^0-9]|$)|#${PR_NUMBER}([^0-9]|$))" <<<"$1"
+  local text="$1"
+  grep -qiE "(pull/${PR_NUMBER}([^0-9]|$)|PR[[:space:]]*#${PR_NUMBER}([^0-9]|$)|#${PR_NUMBER}([^0-9]|$))" <<<"$text"
 }
 
 # Do the issue's comments name the PR? One read and one comparison per attempt.
 # The body is checked by the caller, so it is not part of this loop.
-# Exit 0 found, 1 absent from every answer that could be read, 2 no answer could be
-# read (retryable failures exhausted, payload is the last error), 3 no answer could
-# be read and the failure is not retryable (payload is that error).
+#
+# Precedence, because a readable answer and a failed read are not the same finding:
+#
+#   1. the reference was found                    -> 0 (pass);
+#   2. the last attempt produced a readable answer that lacks it -> 1 (missing);
+#   3. anything else                              -> 2 (retryable failures
+#      exhausted) or 3 (non-retryable), payload the last error.
+#
+# Rule 2 is about the *last* attempt, not about any attempt. GitHub does not
+# guarantee read-after-write for a comment created seconds earlier, so an answer
+# that predates the comment is not evidence that the reference is absent. When
+# reads succeed and then start failing, the earlier success is stale: reporting
+# "must reference PR #N" would tell the author to add a link that may already be
+# there and would throw away the error that stopped the check. That is the bug
+# this precedence exists to prevent.
 reference_is_recorded() {
   local issue="$1" attempt output status
-  local read_ok=0 fatal=0 last_error=""
+  local answer_is_fresh=0 fatal=0 last_error=""
   for ((attempt = 1; attempt <= COMMENT_ATTEMPTS; attempt++)); do
     if output="$(read_comments_once "$issue")"; then
       status=0
@@ -224,20 +238,20 @@ reference_is_recorded() {
     fi
     case "$status" in
       0)
-        read_ok=1
+        answer_is_fresh=1
         if text_names_pr "${output}"; then
           return 0
         fi
         ;;
       2)
-        # A non-retryable failure will not clear with time, so the loop stops. A
-        # readable answer already collected still outranks it: the reference was
-        # genuinely absent from that answer.
+        # A non-retryable failure will not clear with time, so the loop stops.
+        answer_is_fresh=0
         fatal=1
         last_error="$output"
         break
         ;;
       *)
+        answer_is_fresh=0
         last_error="$output"
         ;;
     esac
@@ -245,7 +259,7 @@ reference_is_recorded() {
       sleep "$(comment_retry_delay "$attempt")"
     fi
   done
-  if [[ "$read_ok" -eq 1 ]]; then
+  if [[ "$answer_is_fresh" -eq 1 ]]; then
     return 1
   fi
   printf '%s' "$last_error"
@@ -272,21 +286,21 @@ fi
 case "$reference_status" in
   0) ;;
   1)
-    echo "Issue #$issue_num must reference PR #$PR_NUMBER (e.g. Implementation PR: #${PR_NUMBER})"
-    echo "Add it to the issue body or a comment so the tracker links both ways."
+    echo "Issue #$issue_num must reference PR #$PR_NUMBER (e.g. Implementation PR: #${PR_NUMBER})" >&2
+    echo "Add it to the issue body or a comment so the tracker links both ways." >&2
     exit 1
     ;;
   3)
-    echo "Could not read the comments on issue #$issue_num: $reference_error"
-    echo "That is not a retryable error, so it was not retried."
-    echo "This is a read failure, not a missing reference: the link may well be there."
+    echo "Could not read the comments on issue #$issue_num: $reference_error" >&2
+    echo "That is not a retryable error, so it was not retried." >&2
+    echo "This is a read failure, not a missing reference: the link may well be there." >&2
     exit 1
     ;;
   *)
-    echo "Could not read the comments on issue #$issue_num after $COMMENT_ATTEMPTS attempts."
-    echo "Last GitHub API error: $reference_error"
-    echo "This is a read failure, not a missing reference: the link may well be there."
-    echo "Re-run this job once the API is reachable."
+    echo "Could not read the comments on issue #$issue_num after $COMMENT_ATTEMPTS attempts." >&2
+    echo "Last GitHub API error: $reference_error" >&2
+    echo "This is a read failure, not a missing reference: the link may well be there." >&2
+    echo "Re-run this job once the API is reachable." >&2
     exit 1
     ;;
 esac
@@ -294,19 +308,19 @@ esac
 if grep -qiE '^##[[:space:]]+Problem' <<<"$issue_body"; then
   for section in 'Proposed solution' 'Acceptance criteria'; do
     if ! grep -qiE "^##[[:space:]]+${section}" <<<"$issue_body"; then
-      echo "Issue #$issue_num missing ## ${section} (use feature_request template)"
+      echo "Issue #$issue_num missing ## ${section} (use feature_request template)" >&2
       exit 1
     fi
   done
 elif grep -qiE '^##[[:space:]]+Summary' <<<"$issue_body"; then
   for section in 'Expected behavior' 'Actual behavior' 'Reproduction steps'; do
     if ! grep -qiE "^##[[:space:]]+${section}" <<<"$issue_body"; then
-      echo "Issue #$issue_num missing ## ${section} (use bug_report template)"
+      echo "Issue #$issue_num missing ## ${section} (use bug_report template)" >&2
       exit 1
     fi
   done
 else
-  echo "Issue #$issue_num must use a repo issue template (## Problem or ## Summary)"
+  echo "Issue #$issue_num must use a repo issue template (## Problem or ## Summary)" >&2
   exit 1
 fi
 
@@ -321,8 +335,8 @@ required_pr_sections=(
 )
 for section in "${required_pr_sections[@]}"; do
   if ! grep -qiE "^##[[:space:]]+${section}" <<<"$body"; then
-    echo "PR #$PR_NUMBER missing required section: ## ${section}"
-    echo "Use .github/pull_request_template.md"
+    echo "PR #$PR_NUMBER missing required section: ## ${section}" >&2
+    echo "Use .github/pull_request_template.md" >&2
     exit 1
   fi
 done

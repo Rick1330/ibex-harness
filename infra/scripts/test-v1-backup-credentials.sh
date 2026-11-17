@@ -61,6 +61,11 @@ fail() {
   exit 1
 }
 
+# SHA256_HEX_AWK reduces `sha256sum` output to its digest column. Comparisons
+# below are byte-exact on that column only, so the filename is never part of one.
+# shellcheck disable=SC2016 # single quotes are deliberate: $1 is awk's field, not this shell's.
+SHA256_HEX_AWK='{print $1}'
+
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/ibex-v1-cred-tests.XXXXXX")"
 cleanup() {
   chmod -R u+rwX "$WORK" 2>/dev/null || true
@@ -88,7 +93,7 @@ env_read() {
 }
 
 env_sha() {
-  sha256sum "$IBEX_V1_ENV_FILE" | awk '{print $1}'
+  sha256sum "$IBEX_V1_ENV_FILE" | awk "$SHA256_HEX_AWK"
 }
 
 # seed_env writes a .env holding only the repository passphrase, which is the
@@ -190,23 +195,23 @@ if ! bash "$GEN" >"$dir/out.log" 2>&1; then
 fi
 redis_conf="$IBEX_V1_SECRETS_DIR/redis.conf"
 file_password="$(env_read REDIS_PASSWORD)"
-conf_before="$(sha256sum "$redis_conf" | awk '{print $1}')"
+conf_before="$(sha256sum "$redis_conf" | awk "$SHA256_HEX_AWK")"
 other_password="$(openssl rand -hex 32)"
-if (export REDIS_PASSWORD="$other_password"; bash "$GEN") >"$dir/out.log" 2>&1; then
+if env REDIS_PASSWORD="$other_password" bash "$GEN" >"$dir/out.log" 2>&1; then
   fail "redis conflict: the generator succeeded although the exported REDIS_PASSWORD differs from .env"
 fi
 grep -q 'REDIS_PASSWORD is set in the environment and differs' "$dir/out.log" \
   || fail "redis conflict: the refusal does not name the variable"
 grep -q 'Unset' "$dir/out.log" \
   || fail "redis conflict: the refusal does not tell the operator to unset it"
-[[ "$conf_before" == "$(sha256sum "$redis_conf" | awk '{print $1}')" ]] \
+[[ "$conf_before" == "$(sha256sum "$redis_conf" | awk "$SHA256_HEX_AWK")" ]] \
   || fail "redis conflict: redis.conf was rewritten after the refusal"
 for secret in "$file_password" "$other_password"; do
   if grep -qF -- "$secret" "$dir/out.log"; then
     fail "redis conflict: the refusal printed a password value"
   fi
 done
-if ! (export REDIS_PASSWORD="$file_password"; bash "$GEN") >"$dir/out.log" 2>&1; then
+if ! env REDIS_PASSWORD="$file_password" bash "$GEN" >"$dir/out.log" 2>&1; then
   cat "$dir/out.log" >&2
   fail "redis conflict: a matching exported REDIS_PASSWORD was refused"
 fi
@@ -623,7 +628,7 @@ fi
 [[ "$(stub_report_value ENVFILE_KEYS)" == "3" ]] \
   || fail "v1 dotenv: the credential file did not carry all three credentials"
 expected_cipher="$(python3 "$DOTENV" PGBACKREST_REPO1_CIPHER_PASS <"$dir/.env")"
-expected_sha="$(printf '%s' "$expected_cipher" | sha256sum | awk '{print $1}')"
+expected_sha="$(printf '%s' "$expected_cipher" | sha256sum | awk "$SHA256_HEX_AWK")"
 [[ "$(stub_report_value ENVFILE_CIPHER_SHA)" == "$expected_sha" ]] \
   || fail "v1 dotenv: the container did not receive the passphrase the profile .env holds"
 probe_line="$(grep -n -- '--entrypoint sh' "$STUB_LOG" | head -n1 | cut -d: -f1)"
@@ -706,7 +711,7 @@ fi
   || fail "environment-only credentials: the case created the dotenv it exists to omit"
 [[ "$(stub_report_value ENVFILE_KEYS)" == "3" ]] \
   || fail "environment-only credentials: the credential file did not carry all three credentials"
-expected_sha="$(printf '%s' "$cipher" | sha256sum | awk '{print $1}')"
+expected_sha="$(printf '%s' "$cipher" | sha256sum | awk "$SHA256_HEX_AWK")"
 [[ "$(stub_report_value ENVFILE_CIPHER_SHA)" == "$expected_sha" ]] \
   || fail "environment-only credentials: the container did not receive the passphrase the environment held"
 probe_line="$(grep -n -- '--entrypoint sh' "$STUB_LOG" | head -n1 | cut -d: -f1)"

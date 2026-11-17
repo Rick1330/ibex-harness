@@ -70,6 +70,12 @@ if [[ "$cmd" == "api" ]]; then
       exit 1
     fi
   fi
+  if [[ "$api_mode" == "stale_then_fail" ]] && ((calls > 1)); then
+    # A 200 that predates the comment, then the endpoint stops answering. The one
+    # successful read is stale, so it must not be reported as a missing reference.
+    printf 'gh: Service Unavailable (HTTP 503)\n' >&2
+    exit 1
+  fi
   if [[ "$api_mode" == "stale" ]] && ((calls == 1)); then
     # A 200 that predates the comment: GitHub has not propagated it yet, so the
     # first successful read returns nothing and the second one carries it.
@@ -100,6 +106,11 @@ STUB
 chmod +x "$WORK/bin/sleep"
 
 failures=0
+
+# The summary line a passing run prints, and the prefix every captured-output
+# dump is indented with. Both are asserted on many times, so each is named once.
+PASS_SUMMARY='tracks issue #42'
+INDENT_OUTPUT='s/^/  | /'
 
 reset_case() {
   rm -rf "$WORK/case"
@@ -137,13 +148,13 @@ expect() {
   calls="$(cat "$WORK/case/issue_calls" 2>/dev/null || echo 0)"
   if [[ "$status" -ne "$expected_status" ]]; then
     printf 'FAIL %s: exit %s, expected %s\n' "$name" "$status" "$expected_status"
-    sed 's/^/  | /' "$WORK/out"
+    sed "$INDENT_OUTPUT" "$WORK/out"
     failures=$((failures + 1))
     return
   fi
   if ! grep -qF "$expected_text" "$WORK/out"; then
     printf 'FAIL %s: output missing %s\n' "$name" "$expected_text"
-    sed 's/^/  | /' "$WORK/out"
+    sed "$INDENT_OUTPUT" "$WORK/out"
     failures=$((failures + 1))
     return
   fi
@@ -196,7 +207,7 @@ expect_comment_backoff() {
 
 # 1. Happy path: one read, no retries.
 reset_case
-expect "linked issue passes" 0 "tracks issue #42"
+expect "linked issue passes" 0 "$PASS_SUMMARY"
 expect_issue_calls "linked issue passes" 2  # state + body
 # The body names the PR, so the comments are never read.
 expect_api_calls "linked issue passes" 0
@@ -205,14 +216,14 @@ expect_api_calls "linked issue passes" 0
 # pass must not depend on the comment read at all.
 reset_case
 printf 'fatal' > "$WORK/case/api_mode"
-expect "body-only link passes without reading comments" 0 "tracks issue #42"
+expect "body-only link passes without reading comments" 0 "$PASS_SUMMARY"
 expect_api_calls "body-only link passes without reading comments" 0
 
 # 2. A transient failure is retried and the gate passes on recovery.
 reset_case
 printf 'transient' > "$WORK/case/mode"
 printf '2' > "$WORK/case/transient_attempts"
-expect "recovers after transient failures" 0 "tracks issue #42"
+expect "recovers after transient failures" 0 "$PASS_SUMMARY"
 expect_issue_calls "recovers after transient failures" 4  # 3 state reads + body
 
 # 3. Three transient failures: fail, but say what happened.
@@ -254,7 +265,7 @@ expect_comment_backoff "issue must reference the PR"
 reset_case
 body_without_reference
 printf 'Implementation PR: #7\n' > "$WORK/case/comments"
-expect "reference in a comment passes" 0 "tracks issue #42"
+expect "reference in a comment passes" 0 "$PASS_SUMMARY"
 expect_api_calls "reference in a comment passes" 1
 
 # 8a. Read-after-write: the first read is a 200 that predates the comment, so the
@@ -264,7 +275,7 @@ reset_case
 body_without_reference
 printf 'stale' > "$WORK/case/api_mode"
 printf 'Implementation PR: #7\n' > "$WORK/case/comments"
-expect "reference appears on the second read" 0 "tracks issue #42"
+expect "reference appears on the second read" 0 "$PASS_SUMMARY"
 expect_api_calls "reference appears on the second read" 2
 
 # 9. A non-retryable comment read failure must not be reported as a missing
@@ -276,7 +287,7 @@ expect "unreadable comments are reported as unreadable" 1 "Could not read the co
 expect_api_calls "unreadable comments are reported as unreadable" 1
 if grep -qF "must reference PR #7" "$WORK/out"; then
   printf 'FAIL unreadable comments are reported as unreadable: blamed the data\n'
-  sed 's/^/  | /' "$WORK/out"
+  sed "$INDENT_OUTPUT" "$WORK/out"
   failures=$((failures + 1))
 fi
 
@@ -286,7 +297,7 @@ body_without_reference
 printf 'transient' > "$WORK/case/api_mode"
 printf '2' > "$WORK/case/api_transient_attempts"
 printf 'Implementation PR: #7\n' > "$WORK/case/comments"
-expect "comment read recovers after transient failures" 0 "tracks issue #42"
+expect "comment read recovers after transient failures" 0 "$PASS_SUMMARY"
 expect_api_calls "comment read recovers after transient failures" 3
 
 # 11. Three transient comment read failures exhaust the retries and name the API
@@ -298,12 +309,35 @@ expect "exhausted comment retries name the API failure" 1 "Could not read the co
 expect_api_calls "exhausted comment retries name the API failure" 3
 if ! grep -qF "HTTP 503" "$WORK/out"; then
   printf 'FAIL exhausted comment retries name the API failure: output missing the API error\n'
-  sed 's/^/  | /' "$WORK/out"
+  sed "$INDENT_OUTPUT" "$WORK/out"
   failures=$((failures + 1))
 fi
 if grep -qF "must reference PR #7" "$WORK/out"; then
   printf 'FAIL exhausted comment retries name the API failure: blamed the data\n'
-  sed 's/^/  | /' "$WORK/out"
+  sed "$INDENT_OUTPUT" "$WORK/out"
+  failures=$((failures + 1))
+fi
+
+# 12. A readable answer that predates the comment must not outrank the failures
+# that follow it. The first read is a 200 without the reference; the rest fail.
+# Reporting "must reference PR #7" here would tell the author to add a link that
+# may already be there, and would discard the GitHub error that stopped the
+# check. The read failure is the finding.
+reset_case
+body_without_reference
+printf 'stale_then_fail' > "$WORK/case/api_mode"
+printf 'A comment that names no pull request either.\n' > "$WORK/case/comments"
+expect "a stale readable answer is outranked by later read failures" 1 \
+  "Could not read the comments on issue #42 after 3 attempts"
+expect_api_calls "a stale readable answer is outranked by later read failures" 3
+if ! grep -qF "HTTP 503" "$WORK/out"; then
+  printf 'FAIL a stale readable answer is outranked by later read failures: output missing the API error\n'
+  sed "$INDENT_OUTPUT" "$WORK/out"
+  failures=$((failures + 1))
+fi
+if grep -qF "must reference PR #7" "$WORK/out"; then
+  printf 'FAIL a stale readable answer is outranked by later read failures: blamed the data\n'
+  sed "$INDENT_OUTPUT" "$WORK/out"
   failures=$((failures + 1))
 fi
 
