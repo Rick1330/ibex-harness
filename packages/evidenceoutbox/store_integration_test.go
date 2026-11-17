@@ -231,6 +231,7 @@ func assertPersistedModelTokenMetadata(t *testing.T, db *sql.DB, runID uuid.UUID
 	tx := beginServiceTx(t, db)
 	var model string
 	var input, output, total int64
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 	if err := tx.QueryRowContext(context.Background(), `
 SELECT model_id, input_tokens, output_tokens, total_tokens
 FROM ibex_core.evidence_runs WHERE id = $1`, runID).Scan(&model, &input, &output, &total); err != nil {
@@ -290,10 +291,12 @@ func assertPersistRunMetrics(t *testing.T, db *sql.DB, runID uuid.UUID, wantTota
 	var metricsTotal int
 	var digest sql.NullString
 	const q = `SELECT total_ms FROM ibex_core.evidence_assembly_metrics WHERE run_id = $1`
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 	if err := tx.QueryRowContext(context.Background(), q, runID).Scan(&metricsTotal); err != nil {
 		t.Fatalf("metrics: %v", err)
 	}
 	const dq = `SELECT deploy_image_digest FROM ibex_core.evidence_runs WHERE id = $1`
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 	if err := tx.QueryRowContext(context.Background(), dq, runID).Scan(&digest); err != nil {
 		t.Fatalf("deploy_image_digest: %v", err)
 	}
@@ -378,6 +381,7 @@ INSERT INTO ibex_core.evidence_outbox (
 	encode(sha256(convert_to(($7::jsonb)::text, 'UTF8')), 'hex'),
 	'failed', 1, NOW()
 )`
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: insertLegacy is a literal with $n placeholders and the flagged payload is a bound argument.
 	if _, err := db.ExecContext(context.Background(), insertLegacy, rowID, orgID, eventID,
 		aggregateID, evidenceoutbox.SchemaVersion, evidenceoutbox.EventTypeRunCommitted, payload); err != nil {
 		t.Fatalf("insert legacy retry row: %v", err)
@@ -475,6 +479,7 @@ FROM ibex_core.evidence_outbox
 WHERE org_id = $1 AND aggregate_id = $2
 ORDER BY aggregate_seq
 LIMIT 1`
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: query is a literal with $n placeholders and both flagged values are bound arguments.
 	if err := db.QueryRowContext(context.Background(), query, orgID, requestID).Scan(&status, &lastError); err != nil {
 		t.Fatalf("read poisoned row: %v", err)
 	}
@@ -493,6 +498,7 @@ func keepSinglePendingOutbox(t *testing.T, db *sql.DB, orgID uuid.UUID, aggregat
 	}
 	defer func() { _ = tx.Rollback() }()
 	var keepID uuid.UUID
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 	if err := tx.QueryRow(`
 		SELECT id FROM ibex_core.evidence_outbox
 		WHERE org_id = $1 AND aggregate_id = $2 AND delivery_status = 'pending'
@@ -500,6 +506,7 @@ func keepSinglePendingOutbox(t *testing.T, db *sql.DB, orgID uuid.UUID, aggregat
 		LIMIT 1`, orgID, aggregateID).Scan(&keepID); err != nil {
 		t.Fatalf("select keep row: %v", err)
 	}
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 	if _, err := tx.Exec(`
 		DELETE FROM ibex_core.evidence_outbox
 		WHERE org_id = $1 AND aggregate_id = $2 AND id <> $3`, orgID, aggregateID, keepID); err != nil {
@@ -594,6 +601,7 @@ func forceStaleInFlight(t *testing.T, db *sql.DB, orgID uuid.UUID, aggregateID s
 UPDATE ibex_core.evidence_outbox
 SET delivery_status = 'in_flight', attempts = attempts + 1, claimed_at = NOW() - interval '1 minute'
 WHERE org_id = $1 AND aggregate_id = $2 AND delivery_status = 'pending'`
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: q is a literal with $n placeholders and both flagged values are bound arguments.
 	if _, err = tx.ExecContext(context.Background(), q, orgID, aggregateID); err != nil {
 		t.Fatal(err)
 	}

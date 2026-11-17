@@ -65,6 +65,7 @@ _urlencode() {
 capability_dsn() {
   local owner_dsn="$1"
   local login="$2"
+  # nosemgrep: codacy.bash.security.hard-coded-password -- defaulted local, not a literal credential: assigned from capability_password on the next line; the ${3:-} form is an optional override used only by the encoding test.
   local password="${3:-}"
   local scheme rest authority tail hostport
   if [[ -z "$password" ]]; then

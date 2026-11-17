@@ -334,6 +334,7 @@ func insertMemoryWithEmbedding(t *testing.T, ctx context.Context, in embeddedMem
 	t.Helper()
 	var memID string
 	err := withServiceAccount(ctx, in.db, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		return tx.QueryRowContext(ctx, `
 			INSERT INTO ibex_core.memories (
 				org_id, agent_id, content, content_hash, content_tokens,
@@ -352,6 +353,7 @@ func insertMemoryWithEmbedding(t *testing.T, ctx context.Context, in embeddedMem
 func execAsService(t *testing.T, ctx context.Context, e serviceExec) error {
 	t.Helper()
 	return withServiceAccount(ctx, e.db, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: e.query is a statement literal from the table-driven cases and every value is passed in e.args as a bound argument.
 		_, err := tx.ExecContext(ctx, e.query, e.args...)
 		return err
 	})

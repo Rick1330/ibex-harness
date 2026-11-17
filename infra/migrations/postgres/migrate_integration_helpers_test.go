@@ -142,6 +142,7 @@ func seedDirectiveForOrg(t *testing.T, ctx context.Context, seed directiveSeed) 
 			return err
 		}
 		contentHash := "hash-" + seed.content
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		if err := tx.QueryRowContext(ctx, insertDirectiveVersionSQL,
 			out.directiveID, seed.orgID, seed.content, contentHash).Scan(&out.versionID); err != nil {
 			return err

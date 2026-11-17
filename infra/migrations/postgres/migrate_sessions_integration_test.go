@@ -270,6 +270,7 @@ func seedSessionWithCheckpoint(t *testing.T, ctx context.Context, seed sessionSe
 			seed.orgID, out.agentID, seed.externalID).Scan(&out.sessionID); err != nil {
 			return err
 		}
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		_, err := tx.ExecContext(ctx, insertCheckpointSQL,
 			out.sessionID, seed.orgID, out.agentID, 0, "req-"+seed.externalID, "hash-"+seed.externalID)
 		return err

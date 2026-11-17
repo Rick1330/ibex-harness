@@ -547,6 +547,7 @@ func enqueueOutbox(ctx context.Context, tx *sql.Tx, w outboxWrite) (uuid.UUID, e
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("evidenceoutbox: canonicalize payload: %w", err)
 	}
+	// nosemgrep: go_sql_rule-concat-sqli -- the statement is a literal with $1-$11 placeholders; raw is a payload built by fmt.Sprintf in addProducerMetadata and passed as the $8::jsonb bound argument, never concatenated into the SQL text.
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO ibex_core.evidence_outbox (
 	id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,

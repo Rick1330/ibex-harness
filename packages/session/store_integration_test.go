@@ -414,12 +414,15 @@ func seedOrgAgent(t *testing.T, db *sql.DB, name, slug string) (uuid.UUID, uuid.
 	agentSlug := "agent-" + slug
 	var orgID, userID, agentID string
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		if err := tx.QueryRowContext(ctx, seedInsertOrgSQL, name, slug).Scan(&orgID); err != nil {
 			return err
 		}
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		if err := tx.QueryRowContext(ctx, seedInsertUserSQL, orgID, email, name).Scan(&userID); err != nil {
 			return err
 		}
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		return tx.QueryRowContext(ctx, seedInsertAgentSQL, orgID, userID, agentName, agentSlug).Scan(&agentID)
 	})
 	if err != nil {
@@ -435,9 +438,11 @@ func seedOrgAgentSameOrg(t *testing.T, db *sql.DB, orgID uuid.UUID, agentSlug st
 	agentName := "Agent " + agentSlug
 	var userID, agentID string
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		if err := tx.QueryRowContext(ctx, seedInsertUserSQL, orgID.String(), email, agentName).Scan(&userID); err != nil {
 			return err
 		}
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		return tx.QueryRowContext(ctx, seedInsertAgentSQL, orgID.String(), userID, agentName, agentSlug).Scan(&agentID)
 	})
 	if err != nil {

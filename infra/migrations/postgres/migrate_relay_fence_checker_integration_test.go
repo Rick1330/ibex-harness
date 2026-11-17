@@ -49,6 +49,7 @@ func seedRelayFenceOrgWithSession(t *testing.T, ctx context.Context, db *sql.DB,
 			return err
 		}
 		var userID string
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		if err := tx.QueryRowContext(ctx, `
 			INSERT INTO ibex_core.users (org_id, email, name)
 			VALUES ($1::uuid, $2, $3) RETURNING id::text`,
@@ -62,6 +63,7 @@ func seedRelayFenceOrgWithSession(t *testing.T, ctx context.Context, db *sql.DB,
 			orgID, userID, "Fence Agent", uuid.NewString()[:8]).Scan(&agentID); err != nil {
 			return err
 		}
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		return tx.QueryRowContext(ctx, `
 			INSERT INTO ibex_core.sessions (org_id, agent_id, model, provider)
 			VALUES ($1::uuid, $2::uuid, 'gpt-4o', 'openai') RETURNING id::text`,
@@ -215,6 +217,7 @@ func assertRelayRoleCanFenceButNotReadSessions(t *testing.T, ctx context.Context
 	conn := f.connAs(t, ctx, "SET ROLE ibex_evidence_relay")
 
 	var current string
+	// nosemgrep: go_sql_rule-concat-sqli -- the statement is the literal SELECT current_user and there is no argument.
 	if err := conn.QueryRowContext(ctx, `SELECT current_user`).Scan(&current); err != nil {
 		t.Fatalf("current_user: %v", err)
 	}
@@ -222,6 +225,7 @@ func assertRelayRoleCanFenceButNotReadSessions(t *testing.T, ctx context.Context
 		t.Fatalf("current_user: got %q want ibex_evidence_relay", current)
 	}
 	var outcome string
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: relayFenceCall is a literal with $1-$3 placeholders and every flagged value is a bound argument.
 	if err := conn.QueryRowContext(ctx,
 		relayFenceCall, f.orgID, f.sessionID, 1,
 	).Scan(&outcome); err != nil {
@@ -231,6 +235,7 @@ func assertRelayRoleCanFenceButNotReadSessions(t *testing.T, ctx context.Context
 		t.Fatalf("relay role outcome: got %q want alive", outcome)
 	}
 	var count int
+	// nosemgrep: go_sql_rule-concat-sqli -- the statement is a literal COUNT with no arguments.
 	err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.sessions`).Scan(&count)
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("relay role must not read sessions directly, got count=%d err=%v", count, err)
@@ -241,6 +246,7 @@ func assertAppRoleCannotExecuteFence(t *testing.T, ctx context.Context, f *relay
 	t.Helper()
 	conn := f.connAs(t, ctx, "SET ROLE ibex_app")
 	var outcome string
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: relayFenceCall is a literal with $1-$3 placeholders and every flagged value is a bound argument.
 	err := conn.QueryRowContext(ctx,
 		relayFenceCall, f.orgID, f.sessionID, 1,
 	).Scan(&outcome)
