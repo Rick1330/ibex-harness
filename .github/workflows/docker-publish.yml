@@ -4,7 +4,7 @@ name: Docker Publish
 # list in release-docker.yml; infra/scripts/test-ci-tiering.sh enforces that, so
 # changing one without the other fails CI.
 #
-#   auth, proxy, embedder, mcp-memory, memory, api, worker, context, relay
+#   auth, proxy, embedder, mcp-memory, memory, api, worker, context, console, relay
 #
 # The set is "what the supported v1 profile runs" (ADR-0097,
 # infra/compose/v1-single-node/compose.yml) plus the services that have another
@@ -16,33 +16,21 @@ name: Docker Publish
 #     the profile: while that template ships, the image must exist.
 #   - relay is the default-off evidence daemon (ADR-0085, GAP-011). Publishing
 #     it makes the "deployable daemon" claim testable; no profile enables it yet.
+#   - console (services/console) runs in the supported profile, so it publishes.
+#     It clears the scan gate this workflow enforces only because stage 2 of its
+#     Dockerfile deletes the package managers the node base image ships: all ten
+#     HIGH findings the image used to report (5x brace-expansion CVE-2026-102276,
+#     -102278, -13149, -14257, -69152; ip-address CVE-2026-69192; pacote
+#     CVE-2026-9496; picomatch CVE-2026-33671; sigstore CVE-2026-48815) were
+#     packages bundled under /usr/local/lib/node_modules/npm/node_modules/, and
+#     the SSR bundle under app/.output/server/node_modules/ reports none. The
+#     runtime CMD is `node .output/server/index.mjs`; npm, npx and corepack are
+#     never called after the build stage, which keeps them. Do not re-add a
+#     package manager to the runtime stage without re-scanning: that is the one
+#     change that puts the ten findings back.
 #
 # Not published, recorded as gaps rather than forced:
 #
-#   - console (services/console) is a shipped service with a Dockerfile, removed
-#     from the set on evidence rather than for convenience: its image does not
-#     pass the scan gate this workflow enforces. scan-image-console reported
-#     10 HIGH and 0 CRITICAL findings, and every one of them is a package
-#     bundled inside the npm CLI that the node base image ships, not a dependency
-#     of the application: 5x brace-expansion (CVE-2026-102276, -102278, -13149,
-#     -14257, -69152), ip-address (CVE-2026-69192), pacote (CVE-2026-9496),
-#     picomatch (CVE-2026-33671), sigstore (CVE-2026-48815), all under
-#     /usr/local/lib/node_modules/npm/node_modules/. The SSR bundle under
-#     app/.output/server/node_modules/ reports 0 HIGH, so bumping console's own
-#     dependency tree would not move this number: the fix is a base-image/npm
-#     decision (npm is not used at runtime; the runtime CMD is `node
-#     .output/server/index.mjs`), and that is its own row with the CVE list above.
-#     Publishing the image to complete the table would ship those CVEs as
-#     :latest, which is worse than an incomplete table: the honest state is that
-#     the console image is not in the published set.
-#     Re-adding the three jobs (build-console, scan-image-console, push-console)
-#     plus the release-docker --services entry is the whole of the return path.
-#     The console's own quality gate (ci.yml console-quality) still builds it.
-#     Its path entries (services/console/**, and the root workspace-config files
-#     under the PR filter) stay: they are the input contract for that return, so
-#     they must not have to be rediscovered then. The cost is that a console-only
-#     change still runs this matrix without building console; the alternative —
-#     dropping the entries — would make the return a silent input gap again.
 #   - mcp-operator has a Dockerfile, no deployment path, and no consumer in the
 #     supported profile. An image nothing runs is unowned supply chain.
 #   - migrate (infra/migrations/Dockerfile) builds from the same context and its
@@ -81,10 +69,10 @@ on:
       # pnpm-workspace.yaml .npmrc ./`). Before this, an .npmrc-only change
       # matched no entry here: no PR scan, and after merge the change detector
       # left run_docker false, so the publish skipped and :latest kept the old
-      # install layout while the merged source used the new one. The console
-      # image is out of the published set today (see the header); these four
-      # entries are its input contract, and infra/scripts/test-ci-tiering.sh
-      # fails if that COPY line grows a file this list does not name.
+      # install layout while the merged source used the new one. These four
+      # entries are that COPY line's input contract, and
+      # infra/scripts/test-ci-tiering.sh fails if the line grows a file this list
+      # does not name — including a source that lands on a continuation line.
       - '.npmrc'
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -496,6 +484,40 @@ jobs:
         with:
           name: oci-context
           path: /tmp/context.tar
+          retention-days: 1
+
+  build-console:
+    name: build-console
+    needs: resolve-tag
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build console image artifact
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: services/console/Dockerfile
+          platforms: linux/amd64
+          push: false
+          outputs: type=docker,dest=/tmp/console.tar
+          cache-from: type=gha,scope=console
+          cache-to: type=gha,mode=max,scope=console
+      - name: Upload console OCI artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oci-console
+          path: /tmp/console.tar
           retention-days: 1
 
   build-relay:
@@ -926,6 +948,58 @@ jobs:
         with:
           sarif_file: trivy-image-context.sarif
           category: trivy-image-context
+
+  scan-image-console:
+    name: scan-image-console
+    needs: build-console
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Download console OCI artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: oci-console
+          path: /tmp
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-trivy
+        with:
+          version: v0.70.0
+      - name: Scan console image with Trivy
+        run: |
+          # Table first so failing CVEs are visible in job logs (SARIF alone is opaque).
+          set +e
+          trivy image --input /tmp/console.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format table \
+            --exit-code 1
+          table_rc=$?
+          trivy image --input /tmp/console.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format sarif \
+            --output trivy-image-console.sarif \
+            --exit-code 0
+          sarif_rc=$?
+          set -e
+          if [ "$table_rc" -ne 0 ] || [ "$sarif_rc" -ne 0 ]; then
+            exit 1
+          fi
+      - name: Upload Trivy console SARIF
+        if: always() && hashFiles('trivy-image-console.sarif') != ''
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: trivy-image-console.sarif
+          category: trivy-image-console
 
   scan-image-relay:
     name: scan-image-relay
@@ -1469,6 +1543,66 @@ jobs:
           cache-from: type=gha,scope=context
           cache-to: type=gha,mode=max,scope=context
 
+  push-console:
+    name: push-console
+    needs: [resolve-tag, scan-image-console]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: linux/amd64,linux/arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve push tags
+        id: tags
+        env:
+          IMAGE_TAG: ${{ needs.resolve-tag.outputs.tag }}
+          PUSH_LATEST: ${{ needs.resolve-tag.outputs.push_latest }}
+        run: |
+          repo_lc="${GITHUB_REPOSITORY,,}"
+          tags="ghcr.io/${repo_lc}/console:${IMAGE_TAG}"
+          if [ "${PUSH_LATEST}" = "true" ]; then
+            tags="${tags}"$'\n'"ghcr.io/${repo_lc}/console:latest"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build and push console image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: services/console/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=console
+          cache-to: type=gha,mode=max,scope=console
+
   push-relay:
     name: push-relay
     needs: [resolve-tag, scan-image-relay]
@@ -1614,6 +1748,7 @@ jobs:
       - push-api
       - push-worker
       - push-context
+      - push-console
       - push-relay
     if: always() && github.event_name != 'pull_request' && needs.resolve-tag.result == 'success'
     runs-on: ubuntu-latest
@@ -1645,6 +1780,7 @@ jobs:
           API_DIGEST: ${{ needs.push-api.outputs.digest }}
           WORKER_DIGEST: ${{ needs.push-worker.outputs.digest }}
           CONTEXT_DIGEST: ${{ needs.push-context.outputs.digest }}
+          CONSOLE_DIGEST: ${{ needs.push-console.outputs.digest }}
           RELAY_DIGEST: ${{ needs.push-relay.outputs.digest }}
         run: |
           set -euo pipefail
@@ -1672,6 +1808,7 @@ jobs:
           api ${API_DIGEST}
           worker ${WORKER_DIGEST}
           context ${CONTEXT_DIGEST}
+          console ${CONSOLE_DIGEST}
           relay ${RELAY_DIGEST}
           EOF
       - name: Upload per-image SBOMs
@@ -1686,7 +1823,7 @@ jobs:
   attest-provenance:
     name: attest-provenance
     needs: [push-auth, push-proxy, push-embedder, push-mcp-memory, push-memory, push-api, push-worker,
-            push-context, push-relay, scan-pushed-worker]
+            push-context, push-console, push-relay, scan-pushed-worker]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -1766,6 +1903,13 @@ jobs:
           subject-digest: ${{ needs.push-context.outputs.digest }}
           push-to-registry: true
 
+      - name: Attest console image provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ steps.repo_meta.outputs.repo_lc }}/console
+          subject-digest: ${{ needs.push-console.outputs.digest }}
+          push-to-registry: true
+
       - name: Attest relay image provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -1792,6 +1936,7 @@ jobs:
           cosign sign --yes "${REPO}/api@${{ needs.push-api.outputs.digest }}"
           cosign sign --yes "${REPO}/worker@${{ needs.push-worker.outputs.digest }}"
           cosign sign --yes "${REPO}/context@${{ needs.push-context.outputs.digest }}"
+          cosign sign --yes "${REPO}/console@${{ needs.push-console.outputs.digest }}"
           cosign sign --yes "${REPO}/relay@${{ needs.push-relay.outputs.digest }}"
 
 
@@ -1811,6 +1956,7 @@ jobs:
       - push-api
       - push-worker
       - push-context
+      - push-console
       - push-relay
     # pull_request runs are scan-only. workflow_run runs where resolve-tag was
     # skipped publish nothing by design, so they stay outside this gate.
@@ -1833,6 +1979,7 @@ jobs:
           PUSH_API: ${{ needs.push-api.result }}
           PUSH_WORKER: ${{ needs.push-worker.result }}
           PUSH_CONTEXT: ${{ needs.push-context.result }}
+          PUSH_CONSOLE: ${{ needs.push-console.result }}
           PUSH_RELAY: ${{ needs.push-relay.result }}
         run: |
           set -euo pipefail
@@ -1846,6 +1993,7 @@ jobs:
             "api=${PUSH_API}" \
             "worker=${PUSH_WORKER}" \
             "context=${PUSH_CONTEXT}" \
+            "console=${PUSH_CONSOLE}" \
             "relay=${PUSH_RELAY}"; do
             if [ "${pair#*=}" != "success" ]; then
               failed+=("${pair%%=*}=${pair#*=}")
@@ -1876,8 +2024,10 @@ jobs:
       - push-api
       - push-worker
       - push-context
+      - push-console
       - push-relay
       - scan-image-context
+      - scan-image-console
       - scan-image-relay
       - scan-pushed-worker
       - sbom-images
@@ -1906,6 +2056,7 @@ jobs:
           MEMORY_DIGEST: ${{ needs.push-memory.outputs.digest }}
           API_DIGEST: ${{ needs.push-api.outputs.digest }}
           CONTEXT_DIGEST: ${{ needs.push-context.outputs.digest }}
+          CONSOLE_DIGEST: ${{ needs.push-console.outputs.digest }}
           RELAY_DIGEST: ${{ needs.push-relay.outputs.digest }}
           REPO_LC: ${{ github.repository }}
           RESULT_SCAN_AUTH: ${{ needs.scan-image-auth.result }}
@@ -1916,6 +2067,7 @@ jobs:
           RESULT_SCAN_API: ${{ needs.scan-image-api.result }}
           RESULT_SCAN_WORKER: ${{ needs.scan-image-worker.result }}
           RESULT_SCAN_CONTEXT: ${{ needs.scan-image-context.result }}
+          RESULT_SCAN_CONSOLE: ${{ needs.scan-image-console.result }}
           RESULT_SCAN_RELAY: ${{ needs.scan-image-relay.result }}
           RESULT_PUSH_AUTH: ${{ needs.push-auth.result }}
           RESULT_PUSH_PROXY: ${{ needs.push-proxy.result }}
@@ -1925,6 +2077,7 @@ jobs:
           RESULT_PUSH_API: ${{ needs.push-api.result }}
           RESULT_PUSH_WORKER: ${{ needs.push-worker.result }}
           RESULT_PUSH_CONTEXT: ${{ needs.push-context.result }}
+          RESULT_PUSH_CONSOLE: ${{ needs.push-console.result }}
           RESULT_PUSH_RELAY: ${{ needs.push-relay.result }}
           RESULT_SCAN_PUSHED_WORKER: ${{ needs.scan-pushed-worker.result }}
           WORKER_DIGEST: ${{ needs.push-worker.outputs.digest }}
@@ -1945,6 +2098,7 @@ jobs:
           api_image="ghcr.io/${repo_lc}/api:${TAG}"
           worker_image="ghcr.io/${repo_lc}/worker:${TAG}"
           context_image="ghcr.io/${repo_lc}/context:${TAG}"
+          console_image="ghcr.io/${repo_lc}/console:${TAG}"
           relay_image="ghcr.io/${repo_lc}/relay:${TAG}"
 
           cat <<EOF > body.md
@@ -1963,6 +2117,7 @@ jobs:
           - **API**: \`${api_image}\`  \`${API_DIGEST}\`
           - **Worker**: \`${worker_image}\`  \`${WORKER_DIGEST}\`
           - **Context**: \`${context_image}\`  \`${CONTEXT_DIGEST}\`
+          - **Console**: \`${console_image}\`  \`${CONSOLE_DIGEST}\`
           - **Relay**: \`${relay_image}\`  \`${RELAY_DIGEST}\`
 
           ### Job results
@@ -1974,6 +2129,7 @@ jobs:
           - scan-image-api: **${RESULT_SCAN_API}**
           - scan-image-worker: **${RESULT_SCAN_WORKER}**
           - scan-image-context: **${RESULT_SCAN_CONTEXT}**
+          - scan-image-console: **${RESULT_SCAN_CONSOLE}**
           - scan-image-relay: **${RESULT_SCAN_RELAY}**
           - push-auth: **${RESULT_PUSH_AUTH}**
           - push-proxy: **${RESULT_PUSH_PROXY}**
@@ -1983,6 +2139,7 @@ jobs:
           - push-api: **${RESULT_PUSH_API}**
           - push-worker: **${RESULT_PUSH_WORKER}**
           - push-context: **${RESULT_PUSH_CONTEXT}**
+          - push-console: **${RESULT_PUSH_CONSOLE}**
           - push-relay: **${RESULT_PUSH_RELAY}**
           - sbom-images: **${RESULT_SBOM}**
           - scan-pushed-worker: **${RESULT_SCAN_PUSHED_WORKER}**
