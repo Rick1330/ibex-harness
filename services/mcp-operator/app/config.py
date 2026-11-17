@@ -33,6 +33,13 @@ _ENV_FALLBACK_WARNING = (
 )
 
 
+# Every name a blank IBEX_ENV can arrive under: the field name through
+# ``populate_by_name``, and the two aliases. A blank value used to be coerced to
+# ``development`` by ``_check_env`` while still counting as explicit, so the
+# relaxed-posture warning never fired.
+_ENV_INPUT_KEYS = frozenset({"env", "IBEX_ENV", "IBEX_MCP_OPERATOR_ENV"})
+
+
 def parse_name_list(raw: str) -> tuple[str, ...]:
     """Split a comma-separated allow-list, dropping blanks and keeping order."""
     return tuple(part.strip() for part in raw.split(",") if part.strip())
@@ -129,6 +136,21 @@ class Settings(BaseSettings):
         """Log the relaxed posture once when IBEX_ENV was not supplied."""
         if not self.env_was_explicit:
             log.warning(_ENV_FALLBACK_WARNING)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_blank_env(cls, data: object) -> object:
+        """Treat a blank IBEX_ENV as unset, so the default and its warning apply."""
+        if not isinstance(data, dict):
+            return data
+        blank = {
+            key
+            for key in _ENV_INPUT_KEYS
+            if isinstance(data.get(key), str) and not data[key].strip()
+        }
+        if not blank:
+            return data
+        return {key: value for key, value in data.items() if key not in blank}
 
     @field_validator("env")
     @classmethod

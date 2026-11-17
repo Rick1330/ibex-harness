@@ -20,6 +20,39 @@ def _clear_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
+class _CaptureHandler(logging.Handler):
+    """Collect records on the logger itself, without relying on propagation."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+def _warn_records(settings: Settings) -> list[logging.LogRecord]:
+    """Run warn_if_env_defaulted with a handler on app.config, propagation off.
+
+    ``configure_logging`` sets ``app.propagate = False``. ``caplog`` attaches its
+    handler to the root logger, so these assertions would silently depend on
+    whether another test had reconfigured logging first. The handler sits on the
+    logger the code is given, and propagation is forced off for the call, so the
+    result is the same in any test order.
+    """
+    log = logging.getLogger("app.config")
+    handler = _CaptureHandler()
+    previous_propagate = log.propagate
+    log.addHandler(handler)
+    log.propagate = False
+    try:
+        settings.warn_if_env_defaulted(log)
+    finally:
+        log.removeHandler(handler)
+        log.propagate = previous_propagate
+    return handler.records
+
+
 def test_default_transport_http() -> None:
     s = Settings()
     assert s.transport == "streamable_http"
@@ -167,9 +200,7 @@ def test_protected_profile_requires_auth_ca(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
 
-def test_unset_env_warns_about_the_relaxed_posture(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_unset_env_warns_about_the_relaxed_posture(monkeypatch: pytest.MonkeyPatch) -> None:
     # P1-14/S11: an unset IBEX_ENV silently selects development. The default
     # stays, but the relaxation has to be visible in the first log lines.
     monkeypatch.delenv("IBEX_ENV", raising=False)
@@ -177,18 +208,37 @@ def test_unset_env_warns_about_the_relaxed_posture(
     settings = Settings()
     assert settings.env == "development"
     assert settings.env_was_explicit is False
-    with caplog.at_level(logging.WARNING, logger="app.config"):
-        settings.warn_if_env_defaulted(logging.getLogger("app.config"))
-    assert any("IBEX_ENV is not set" in record.getMessage() for record in caplog.records)
-    assert any("DNS-rebinding" in record.getMessage() for record in caplog.records)
+    records = _warn_records(settings)
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    message = records[0].getMessage()
+    assert "IBEX_ENV is not set" in message
+    assert "DNS-rebinding" in message
 
 
-def test_explicit_env_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+def test_explicit_env_does_not_warn() -> None:
     settings = Settings(env="development")
     assert settings.env_was_explicit is True
-    with caplog.at_level(logging.WARNING, logger="app.config"):
-        settings.warn_if_env_defaulted(logging.getLogger("app.config"))
-    assert caplog.records == []
+    assert _warn_records(settings) == []
+
+
+@pytest.mark.parametrize("raw", ["", " ", "\t\n "])
+def test_blank_env_is_treated_as_unset(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    # A blank IBEX_ENV counted as explicit: it was coerced to development and
+    # suppressed the relaxed-posture warning, so the operator saw a
+    # protected-looking setting that did nothing.
+    monkeypatch.delenv("IBEX_ENV", raising=False)
+    monkeypatch.delenv("IBEX_MCP_ENV", raising=False)
+    supplied = Settings(env=raw)
+    assert supplied.env == "development"
+    assert supplied.env_was_explicit is False
+    assert len(_warn_records(supplied)) == 1
+
+    monkeypatch.setenv("IBEX_ENV", raw)
+    from_env = Settings()
+    assert from_env.env == "development"
+    assert from_env.env_was_explicit is False
+    assert len(_warn_records(from_env)) == 1
 
 
 def test_allowed_hosts_parse_as_a_comma_separated_list() -> None:

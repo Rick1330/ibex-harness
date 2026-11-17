@@ -37,6 +37,11 @@ re-audit the waiver's `reason` describes. Removing the waiver (because the
 dependency was upgraded) is the other exit, and it needs both files edited too
 -- which is what the parity check enforces.
 
+A fully remediated record is a valid input: a TOML with no `[[IgnoredVulns]]`
+entries (or an empty `IgnoredVulns`) and a table header with zero data rows both
+pass, because that is what every waiver removed leaves behind. A missing section,
+a missing header, and a duplicate row for one advisory are still input errors.
+
 Exit 1 on drift or a waiver inside the window, 2 when an input cannot be read,
 parsed, or resolves outside this checkout, 0 otherwise.
 
@@ -233,16 +238,19 @@ def _parse_expiry(cell: str) -> datetime.date | None:
         return None
 
 
-def _require_expiry_column(cells: list[str], number: int, path: pathlib.Path) -> None:
-    """Refuse a header that no longer carries the `Expires` column."""
+def _expiry_column_index(cells: list[str], number: int, path: pathlib.Path) -> int:
+    """Return the `Expires` column's position, refusing a header without it."""
     if EXPIRY_COLUMN not in cells:
         raise InputError(
             f"{path}:{number}: waiver table has no {EXPIRY_COLUMN!r} column"
         )
+    return cells.index(EXPIRY_COLUMN)
 
 
-def _row_from_cells(cells: list[str], number: int, path: pathlib.Path) -> TableRow:
-    """Read one data row, refusing a row that names no advisory."""
+def _row_from_cells(
+    cells: list[str], number: int, expiry_index: int, path: pathlib.Path
+) -> TableRow:
+    """Read one data row, refusing a row that names no advisory or is too short."""
     advisories = tuple(
         match.group(0).upper() for match in ADVISORY_RE.finditer(cells[0])
     )
@@ -250,39 +258,73 @@ def _row_from_cells(cells: list[str], number: int, path: pathlib.Path) -> TableR
         raise InputError(
             f"{path}:{number}: waiver row names no GHSA advisory: {cells[0]!r}"
         )
+    if len(cells) <= expiry_index:
+        raise InputError(
+            f"{path}:{number}: waiver row has {len(cells)} cell(s), so the "
+            f"{EXPIRY_COLUMN!r} column at position {expiry_index + 1} is missing"
+        )
     return TableRow(
         advisories=advisories,
-        expires=_parse_expiry(cells[-1]),
+        expires=_parse_expiry(cells[expiry_index]),
         line_number=number,
     )
 
 
 def _table_rows(path: pathlib.Path) -> list[TableRow]:
-    """Return the section's data rows, reading the header once."""
+    """Return the section's data rows, reading the header once.
+
+    The expiry cell is found by name in the header and read at that position in
+    every row. Reading `cells[-1]` instead made a table whose `Expires` column an
+    editor had moved earlier fail as if the date were missing.
+    """
     rows: list[TableRow] = []
-    saw_header = False
+    expiry_index: int | None = None
     for number, line in _table_lines(path):
         if not line.strip().startswith("|"):
             continue
         cells = _cells(line)
-        if not saw_header:
-            # The first row is the header; if the column moved, the positions
-            # this parser relies on are gone and reading on would compare the
-            # wrong cell.
-            _require_expiry_column(cells, number, path)
-            saw_header = True
+        if expiry_index is None:
+            # The first row is the header. Without it there is no column
+            # position to read, so the section cannot be compared at all.
+            expiry_index = _expiry_column_index(cells, number, path)
             continue
         if _is_separator(cells):
             continue
-        rows.append(_row_from_cells(cells, number, path))
+        rows.append(_row_from_cells(cells, number, expiry_index, path))
+    if expiry_index is None:
+        raise InputError(f"{path}: the waiver table has no header row")
     return rows
 
 
+def _refuse_duplicate_advisories(rows: list[TableRow], path: pathlib.Path) -> None:
+    """Refuse two rows that record the same advisory.
+
+    Every check maps an advisory to one row, so `setdefault` silently kept the
+    first: a matching first row and a stale second row passed, which is exactly
+    the drift the date check exists to catch. Validating every occurrence instead
+    would leave two dates for one advisory with no rule for reconciling them, so
+    the duplicate itself is refused. One row may still name several advisories.
+    """
+    first_line: dict[str, int] = {}
+    for row in rows:
+        for advisory in row.advisories:
+            recorded_at = first_line.setdefault(advisory, row.line_number)
+            if recorded_at != row.line_number:
+                raise InputError(
+                    f"{path}:{row.line_number}: {advisory} already has a waiver row "
+                    f"at line {recorded_at}; each advisory is recorded once"
+                )
+
+
 def parse_table(path: pathlib.Path) -> list[TableRow]:
-    """Return the waiver rows: their advisory ids and recorded expiry."""
+    """Return the waiver rows: their advisory ids and recorded expiry.
+
+    A present header with no data rows is valid: that is the state every waiver
+    removed leaves behind, and the parity check then requires the TOML to hold no
+    waiver either. A section with no table at all is still refused.
+    """
     rows = _table_rows(path)
-    if not rows:
-        raise InputError(f"{path}: the waiver table has no rows")
+    _refuse_duplicate_advisories(rows, path)
     return rows
 
 

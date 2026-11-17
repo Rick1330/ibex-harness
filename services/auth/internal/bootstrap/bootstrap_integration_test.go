@@ -11,9 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/infra/migrations/postgres"
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/packages/crypto"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
@@ -1246,5 +1248,182 @@ func TestBootstrapIntegrationBindsActiveReplacementAgent(t *testing.T) {
 	}
 	if bound != replacement {
 		t.Fatalf("memory token bound to %s, want the active replacement %s", bound, replacement)
+	}
+}
+
+// --- the second-organization guard's serialisation --------------------------
+
+// newScratchDatabase creates and migrates an empty database and returns its DSN.
+//
+// The guard decides about an installation that holds no organization, and the
+// shared test database cannot offer that state: the whole suite writes into it.
+// A scratch database gives the concurrent first runs a genuinely empty
+// installation, and it is dropped with the test.
+func newScratchDatabase(t *testing.T) string {
+	t.Helper()
+	shared, _ := testutil.SetupPostgres(t)
+	admin, err := sql.Open("postgres", shared)
+	if err != nil {
+		t.Fatalf("open admin handle: %v", err)
+	}
+	name := "ibex_scratch_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := admin.Exec("CREATE DATABASE " + name); err != nil {
+		_ = admin.Close()
+		t.Fatalf("create scratch database: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec("DROP DATABASE IF EXISTS " + name + " WITH (FORCE)"); err != nil {
+			t.Logf("drop scratch database %s: %v", name, err)
+		}
+		_ = admin.Close()
+	})
+	dsn := dsnForDatabase(t, shared, name)
+	if err := postgres.Up(dsn); err != nil {
+		t.Fatalf("migrate scratch database: %v", err)
+	}
+	return dsn
+}
+
+// dsnForDatabase points one Postgres DSN at another database on the same server.
+func dsnForDatabase(t *testing.T, dsn, database string) string {
+	t.Helper()
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("parse test DSN: %v", err)
+	}
+	parsed.Path = "/" + database
+	return parsed.String()
+}
+
+// firstRunConfig is one first-run bootstrap aimed at a fresh installation, with
+// the second-organization guard enabled: the guard is what these tests exercise.
+func firstRunConfig(t *testing.T, dsn, slug string) bootstrapConfig {
+	t.Helper()
+	return bootstrapConfig{
+		PostgresDSN:    dsn,
+		OrgName:        "Concurrent " + slug,
+		OrgSlug:        slug,
+		UserEmail:      "owner@example.com",
+		UserName:       "Owner",
+		AgentName:      "Default Agent",
+		AgentSlug:      "default",
+		PATName:        "Bootstrap PAT",
+		PATFile:        filepath.Join(t.TempDir(), "bootstrap.pat"),
+		AllowSecondOrg: false,
+	}
+}
+
+// runConcurrently starts every configuration at the same instant and returns
+// each run's error in the order given.
+func runConcurrently(t *testing.T, db *sql.DB, configs []bootstrapConfig) []error {
+	t.Helper()
+	errs := make([]error, len(configs))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for index := range configs {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			<-start
+			_, errs[index] = bootstrap(context.Background(), db, configs[index])
+		}(index)
+	}
+	close(start)
+	wg.Wait()
+	return errs
+}
+
+// scratchHandle opens the scratch database the concurrency tests run against.
+func scratchHandle(t *testing.T) (*sql.DB, string) {
+	t.Helper()
+	dsn := newScratchDatabase(t)
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open scratch database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db, dsn
+}
+
+// TestBootstrapIntegrationSerialisesConcurrentFirstRuns is the P2-13 race: two
+// first runs against an installation that holds no organization must not both
+// mint an owner credential. The guard's advisory lock makes its read-and-decide
+// atomic, so one run creates the organization and the other refuses.
+func TestBootstrapIntegrationSerialisesConcurrentFirstRuns(t *testing.T) {
+	db, dsn := scratchHandle(t)
+	configs := []bootstrapConfig{
+		firstRunConfig(t, dsn, "concurrent-"+uuid.NewString()[:8]),
+		firstRunConfig(t, dsn, "concurrent-"+uuid.NewString()[:8]),
+	}
+
+	errs := runConcurrently(t, db, configs)
+
+	created := 0
+	for index, err := range errs {
+		switch {
+		case err == nil:
+			created++
+		case strings.Contains(err.Error(), "IBEX_BOOTSTRAP_ALLOW_SECOND_ORG=true"):
+			// The guard's refusal: the other run committed first.
+		default:
+			t.Fatalf("concurrent first run %d: %v", index, err)
+		}
+	}
+	if created != 1 {
+		t.Fatalf("%d of %d concurrent first runs created an organization, want exactly 1",
+			created, len(configs))
+	}
+	total := countOrganizations(t, db, configs[0].OrgSlug) +
+		countOrganizations(t, db, configs[1].OrgSlug)
+	if total != 1 {
+		t.Fatalf("the installation holds %d organizations for the two slugs, want 1", total)
+	}
+}
+
+// TestBootstrapIntegrationWaitsForAnotherGuardLock pins the serialisation point
+// itself: while another transaction holds the guard's advisory lock, a bootstrap
+// must not decide. A guard that read the inventory without the lock would allow
+// (or refuse) immediately, which is how two concurrent first runs both minted a
+// credential.
+func TestBootstrapIntegrationWaitsForAnotherGuardLock(t *testing.T) {
+	db, dsn := scratchHandle(t)
+	cfg := firstRunConfig(t, dsn, "blocked-"+uuid.NewString()[:8])
+
+	holder, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("begin lock holder: %v", err)
+	}
+	if _, err := holder.ExecContext(context.Background(),
+		`SELECT true FROM pg_advisory_xact_lock($1)`, guardLockKey); err != nil {
+		_ = holder.Rollback()
+		t.Fatalf("take the guard lock: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := bootstrap(context.Background(), db, cfg)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		_ = holder.Rollback()
+		t.Fatalf("bootstrap decided while another transaction held the guard lock (err = %v)", err)
+	case <-time.After(400 * time.Millisecond):
+	}
+	if err := holder.Rollback(); err != nil {
+		t.Fatalf("release the guard lock: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("bootstrap after the guard lock was released: %v", err)
+		}
+	case <-time.After(verifyTimeout):
+		t.Fatal("bootstrap did not decide after the guard lock was released")
+	}
+	if got := countOrganizations(t, db, cfg.OrgSlug); got != 1 {
+		t.Fatalf("the released run created %d organizations, want 1", got)
 	}
 }

@@ -155,7 +155,7 @@ def _build_mcp_app(deps: _McpBuildConfig) -> Any | None:
         McpServerWiring(
             enforcer=enforcer,
             registry=registry,
-            allow_test_hosts=deps.cfg.env != "production",
+            allow_test_hosts=deps.cfg.env == "development",
             resource_url=deps.cfg.resource_url,
             allowed_hosts=deps.cfg.allowed_host_list,
             allowed_origins=deps.cfg.allowed_origin_list,

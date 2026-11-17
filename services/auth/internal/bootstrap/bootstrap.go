@@ -43,6 +43,12 @@ const (
 	bootstrapErrorFormat = "ibex-bootstrap: %v\n"
 	bootstrapBanner      = "======================================================================\n"
 	bootstrapRule        = "----------------------------------------------------------------------\n"
+
+	// guardLockKey is the advisory-lock key that serialises the
+	// second-organization decision. 0x69626578_626f6f74 spells "ibexboot" in
+	// ASCII: a fixed, documented key every bootstrap process derives the same
+	// way, so no coordinator or configuration can disagree about it.
+	guardLockKey int64 = 0x69626578_626f6f74
 )
 
 var (
@@ -135,6 +141,13 @@ const (
 	upsertOrganizationSQL = `
 		SELECT created, org_id, deleted_at
 		FROM ibex_core.bootstrap_upsert_organization($1, $2, $3)`
+	// guardLockSQL takes the installation-wide advisory lock the second-org
+	// guard holds for the rest of its transaction, so its read-and-decide cannot
+	// interleave with another bootstrap. pg_advisory_xact_lock returns void and
+	// blocks until the lock is held, so the row proves only that the statement
+	// ran; the value is scanned to keep the call a QueryRow rather than an Exec
+	// that the write-counting fault harness cannot tell apart from a write.
+	guardLockSQL = `SELECT true AS held FROM pg_advisory_xact_lock($1)`
 	// listOrganizationSlugsSQL is the installation inventory the second-org
 	// guard reads (000077). One column, non-deleted organizations only.
 	listOrganizationSlugsSQL = `
@@ -438,6 +451,12 @@ func reconcileExisting(
 // guardSecondOrganization refuses to mint an owner credential for a slug the
 // installation does not already have.
 //
+// The decision is serialised across processes by holdGuardLock: the guard is
+// only correct if nothing can create an organization between the inventory read
+// and this transaction's own insert. Two concurrent first runs on a fresh
+// installation would otherwise both read an empty inventory and both mint an
+// owner credential, which is the exact outcome the guard exists to prevent.
+//
 // The guard exists because the command is idempotent per slug, not per
 // installation: before it, a rerun with a different IBEX_BOOTSTRAP_ORG_SLUG
 // created a second organization, a second owner user, and a second admin PAT on
@@ -445,6 +464,9 @@ func reconcileExisting(
 // still allowed (that is the reconcile path), and so is creating the first
 // organization on a fresh database.
 func guardSecondOrganization(ctx context.Context, tx *sql.Tx, cfg bootstrapConfig) error {
+	if err := holdGuardLock(ctx, tx); err != nil {
+		return err
+	}
 	slugs, err := listOrganizationSlugs(ctx, tx)
 	if err != nil {
 		return err
@@ -463,6 +485,31 @@ func guardSecondOrganization(ctx context.Context, tx *sql.Tx, cfg bootstrapConfi
 			"IBEX_BOOTSTRAP_ALLOW_SECOND_ORG=true if a second owner credential is intended",
 		cfg.OrgSlug, describeSlugs(slugs),
 	)
+}
+
+// holdGuardLock serialises the guard's read-and-decide for the rest of the
+// transaction.
+//
+// A row lock cannot close the window: on a fresh installation there is no
+// organization row to lock, and the two runs that race are exactly the ones that
+// see an empty table. An advisory lock on a fixed key needs no row, is released
+// at commit or rollback (so a killed run cannot leave the installation locked),
+// and needs no table privilege, which the ibex_bootstrap login does not hold.
+// The lock is held until commit, including the Argon2id hashing in the identity
+// and token writes below; that is milliseconds, and the alternative is a window
+// that mints a second owner credential.
+func holdGuardLock(ctx context.Context, tx *sql.Tx) error {
+	var held bool
+	if err := tx.QueryRowContext(ctx, guardLockSQL, guardLockKey).Scan(&held); err != nil {
+		return fmt.Errorf("lock bootstrap guard: %w", err)
+	}
+	if !held {
+		// Unreachable with pg_advisory_xact_lock, which always returns a row once
+		// it holds the lock. Reported as a failure anyway: a driver or SQL change
+		// that silently skipped the serialisation must not read as a decision.
+		return errors.New("lock bootstrap guard: the advisory lock was not acquired")
+	}
+	return nil
 }
 
 // listOrganizationSlugs reads the installation's non-deleted organization slugs

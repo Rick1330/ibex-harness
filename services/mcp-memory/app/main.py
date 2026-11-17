@@ -77,7 +77,7 @@ def create_app(
             agent_verifier=verifier,
             rate_limiter=limiter,
         ),
-        allow_test_hosts=cfg.env != "production",
+        allow_test_hosts=cfg.env == "development",
         allowed_hosts=cfg.allowed_host_list,
         allowed_origins=cfg.allowed_origin_list,
     )
