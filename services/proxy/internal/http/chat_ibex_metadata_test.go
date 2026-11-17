@@ -83,6 +83,57 @@ func TestUnit_AttachIbexMetadataForPipeline_NoopWhenNotAttempted(t *testing.T) {
 	}
 }
 
+// proxyOverheadRequestAge is the fixed wall time every case measures against,
+// so the assertions are exact instead of racing the wall clock.
+const proxyOverheadRequestAge = 100 * time.Millisecond
+
+// proxyOverheadSLOOverhead is the ratified p99 overhead objective
+// (engineering/architecture-v2/05-request-lifecycle-and-slos.md §budget,
+// ADR-0034:59).
+const proxyOverheadSLOOverhead = 20 * time.Millisecond
+
+// proxyOverheadCase is one duration-based scenario for
+// TestUnit_ProxyOverhead_SubtractsProvider.
+type proxyOverheadCase struct {
+	name         string
+	provider     time.Duration
+	hasProvider  bool
+	want         time.Duration
+	wantBelowSLO bool
+}
+
+// requestContext builds the context the case describes: the fixed request start
+// plus, when the case measures one, the provider leg.
+func (tc proxyOverheadCase) requestContext(start time.Time) context.Context {
+	ctx := WithRequestStart(context.Background(), start)
+	if tc.hasProvider {
+		ctx = withProviderDurationMs(ctx, tc.provider.Milliseconds())
+	}
+	return ctx
+}
+
+// assertOverhead checks the exact overhead, its truncating millisecond view,
+// and the SLO bound for the cases that claim one.
+func (tc proxyOverheadCase) assertOverhead(t *testing.T, got time.Duration, ok bool) {
+	t.Helper()
+	if !ok {
+		t.Fatalf("proxyOverheadDuration reported no sample; want %v", tc.want)
+	}
+	if got != tc.want {
+		t.Fatalf("proxy overhead=%v want %v (provider=%v over %v wall)",
+			got, tc.want, tc.provider, proxyOverheadRequestAge)
+	}
+	// The embedded proxy_overhead_ms is the truncating view of the same
+	// arithmetic: it may round down, it must never round up or differ.
+	if ms := got.Milliseconds(); ms != tc.want.Milliseconds() {
+		t.Fatalf("proxy_overhead_ms=%d want %d", ms, tc.want.Milliseconds())
+	}
+	if tc.wantBelowSLO && got >= proxyOverheadSLOOverhead {
+		t.Fatalf("provider-dominated request must stay under the %v objective, got %v",
+			proxyOverheadSLOOverhead, got)
+	}
+}
+
 // TestUnit_ProxyOverhead_SubtractsProvider guards the one arithmetic property
 // the proxy-overhead SLO depends on: provider time is subtracted from the sample
 // exactly once, at full duration precision. The ratified objective is p99 ≤20 ms
@@ -99,18 +150,8 @@ func TestUnit_AttachIbexMetadataForPipeline_NoopWhenNotAttempted(t *testing.T) {
 // 20 ms, the objective, hiding a 60 ms breach).
 func TestUnit_ProxyOverhead_SubtractsProvider(t *testing.T) {
 	t.Parallel()
-	const (
-		requestAge  = 100 * time.Millisecond
-		sloOverhead = 20 * time.Millisecond
-	)
 	start := time.Date(2026, time.November, 12, 9, 0, 0, 0, time.UTC)
-	tests := []struct {
-		name         string
-		provider     time.Duration
-		hasProvider  bool
-		want         time.Duration
-		wantBelowSLO bool
-	}{
+	tests := []proxyOverheadCase{
 		{
 			// Wall 100 ms, provider 95 ms => 5 ms of real overhead. Without the
 			// subtraction this is 100 ms, which the SLO bound rejects.
@@ -146,34 +187,17 @@ func TestUnit_ProxyOverhead_SubtractsProvider(t *testing.T) {
 		},
 		{
 			name: "no_provider_measurement_keeps_wall_time",
-			want: requestAge,
+			want: proxyOverheadRequestAge,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ctx := WithRequestStart(context.Background(), start)
-			if tc.hasProvider {
-				ctx = withProviderDurationMs(ctx, tc.provider.Milliseconds())
-			}
-			got, ok := proxyOverheadDuration(ctx, start.Add(requestAge))
+			got, ok := proxyOverheadDuration(
+				tc.requestContext(start), start.Add(proxyOverheadRequestAge))
 			t.Logf("wall=%v provider=%v (measured=%t) overhead=%v (ms view %d) want %v",
-				requestAge, tc.provider, tc.hasProvider, got, got.Milliseconds(), tc.want)
-			if !ok {
-				t.Fatalf("proxyOverheadDuration reported no sample; want %v", tc.want)
-			}
-			if got != tc.want {
-				t.Fatalf("proxy overhead=%v want %v (provider=%v over %v wall)",
-					got, tc.want, tc.provider, requestAge)
-			}
-			// The embedded proxy_overhead_ms is the truncating view of the same
-			// arithmetic: it may round down, it must never round up or differ.
-			if ms := got.Milliseconds(); ms != tc.want.Milliseconds() {
-				t.Fatalf("proxy_overhead_ms=%d want %d", ms, tc.want.Milliseconds())
-			}
-			if tc.wantBelowSLO && got >= sloOverhead {
-				t.Fatalf("provider-dominated request must stay under the %v objective, got %v", sloOverhead, got)
-			}
+				proxyOverheadRequestAge, tc.provider, tc.hasProvider, got, got.Milliseconds(), tc.want)
+			tc.assertOverhead(t, got, ok)
 		})
 	}
 }

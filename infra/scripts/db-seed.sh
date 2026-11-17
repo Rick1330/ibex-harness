@@ -79,8 +79,11 @@ docker_seed_matches_compose() {
     postgres://ibex:ibex@localhost:5433/ibex_test*|postgres://ibex:ibex@127.0.0.1:5433/ibex_test*)
       return 0
       ;;
+    *)
+      # Any other DSN is not a compose dev/test database; the caller reports the mismatch.
+      return 1
+      ;;
   esac
-  return 1
 }
 
 run_seed_sql() {

@@ -30,6 +30,8 @@ GRAPH_SUBSET: Final = "graph"
 POINTS: Final = 100.0
 # Scores are fractions, so a point comparison needs slack well below published precision.
 _EPSILON: Final = 1e-9
+# Check label every subset-size failure carries; the report prints it verbatim.
+_SUBSET_SIZE_CHECK: Final = "subset size"
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,7 +154,7 @@ def _validate_subset_counts(
     failures = [
         GateFailure(
             mode=name,
-            check="subset size",
+            check=_SUBSET_SIZE_CHECK,
             detail=f"unknown subset {subset!r} in the breakdown",
         )
         for subset in sorted(result.per_subset_counts)
@@ -161,7 +163,7 @@ def _validate_subset_counts(
     failures.extend(
         GateFailure(
             mode=name,
-            check="subset size",
+            check=_SUBSET_SIZE_CHECK,
             detail=f"{subset} was scored on {count} queries, below the {min_queries} required",
         )
         for subset, count in sorted(result.per_subset_counts.items())
@@ -173,7 +175,7 @@ def _validate_subset_counts(
     failures.extend(
         GateFailure(
             mode=name,
-            check="subset size",
+            check=_SUBSET_SIZE_CHECK,
             detail=f"{subset} has no query support, so its mean was never measured",
         )
         for subset in missing
@@ -183,7 +185,7 @@ def _validate_subset_counts(
         failures.append(
             GateFailure(
                 mode=name,
-                check="subset size",
+                check=_SUBSET_SIZE_CHECK,
                 detail=f"subset counts sum to {total} but query_count is {result.query_count}",
             )
         )
