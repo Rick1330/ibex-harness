@@ -43,12 +43,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/services/worker/.venv/bin:$PATH" \
     IBEX_WORKER_BEAT_SCHEDULE_FILE=/var/lib/ibex/celerybeat/celerybeat-schedule
 
+# Debian security patches come from the pinned base digest, not from an in-build
+# blanket upgrade: that step is a no-op on this base and only makes the build
+# resolve against a mutable package index. Refresh the base digest to take new
+# fixes; see engineering/quality/base-images.md. apt-get update stays for the
+# libpcre2 pin below.
 RUN python -m pip uninstall --yes setuptools wheel || true \
     && rm -rf /usr/local/lib/python3.*/site-packages/pip* \
        /usr/local/lib/python3.*/ensurepip \
        /usr/local/bin/pip* \
     && apt-get update \
-    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends libpcre2-8-0=10.42-1+deb12u2 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 ibex \

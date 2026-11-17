@@ -154,7 +154,7 @@ the `deprecation-days-beta` / `deprecation-days-stable` defaults are the paramet
 | 7.1 | Owner sets `VERSION_RELEASE_TOKEN`; the Version Release workflow runs green | run URL; release PR opened by the pipeline |
 | 7.2 | Signed annotated tags; tag protection | `git cat-file -t vX` = `tag`, `git tag -v` verifies |
 | 7.3 | Manifest schema-validated and signed **at upload**; per-image SBOM; `cosign verify` in the pipeline | a release whose manifest and images verify |
-| 7.4 | Reproducible builds: remove `apt-get upgrade` from memory/embedder; record base digests | two builds of the same commit produce the same digest |
+| 7.4 | Reproducible builds: remove the in-build `apt-get upgrade` — it is in seven images, not only memory/embedder — and record base digests | two builds of the same commit produce the same digest — **unmet**: the removal and the base pins landed, but builds still differ on the image config `created` field and layer mtimes |
 | 7.5 | Bundle smoke on the tag, and the v1 profile smoke in CI | `v1-smoke` job green on the tag |
 
 **Gate:** cut `v0.2.0` entirely through the pipeline, then repeat for `1.0`.
