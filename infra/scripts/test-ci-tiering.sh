@@ -246,17 +246,37 @@ digest_step_id() {
 # regular file at the repository root: `COPY packages ./packages` and a trailing
 # backslash name directories, which the directory globs already cover, while
 # `COPY package.json …` names one file that a filter list can forget.
+#
+# Three parsing hazards, all handled here rather than by the caller:
+#   * A COPY continued with a trailing backslash is one instruction. Reading only
+#     the first line (`COPY package.json \`) missed the second line of sources,
+#     so a file copied next to it — the real .npmrc case — could lose its trigger
+#     without this test noticing. Continuations are joined before extraction, the
+#     way the Dockerfile parser does it.
+#   * `COPY --from=<stage>` reads from an earlier stage (or another image), not
+#     from the repository, so its sources are not build inputs here. `--chown=`
+#     and `--chmod=` are flag tokens, skipped by the same `--` rule without
+#     hiding the sources that follow them.
+#   * `COPY ["package.json", "./"]` is the JSON form of the same instruction. Its
+#     tokens carry brackets, quotes and commas, so no token ever matched a
+#     repository file and the whole instruction was skipped.
 root_copy_sources() {
   awk '
+    { if (pending != "") { $0 = pending " " $0; pending = "" } }
+    /\\[[:space:]]*$/ { sub(/\\[[:space:]]*$/, ""); pending = $0; next }
+    { print }
+    END { if (pending != "") print pending }
+  ' "$1" | awk '
     /^COPY / {
+      gsub(/[][",]/, " ")
+      for (i = 2; i <= NF; i++) if ($i ~ /^--from=/) next
       for (i = 2; i <= NF; i++) {
         if ($i ~ /^--/) continue
         if ($i ~ /\//) continue
-        if ($i == "\\") continue
         print $i
       }
     }
-  ' "$1" | while read -r candidate; do
+  ' | while read -r candidate; do
     [[ -f "$ROOT/${candidate}" ]] && printf '%s\n' "$candidate"
   done
 }
@@ -405,20 +425,84 @@ filter_block() {
   awk -v k="${key}:" '$0 == k { f = 1 } f && /^[a-z]+:$/ && $0 != k { exit } f { print }' "$file"
 }
 FILTERS="$ROOT/.github/path-filters.yml"
-missing_console_inputs=()
-while read -r input; do
-  [[ -n "$input" ]] || continue
-  grep -Fq -- "'${input}'" "$DOCKER" ||
-    missing_console_inputs+=("${input} is not in the Docker Publish PR filter")
-  grep -Fq -- "- '${input}'" <<<"$(filter_block "$FILTERS" docker)" ||
-    missing_console_inputs+=("${input} does not set run_docker")
-  grep -Fq -- "- '${input}'" <<<"$(filter_block "$FILTERS" console)" ||
-    missing_console_inputs+=("${input} does not run the console-quality gate")
-done <<<"$(root_copy_sources "$ROOT/services/console/Dockerfile")"
+# One line per input the console build copies but no trigger names, across the
+# three lists a copied file has to appear in. Split out of the caller so the
+# fixture below can be run against filters that are missing a name on purpose:
+# an assertion nobody has seen fail is not known to work.
+console_trigger_gaps() {
+  local dockerfile="$1" workflow="$2" filters="$3" input
+  while read -r input; do
+    [[ -n "$input" ]] || continue
+    grep -Fq -- "'${input}'" "$workflow" ||
+      printf '%s is not in the Docker Publish PR filter\n' "$input"
+    grep -Fq -- "- '${input}'" <<<"$(filter_block "$filters" docker)" ||
+      printf '%s does not set run_docker\n' "$input"
+    grep -Fq -- "- '${input}'" <<<"$(filter_block "$filters" console)" ||
+      printf '%s does not run the console-quality gate\n' "$input"
+  done <<<"$(root_copy_sources "$dockerfile")"
+}
+
+mapfile -t missing_console_inputs < <(
+  console_trigger_gaps "$ROOT/services/console/Dockerfile" "$DOCKER" "$FILTERS"
+)
 if (( ${#missing_console_inputs[@]} == 0 )); then
   pass "every root file the console Dockerfile copies is a trigger for its build"
 else
   bad "console image inputs with no trigger: ${missing_console_inputs[*]}"
+fi
+
+# Fixture: one COPY continued onto a second line, one stage-sourced COPY, one COPY
+# behind a --chown/--chmod prefix, and one JSON-form COPY. The expected set is
+# asserted exactly, so a matcher that reads only the first line, treats a stage
+# source as a repository input, or skips the JSON form fails here.
+fixture_dir="$(mktemp -d)"
+trap 'rm -rf "$fixture_dir"' EXIT
+fixture_dockerfile="$fixture_dir/Dockerfile"
+cat >"$fixture_dockerfile" <<'EOF'
+FROM node AS build
+COPY package.json \
+     .npmrc ./
+COPY --from=build go.mod ./
+COPY --chown=10001:10001 --chmod=600 pnpm-workspace.yaml ./
+COPY ["pnpm-lock.yaml", "./"]
+EOF
+if [[ "$(root_copy_sources "$fixture_dockerfile" | sort | tr '\n' ' ')" == \
+  ".npmrc package.json pnpm-lock.yaml pnpm-workspace.yaml " ]]; then
+  pass "the COPY matcher reads continuations, JSON form, and skips --from"
+else
+  bad "the COPY matcher read '$(root_copy_sources "$fixture_dockerfile" | tr '\n' ' ')': a continued, JSON-form, stage or prefixed source is misparsed"
+fi
+
+# The same fixture with every name present in every list: the assertion must
+# report nothing. Then drop all but package.json and it must report the rest —
+# the control is what proves the failure is the omission, not the fixture.
+fixture_workflow="$fixture_dir/workflow.yml"
+fixture_filters="$fixture_dir/filters.yml"
+write_fixture_lists() {
+  {
+    printf "on:\n  pull_request:\n    paths:\n"
+    printf "      - '%s'\n" "$@"
+  } >"$fixture_workflow"
+  {
+    printf 'docker:\n'
+    printf "  - '%s'\n" "$@"
+    printf 'console:\n'
+    printf "  - '%s'\n" "$@"
+  } >"$fixture_filters"
+}
+write_fixture_lists package.json .npmrc pnpm-workspace.yaml pnpm-lock.yaml
+if [[ -z "$(console_trigger_gaps "$fixture_dockerfile" "$fixture_workflow" "$fixture_filters")" ]]; then
+  pass "a continued COPY source that every list names is not reported"
+else
+  bad "the trigger check reports a fully named continued COPY source"
+fi
+write_fixture_lists package.json
+fixture_gaps="$(console_trigger_gaps "$fixture_dockerfile" "$fixture_workflow" "$fixture_filters")"
+if grep -Fq '.npmrc does not set run_docker' <<<"$fixture_gaps" &&
+  grep -Fq 'pnpm-workspace.yaml does not run the console-quality gate' <<<"$fixture_gaps"; then
+  pass "a continued COPY source with no trigger fails the assertion"
+else
+  bad "the trigger check passed a continued COPY source with no trigger: ${fixture_gaps:-<no gap reported>}"
 fi
 
 missing_publish_inputs=()

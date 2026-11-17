@@ -33,6 +33,11 @@
 #
 # Secrets are injected at run time. No credential or upstream origin is baked
 # into this image.
+#
+# npm, npx and corepack are removed from stage 2: the SSR server never calls them
+# (`CMD` is `node .output/server/index.mjs`), and npm's bundled node_modules was
+# the source of every HIGH finding this image used to scan with. The base image's
+# yarn shim stays — it carries no dependency tree of its own and scans clean.
 
 # --------------------------------------------------------------------------- #
 # Stage 1 — workspace install and production build.                            #
@@ -70,6 +75,24 @@ ENV NODE_ENV=production \
 
 RUN groupadd -g 10001 ibex \
     && useradd -u 10001 -g ibex -r -s /usr/sbin/nologin ibex
+
+# Drop the package managers. The runtime entrypoint is `node
+# .output/server/index.mjs`; npm, npx and corepack are never invoked after the
+# build stage, and every HIGH finding this image used to scan with (all ten:
+# brace-expansion x5, ip-address, pacote, picomatch, sigstore) resolved under
+# /usr/local/lib/node_modules/npm/node_modules/. The build stage keeps them —
+# `corepack prepare pnpm@9.15.9` needs corepack. The trees and the shims that
+# point into them go together, and the check is build-time so a base-image change
+# that brings npm back fails here instead of reaching the scanner.
+RUN rm -rf /usr/local/lib/node_modules/npm \
+           /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm \
+           /usr/local/bin/npx \
+           /usr/local/bin/corepack \
+    && ! command -v npm \
+    && ! command -v npx \
+    && ! command -v corepack \
+    && node --version
 
 WORKDIR /app
 

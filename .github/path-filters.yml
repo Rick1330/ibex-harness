@@ -89,11 +89,10 @@ site:
   - '.github/actions/setup-pnpm-node/**'
 console:
   - 'services/console/**'
-  # The console image is not published (docker-publish.yml header records the ten
-  # HIGH CVEs behind that), so ci.yml's console-quality job is the only place the
-  # console is still installed and built. These are the root workspace-config
-  # files its build copies, and .npmrc (`node-linker=hoisted`) is part of the
-  # install contract: an .npmrc-only change must run the gate that resolves it.
+  # These are the root workspace-config files the console image build copies, and
+  # .npmrc (`node-linker=hoisted`) is part of the install contract: an .npmrc-only
+  # change must run the gate that resolves it. The image publishes, so the same
+  # four entries are its input contract in the docker filter below.
   - '.npmrc'
   - 'package.json'
   - 'pnpm-lock.yaml'
@@ -117,8 +116,7 @@ docker:
   # workflow_run when run_docker or run_go is true: without these entries an
   # .npmrc-only merge left the publish skipped, so :latest kept the previous
   # pnpm install layout (`node-linker=hoisted`) while the merged source used the
-  # new one. Kept as the console image's input contract while the image is out of
-  # the published set (docker-publish.yml header records why).
+  # new one.
   - '.npmrc'
   - 'package.json'
   - 'pnpm-lock.yaml'
