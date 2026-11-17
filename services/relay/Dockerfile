@@ -45,6 +45,11 @@ EXPOSE 8081
 # Like the Python images (services/context, services/console), Podman 5.7
 # defaults to the OCI format, which drops HEALTHCHECK: build with
 # `podman build --format docker` to keep it.
+#
+# Shell form on purpose: the probe resolves IBEX_PORT when the check runs, from
+# the same variable and default (8081) the HTTP server binds to
+# (services/relay/internal/config/env_config.go). The exec form would freeze the
+# port at build time and report a relay on a non-default port as unhealthy.
 HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
-    CMD ["wget", "-qO-", "http://127.0.0.1:8081/health"]
+    CMD wget -qO- "http://127.0.0.1:${IBEX_PORT:-8081}/health"
 ENTRYPOINT ["/usr/local/bin/relay"]

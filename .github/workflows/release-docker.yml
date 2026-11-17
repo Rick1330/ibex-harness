@@ -81,7 +81,7 @@ jobs:
         run: |
           bash infra/scripts/verify-release-images.sh \
             --tag "$TAG" \
-            --services auth,proxy,api,memory,embedder,worker,mcp-memory,context,console,relay
+            --services auth,proxy,api,memory,embedder,worker,mcp-memory,context,relay
 
   release-manifest:
     name: release-manifest
@@ -123,7 +123,7 @@ jobs:
             --tag "$TAG" \
             --commit "$COMMIT" \
             --repository "$REPOSITORY" \
-            --services auth,proxy,api,memory,embedder,worker,mcp-memory,context,console,relay \
+            --services auth,proxy,api,memory,embedder,worker,mcp-memory,context,relay \
             --output release-manifest.json
       - name: Validate the release manifest against the schema
         run: |
