@@ -595,6 +595,9 @@ v1_container_cli() {
     docker)
       printf 'docker\n'
       return 0 ;;
+    *)
+      # podman / podman-compose: the podman engine resolution below owns both.
+      ;;
   esac
   podman_engine
 }

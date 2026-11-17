@@ -60,6 +60,9 @@ while IFS= read -r f; do
       echo "Local-only file must not be tracked: $f"
       fail=1
       ;;
+    *)
+      # Any other basename is an ordinary tracked file; nothing to report.
+      ;;
   esac
 done < <(git ls-files)
 

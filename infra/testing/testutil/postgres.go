@@ -23,7 +23,11 @@ func SetupPostgres(t testing.TB) (dsn string, cleanup func()) {
 	if err := postgres.Up(dsn); err != nil {
 		t.Fatalf("migrate up: %v", err)
 	}
-	return dsn, func() {}
+	return dsn, func() {
+		// Intentionally empty: the compose test database is shared by the whole
+		// suite, so there is no per-test teardown; this exists only to satisfy the
+		// (dsn, cleanup) contract callers already defer.
+	}
 }
 
 func resolveComposeDSN() string {

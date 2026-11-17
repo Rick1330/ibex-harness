@@ -11,6 +11,8 @@ from apierror_py import VALIDATION_ERROR
 from app.errors import ApiError
 from app.pagination import decode_cursor
 
+INVALID_CURSOR_MSG = "Invalid cursor"
+
 
 @dataclass(frozen=True)
 class KeysetCursor:
@@ -23,16 +25,16 @@ def parse_keyset_cursor(cursor: str | None) -> KeysetCursor:
     try:
         payload = decode_cursor(cursor)
     except (TypeError, ValueError) as exc:
-        raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
+        raise ApiError(code=VALIDATION_ERROR, message=INVALID_CURSOR_MSG) from exc
     if payload is None:
         return KeysetCursor(None, None)
     try:
         created_at = datetime.fromisoformat(str(payload["created_at"]))
         row_id = UUID(str(payload["id"]))
     except (KeyError, TypeError, ValueError) as exc:
-        raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
+        raise ApiError(code=VALIDATION_ERROR, message=INVALID_CURSOR_MSG) from exc
     if created_at.tzinfo is None:
-        raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor")
+        raise ApiError(code=VALIDATION_ERROR, message=INVALID_CURSOR_MSG)
     return KeysetCursor(created_at, row_id)
 
 

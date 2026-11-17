@@ -80,6 +80,7 @@ Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow, P
 | [OPS_GUIDE.md](OPS_GUIDE.md) | Health probes, Kubernetes liveness/readiness configuration |
 | [FILE_STRUCTURE.md](FILE_STRUCTURE.md) | Monorepo layout and service scaffolds |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Local/CI/staging triage and common failures |
+| [quality/sonar-accepted-findings.md](quality/sonar-accepted-findings.md) | Static-analysis findings accepted rather than fixed, with the reason |
 | [runbooks/RUNBOOKS.md](runbooks/RUNBOOKS.md) | P1/P2 incident runbooks (proxy, auth, Redis, DB, workers) |
 | [CHANGELOG.md](../CHANGELOG.md) | Release history and changelog discipline |
 | [GLOSSARY.md](GLOSSARY.md) | Domain terminology (agent, memory, directive, trace, etc.) |
