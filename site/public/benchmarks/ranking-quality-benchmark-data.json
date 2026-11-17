@@ -3,12 +3,12 @@
   "benchmark": "ranking_quality",
   "runs": [
     {
-      "sha": "01edab876abce5a8f2bae7adb7443c9e44aa674d",
-      "short_sha": "01edab8",
-      "timestamp": "2026-11-17T15:28:02.953893+00:00",
+      "sha": "2e8d930edbcfd33466858052cf59ff556111d0f7",
+      "short_sha": "2e8d930",
+      "timestamp": "2026-11-17T21:02:20.095212+00:00",
       "branch": "main",
-      "run_number": 748,
-      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/44114374585",
+      "run_number": 762,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/44175129922",
       "gold_set": "v1",
       "query_count": 20,
       "memory_count": 51,
@@ -52,7 +52,7 @@
       "provenance": {
         "status": "recorded",
         "producer": "benchmarks/memory/provenance.py",
-        "runner_cpu_model": "AMD EPYC 9V45 96-Core Processor",
+        "runner_cpu_model": "AMD EPYC 7763 64-Core Processor",
         "runner_cpu_count": 4,
         "runner_ram_mib": 15983,
         "corpus_hash": "5db8becdf6d24ad2e10efa7ca1ead4c1d43d961ed378e228366193d5064d4b92",
