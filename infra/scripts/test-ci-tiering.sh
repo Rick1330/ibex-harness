@@ -125,6 +125,9 @@ for path in \
   "services/**/scripts/**" \
   "services/auth/**" \
   "services/proxy/**" \
+  "services/context/**" \
+  "services/console/**" \
+  "services/relay/**" \
   "infra/provider-capabilities/**" \
   "services/**/pyproject.toml" \
   "services/**/uv.lock" \
@@ -215,6 +218,52 @@ for services_list in "${services_lists[@]}"; do
     bad "services do not match the docker-publish push jobs ($services_list)"
   fi
 done
+
+# --- published images are gated and evidenced ------------------------------
+# P1-50: a push-* job is the only way an image reaches the registry, so every
+# push job needs the amd64 build whose tar the scan gate reads, and the scan
+# job itself. A publish job without one of them ships an unscanned image.
+missing_gates=()
+for service in $publish_services; do
+  for prefix in build scan-image; do
+    grep -Fxq "  ${prefix}-${service}:" "$DOCKER" || missing_gates+=("${prefix}-${service}")
+  done
+done
+if (( ${#missing_gates[@]} == 0 )); then
+  pass "every push-* job has a build and a scan gate ($(wc -w <<<"$publish_services") images)"
+else
+  bad "published images without a build or scan gate: ${missing_gates[*]}"
+fi
+
+# P1-09: one SPDX SBOM per published image, generated from the digest the push
+# job published, and attached to the tagged release. An SBOM for an image that
+# is not fed into the generator is an image with no evidence asset.
+sbom_block="$(file_block "$DOCKER" sbom-images)"
+if grep -Fq -- '--output spdx-json' <<<"$sbom_block" &&
+  grep -Fq '.sbom.spdx.json' <<<"$sbom_block"; then
+  pass "docker-publish generates one SPDX SBOM per published image"
+else
+  bad "docker-publish has no per-image SPDX SBOM step"
+fi
+missing_sbom=()
+for service in $publish_services; do
+  grep -Fq -- "- push-${service}" <<<"$sbom_block" || missing_sbom+=("$service")
+done
+if (( ${#missing_sbom[@]} == 0 )); then
+  pass "the SBOM job consumes every push job digest"
+else
+  bad "the SBOM job ignores published images: ${missing_sbom[*]}"
+fi
+if grep -Fq 'SPDXRef-DocumentRoot' <<<"$sbom_block"; then
+  pass "each SBOM is asserted to name the digest it describes"
+else
+  bad "the SBOM job does not bind a document to its image digest"
+fi
+if grep -Fq 'sboms/*.sbom.spdx.json' <<<"$manifest_block"; then
+  pass "tagged release uploads the per-image SBOMs"
+else
+  bad "tagged release does not upload the per-image SBOMs"
+fi
 
 if (( fail != 0 )); then
   echo "CI tiering policy tests failed" >&2
