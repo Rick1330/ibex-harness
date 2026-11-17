@@ -46,18 +46,19 @@ def build_stdio_runtime(settings: Settings) -> _StdioRuntime:
         ca_file=settings.auth_grpc_ca_file,
     )
     # False positive: both MCP services define a top-level `app.server` module, and a
-    # repo-root analysis resolves this import to the other service's wiring class
-    # (which takes `enforcer` and `registry`, and has no `audit`). This service's
-    # class takes exactly `audit`, `memory_client`, `agent_verifier` and
-    # `rate_limiter`; the call is correct and the tests exercise it.
+    # repo-root analysis resolves this import to the operator service's class, which
+    # takes `enforcer` and has no `audit`. This service's class takes exactly `audit`,
+    # `memory_client`, `agent_verifier` and `rate_limiter`.
+    # pylint: disable=no-value-for-parameter,unexpected-keyword-arg
     mcp = build_mcp_server(
-        McpServerWiring(  # pylint: disable=no-value-for-parameter
+        McpServerWiring(
             audit=audit,
             memory_client=memory_client,
             agent_verifier=verifier,
             rate_limiter=limiter,
         )
     )
+    # pylint: enable=no-value-for-parameter,unexpected-keyword-arg
     return _StdioRuntime(
         mcp=mcp,
         audit=audit,
