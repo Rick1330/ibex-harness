@@ -87,3 +87,34 @@ engines:
     exclude_paths:
       - "site/app/components/content/MermaidDiagram.vue"
       - "site/app/components/DiagramViewer.vue"
+      # Semgrep_go_sql_rule-concat-sqli fires on every parameterised Go query whose
+      # bound argument is a computed value. Its sink is any call to Exec/Query/
+      # QueryRow and its sources include `fmt.Sprintf(...)`, string concatenation,
+      # and `strings.Builder.String()`, so a value built with one of those and then
+      # passed as a `$n` argument is reported as if the statement text carried it;
+      # the statement itself is never inspected. Every finding below is in a
+      # `_test.go` fixture whose SQL is a literal with `$n` placeholders or a
+      # test-authored constant, and whose values are all bound arguments. Listed one
+      # by one rather than as `**/*_test.go` so a future real finding in an unrelated
+      # test file is still reported. 37 findings across these 17 files. The two
+      # production findings under the same rule (packages/evidenceoutbox/store.go and
+      # packages/idempotency/ledger.go) are accepted in
+      # engineering/quality/accepted-findings.md rather than excluded here: a
+      # file-level exclude would blind Opengrep to every other line of those files.
+      - "infra/migrations/postgres/migrate_billing_integration_test.go"
+      - "infra/migrations/postgres/migrate_budget_reservations_integration_test.go"
+      - "infra/migrations/postgres/migrate_directives_integration_test.go"
+      - "infra/migrations/postgres/migrate_evidence_outbox_digest_scheme_integration_test.go"
+      - "infra/migrations/postgres/migrate_integration_helpers_test.go"
+      - "infra/migrations/postgres/migrate_memories_integration_test.go"
+      - "infra/migrations/postgres/migrate_memory_conflict_escalations_integration_test.go"
+      - "infra/migrations/postgres/migrate_memory_labels_integration_test.go"
+      - "infra/migrations/postgres/migrate_memory_relationships_integration_test.go"
+      - "infra/migrations/postgres/migrate_memory_schema_v2_integration_test.go"
+      - "infra/migrations/postgres/migrate_relay_fence_checker_integration_test.go"
+      - "infra/migrations/postgres/migrate_sessions_integration_test.go"
+      - "infra/migrations/postgres/migrate_tokens_integration_test.go"
+      - "packages/directive/store_integration_test.go"
+      - "packages/evidenceoutbox/store_integration_test.go"
+      - "packages/idempotency/ledger_postgres_integration_test.go"
+      - "packages/session/store_integration_test.go"

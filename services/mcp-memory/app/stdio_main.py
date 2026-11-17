@@ -45,6 +45,12 @@ def build_stdio_runtime(settings: Settings) -> _StdioRuntime:
         timeout_seconds=settings.auth_timeout_ms / 1000.0,
         ca_file=settings.auth_grpc_ca_file,
     )
+    # pylint: disable=no-value-for-parameter
+    # False positive: both MCP services define a top-level `app.server` module, and a
+    # repo-root analysis resolves this import to the other service's wiring class
+    # (which takes `enforcer` and `registry`, and has no `audit`). This service's
+    # class takes exactly `audit`, `memory_client`, `agent_verifier` and
+    # `rate_limiter`; the call is correct and the tests exercise it.
     mcp = build_mcp_server(
         McpServerWiring(
             audit=audit,
