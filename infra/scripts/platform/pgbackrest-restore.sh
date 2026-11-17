@@ -108,10 +108,10 @@ PITR_WAL_ARCHIVE_WAL_SEGMENT_SIZE=""
 # The older-segment count is not measured. PostgreSQL retains already-archived
 # segments in pg_wal until recycling, so a positive count of segments older than
 # last_archived_wal does not mean they are pending archival: a healthy PITR run
-# reported a backlog until those files were recycled. The continuity proof is the
-# restore itself, which replays every segment from the backup to the replay
-# point, so this report records wal_archive_backlog: null because the continuity
-# input is not measurable.
+# reported a backlog until those files were recycled. A restore shows only that
+# the WAL needed to reach its recovered frontier was present and replayable, so
+# this report records wal_archive_backlog: null because the continuity input is
+# not measurable.
 
 # Record the requested target immediately: a run blocked before the target is
 # parsed must still say which recovery point was asked for.

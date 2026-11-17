@@ -217,9 +217,11 @@ def _restored_row_counts(e: dict[str, str]) -> dict[str, int | None]:
 def _wal_archive_facts(e: dict[str, str]) -> dict[str, Any]:
     """What the producer observed about the archive. Diagnostics only.
 
-    None of these gates the RPO: the restore replays every segment from the
-    backup to the replay point, so a gap either stops recovery or truncates the
-    replay timestamp, and the derived bound shows it. ``wal_archive_backlog`` is
+    None of these gates the RPO. What a restore demonstrates is narrower: the
+    WAL needed to reach its recovered frontier was present and replayable, which
+    is why a gap either stops recovery or truncates the replay timestamp and the
+    derived bound shows it. That says nothing about the queue beyond the
+    frontier. ``wal_archive_backlog`` is
     null when the producer supplies no continuity inputs, which is what both
     shipped producers do — PostgreSQL retains already-archived segments in
     ``pg_wal`` until recycling, so the count cannot say whether any is still

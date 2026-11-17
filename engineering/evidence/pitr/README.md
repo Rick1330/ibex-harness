@@ -124,9 +124,10 @@ The row written before the target came back; the row written after it did not. T
   sustained-write distribution is a different experiment, and this file does not claim one.
 - **When a bound exists, the restore demonstrates it.** It is not `last_archived_time` plus `archive_timeout`, and it is not read
   from `pg_stat_archiver` at all: a push slower than `archive_timeout` leaves the counters looking drained while the
-  newest recoverable commit is older than the number they would produce. The restore is the continuity proof — it
-  replays every segment from the backup to the replay point, so a gap either stops recovery or truncates the replay
-  timestamp, and the derived number then shows it. `wal_archive_backlog`, `wal_archive_ok` and the upload age are
+  newest recoverable commit is older than the number they would produce. What a restore demonstrates is narrower: the
+  WAL needed to reach its recovered frontier was present and replayable, which is why a gap either stops recovery or
+  truncates the replay timestamp and the derived number then shows it — not that the queue is drained, nor that the
+  archive is continuous past that frontier. `wal_archive_backlog`, `wal_archive_ok` and the upload age are
   diagnostics and gate nothing.
 - **No RTO.** `rto_measured_sec` is null: a PITR rehearsal does not measure detection, drain, restore and verification
   as an RTO, so the report does not invent one.

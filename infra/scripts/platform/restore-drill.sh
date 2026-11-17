@@ -466,9 +466,9 @@ measure_wal_archive() {
   esac
   # The older-segment count is gone with the pg_wal listing that produced it: a
   # file older than the newest archived segment may simply not have been
-  # recycled yet, so the count cannot express continuity. The restore is the
-  # continuity proof — it replays every segment from the backup to the replay
-  # point, so a gap either stops recovery or truncates the replay timestamp.
+  # recycled yet, so the count cannot express continuity. A restore shows only
+  # that the WAL needed to reach its recovered frontier was present and
+  # replayable, so a gap either stops recovery or truncates the replay timestamp.
   # The segment size stays as a diagnostic, but a report records
   # wal_archive_backlog: null because this continuity input is not measurable.
   # The PITR producer stopped measuring it for the same reason.
