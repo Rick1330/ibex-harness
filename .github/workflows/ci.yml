@@ -97,6 +97,11 @@ jobs:
       - name: Bundle smoke URL guard tests
         run: bash infra/scripts/test-bundle-smoke-url.sh
 
+      # The tag release passes on this verifier's exit code, so a broken guard is
+      # silent unless it is exercised. Bash only: no Python, no path-filter gate.
+      - name: Release image verification guard regression tests
+        run: bash infra/scripts/test_verify_release_images.sh
+
       # G03: the rule tree and the Alertmanager routing tree are edited independently,
       # so a severity nothing routes to is silent. Stdlib-only; runs from the repo root.
       - name: Alert routing coverage guard
@@ -1615,6 +1620,11 @@ jobs:
 
       - name: Release manifest tests
         run: uv run --no-project --no-build --with-requirements infra/scripts/release-manifest-test-requirements.txt python3 infra/scripts/test_release_manifest.py
+
+      # The validator is the last gate before release-manifest.json is uploaded, and
+      # the schema's `format: date-time` only bites when a format checker is passed.
+      - name: Release manifest validator tests
+        run: uv run --no-project --no-build --with-requirements infra/scripts/release-manifest-test-requirements.txt python3 infra/scripts/test_validate_release_manifest.py
 
   api-integration:
     name: api-integration

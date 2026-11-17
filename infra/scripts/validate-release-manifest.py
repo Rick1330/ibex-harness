@@ -14,6 +14,12 @@ that requirement set:
 The manifest and schema paths must resolve inside this checkout, the same rule
 ``release-manifest.py`` applies to its own path arguments; a manifest staged
 elsewhere has to be copied in first.
+
+Format assertions are enabled: the schema declares ``format: date-time`` on
+``generated_at``, and a validator built without a format checker treats that
+keyword as an annotation, so ``"not-a-timestamp"`` would pass. The checker is a
+no-op unless the optional ``rfc3339-validator`` wheel is installed, which is why
+it is pinned in the requirement file alongside ``jsonschema``.
 """
 
 from __future__ import annotations
@@ -63,7 +69,12 @@ def _location(error: jsonschema.ValidationError) -> str:
 
 
 def _errors(schema: Any, manifest: Any) -> list[jsonschema.ValidationError]:
-    validator = jsonschema.Draft202012Validator(schema)
+    # Passing the checker is what turns `format` from an annotation into an
+    # assertion. Without it `generated_at: "not-a-timestamp"` validates and the
+    # release publishes a manifest whose timestamp means nothing.
+    validator = jsonschema.Draft202012Validator(
+        schema, format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER
+    )
     return sorted(
         validator.iter_errors(manifest),
         key=lambda error: [str(part) for part in error.absolute_path],
