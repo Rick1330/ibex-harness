@@ -34,6 +34,10 @@
 # already written, then renamed into place, so an interruption between the two
 # cannot leave .env without the only copy of the key.
 #
+# An exported REDIS_PASSWORD that disagrees with .env is refused before the redis
+# config is written: Compose interpolates the environment value first, so the two
+# would give the server and its clients different passwords.
+#
 # The container copies in the secrets directory are mode 0444 so uid 10001 can
 # read them. The directory itself is 0700; that is the access boundary. Canonical
 # TLS private keys under certs/ stay 0600.
@@ -458,6 +462,36 @@ redis_quote() {
   printf '"%s"' "$value"
 }
 
+# refuse_exported_redis_conflict stops the run when the environment and .env
+# disagree about REDIS_PASSWORD.
+#
+# Compose interpolates an exported variable before the .env file, so
+# `REDIS_PASSWORD=beta make v1-up` against a .env holding `alpha` starts Redis
+# with `requirepass alpha` from this file while REDISCLI_AUTH and every REDIS_URL
+# carry beta. Redis then rejects every client, the healthchecks never pass, and
+# the profile does not come up -- with nothing in the output naming the cause.
+# The two sources have to agree before the config is written; which one wins is
+# the operator's decision, so the run stops instead of picking for them.
+#
+# Neither value is printed: the message names the variable, not its content.
+refuse_exported_redis_conflict() {
+  local from_environment from_file
+  from_environment="${REDIS_PASSWORD:-}"
+  from_file="$(env_value REDIS_PASSWORD)"
+  if [[ -z "$from_environment" || "$from_environment" == "$from_file" ]]; then
+    return 0
+  fi
+  cat >&2 <<EOF
+gen-v1-secrets.sh: REDIS_PASSWORD is set in the environment and differs from the
+value in $ENV_FILE.
+Compose interpolates the environment value first, so Redis would be started with
+the .env password while REDISCLI_AUTH and every REDIS_URL carried the environment
+one: every client would be rejected and no healthcheck would pass. Unset
+REDIS_PASSWORD so $ENV_FILE is the single source, then rerun.
+EOF
+  exit 1
+}
+
 # write_redis_conf renders the redis server config from .env.
 #
 # The password used to be a command-line argument (`--requirepass <value>`), which
@@ -471,6 +505,7 @@ redis_quote() {
 # (the 0700 secrets directory is the access boundary).
 write_redis_conf() {
   local dest="$SECRETS_DIR/redis.conf" password tmp
+  refuse_exported_redis_conflict
   password="$(env_value REDIS_PASSWORD)"
   if [[ -z "$password" ]]; then
     echo "gen-v1-secrets.sh: REDIS_PASSWORD is empty; refusing to write $dest" >&2

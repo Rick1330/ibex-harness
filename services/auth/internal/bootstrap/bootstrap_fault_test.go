@@ -37,12 +37,16 @@ func TestBootstrapErrorPropagation(t *testing.T) {
 		},
 		{
 			name: "inventory read fails",
-			f:    faultConfig{query: errInjected},
+			// The guard's advisory lock is the first query, so the inventory
+			// read is the second and the first one to fail.
+			f:    faultConfig{query: errInjected, queryAfter: 1, rows: firstRunRows()},
 			want: "list organizations",
 		},
 		{
 			name: "organization read fails",
-			f:    faultConfig{query: errInjected, queryAfter: 1, rows: firstRunRows()},
+			// The lock and the inventory read succeed; the upsert is the third
+			// query and the first one to fail.
+			f:    faultConfig{query: errInjected, queryAfter: 2, rows: firstRunRows()},
 			want: "insert organization",
 		},
 	}
@@ -60,7 +64,7 @@ func TestBootstrapErrorPropagation(t *testing.T) {
 func TestBootstrapInTxPropagatesOrganizationFailure(t *testing.T) {
 	// queryAfter 1 skips the inventory read so the organization statement is the
 	// one that fails.
-	db := openFaultDB(t, faultConfig{query: errInjected, queryAfter: 1, rows: firstRunRows()})
+	db := openFaultDB(t, faultConfig{query: errInjected, queryAfter: 2, rows: firstRunRows()})
 	tx := beginFaultTx(t, db)
 	_, err := bootstrapInTx(context.Background(), tx, testConfig(t))
 	if err == nil || !strings.Contains(err.Error(), "insert organization") {
@@ -83,19 +87,27 @@ func TestGuardSecondOrganization(t *testing.T) {
 		{
 			name: "fresh installation is allowed",
 			cfg:  testConfig(t),
-			rows: []faultRow{emptyInventoryRow()},
+			rows: []faultRow{lockRow(true), emptyInventoryRow()},
 		},
 		{
 			name: "the existing slug is allowed",
 			cfg:  testConfig(t),
-			rows: []faultRow{inventoryRow("fault-injection")},
+			rows: []faultRow{lockRow(true), inventoryRow("fault-injection")},
 		},
 		{
 			name: "a different slug is refused",
 			cfg:  testConfig(t),
-			rows: []faultRow{inventoryRow("ibex")},
+			rows: []faultRow{lockRow(true), inventoryRow("ibex")},
 			wantErr: `refusing to create organization "fault-injection": this ` +
 				`installation already has organization "ibex"`,
+		},
+		{
+			// The serialisation is not optional: a lock that reports it was not
+			// held is a failed decision, never a fresh installation.
+			name:    "a lock that is not held is refused",
+			cfg:     testConfig(t),
+			rows:    []faultRow{lockRow(false)},
+			wantErr: "the advisory lock was not acquired",
 		},
 	}
 	for _, tc := range tests {
@@ -115,6 +127,22 @@ func TestGuardSecondOrganization(t *testing.T) {
 	}
 }
 
+// TestGuardTakesTheLockBeforeTheInventoryRead proves the lock is the guard's
+// first statement. The driver fails the first query, so the guard can only
+// report a lock failure if the lock came before the inventory read: with the
+// inventory read first, the empty row would have allowed the run.
+func TestGuardTakesTheLockBeforeTheInventoryRead(t *testing.T) {
+	db := openFaultDB(t, faultConfig{query: errInjected, rows: []faultRow{emptyInventoryRow()}})
+	tx := beginFaultTx(t, db)
+	err := guardSecondOrganization(context.Background(), tx, testConfig(t))
+	if err == nil || !strings.Contains(err.Error(), "lock bootstrap guard") {
+		t.Fatalf("guard error = %v, want a lock failure before the inventory read", err)
+	}
+	if queryCalls != 1 {
+		t.Fatalf("guard issued %d queries before failing, want the lock alone", queryCalls)
+	}
+}
+
 func TestDescribeSlugs(t *testing.T) {
 	if got := describeSlugs([]string{"ibex"}); got != `organization "ibex"` {
 		t.Fatalf("describeSlugs(one) = %q", got)
@@ -129,7 +157,7 @@ func TestDescribeSlugs(t *testing.T) {
 func TestGuardSecondOrganizationAllowFlag(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.AllowSecondOrg = true
-	tx := beginFaultTx(t, openFaultDB(t, faultConfig{rows: []faultRow{inventoryRow("ibex")}}))
+	tx := beginFaultTx(t, openFaultDB(t, faultConfig{rows: []faultRow{lockRow(true), inventoryRow("ibex")}}))
 	if err := guardSecondOrganization(context.Background(), tx, cfg); err != nil {
 		t.Fatalf("guard refused with IBEX_BOOTSTRAP_ALLOW_SECOND_ORG=true: %v", err)
 	}
@@ -139,7 +167,7 @@ func TestGuardSecondOrganizationAllowFlag(t *testing.T) {
 // entrypoint the command uses, so a future reordering of bootstrapInTx that
 // skipped the guard would fail here.
 func TestBootstrapInTxRefusesSecondOrganization(t *testing.T) {
-	db := openFaultDB(t, faultConfig{rows: []faultRow{inventoryRow("ibex")}})
+	db := openFaultDB(t, faultConfig{rows: []faultRow{lockRow(true), inventoryRow("ibex")}})
 	tx := beginFaultTx(t, db)
 	_, err := bootstrapInTx(context.Background(), tx, testConfig(t))
 	if err == nil || !strings.Contains(err.Error(), "IBEX_BOOTSTRAP_ALLOW_SECOND_ORG=true") {

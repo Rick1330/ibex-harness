@@ -208,11 +208,11 @@ func beginFaultTx(t *testing.T, db *sql.DB) *sql.Tx {
 	return tx
 }
 
-// firstRunRows is the row set a clean first-run bootstrap reads: no existing
-// organization (the second-org guard), the new organization, the identity, and
-// the memory-service outcome.
+// firstRunRows is the row set a clean first-run bootstrap reads: the guard's
+// advisory lock, no existing organization, the new organization, the identity,
+// and the memory-service outcome.
 func firstRunRows() []faultRow {
-	return append([]faultRow{emptyInventoryRow()}, firstRunCreationRows()...)
+	return append([]faultRow{lockRow(true), emptyInventoryRow()}, firstRunCreationRows()...)
 }
 
 // firstRunCreationRows is firstRunRows without the inventory read, for the
@@ -272,7 +272,9 @@ func subjectsRow(owner, agent driver.Value) faultRow {
 	}
 }
 
-// lockRow is the bootstrap_lock_organization result.
+// lockRow answers a lock statement that reports one boolean: both
+// bootstrap_lock_organization and the guard's pg_advisory_xact_lock row have
+// that shape.
 func lockRow(locked bool) faultRow {
 	return faultRow{
 		columns: []string{"bootstrap_lock_organization"},

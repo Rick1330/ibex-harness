@@ -131,14 +131,15 @@ if [[ "$issue_state" == "CLOSED" ]]; then
   exit 1
 fi
 
-# The link may be recorded as a comment, so the comments are read too. That read
-# used to swallow its own failure: `|| true` turned a rate limit, a 5xx, or a
-# token-scope error into an empty string, and the gate then blamed the data with
-# "must reference PR #N" while the reference was there (PRs #1239, #1243, #1256).
-# A failed read is a failure of this check, and it has to say so.
+# The link may be recorded as a comment, so when the issue body does not already
+# name the PR the comments are read too. That read used to swallow its own failure:
+# `|| true` turned a rate limit, a 5xx, or a token-scope error into an empty string,
+# and the gate then blamed the data with "must reference PR #N" while the reference
+# was there (PRs #1239, #1243, #1256). A failed read is a failure of this check, and
+# it has to say so.
 #
-# Two failures have to stay distinct, and both are retried three times two seconds
-# apart, because neither is the data's fault:
+# Two failures have to stay distinct, and both are retried -- COMMENT_ATTEMPTS reads
+# in total -- because neither is the data's fault:
 #
 #   1. the read itself failed -- a rate limit, a 5xx, a dropped connection;
 #   2. the read succeeded but the comment had not propagated yet. GitHub does not
@@ -149,8 +150,23 @@ fi
 #
 # One loop drives both, so an attempt is exactly one read plus one comparison:
 # three reads when the reference is genuinely absent, one when it is there.
+#
+# The issue body is checked first and needs no extra API call: an issue whose body
+# names the PR passes even when the comments endpoint is unreachable.
 COMMENT_ATTEMPTS=3
-COMMENT_RETRY_SECONDS=2
+
+# Exponential backoff with jitter for the comment retries, in the same shape as the
+# issue read: 1 s after the first attempt, 2 s after the second, plus 0-999 ms of
+# jitter so concurrent runs do not retry in lockstep. Capped at 4 s, so no single
+# retry waits longer than that.
+comment_retry_delay() {
+  local attempt="$1" delay=1 cap=4
+  delay=$((delay * 2 ** (attempt - 1)))
+  if ((delay > cap)); then
+    delay=$cap
+  fi
+  printf '%s.%03d' "$delay" "$((RANDOM % 1000))"
+}
 
 # Rate limiting is retryable here but not for the issue read above: the GraphQL
 # issue query answers "could not resolve" for a rate-limited request, which would
@@ -192,12 +208,13 @@ text_names_pr() {
   grep -qiE "(pull/${PR_NUMBER}([^0-9]|$)|PR[[:space:]]*#${PR_NUMBER}([^0-9]|$)|#${PR_NUMBER}([^0-9]|$))" <<<"$1"
 }
 
-# Does the issue body or its comments name the PR? One read and one comparison per
-# attempt. Exit 0 found, 1 absent from every answer that could be read, 2 no answer
-# could be read (retryable failures exhausted, payload is the last error), 3 no
-# answer could be read and the failure is not retryable (payload is that error).
+# Do the issue's comments name the PR? One read and one comparison per attempt.
+# The body is checked by the caller, so it is not part of this loop.
+# Exit 0 found, 1 absent from every answer that could be read, 2 no answer could be
+# read (retryable failures exhausted, payload is the last error), 3 no answer could
+# be read and the failure is not retryable (payload is that error).
 reference_is_recorded() {
-  local issue="$1" body="$2" attempt output status
+  local issue="$1" attempt output status
   local read_ok=0 fatal=0 last_error=""
   for ((attempt = 1; attempt <= COMMENT_ATTEMPTS; attempt++)); do
     if output="$(read_comments_once "$issue")"; then
@@ -208,7 +225,7 @@ reference_is_recorded() {
     case "$status" in
       0)
         read_ok=1
-        if text_names_pr "${body}"$'\n'"${output}"; then
+        if text_names_pr "${output}"; then
           return 0
         fi
         ;;
@@ -225,7 +242,7 @@ reference_is_recorded() {
         ;;
     esac
     if [[ "$attempt" -lt "$COMMENT_ATTEMPTS" ]]; then
-      sleep "$COMMENT_RETRY_SECONDS"
+      sleep "$(comment_retry_delay "$attempt")"
     fi
   done
   if [[ "$read_ok" -eq 1 ]]; then
@@ -240,10 +257,17 @@ reference_is_recorded() {
 
 issue_body="$(gh issue view "$issue_num" --repo "$REPO" --json body -q .body | tr -d '\r')"
 
-set +e
-reference_error="$(reference_is_recorded "$issue_num" "$issue_body")"
-reference_status=$?
-set -e
+# The body is authoritative when it names the PR: no comment read, no retry, and no
+# chance of an API outage failing an issue that is already correctly linked.
+if text_names_pr "$issue_body"; then
+  reference_status=0
+  reference_error=""
+else
+  set +e
+  reference_error="$(reference_is_recorded "$issue_num")"
+  reference_status=$?
+  set -e
+fi
 
 case "$reference_status" in
   0) ;;

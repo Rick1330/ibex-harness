@@ -2,7 +2,7 @@
 # test-v1-backup-credentials.sh — regression tests for the v1 backup-repository
 # credential chain.
 #
-# Seven properties are guarded here because they all protect the same secret:
+# Nine properties are guarded here because they all protect the same secret:
 #
 #   1. gen-v1-secrets.sh never loses or silently replaces
 #      PGBACKREST_REPO1_CIPHER_PASS. That passphrase is the only key to every
@@ -31,6 +31,10 @@
 #      profile mounts, and the compose file carries neither `--requirepass` nor
 #      a healthcheck `-a <value>`: the secret must never be a container
 #      command-line argument that `podman inspect` and /proc print.
+#   9. An exported REDIS_PASSWORD that disagrees with the .env value is refused
+#      before the config is written. Compose interpolates the environment value
+#      first, so the two would give the server and its clients different
+#      passwords and nothing would start.
 #
 # Every path is redirected: IBEX_V1_ENV_FILE, IBEX_V1_SECRETS_DIR,
 # IBEX_V1_CERTS_DIR and IBEX_V1_PGBACKREST_CONF keep the generator out of the
@@ -170,6 +174,43 @@ fi
 grep -q 'redis.conf:' "$COMPOSE" \
   || fail "redis config: compose does not declare the redis.conf secret"
 pass "the Redis password is a mounted config directive and never an argv flag"
+
+# --- case 2c: an exported REDIS_PASSWORD that disagrees is refused ----------
+#
+# Compose interpolates an exported REDIS_PASSWORD before .env, so the two sources
+# can disagree: Redis would get the .env value through redis.conf while
+# REDISCLI_AUTH and every REDIS_URL carry the environment one. The conflict is
+# refused before the config is written, and neither value is printed.
+
+dir="$WORK/redis-conflict"
+gen_env "$dir"
+if ! bash "$GEN" >"$dir/out.log" 2>&1; then
+  cat "$dir/out.log" >&2
+  fail "redis conflict: the first generator run failed"
+fi
+redis_conf="$IBEX_V1_SECRETS_DIR/redis.conf"
+file_password="$(env_read REDIS_PASSWORD)"
+conf_before="$(sha256sum "$redis_conf" | awk '{print $1}')"
+other_password="$(openssl rand -hex 32)"
+if (export REDIS_PASSWORD="$other_password"; bash "$GEN") >"$dir/out.log" 2>&1; then
+  fail "redis conflict: the generator succeeded although the exported REDIS_PASSWORD differs from .env"
+fi
+grep -q 'REDIS_PASSWORD is set in the environment and differs' "$dir/out.log" \
+  || fail "redis conflict: the refusal does not name the variable"
+grep -q 'Unset' "$dir/out.log" \
+  || fail "redis conflict: the refusal does not tell the operator to unset it"
+[[ "$conf_before" == "$(sha256sum "$redis_conf" | awk '{print $1}')" ]] \
+  || fail "redis conflict: redis.conf was rewritten after the refusal"
+for secret in "$file_password" "$other_password"; do
+  if grep -qF -- "$secret" "$dir/out.log"; then
+    fail "redis conflict: the refusal printed a password value"
+  fi
+done
+if ! (export REDIS_PASSWORD="$file_password"; bash "$GEN") >"$dir/out.log" 2>&1; then
+  cat "$dir/out.log" >&2
+  fail "redis conflict: a matching exported REDIS_PASSWORD was refused"
+fi
+pass "an exported REDIS_PASSWORD that disagrees with .env is refused before redis.conf is written"
 
 # --- case 3: explicit rotation without the override is refused -------------
 

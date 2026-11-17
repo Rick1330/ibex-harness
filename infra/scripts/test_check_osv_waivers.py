@@ -112,6 +112,12 @@ class TomlWaiverTests(unittest.TestCase):
     def test_no_entries_is_an_empty_list(self) -> None:
         self.assertEqual(waivers("# nothing ignored here\n"), [])
 
+    def test_an_emptied_ignored_vulns_array_is_valid(self) -> None:
+        # The fully-remediated state keeps the key and empties the array; reading
+        # it as a broken document would fail the gate on the one state the
+        # renewal procedure asks for.
+        self.assertEqual(waivers("IgnoredVulns = []\n"), [])
+
     def test_unparseable_toml_is_an_input_error(self) -> None:
         with self.assertRaises(check_osv_waivers.InputError):
             waivers("[[IgnoredVulns]\nid = 1\n")
@@ -134,6 +140,76 @@ class TableTests(unittest.TestCase):
         ids = {advisory for row in found for advisory in row.advisories}
         self.assertNotIn("GHSA-9999-9999-9999", ids)
         self.assertNotIn("GHSA-7777-7777-7777", ids)
+
+    def test_an_empty_table_with_a_header_is_valid(self) -> None:
+        # Every waiver removed leaves the header and the separator behind. That
+        # is a complete record, not a parse failure.
+        self.assertEqual(
+            rows(
+                """
+                ### 9.0.1a Active SCA waivers
+
+                | Advisory | Package | Severity | Reachability | Disposition | Expires |
+                | --- | --- | --- | --- | --- | --- |
+                """
+            ),
+            [],
+        )
+
+    def test_a_section_without_a_header_row_is_an_input_error(self) -> None:
+        # The section exists but carries no table, so there is no column
+        # position to read. This must stay distinct from an empty table.
+        with self.assertRaises(check_osv_waivers.InputError):
+            rows(
+                """
+                ### 9.0.1a Active SCA waivers
+
+                No waivers are recorded in a table any more.
+                """
+            )
+
+    def test_a_reordered_expiry_column_is_read_by_name(self) -> None:
+        # Reading the last cell made a correct row fail once `Expires` moved
+        # earlier: the date was there and the parser looked past it.
+        found = rows(
+            """
+            ### 9.0.1a Active SCA waivers
+
+            | Advisory | Expires | Package |
+            | --- | --- | --- |
+            | GHSA-aaaa-bbbb-cccc | 2027-03-01 | `a` |
+            """
+        )
+        self.assertEqual(found[0].expires, datetime.date(2027, 3, 1))
+
+    def test_a_row_shorter_than_the_expiry_column_is_an_input_error(self) -> None:
+        with self.assertRaises(check_osv_waivers.InputError):
+            rows(
+                """
+                ### 9.0.1a Active SCA waivers
+
+                | Advisory | Package | Expires |
+                | --- | --- | --- |
+                | GHSA-aaaa-bbbb-cccc | `a` |
+                """
+            )
+
+    def test_duplicate_rows_for_one_advisory_are_refused(self) -> None:
+        # setdefault kept the first row and dropped the second, so a matching
+        # first row hid a stale renewal.
+        with self.assertRaises(check_osv_waivers.InputError) as caught:
+            rows(
+                """
+                ### 9.0.1a Active SCA waivers
+
+                | Advisory | Package | Expires |
+                | --- | --- | --- |
+                | GHSA-aaaa-bbbb-cccc | `a` | 2027-03-01 |
+                | GHSA-aaaa-bbbb-cccc | `a` | 2026-01-01 |
+                """
+            )
+        self.assertIn("GHSA-AAAA-BBBB-CCCC", str(caught.exception))
+        self.assertIn("already has a waiver row", str(caught.exception))
 
     def test_a_missing_section_is_an_input_error(self) -> None:
         with self.assertRaises(check_osv_waivers.InputError):
@@ -324,6 +400,38 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("GHSA-AAAA-BBBB-CCCC", err)
         self.assertIn("2027-03-01", err)
+
+    def test_a_fully_remediated_record_exits_zero(self) -> None:
+        # The state the renewal procedure asks for: no waiver in the TOML and no
+        # row in the table. It must pass, or removing the last waiver turns the
+        # gate into the outage it exists to prevent.
+        self._write(
+            toml="IgnoredVulns = []\n",
+            table="""
+                ### 9.0.1a Active SCA waivers
+
+                | Advisory | Package | Severity | Reachability | Disposition | Expires |
+                | --- | --- | --- | --- | --- | --- |
+                """,
+        )
+        code, out, err = self._run("--today", "2026-11-17")
+        self.assertEqual(code, 0, err)
+        self.assertIn("every expiry is beyond the window", out)
+
+    def test_a_duplicate_row_exits_two(self) -> None:
+        self._write(
+            table="""
+                ### 9.0.1a Active SCA waivers
+
+                | Advisory | Package | Expires |
+                | --- | --- | --- |
+                | GHSA-aaaa-bbbb-cccc | `a` | 2027-03-01 |
+                | GHSA-aaaa-bbbb-cccc | `a` | 2027-03-01 |
+                """,
+        )
+        code, _, err = self._run()
+        self.assertEqual(code, 2)
+        self.assertIn("already has a waiver row", err)
 
     def test_a_missing_config_exits_two(self) -> None:
         self.table.write_text(textwrap.dedent(TABLE_IN_AGREEMENT), encoding="utf-8")

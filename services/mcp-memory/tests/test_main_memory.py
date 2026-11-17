@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -51,6 +52,19 @@ def _settings(**overrides: object) -> Settings:
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
+
+
+def _capture_build_kwargs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Patch build_mcp_server so a test can assert the kwargs create_app forwards."""
+    captured: dict[str, Any] = {}
+    real_build = main.build_mcp_server
+
+    def spy(wiring: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return real_build(wiring, **kwargs)
+
+    monkeypatch.setattr(main, "build_mcp_server", spy)
+    return captured
 
 
 def test_create_app_warns_when_memory_url_unset(caplog: pytest.LogCaptureFixture) -> None:
@@ -136,14 +150,7 @@ def test_create_app_passes_the_configured_allow_list_to_the_transport(
     # P1-14: the config field is only useful if create_app forwards it. The unit
     # tests on _transport_security cannot see a missing argument here, and the
     # symptom of one is production answering 421 to every request.
-    captured: dict[str, object] = {}
-    real_build = main.build_mcp_server
-
-    def spy(wiring, **kwargs):  # type: ignore[no-untyped-def]
-        captured.update(kwargs)
-        return real_build(wiring, **kwargs)
-
-    monkeypatch.setattr(main, "build_mcp_server", spy)
+    captured = _capture_build_kwargs(monkeypatch)
     application = create_app(
         settings=_settings(
             env="production",
@@ -161,3 +168,23 @@ def test_create_app_passes_the_configured_allow_list_to_the_transport(
     assert captured["allow_test_hosts"] is False
     assert captured["allowed_hosts"] == ("mcp.example.com", "mcp.example.com:8443")
     assert captured["allowed_origins"] == ("https://console.example.com",)
+
+
+def test_create_app_keeps_dns_rebinding_protection_on_in_staging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Staging already requires Redis and the AuthService CA, so it is a protected
+    # profile. Accepting the SDK's test hosts there turned DNS-rebinding
+    # protection off in exactly the environment it exists to cover.
+    captured = _capture_build_kwargs(monkeypatch)
+    application = create_app(
+        settings=_settings(
+            env="staging",
+            redis_url="redis://redis:6379/0",
+            auth_grpc_ca_file="/etc/ibex/auth-grpc-ca.pem",
+        ),
+        deps=_deps(),
+    )
+    with TestClient(application) as client:
+        assert client.get("/health").status_code == 200
+    assert captured["allow_test_hosts"] is False

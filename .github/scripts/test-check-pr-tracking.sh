@@ -86,10 +86,15 @@ exit 99
 STUB
 chmod +x "$WORK/bin/gh"
 
-# The script sleeps between retries; the stub keeps the suite fast without touching the
-# script's backoff behaviour.
+# The script sleeps between retries; the stub records the delay it was asked for and
+# returns immediately, so the suite stays fast while the backoff numbers stay
+# observable.
 cat > "$WORK/bin/sleep" <<'STUB'
 #!/usr/bin/env bash
+set -uo pipefail
+if [[ -n "${GH_STUB_DIR:-}" ]]; then
+  printf '%s\n' "${1:-}" >> "$GH_STUB_DIR/sleeps"
+fi
 exit 0
 STUB
 chmod +x "$WORK/bin/sleep"
@@ -104,8 +109,16 @@ reset_case() {
   printf '0' > "$WORK/case/transient_attempts"
   printf '0' > "$WORK/case/api_transient_attempts"
   printf 'OPEN' > "$WORK/case/state"
+  : > "$WORK/case/sleeps"
   printf '## Problem\n\nTracked.\n\n## Proposed solution\n\nDo the thing.\n\n## Acceptance criteria\n\n- Done.\n\nImplementation PR: #7\n' > "$WORK/case/issue_body"
   : > "$WORK/case/comments"
+}
+
+# An issue body that satisfies the template checks but names no PR, so the comment
+# read is exercised rather than short-circuited by the body.
+body_without_reference() {
+  printf '## Problem\n\nTracked.\n\n## Proposed solution\n\nDo the thing.\n\n## Acceptance criteria\n\n- Done.\n' \
+    > "$WORK/case/issue_body"
 }
 
 run() {
@@ -158,10 +171,42 @@ expect_api_calls() {
   fi
 }
 
+# Assert the comment-retry backoff recorded by the sleep stub: exactly two sleeps,
+# the first in [1,2) seconds and the second in [2,3).
+expect_comment_backoff() {
+  local name="$1"
+  local delays=()
+  if [[ -f "$WORK/case/sleeps" ]]; then
+    mapfile -t delays < "$WORK/case/sleeps"
+  fi
+  if [[ "${#delays[@]}" -ne 2 ]]; then
+    printf 'FAIL %s: %s sleep(s), expected 2\n' "$name" "${#delays[@]}"
+    failures=$((failures + 1))
+    return
+  fi
+  if ! awk -v v="${delays[0]}" 'BEGIN { exit !(v >= 1 && v < 2) }'; then
+    printf 'FAIL %s: first delay %s not in [1,2)\n' "$name" "${delays[0]}"
+    failures=$((failures + 1))
+  fi
+  if ! awk -v v="${delays[1]}" 'BEGIN { exit !(v >= 2 && v < 3) }'; then
+    printf 'FAIL %s: second delay %s not in [2,3)\n' "$name" "${delays[1]}"
+    failures=$((failures + 1))
+  fi
+}
+
 # 1. Happy path: one read, no retries.
 reset_case
 expect "linked issue passes" 0 "tracks issue #42"
 expect_issue_calls "linked issue passes" 2  # state + body
+# The body names the PR, so the comments are never read.
+expect_api_calls "linked issue passes" 0
+
+# 1a. The body names the PR and the comments endpoint is unreadable: the body-only
+# pass must not depend on the comment read at all.
+reset_case
+printf 'fatal' > "$WORK/case/api_mode"
+expect "body-only link passes without reading comments" 0 "tracks issue #42"
+expect_api_calls "body-only link passes without reading comments" 0
 
 # 2. A transient failure is retried and the gate passes on recovery.
 reset_case
@@ -201,12 +246,13 @@ printf 'Issue body without a PR reference\n' > "$WORK/case/issue_body"
 printf 'A comment that names no pull request either.\n' > "$WORK/case/comments"
 expect "issue must reference the PR" 1 "must reference PR #7"
 expect_api_calls "issue must reference the PR" 3
+expect_comment_backoff "issue must reference the PR"
 
 # 8. The reference lives only in a comment: the joined comment text is read, so the
 # gate passes on the first comparison. This is the shape that was reported as
 # missing on PRs #1239, #1243, and #1256.
 reset_case
-printf '## Problem\n\nTracked.\n\n## Proposed solution\n\nDo the thing.\n\n## Acceptance criteria\n\n- Done.\n' > "$WORK/case/issue_body"
+body_without_reference
 printf 'Implementation PR: #7\n' > "$WORK/case/comments"
 expect "reference in a comment passes" 0 "tracks issue #42"
 expect_api_calls "reference in a comment passes" 1
@@ -215,7 +261,7 @@ expect_api_calls "reference in a comment passes" 1
 # reference is absent from a readable answer. The second comparison finds it and
 # the gate passes -- retrying the read alone would still have reported it missing.
 reset_case
-printf '## Problem\n\nTracked.\n\n## Proposed solution\n\nDo the thing.\n\n## Acceptance criteria\n\n- Done.\n' > "$WORK/case/issue_body"
+body_without_reference
 printf 'stale' > "$WORK/case/api_mode"
 printf 'Implementation PR: #7\n' > "$WORK/case/comments"
 expect "reference appears on the second read" 0 "tracks issue #42"
@@ -224,6 +270,7 @@ expect_api_calls "reference appears on the second read" 2
 # 9. A non-retryable comment read failure must not be reported as a missing
 # reference: the link may be there and the check simply could not see it.
 reset_case
+body_without_reference
 printf 'fatal' > "$WORK/case/api_mode"
 expect "unreadable comments are reported as unreadable" 1 "Could not read the comments on issue #42"
 expect_api_calls "unreadable comments are reported as unreadable" 1
@@ -235,6 +282,7 @@ fi
 
 # 10. A transient comment read failure is retried and passes on recovery.
 reset_case
+body_without_reference
 printf 'transient' > "$WORK/case/api_mode"
 printf '2' > "$WORK/case/api_transient_attempts"
 printf 'Implementation PR: #7\n' > "$WORK/case/comments"
@@ -244,6 +292,7 @@ expect_api_calls "comment read recovers after transient failures" 3
 # 11. Three transient comment read failures exhaust the retries and name the API
 # failure, still without blaming the data.
 reset_case
+body_without_reference
 printf 'down' > "$WORK/case/api_mode"
 expect "exhausted comment retries name the API failure" 1 "Could not read the comments on issue #42 after 3 attempts"
 expect_api_calls "exhausted comment retries name the API failure" 3

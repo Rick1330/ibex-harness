@@ -82,9 +82,14 @@ profile a 1.0 claim may cite. Kubernetes, Helm and HA are outside the profile (�
 files under `infra/compose/v1-single-node/secrets/` (directory `0700`; the container copies are `0444` so uid 10001 can
 read them), and the `bootstrap/` directory (`0700`) that receives the one-time admin PAT. That directory also carries
 `secrets/redis.conf`: the Redis server configuration, regenerated on every run from `REDIS_PASSWORD`, mounted
-read-only at `/run/secrets/redis.conf`. The password is a `requirepass` directive there rather than a
-`--requirepass` argument, so it does not appear in the container's command line (`podman inspect`, `/proc/*/cmdline`);
-`docker compose config` and `podman inspect` show the path only. `secrets/redis.conf` is therefore a required input to
+read-only at `/run/secrets/redis.conf`. The password is a `requirepass` directive there rather than a `--requirepass` argument, so it does not appear in the
+container's command line: `podman inspect` shows only the mount path, and `/proc/*/cmdline` shows `redis-server
+/run/secrets/redis.conf`. It does still reach the containers through the environment — the Redis healthcheck sets
+`REDISCLI_AUTH`, and every service that talks to Redis carries the password inside `REDIS_URL` (the API also sets it in
+`IBEX_API_CELERY_BROKER_URL`). `docker compose config` resolves those `${REDIS_PASSWORD}` references, so **its output
+contains the password in clear text**: never paste it, in whole or in part, into an issue, a pull request, or a chat,
+and redact `REDISCLI_AUTH` and every `REDIS_URL` before sharing an excerpt. `secrets/redis.conf` is therefore a
+required input to
 `docker compose up` — an install created before it existed must rerun `make v1-secrets` (or the whole profile, via
 `make v1-up`, which runs the generator first). The `.env` also carries the
 four capability-login passwords `IBEX_RUNTIME_DB_PASSWORD`, `IBEX_AUTH_DB_PASSWORD`, `IBEX_WORKER_DB_PASSWORD` and

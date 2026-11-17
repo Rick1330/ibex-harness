@@ -31,7 +31,7 @@ def test_production_with_an_allow_list_accepts_the_configured_host_and_rejects_a
         allowed_hosts="mcp.example.com,mcp.example.com:8443",
     )
     settings = _transport_security(
-        allow_test_hosts=cfg.env != "production",
+        allow_test_hosts=cfg.env == "development",
         allowed_hosts=cfg.allowed_host_list,
         allowed_origins=cfg.allowed_origin_list,
     )
