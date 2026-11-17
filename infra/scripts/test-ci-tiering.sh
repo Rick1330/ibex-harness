@@ -159,10 +159,15 @@ fi
 
 release_docker="$ROOT/.github/workflows/release-docker.yml"
 manifest_block="$(file_block "$release_docker" release-manifest)"
-if grep -Fq 'needs: tagged-docker-publish' <<<"$manifest_block"; then
+if grep -Eq '^    needs: .*tagged-docker-publish' <<<"$manifest_block"; then
   pass "release-manifest runs after tagged-docker-publish"
 else
   bad "release-manifest does not depend on tagged-docker-publish"
+fi
+if grep -Eq '^    needs: .*verify-published-images' <<<"$manifest_block"; then
+  pass "release-manifest runs after the published images are verified"
+else
+  bad "release-manifest does not depend on verify-published-images"
 fi
 if grep -Fq 'gh release upload "$TAG" release-manifest.json' <<<"$manifest_block"; then
   pass "tagged release uploads the manifest"
@@ -175,19 +180,41 @@ else
   bad "image publication does not wait for tag validation"
 fi
 
-publish_services="$(grep -E '^  push-[a-z0-9-]+:$' "$DOCKER" | sed -E 's/^  push-(.+):$/\1/' | sort)"
-manifest_services="$(
-  grep -oE -- '--services [a-z0-9,-]+' "$release_docker" |
-    head -1 |
-    awk '{print $2}' |
-    tr ',' '\n' |
-    sort
-)"
-if [[ "$publish_services" == "$manifest_services" ]]; then
-  pass "manifest services match the docker-publish push jobs"
+# A tag push must not report success when every publish job was skipped: the
+# called workflow's status is not evidence, so release-docker.yml asserts the
+# images, and docker-publish has a terminal gate for the same condition.
+verify_block="$(file_block "$release_docker" verify-published-images)"
+if grep -Fq 'verify-release-images.sh' <<<"$verify_block" &&
+  grep -Fq 'always()' <<<"$verify_block"; then
+  pass "tagged release asserts the published images even when publishing was skipped"
 else
-  bad "manifest services do not match the docker-publish push jobs"
+  bad "tagged release does not assert the published images"
 fi
+gate_block="$(file_block "$DOCKER" publish-gate)"
+if grep -Fq 'always()' <<<"$gate_block" &&
+  grep -Fq "github.event_name != 'pull_request'" <<<"$gate_block" &&
+  grep -Fq 'exit 1' <<<"$gate_block"; then
+  pass "docker-publish gate fails when a publish job did not succeed"
+else
+  bad "docker-publish has no terminal gate for skipped publish jobs"
+fi
+
+publish_services="$(grep -E '^  push-[a-z0-9-]+:$' "$DOCKER" | sed -E 's/^  push-(.+):$/\1/' | sort)"
+mapfile -t services_lists < <(
+  grep -oE -- '--services [a-z0-9,-]+' "$release_docker" | awk '{print $2}'
+)
+if (( ${#services_lists[@]} == 0 )); then
+  bad "release-docker.yml names no services"
+fi
+# Every call site must list exactly the published services; the verification and
+# the manifest are generated from the same set, so they cannot drift apart.
+for services_list in "${services_lists[@]}"; do
+  if [[ "$(tr ',' '\n' <<<"$services_list" | sort)" == "$publish_services" ]]; then
+    pass "services match the docker-publish push jobs ($services_list)"
+  else
+    bad "services do not match the docker-publish push jobs ($services_list)"
+  fi
+done
 
 if (( fail != 0 )); then
   echo "CI tiering policy tests failed" >&2

@@ -10,7 +10,7 @@ These names look similar but do **different** jobs. You usually need only one at
 | --- | --- | --- | --- | --- |
 | **Version Release PR** | `version-release-pr.yml` | Opens/updates the weekly `chore(release): prepare vX.Y.Z` PR; on merge **publish**, creates the git tag + GitHub Release notes | Sunday 08:00 UTC propose; publish on `chore(release): prepare v…` merge | **Yes** for cutting semver releases |
 | **Tagged Release** | `release.yml` | Builds SBOM, signs with cosign, **uploads** `sbom.spdx.json` + `.sigstore` onto an **existing** GitHub Release | Tag push `v*.*.*`, release published, or manual `workflow_dispatch` with `tag_name` | **Yes** for Scorecard signed-release assets. Input must be an **existing** tag (today: `v0.1.0`) |
-| **Tagged Release Docker** | `release-docker.yml` | Publishes **version-tagged** container images (`ghcr.io/.../auth:vX.Y.Z`) and uploads `release-manifest.json` | Only on **tag push** `v*.*.*` | Automatic with new tags; not used for manual SBOM repair. Caller must grant callee max permissions including `contents: write` (notify job) or the run fails at startup. |
+| **Tagged Release Docker** | `release-docker.yml` | Publishes **version-tagged** container images (`ghcr.io/.../auth:vX.Y.Z`) and uploads `release-manifest.json` | Only on **tag push** `v*.*.*` | Automatic with new tags; not used for manual SBOM repair. Caller must grant callee max permissions including `contents: write` (notify job) or the run fails at startup. The run fails when any image is absent at the tag or the manifest does not validate. |
 | **Docker Publish** | `docker-publish.yml` | Builds/scans/pushes **`latest`** (and related) images after successful CI on `main` | `workflow_run` after CI, PRs (scan-only), manual, or called by Tagged Release Docker | **Unrelated to SBOM/releases.** A green Docker Publish does **not** attach release assets |
 
 **Confusion trap:** After a merge, **Docker Publish** often succeeds with `latest` images. That is **not** Tagged Release. To attach SBOM signatures to `v0.1.0`, run **Actions → Tagged Release → Run workflow** with `tag_name=v0.1.0`.
@@ -33,6 +33,13 @@ These names look similar but do **different** jobs. You usually need only one at
 `bundles` is populated from `infra/bundles/*.json`. A bundle is `unverified` unless the generator receives `--smoke-results` with a `passed` result for the same commit. The `memory-context` profile and its smoke are documented in [`infra/compose/bundles/README.md`](../infra/compose/bundles/README.md); until a same-commit smoke runs in CI, the manifest reports the bundle as unverified rather than claiming a pass.
 
 The workflow validates the tag as `vX.Y.Z` before publishing any image. If the tag has no GitHub Release yet, the manifest job creates a minimal release, then uploads the manifest.
+
+Two guards make a release that published nothing fail instead of going green:
+
+- **`verify-published-images`** inspects every service with `docker buildx imagetools inspect` at the tag and fails naming each image that is missing. It asserts the artifact, not the job status, so a skipped publish job cannot satisfy it. `release-manifest` depends on it and never runs when it fails.
+- **`publish-gate`** in `docker-publish.yml` is the terminal status for the called path. `notify` is `if: always()` so that it can report a fully skipped run, which means a green `notify` is not evidence; `publish-gate` fails when any publish job did not succeed. The scan-only `pull_request` path and the `workflow_run` path where `resolve-tag` is skipped are unchanged.
+
+The generated manifest is validated against `infra/release-manifest.schema.json` before the GitHub Release is created or the asset is uploaded, using the same hash-locked `jsonschema` that `make test-release-manifest` uses. A non-conforming manifest fails the release and nothing is published.
 
 Verify a downloaded manifest:
 
@@ -175,6 +182,16 @@ Container images published to GHCR include GitHub artifact attestations (see `do
 - Tags `v*.*.*` are created only by the **Version Release PR** publish step or documented hotfix flow — not ad hoc in the GitHub UI.
 - SBOM signing runs in [`.github/workflows/release.yml`](../.github/workflows/release.yml) using GitHub OIDC (`id-token: write`); cosign certificates identify the workflow and repository.
 - Branch protection on `main` blocks unreviewed direct pushes ([`.github/branch-protection-main.json`](../.github/branch-protection-main.json)).
+
+### Why release tags are not signed
+
+Tag signing is deliberately out of scope for this pipeline. Adding it would not raise the assurance the repository has today.
+
+- **Nothing consumes a tag signature.** No workflow runs `git verify-tag`, the repository has no `allowed_signers` file for SSH signing, no protection rule covers `v*.*.*` tags, and `main` does not require signed commits.
+- **A pipeline-held key adds no assurance.** A signing key stored in repository Actions secrets lives in the same trust boundary as `VERSION_RELEASE_TOKEN`. An actor who can make the pipeline sign a tag can already make it push the tag and its release assets, so the signature would attest to the same identity as the artifact it is meant to protect.
+- **Provenance comes from the build platform instead.** Image digests carry GitHub artifact attestations and keyless cosign signatures, and `sbom.spdx.json` carries a keyless cosign bundle. Those bind the artifact to a workflow identity through OIDC, with no long-lived signing key to steal.
+
+Revisit this only when something verifies the tag itself: a `git verify-tag` gate in CI or a deployment, tag protection that requires signatures, or an external consumer that checks them.
 
 ## Support scope and security updates (OSPS-DO-04.01, OSPS-DO-05.01)
 
