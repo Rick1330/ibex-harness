@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -210,26 +209,14 @@ func TestBootstrapIntegrationAsBootstrapLogin(t *testing.T) {
 	if os.Getenv("POSTGRES_TEST_DSN") == "" {
 		t.Skip("POSTGRES_TEST_DSN not set")
 	}
-	dsn, cleanup := testutil.SetupPostgres(t)
-	t.Cleanup(cleanup)
+	ownerDB, dsn := openIntegrationDB(t)
 
-	ownerDB := testutil.OpenDB(t, dsn)
-	t.Cleanup(func() { _ = ownerDB.Close() })
-
-	cfg := bootstrapConfig{
-		PostgresDSN: openCapabilityDSN(t, dsn, "ibex_bootstrap", testutil.BootstrapLoginTestPassword),
-		OrgName:     "Bootstrap As Login",
-		OrgSlug:     uuid.NewString(),
-		UserEmail:   "login-owner@example.com",
-		UserName:    "Owner",
-		AgentName:   "Default Agent",
-		AgentSlug:   "default",
-		PATName:     "Bootstrap PAT",
-		PATFile:     filepath.Join(t.TempDir(), "bootstrap.pat"),
-		MemoryToken: generatePAT(t),
-		// Shared test database: this run is a deliberate second tenant.
-		AllowSecondOrg: true,
-	}
+	cfg := newBootstrapConfig(t, openCapabilityDSN(t, dsn, "ibex_bootstrap", testutil.BootstrapLoginTestPassword),
+		uuid.NewString(), "login-owner@example.com")
+	cfg.OrgName = "Bootstrap As Login"
+	cfg.MemoryToken = generatePAT(t)
+	// Shared test database: this run is a deliberate second tenant.
+	cfg.AllowSecondOrg = true
 	t.Cleanup(func() { cleanupBootstrapOrg(t, ownerDB, cfg.OrgSlug) })
 
 	testutil.ProvisionCapabilityLogins(t, dsn)

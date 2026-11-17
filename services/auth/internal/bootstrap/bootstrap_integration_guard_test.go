@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -137,20 +136,13 @@ func dsnForDatabase(t *testing.T, dsn, database string) string {
 
 // firstRunConfig is one first-run bootstrap aimed at a fresh installation, with
 // the second-organization guard enabled: the guard is what these tests exercise.
+// No memory-service bearer is supplied, so the run has to mint the organization
+// and its token itself.
 func firstRunConfig(t *testing.T, dsn, slug string) bootstrapConfig {
 	t.Helper()
-	return bootstrapConfig{
-		PostgresDSN:    dsn,
-		OrgName:        "Concurrent " + slug,
-		OrgSlug:        slug,
-		UserEmail:      "owner@example.com",
-		UserName:       "Owner",
-		AgentName:      "Default Agent",
-		AgentSlug:      "default",
-		PATName:        "Bootstrap PAT",
-		PATFile:        filepath.Join(t.TempDir(), "bootstrap.pat"),
-		AllowSecondOrg: false,
-	}
+	cfg := newBootstrapConfig(t, dsn, slug, "owner@example.com")
+	cfg.OrgName = "Concurrent " + slug
+	return cfg
 }
 
 // runConcurrently starts every configuration at the same instant and returns

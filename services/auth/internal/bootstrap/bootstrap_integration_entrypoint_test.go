@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/packages/crypto"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
@@ -41,14 +40,7 @@ func newEntrypointFixture(t *testing.T, orgName string) entrypointFixture {
 	if os.Getenv("POSTGRES_TEST_DSN") == "" {
 		t.Skip("POSTGRES_TEST_DSN not set")
 	}
-	dsn, cleanup := testutil.SetupPostgres(t)
-	t.Cleanup(cleanup)
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db, dsn := openIntegrationDB(t)
 
 	slug := uuid.NewString()
 	t.Cleanup(func() { cleanupBootstrapOrg(t, db, slug) })
@@ -197,14 +189,7 @@ func TestBootstrapIntegrationRunFailsWhenPATCannotBeWritten(t *testing.T) {
 	if os.Getenv("POSTGRES_TEST_DSN") == "" {
 		t.Skip("POSTGRES_TEST_DSN not set")
 	}
-	dsn, cleanup := testutil.SetupPostgres(t)
-	t.Cleanup(cleanup)
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db, dsn := openIntegrationDB(t)
 
 	slug := uuid.NewString()
 	t.Cleanup(func() { cleanupBootstrapOrg(t, db, slug) })
@@ -256,14 +241,7 @@ func TestBootstrapIntegrationRunFailsWhenSummaryCannotBeWritten(t *testing.T) {
 	if os.Getenv("POSTGRES_TEST_DSN") == "" {
 		t.Skip("POSTGRES_TEST_DSN not set")
 	}
-	dsn, cleanup := testutil.SetupPostgres(t)
-	t.Cleanup(cleanup)
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db, dsn := openIntegrationDB(t)
 
 	slug := uuid.NewString()
 	t.Cleanup(func() { cleanupBootstrapOrg(t, db, slug) })
