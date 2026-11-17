@@ -50,6 +50,10 @@ EXPOSE 8081
 # the same variable and default (8081) the HTTP server binds to
 # (services/relay/internal/config/env_config.go). The exec form would freeze the
 # port at build time and report a relay on a non-default port as unhealthy.
+# DL3025 is suppressed for this instruction only: hadolint 2.13+ extends the rule
+# to the HEALTHCHECK CMD, which is not a container CMD/ENTRYPOINT, and the exec
+# form is exactly the defect described above.
+# hadolint ignore=DL3025
 HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -qO- "http://127.0.0.1:${IBEX_PORT:-8081}/health"
 ENTRYPOINT ["/usr/local/bin/relay"]
