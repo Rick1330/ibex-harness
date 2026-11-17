@@ -219,10 +219,11 @@ func seedUpgradeFixture(t *testing.T, db *sql.DB) upgradeSeed {
 
 // insertUpgradeToken writes one token row with the columns v0.1.9 requires.
 func insertUpgradeToken(ctx context.Context, tx *sql.Tx, seed upgradeToken) error {
+	tokenName := "token-" + seed.prefix
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO ibex_core.tokens (org_id, type, hash, prefix, name, permissions)
 		VALUES ($1::uuid, 'pat', $2, $3, $4, 0)`,
-		seed.orgID, seed.hash, seed.prefix, "token-"+seed.prefix)
+		seed.orgID, seed.hash, seed.prefix, tokenName)
 	return err
 }
 
@@ -248,12 +249,13 @@ func insertUpgradeMemory(ctx context.Context, tx *sql.Tx, seed upgradeMemory) (s
 		deletedAt = time.Now().UTC()
 	}
 	var id string
+	contentHash := "hash-" + seed.content
 	err := tx.QueryRowContext(ctx, `
 		INSERT INTO ibex_core.memories
 			(org_id, agent_id, content, content_hash, content_tokens, category, status, deleted_at)
 		VALUES ($1::uuid, $2::uuid, $3, $4, 1, 'factual', $5, $6)
 		RETURNING id::text`,
-		seed.orgID, seed.agentID, seed.content, "hash-"+seed.content, seed.status, deletedAt).Scan(&id)
+		seed.orgID, seed.agentID, seed.content, contentHash, seed.status, deletedAt).Scan(&id)
 	return id, err
 }
 
@@ -450,10 +452,12 @@ func assertTokenPrefixIndexes(t *testing.T, db *sql.DB) {
 func assertPrefixIndex(t *testing.T, db *sql.DB, want prefixIndexCheck) {
 	t.Helper()
 	var valid, ready, unique bool
+	indexName := "ibex_core." + want.name
+	// nosemgrep: go.lang.security.audit.sqli.gosql-sqli.gosql-sqli -- the query is a literal; indexName is bound to $1, not concatenated into SQL
 	err := db.QueryRowContext(context.Background(), `
 		SELECT i.indisvalid, i.indisready, i.indisunique
 		FROM pg_index i
-		WHERE i.indexrelid = to_regclass($1)`, "ibex_core."+want.name).Scan(&valid, &ready, &unique)
+		WHERE i.indexrelid = to_regclass($1)`, indexName).Scan(&valid, &ready, &unique)
 	if err != nil {
 		t.Fatalf("read %s flags: %v", want.name, err)
 	}
