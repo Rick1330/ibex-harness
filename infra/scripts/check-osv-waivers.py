@@ -40,7 +40,9 @@ dependency was upgraded) is the other exit, and it needs both files edited too
 A fully remediated record is a valid input: a TOML with no `[[IgnoredVulns]]`
 entries (or an empty `IgnoredVulns`) and a table header with zero data rows both
 pass, because that is what every waiver removed leaves behind. A missing section,
-a missing header, and a duplicate row for one advisory are still input errors.
+a missing header, and a duplicate row for one advisory are still input errors, as
+is an `ignoreUntil` that is not a bare `YYYY-MM-DD` date: a datetime is refused,
+not truncated to its date.
 
 Exit 1 on drift or a waiver inside the window, 2 when an input cannot be read,
 parsed, or resolves outside this checkout, 0 otherwise.
@@ -153,18 +155,61 @@ def _ignored_vuln_entries(document: dict, path: pathlib.Path) -> list[object]:
 
 
 def _waiver_from_entry(entry: object, index: int, path: pathlib.Path) -> Waiver:
-    """Read one `[[IgnoredVulns]]` entry, refusing one the check cannot use."""
+    """Read one `[[IgnoredVulns]]` entry, refusing one the check cannot use.
+
+    Each rule lives in its own helper, so this reads as the sequence of checks it
+    is: an entry must be a table, it must name an advisory, and its expiry must
+    be a bare date.
+    """
+    table = _entry_as_table(entry, index, path)
+    advisory = _required_advisory(table, index, path)
+    expires = _required_bare_date(table, advisory, path)
+    return Waiver(advisory=advisory.upper(), expires=expires)
+
+
+def _entry_as_table(entry: object, index: int, path: pathlib.Path) -> dict:
+    """Refuse an `[[IgnoredVulns]]` item that is not a table."""
     if not isinstance(entry, dict):
         raise InputError(f"{path}: IgnoredVulns entry {index} is not a table")
-    advisory = str(entry.get("id", "")).strip()
-    expires = entry.get("ignoreUntil")
+    return entry
+
+
+def _required_advisory(table: dict, index: int, path: pathlib.Path) -> str:
+    """Return the entry's advisory id, refusing an entry that names none.
+
+    The id is read as text instead of type-checked: a numeric `id` is accepted
+    today, so refusing it here would be a behaviour change rather than a
+    refactor.
+    """
+    advisory = str(table.get("id", "")).strip()
     if not advisory:
         raise InputError(f"{path}: IgnoredVulns entry {index} has no id")
+    return advisory
+
+
+def _required_bare_date(table: dict, advisory: str, path: pathlib.Path) -> datetime.date:
+    """Return `ignoreUntil` as a date, refusing anything that is not a bare date.
+
+    A TOML datetime (`ignoreUntil = 2027-03-01T00:00:00Z`) parses to
+    `datetime.datetime`, which is a `datetime.date` subclass, so it must be
+    refused here before the date check the comparison relies on: the expiry
+    comparison then mixed a datetime with a date, and the recorded-date parity
+    compared values that can never be equal. It is refused rather than truncated
+    to its date because the table records a bare date, so accepting a time would
+    state a fact the operator did not write -- the same reason a quoted date is
+    refused.
+    """
+    expires = table.get("ignoreUntil")
+    if isinstance(expires, datetime.datetime):
+        raise InputError(
+            f"{path}: waiver {advisory} has ignoreUntil = {expires.isoformat()}; "
+            "expected a bare date (YYYY-MM-DD), not a datetime"
+        )
     if not isinstance(expires, datetime.date):
         # A missing or unquoted date would make the entry permanent without
         # anyone deciding that, which is the opposite of the policy.
         raise InputError(f"{path}: waiver {advisory} has no date-valued ignoreUntil")
-    return Waiver(advisory=advisory.upper(), expires=expires)
+    return expires
 
 
 def load_toml_waivers(path: pathlib.Path) -> list[Waiver]:

@@ -81,7 +81,13 @@ func requireRunSucceeded(t *testing.T, run entrypointRun) {
 func assertSummaryNamesPATFile(t *testing.T, stdout, patFile string) {
 	t.Helper()
 	if strings.Contains(stdout, "ibex_pat_") {
-		t.Fatalf("summary printed the PAT: %s", stdout)
+		// The summary must not carry the bearer, so a failure here means stdout
+		// holds a generated credential. Report where it appeared and how large
+		// the output is, never the value: this log is a CI artifact.
+		t.Fatalf(
+			"summary printed a PAT-shaped value (%d bytes of stdout, ibex_pat_ prefix present)",
+			len(stdout),
+		)
 	}
 	if !strings.Contains(stdout, "IBEX_BOOTSTRAP_PAT_FILE="+patFile) {
 		t.Fatalf("summary did not name the PAT file: %s", stdout)

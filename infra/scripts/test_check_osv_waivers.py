@@ -100,6 +100,49 @@ class TomlWaiverTests(unittest.TestCase):
                 """
             )
 
+    def test_a_bare_date_is_kept_as_a_date(self) -> None:
+        # Not datetime: datetime subclasses date, and a stored datetime breaks the
+        # date-only comparison the expiry check performs.
+        found = waivers(
+            """
+            [[IgnoredVulns]]
+            id = "GHSA-aaaa-bbbb-cccc"
+            ignoreUntil = 2027-03-01
+            reason = "bare"
+            """
+        )
+        self.assertEqual(found[0].expires, datetime.date(2027, 3, 1))
+        self.assertIs(type(found[0].expires), datetime.date)
+
+    def test_a_midnight_datetime_is_refused(self) -> None:
+        # `2027-03-01T00:00:00Z` parses to datetime.datetime, which isinstance
+        # reads as a date; truncating it would record a value the operator did
+        # not write, so it is refused with the expected form.
+        with self.assertRaises(check_osv_waivers.InputError) as caught:
+            waivers(
+                """
+                [[IgnoredVulns]]
+                id = "GHSA-aaaa-bbbb-cccc"
+                ignoreUntil = 2027-03-01T00:00:00Z
+                reason = "midnight datetime"
+                """
+            )
+        message = str(caught.exception)
+        self.assertIn("GHSA-aaaa-bbbb-cccc", message)
+        self.assertIn("YYYY-MM-DD", message)
+
+    def test_a_datetime_with_a_time_component_is_refused(self) -> None:
+        with self.assertRaises(check_osv_waivers.InputError) as caught:
+            waivers(
+                """
+                [[IgnoredVulns]]
+                id = "GHSA-aaaa-bbbb-cccc"
+                ignoreUntil = 2027-03-01T12:30:00Z
+                reason = "datetime with a time"
+                """
+            )
+        self.assertIn("GHSA-aaaa-bbbb-cccc", str(caught.exception))
+
     def test_an_entry_without_an_id_is_refused(self) -> None:
         with self.assertRaises(check_osv_waivers.InputError):
             waivers(
@@ -374,6 +417,18 @@ class MainTests(unittest.TestCase):
         self.config.write_text(textwrap.dedent(toml), encoding="utf-8")
         self.table.write_text(textwrap.dedent(table), encoding="utf-8")
 
+    def test_a_datetime_waiver_exits_two(self) -> None:
+        # Before the type check was tightened this reached check_expiry and raised
+        # TypeError, so the gate crashed instead of reporting an input error.
+        self._write(
+            TOML_IN_AGREEMENT.replace(
+                "ignoreUntil = 2027-03-01", "ignoreUntil = 2027-03-01T00:00:00Z"
+            )
+        )
+        code, _, err = self._run("--today", "2026-11-17")
+        self.assertEqual(code, 2, err)
+        self.assertIn("expected a bare date (YYYY-MM-DD)", err)
+
     def test_a_clean_record_exits_zero(self) -> None:
         self._write()
         code, out, err = self._run("--today", "2026-11-17")
@@ -464,14 +519,18 @@ class MainTests(unittest.TestCase):
         asked: list[datetime.tzinfo] = []
 
         class _Clock:
-            def now(self, tz: datetime.tzinfo) -> datetime.datetime:
+            # A class, not an instance: the script type-checks `ignoreUntil`
+            # against `datetime.datetime`, and `isinstance(value, instance)`
+            # raises TypeError.
+            @staticmethod
+            def now(tz: datetime.tzinfo) -> datetime.datetime:
                 asked.append(tz)
                 return fixed
 
         with patch.object(
             check_osv_waivers,
             "datetime",
-            SimpleNamespace(datetime=_Clock(), date=datetime.date, UTC=datetime.UTC),
+            SimpleNamespace(datetime=_Clock, date=datetime.date, UTC=datetime.UTC),
         ):
             code, _, err = self._run("--lead-days", "200")
 

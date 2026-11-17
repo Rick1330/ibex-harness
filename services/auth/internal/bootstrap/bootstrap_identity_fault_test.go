@@ -82,7 +82,12 @@ func TestCreateIdentityErrorPaths(t *testing.T) {
 			t.Fatalf("createIdentity: %v", err)
 		}
 		if !result.MemoryTokenManaged || result.PAT == "" {
-			t.Fatalf("result = %+v", result)
+			// Report presence, never the value: result.PAT is a generated bearer
+			// and this log is a CI artifact.
+			t.Fatalf(
+				"memory token managed = %t, PAT present = %t",
+				result.MemoryTokenManaged, result.PAT != "",
+			)
 		}
 	})
 }
