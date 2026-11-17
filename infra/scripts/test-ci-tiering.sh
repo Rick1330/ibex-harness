@@ -219,25 +219,99 @@ for services_list in "${services_lists[@]}"; do
   fi
 done
 
+# --- helpers for edge assertions -------------------------------------------
+# `needs:` is inline (`needs: [a, b]`) in most jobs and a list in the aggregates.
+# Both spellings are normalised to one job name per line, so an assertion reads
+# the edge and not the fact that a name appears somewhere in the block.
+needs_tokens() {
+  local file="$1" job="$2"
+  file_block "$file" "$job" |
+    awk '
+      /^    needs:/ { pull = 1; sub(/^    needs:[[:space:]]*/, ""); print; next }
+      pull && /^      - / { sub(/^      -[[:space:]]*/, ""); print; next }
+      pull { exit }
+    ' |
+    tr -d '[]' | tr ',' '\n' | tr -d ' \r' | sed '/^$/d'
+}
+
+# The push job's published digest must come from a step that exists in it,
+# otherwise `outputs.digest` resolves to the empty string and every consumer
+# (SBOM, attestation, cosign, manifest) silently binds to nothing.
+digest_step_id() {
+  grep -oE 'digest: *\$\{\{ *steps\.[A-Za-z0-9_-]+\.outputs\.digest *\}\}' <<<"$1" |
+    sed -E 's/.*steps\.([A-Za-z0-9_-]+)\.outputs.*/\1/' | head -1
+}
+
+# Root-level files copied into an image (go.mod, .npmrc, …). The token must be a
+# regular file at the repository root: `COPY packages ./packages` and a trailing
+# backslash name directories, which the directory globs already cover, while
+# `COPY package.json …` names one file that a filter list can forget.
+root_copy_sources() {
+  awk '
+    /^COPY / {
+      for (i = 2; i <= NF; i++) {
+        if ($i ~ /^--/) continue
+        if ($i ~ /\//) continue
+        if ($i == "\\") continue
+        print $i
+      }
+    }
+  ' "$1" | while read -r candidate; do
+    [[ -f "$ROOT/${candidate}" ]] && printf '%s\n' "$candidate"
+  done
+}
+
 # --- published images are gated and evidenced ------------------------------
 # P1-50: a push-* job is the only way an image reaches the registry, so every
-# push job needs the amd64 build whose tar the scan gate reads, and the scan
-# job itself. A publish job without one of them ships an unscanned image.
-missing_gates=()
+# push job needs the amd64 build whose tar the scan gate reads and the scan job
+# itself. Existence of the two jobs is not the gate; the ordering edge is. A push
+# job that does not `needs` its scan job still publishes — removing one name from
+# one `needs:` list used to pass this test — so the assertions read the edges.
+broken_edges=()
 for service in $publish_services; do
+  tokens="$(needs_tokens "$DOCKER" "push-${service}")"
+  grep -Fxq "scan-image-${service}" <<<"$tokens" ||
+    broken_edges+=("push-${service} does not need scan-image-${service}")
+  grep -Fxq "resolve-tag" <<<"$tokens" ||
+    broken_edges+=("push-${service} does not need resolve-tag")
   for prefix in build scan-image; do
-    grep -Fxq "  ${prefix}-${service}:" "$DOCKER" || missing_gates+=("${prefix}-${service}")
+    grep -Fxq "  ${prefix}-${service}:" "$DOCKER" ||
+      broken_edges+=("push-${service} has no ${prefix}-${service} job")
   done
 done
-if (( ${#missing_gates[@]} == 0 )); then
-  pass "every push-* job has a build and a scan gate ($(wc -w <<<"$publish_services") images)"
+if (( ${#broken_edges[@]} == 0 )); then
+  pass "every push-* job needs its own scan gate and has a build gate ($(wc -w <<<"$publish_services") images)"
 else
-  bad "published images without a build or scan gate: ${missing_gates[*]}"
+  bad "publish ordering is broken: ${broken_edges[*]}"
+fi
+
+missing_digest=()
+unproduced_digest=()
+for service in $publish_services; do
+  push_block="$(file_block "$DOCKER" "push-${service}")"
+  step_id="$(digest_step_id "$push_block" || true)"
+  if [[ -z "$step_id" ]]; then
+    missing_digest+=("push-${service}")
+  elif ! grep -Eq "^[[:space:]]+id: ${step_id}$" <<<"$push_block"; then
+    unproduced_digest+=("push-${service} (no step id ${step_id})")
+  fi
+done
+if (( ${#missing_digest[@]} == 0 )); then
+  pass "every push-* job exposes a digest output"
+else
+  bad "push jobs with no digest output: ${missing_digest[*]}"
+fi
+if (( ${#unproduced_digest[@]} == 0 )); then
+  pass "every push-* digest output names a step that exists in that job"
+else
+  bad "digest outputs naming a step the job does not have: ${unproduced_digest[*]}"
 fi
 
 # P1-09: one SPDX SBOM per published image, generated from the digest the push
 # job published, and attached to the tagged release. An SBOM for an image that
-# is not fed into the generator is an image with no evidence asset.
+# is not fed into the generator is an image with no evidence asset, and a loop
+# entry that names the wrong job's digest binds the document to the wrong image,
+# so the loop is compared against the push jobs in both directions.
 sbom_block="$(file_block "$DOCKER" sbom-images)"
 if grep -Fq -- '--output spdx-json' <<<"$sbom_block" &&
   grep -Fq '.sbom.spdx.json' <<<"$sbom_block"; then
@@ -245,15 +319,68 @@ if grep -Fq -- '--output spdx-json' <<<"$sbom_block" &&
 else
   bad "docker-publish has no per-image SPDX SBOM step"
 fi
+
+sbom_loop="$(awk '
+  /<<EOF/ { inloop = 1; next }
+  inloop && /^[[:space:]]*EOF$/ { exit }
+  inloop { sub(/^[[:space:]]+/, ""); if ($0 != "") print }
+' <<<"$sbom_block")"
+if [[ -z "$sbom_loop" ]]; then
+  bad "docker-publish has no SBOM digest loop"
+fi
+loop_services="$(awk '{print $1}' <<<"$sbom_loop" | sed '/^$/d' | sort)"
+
 missing_sbom=()
 for service in $publish_services; do
-  grep -Fq -- "- push-${service}" <<<"$sbom_block" || missing_sbom+=("$service")
+  grep -Fxq "$service" <<<"$loop_services" ||
+    missing_sbom+=("${service} is missing from the SBOM loop")
 done
 if (( ${#missing_sbom[@]} == 0 )); then
-  pass "the SBOM job consumes every push job digest"
+  pass "the SBOM loop contains every push job"
 else
-  bad "the SBOM job ignores published images: ${missing_sbom[*]}"
+  bad "the SBOM loop is incomplete: ${missing_sbom[*]}"
 fi
+
+# Every loop entry must be a published image: a service in the loop with no
+# push-* job asks for a digest nothing produces, which is the same defect from
+# the other side.
+sbom_needs="$(needs_tokens "$DOCKER" sbom-images | sort)"
+orphan_sbom=()
+extra_sbom=()
+while read -r service; do
+  [[ -n "$service" ]] || continue
+  grep -Fxq "push-${service}" <<<"$sbom_needs" ||
+    orphan_sbom+=("the SBOM loop generates ${service} but no push-${service} job produces it")
+done <<<"$loop_services"
+for service in $publish_services; do
+  grep -Fxq "push-${service}" <<<"$sbom_needs" ||
+    extra_sbom+=("push-${service}")
+done
+if (( ${#orphan_sbom[@]} == 0 && ${#extra_sbom[@]} == 0 )); then
+  pass "the SBOM job depends on exactly the push jobs its loop generates for"
+else
+  bad "SBOM job/push-job mismatch: ${orphan_sbom[*]} ${extra_sbom[*]}"
+fi
+
+# The loop line, the env var it reads, and the output it binds must name the same
+# service. Names alone are not enough: `console ${CONSOLE_DIGEST}` passing while
+# CONSOLE_DIGEST reads needs.push-relay.outputs.digest binds the wrong document.
+unbound_digest=()
+while read -r line; do
+  [[ -n "$line" ]] || continue
+  service="${line%% *}"
+  var="${line##* }"
+  var="${var#\$\{}"
+  var="${var%\}}"
+  grep -Fq -- "${var}: \${{ needs.push-${service}.outputs.digest }}" <<<"$sbom_block" ||
+    unbound_digest+=("${service}: ${var} is not needs.push-${service}.outputs.digest")
+done <<<"$sbom_loop"
+if (( ${#unbound_digest[@]} == 0 )); then
+  pass "each SBOM loop entry binds its own push job's digest"
+else
+  bad "the SBOM job binds the wrong digest: ${unbound_digest[*]}"
+fi
+
 if grep -Fq 'SPDXRef-DocumentRoot' <<<"$sbom_block"; then
   pass "each SBOM is asserted to name the digest it describes"
 else
@@ -263,6 +390,49 @@ if grep -Fq 'sboms/*.sbom.spdx.json' <<<"$manifest_block"; then
   pass "tagged release uploads the per-image SBOMs"
 else
   bad "tagged release does not upload the per-image SBOMs"
+fi
+
+# --- copied image inputs are triggers --------------------------------------
+# A file copied into an image build must trigger that build. Devin's finding: the
+# console Dockerfile copies the root workspace config, but an .npmrc-only change
+# matched no docker-publish path entry, and after merge the detector left
+# run_docker false, so the publish skipped and :latest kept the previous install
+# layout while the merged source used the new one. The lists below are derived
+# from the Dockerfiles so a COPY line that grows a file fails here instead of
+# being found after a release.
+filter_block() {
+  local file="$1" key="$2"
+  awk -v k="${key}:" '$0 == k { f = 1 } f && /^[a-z]+:$/ && $0 != k { exit } f { print }' "$file"
+}
+FILTERS="$ROOT/.github/path-filters.yml"
+missing_console_inputs=()
+while read -r input; do
+  [[ -n "$input" ]] || continue
+  grep -Fq -- "'${input}'" "$DOCKER" ||
+    missing_console_inputs+=("${input} is not in the Docker Publish PR filter")
+  grep -Fq -- "- '${input}'" <<<"$(filter_block "$FILTERS" docker)" ||
+    missing_console_inputs+=("${input} does not set run_docker")
+  grep -Fq -- "- '${input}'" <<<"$(filter_block "$FILTERS" console)" ||
+    missing_console_inputs+=("${input} does not run the console-quality gate")
+done <<<"$(root_copy_sources "$ROOT/services/console/Dockerfile")"
+if (( ${#missing_console_inputs[@]} == 0 )); then
+  pass "every root file the console Dockerfile copies is a trigger for its build"
+else
+  bad "console image inputs with no trigger: ${missing_console_inputs[*]}"
+fi
+
+missing_publish_inputs=()
+for service in $publish_services; do
+  while read -r input; do
+    [[ -n "$input" ]] || continue
+    grep -Fq -- "'${input}'" "$DOCKER" ||
+      missing_publish_inputs+=("${service}/${input} is not in the Docker Publish PR filter")
+  done <<<"$(root_copy_sources "$ROOT/services/${service}/Dockerfile")"
+done
+if (( ${#missing_publish_inputs[@]} == 0 )); then
+  pass "every root file a published image copies is a Docker Publish trigger"
+else
+  bad "published image inputs with no trigger: ${missing_publish_inputs[*]}"
 fi
 
 if (( fail != 0 )); then

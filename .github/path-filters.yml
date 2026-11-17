@@ -89,6 +89,15 @@ site:
   - '.github/actions/setup-pnpm-node/**'
 console:
   - 'services/console/**'
+  # The console image is not published (docker-publish.yml header records the ten
+  # HIGH CVEs behind that), so ci.yml's console-quality job is the only place the
+  # console is still installed and built. These are the root workspace-config
+  # files its build copies, and .npmrc (`node-linker=hoisted`) is part of the
+  # install contract: an .npmrc-only change must run the gate that resolves it.
+  - '.npmrc'
+  - 'package.json'
+  - 'pnpm-lock.yaml'
+  - 'pnpm-workspace.yaml'
   # `services/console/tests/surfaces.test.ts` reads the REST/gRPC/MCP registry and fails
   # on a surface that names a contract the registry does not carry (R01). The registry
   # lives under engineering/**, which matched only the `site` filter, so a registry-only
@@ -103,6 +112,17 @@ docker:
   - 'services/**/Dockerfile'
   - 'services/*/Dockerfile'
   - '.hadolint.yaml'
+  # The console image's root workspace-config COPY set. The `docker` filter is
+  # what sets run_docker, and docker-publish's resolve-tag only runs on a
+  # workflow_run when run_docker or run_go is true: without these entries an
+  # .npmrc-only merge left the publish skipped, so :latest kept the previous
+  # pnpm install layout (`node-linker=hoisted`) while the merged source used the
+  # new one. Kept as the console image's input contract while the image is out of
+  # the published set (docker-publish.yml header records why).
+  - '.npmrc'
+  - 'package.json'
+  - 'pnpm-lock.yaml'
+  - 'pnpm-workspace.yaml'
 workflows:
   - '.github/workflows/**'
   - '.github/actions/**'
