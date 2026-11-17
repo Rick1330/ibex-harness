@@ -172,25 +172,38 @@ def load_toml_waivers(path: pathlib.Path) -> list[Waiver]:
     ]
 
 
-def _table_lines(path: pathlib.Path) -> list[tuple[int, str]]:
-    """Return the section's numbered lines: (1-based line number, text)."""
+def _read_text_document(path: pathlib.Path) -> str:
+    """Read one text file, reporting I/O and decoding failures as InputError."""
     try:
-        text = path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         raise InputError(f"cannot read {path}: {error}") from error
 
+
+def _waiver_section_lines(text: str) -> list[tuple[int, str]]:
+    """Return the numbered lines that fall inside the waiver-table section.
+
+    Any heading ends the section: the table is the whole of it. A section that is
+    not there yields nothing, which the caller turns into an InputError so a
+    renamed heading cannot be read as "no waivers".
+    """
     lines: list[tuple[int, str]] = []
     in_section = False
     for number, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
         if stripped.startswith("#"):
-            # Any heading ends the section: the table is the whole of it.
             if in_section:
                 break
             in_section = stripped.startswith(TABLE_HEADING)
             continue
         if in_section:
             lines.append((number, line))
+    return lines
+
+
+def _table_lines(path: pathlib.Path) -> list[tuple[int, str]]:
+    """Return the section's numbered lines: (1-based line number, text)."""
+    lines = _waiver_section_lines(_read_text_document(path))
     if not lines:
         raise InputError(
             f"{path}: no '{TABLE_HEADING}' section; the waiver table was renamed "
