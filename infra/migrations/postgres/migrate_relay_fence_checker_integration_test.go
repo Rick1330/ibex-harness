@@ -49,11 +49,12 @@ func seedRelayFenceOrgWithSession(t *testing.T, ctx context.Context, db *sql.DB,
 			return err
 		}
 		var userID string
+		agentEmail := uuid.NewString() + "@example.com"
 		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		if err := tx.QueryRowContext(ctx, `
 			INSERT INTO ibex_core.users (org_id, email, name)
 			VALUES ($1::uuid, $2, $3) RETURNING id::text`,
-			orgID, uuid.NewString()+"@example.com", "Fence User").Scan(&userID); err != nil {
+			orgID, agentEmail, "Fence User").Scan(&userID); err != nil {
 			return err
 		}
 		var agentID string

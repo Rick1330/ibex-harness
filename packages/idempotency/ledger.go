@@ -131,9 +131,10 @@ func (l *PostgresLedger) Claim(ctx context.Context, p Principal, key, requestHas
 }
 
 func (l *PostgresLedger) insertOrLoad(ctx context.Context, tx *sql.Tx, p Principal, key, requestHash string) (ledgerRow, bool, error) {
+	leaseInterval := fmt.Sprintf("%f seconds", l.lease.Seconds())
 	// nosemgrep: go_sql_rule-concat-sqli -- the statement is insertLedgerSQL, a literal with $1-$5 placeholders; the only computed value is the lease interval from fmt.Sprintf, passed as the $5::interval bound argument, never concatenated into the SQL text.
 	row, err := scanLedgerRow(tx.QueryRowContext(ctx, insertLedgerSQL, // NOSONAR — static SQL with bound arguments.
-		p.OrgID, p.AgentID, key, requestHash, fmt.Sprintf("%f seconds", l.lease.Seconds())))
+		p.OrgID, p.AgentID, key, requestHash, leaseInterval))
 	if err == nil {
 		return row, true, nil
 	}

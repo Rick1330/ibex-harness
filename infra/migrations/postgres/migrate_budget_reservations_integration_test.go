@@ -141,13 +141,14 @@ func assertBudgetConstraintCases(ctx context.Context, t *testing.T, f budgetRese
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := withServiceAccount(ctx, f.db, func(tx *sql.Tx) error {
+				reservationKey := "constraint-" + tc.name
 				// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the only concatenated fragment is tc.values, a SQL literal from the cases table; org, agent, period and hash are bound arguments.
 				_, e := tx.ExecContext(ctx, `
 					INSERT INTO ibex_core.budget_reservations
 						(organization_id, agent_id, budget_period_id, reservation_key, request_hash,
 						 state, amount_estimated_cents, amount_final_cents, finalized_completeness, lease_expires_at)
 					VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, `+tc.values+`)`,
-					f.orgA, f.agentA, f.periodA, "constraint-"+tc.name, hash)
+					f.orgA, f.agentA, f.periodA, reservationKey, hash)
 				return e
 			})
 			requireBudgetSQLState(t, err, tc.code)

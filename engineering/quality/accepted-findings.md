@@ -30,11 +30,12 @@ below is later fixed or the reason stops holding, delete its row and say so in t
 | Tool | Findings | Disposition |
 |---|---|---|
 | SonarQube | 15 | Accepted — see `plsql:S1192` below |
-| Codacy (Opengrep and Pylint) | 42 | 1 fixed, 41 suppressed inline at the call site — see "Codacy `Error` findings" below |
+| Codacy (Opengrep and Pylint) | 42 | 42 suppressed at the call site (41 Opengrep, 1 Pylint) — see "Codacy `Error` findings" below |
 
-The Codacy set closes as **1 fixed** and **41 suppressed inline**, which accounts for all 42 findings.
-Each suppression names one rule at one call site and carries its reason in the comment; the reason for
-choosing that form over a file exclusion is recorded in that section.
+The Codacy set closes as **42 suppressed at the call site** — 41 Opengrep findings and the Pylint `E1120` disable.
+**Zero** were fixed at the cause and **zero** files were excluded, so the 42 is accounted for without claiming a code
+change that did not happen. Each suppression names one rule at one call site and carries its reason in the comment;
+the reason for choosing that form over a file exclusion is recorded in that section.
 
 ---
 
@@ -145,7 +146,7 @@ remaining rows should be re-checked against the rewritten files; in the second t
 
 ---
 
-## Codacy `Error` findings (42 findings: 1 fixed, 41 suppressed inline)
+## Codacy `Error` findings (42 findings: 42 suppressed at the call site)
 
 Codacy reports 42 `Error`-severity findings on `main`. Grouped by rule:
 
@@ -158,9 +159,10 @@ Codacy reports 42 `Error`-severity findings on `main`. Grouped by rule:
 
 | Disposition | Findings | Files | Mechanism |
 |---|---|---|---|
-| Fixed | 1 | 1 | rule-scoped `# pylint: disable` at the call site |
-| Suppressed inline | 41 | 21 | `// nosemgrep: <rule>` at the call site, reason inline |
-| **Total** | **42** | | |
+| Suppressed at the call site | 42 | 22 | 41 × `// nosemgrep: <rule>`; 1 × `# pylint: disable=<rule>` — each on, or immediately above, one call site, reason inline |
+| Fixed at the cause | 0 | 0 | — |
+| Excluded by file | 0 | 0 | — |
+| **Total** | **42** | **22** | |
 
 ### Why the suppression is inline rather than by file
 
@@ -168,9 +170,10 @@ Codacy's `.codacy.yml` can only ignore whole files or globs, not a single findin
 that carry the 37 fixture findings would also hide every *other* Opengrep finding in those files, and excluding
 `store.go`, `ledger.go`, `budget.py`, or `pgcapability.sh` would do the same to production code.
 `engineering/agent-playbook.md` §6.1 requires a suppression to be "the narrowest scope that covers the true positive …
-**never whole-file or whole-rule**. A blanket disable is itself a finding." Each of the 41 findings is therefore
+**never whole-file or whole-rule**. A blanket disable is itself a finding." Each of the 42 findings is therefore
 suppressed at its call site: one rule id, one reason, on the flagged line or the line immediately above a multi-line
-call. The rule id is the Semgrep id without the tool prefix (`go_sql_rule-concat-sqli`, not
+call. The Pylint `E1120` disable is scoped inline to the one constructor call on the same terms. The rule id is the
+Semgrep id without the tool prefix (`go_sql_rule-concat-sqli`, not
 `Semgrep_go_sql_rule-concat-sqli`), matching the form the Opengrep SSRF suppression in this repository already uses.
 
 ### Why `concat-sqli` fires on all 39 sites
@@ -178,21 +181,28 @@ call. The rule id is the Semgrep id without the tool prefix (`go_sql_rule-concat
 `Semgrep_go_sql_rule-concat-sqli` fires on **every parameterised Go query whose bound argument is a computed value**.
 Its sink is any call to `Exec`/`Query`/`QueryRow` and its sources include `fmt.Sprintf(...)`, string concatenation, and
 `strings.Builder.String()`, so a value built with one of those and then passed as a `$n` argument is reported as if the
-statement text carried it. **The statement itself is never inspected.** In all 39 cases the statement is a literal or a
-test-authored constant with `$n` placeholders — in two fixtures a test-authored fragment from a local table is
-concatenated into it — and the flagged value is a bound argument. Two findings carry a `fmt.Sprintf`-built payload
-that is bound as `$8::jsonb`/`$5::interval`, not statement text. Keeping that explanation here is what makes the
-suppression reviewable.
+statement text carried it. **The statement itself is never inspected.** The relay fixture is the clearest case: the
+taint that reaches its sinks is `"Org "+slug` (literal on the left), which flows through `insertOrg` into `orgID`, not
+`uuid.NewString()+"@example.com"` (literal on the right), which the rule does not treat as a source. In all 39 cases
+the statement is a literal or a test-authored constant with `$n` placeholders — in two fixtures a test-authored
+fragment from a local table is concatenated into it — and the flagged value is a bound argument. Two findings carry a
+`fmt.Sprintf`-built payload that is bound as `$8::jsonb`/`$5::interval`, not statement text. Keeping that explanation
+here is what makes the suppression reviewable.
 
-### Fixed: `services/mcp-memory/app/stdio_main.py:49` — Pylint `E1120`
+### Suppressed at the call site: `services/mcp-memory/app/stdio_main.py:54` — Pylint `E1120`
 
 Pylint reports "No value for argument `enforcer` in constructor call" on `McpServerWiring(...)`. This
 is the documented false positive from `AGENTS.md`: both MCP services define a top-level `app.server`
 module, and a repo-root analysis resolves `from app.server import McpServerWiring` to the *other*
 service's wiring class, which takes `enforcer` and `registry`. This service's class takes `audit`,
-`memory_client`, `agent_verifier`, and `rate_limiter`, and the call passes exactly those. Fixed with
-the same rule-scoped, documented disable that `services/mcp-memory/app/descriptors.py:42` and
-`services/mcp-operator/app/descriptors.py:52` already carry.
+`memory_client`, `agent_verifier`, and `rate_limiter`, and the call passes exactly those.
+
+This is a **suppression, not a fix**: the code is unchanged and the finding is silenced by an inline,
+rule-scoped `# pylint: disable=no-value-for-parameter` on the constructor call itself. It has the same
+standing as the 41 Opengrep suppressions in this section — one rule, one call site, reason inline — and
+no finding in the Codacy set required a code change. The disable uses the same documented form that
+`services/mcp-memory/app/descriptors.py:42` and `services/mcp-operator/app/descriptors.py:52` already
+carry.
 
 ### Suppressed 1: `packages/evidenceoutbox/store.go:550` — `concat-sqli`
 
@@ -258,10 +268,18 @@ becoming reachable from a production caller.
   request, not by this record. If a finding persists with the correct rule id in place, the fallback is
   to retain that finding with a written justification (as this section did before) rather than re-add a
   file exclusion.
+- Two further `concat-sqli` sinks are unsuppressed under the exact rule:
+  `infra/migrations/postgres/migrate_relay_fence_checker_integration_test.go:61` (the agents insert,
+  same `orgID` taint from `"Org "+slug`) and
+  `packages/idempotency/ledger_postgres_integration_test.go:71` (the agents insert,
+  `"ledger-it-agent-"+suffix`). Codacy does not report either, so no suppression was added — adding one
+  would exceed the reported set — and if Codacy reports them the identical one-line
+  `// nosemgrep: go_sql_rule-concat-sqli` applies with the same reason.
 
 ### Re-audit trigger
 
-Revisit this record if Opengrep's `concat-sqli` rule stops treating bound arguments as sinks, if
+Revisit this record if Opengrep's `concat-sqli` source list changes — it currently matches
+`fmt.Sprintf(...)`, `"..." + $X` with the literal on the left, and `strings.Builder.String()` — if
 `representative_nonce` stops being the only source of the framing nonce, if `capability_dsn` gains a
-caller that passes a literal password, or if any of the 21 suppressed sites is edited to build SQL
-text from a value instead of binding it.
+caller that passes a literal password, or if any of the 42 suppressed call sites is edited so that the
+suppression no longer sits next to the flagged expression.
