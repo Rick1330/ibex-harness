@@ -1,5 +1,34 @@
 name: Docker Publish
 
+# Published images: one push-* job each. The set must equal every --services
+# list in release-docker.yml; infra/scripts/test-ci-tiering.sh enforces that, so
+# changing one without the other fails CI.
+#
+#   auth, proxy, embedder, mcp-memory, memory, api, worker, context, console, relay
+#
+# The set is "what the supported v1 profile runs" (ADR-0097,
+# infra/compose/v1-single-node/compose.yml) plus the services that have another
+# shipped deployment path:
+#
+#   - mcp-memory is published for the Helm chart's mcp-memory deployment, which
+#     the Compose profile does not run (templates/mcp-memory-deployment.yaml).
+#     Its continued publication is a keep-or-retire decision, not a follower of
+#     the profile: while that template ships, the image must exist.
+#   - relay is the default-off evidence daemon (ADR-0085, GAP-011). Publishing
+#     it makes the "deployable daemon" claim testable; no profile enables it yet.
+#
+# Not published, recorded as gaps rather than forced:
+#
+#   - mcp-operator has a Dockerfile, no deployment path, and no consumer in the
+#     supported profile. An image nothing runs is unowned supply chain.
+#   - migrate (infra/migrations/Dockerfile) builds from the same context and its
+#     SQL is go:embed'ed, but the release manifest and the verifier address an
+#     image as services/<name>/Dockerfile (infra/scripts/release-manifest.py
+#     _validate_services). Publishing it needs a manifest-generator change, so
+#     it stays a recorded gap instead of a release that cannot generate.
+#   - The Helm chart already carries values.images.migrate with
+#     migrate.enabled=false for the same reason.
+
 env:
   # Primary GHCR DB + mirror fallback (comma-separated per Trivy docs).
   TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2
@@ -13,6 +42,9 @@ on:
       - 'services/**/scripts/**'
       - 'services/auth/**'
       - 'services/proxy/**'
+      - 'services/context/**'
+      - 'services/console/**'
+      - 'services/relay/**'
       - 'infra/provider-capabilities/**'
       - 'services/**/pyproject.toml'
       - 'services/**/uv.lock'
@@ -395,6 +427,113 @@ jobs:
           path: /tmp/worker.tar
           retention-days: 1
 
+  build-context:
+    name: build-context
+    needs: resolve-tag
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build context image artifact
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: services/context/Dockerfile
+          platforms: linux/amd64
+          push: false
+          outputs: type=docker,dest=/tmp/context.tar
+          cache-from: type=gha,scope=context
+          cache-to: type=gha,mode=max,scope=context
+      - name: Upload context OCI artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oci-context
+          path: /tmp/context.tar
+          retention-days: 1
+
+  build-console:
+    name: build-console
+    needs: resolve-tag
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build console image artifact
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: services/console/Dockerfile
+          platforms: linux/amd64
+          push: false
+          outputs: type=docker,dest=/tmp/console.tar
+          cache-from: type=gha,scope=console
+          cache-to: type=gha,mode=max,scope=console
+      - name: Upload console OCI artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oci-console
+          path: /tmp/console.tar
+          retention-days: 1
+
+  build-relay:
+    name: build-relay
+    needs: resolve-tag
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-buf
+      - name: Generate protobuf stubs
+        run: |
+          cd packages/proto
+          buf generate
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build relay image artifact
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: services/relay/Dockerfile
+          platforms: linux/amd64
+          push: false
+          outputs: type=docker,dest=/tmp/relay.tar
+          cache-from: type=gha,scope=relay
+          cache-to: type=gha,mode=max,scope=relay
+      - name: Upload relay OCI artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oci-relay
+          path: /tmp/relay.tar
+          retention-days: 1
+
   scan-image-auth:
     name: scan-image-auth
     needs: build-auth
@@ -732,6 +871,162 @@ jobs:
         with:
           sarif_file: trivy-image-worker.sarif
           category: trivy-image-worker
+
+  scan-image-context:
+    name: scan-image-context
+    needs: build-context
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Download context OCI artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: oci-context
+          path: /tmp
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-trivy
+        with:
+          version: v0.70.0
+      - name: Scan context image with Trivy
+        run: |
+          # Table first so failing CVEs are visible in job logs (SARIF alone is opaque).
+          set +e
+          trivy image --input /tmp/context.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format table \
+            --exit-code 1
+          table_rc=$?
+          trivy image --input /tmp/context.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format sarif \
+            --output trivy-image-context.sarif \
+            --exit-code 0
+          sarif_rc=$?
+          set -e
+          if [ "$table_rc" -ne 0 ] || [ "$sarif_rc" -ne 0 ]; then
+            exit 1
+          fi
+      - name: Upload Trivy context SARIF
+        if: always() && hashFiles('trivy-image-context.sarif') != ''
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: trivy-image-context.sarif
+          category: trivy-image-context
+
+  scan-image-console:
+    name: scan-image-console
+    needs: build-console
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Download console OCI artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: oci-console
+          path: /tmp
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-trivy
+        with:
+          version: v0.70.0
+      - name: Scan console image with Trivy
+        run: |
+          # Table first so failing CVEs are visible in job logs (SARIF alone is opaque).
+          set +e
+          trivy image --input /tmp/console.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format table \
+            --exit-code 1
+          table_rc=$?
+          trivy image --input /tmp/console.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format sarif \
+            --output trivy-image-console.sarif \
+            --exit-code 0
+          sarif_rc=$?
+          set -e
+          if [ "$table_rc" -ne 0 ] || [ "$sarif_rc" -ne 0 ]; then
+            exit 1
+          fi
+      - name: Upload Trivy console SARIF
+        if: always() && hashFiles('trivy-image-console.sarif') != ''
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: trivy-image-console.sarif
+          category: trivy-image-console
+
+  scan-image-relay:
+    name: scan-image-relay
+    needs: build-relay
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Download relay OCI artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: oci-relay
+          path: /tmp
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-trivy
+        with:
+          version: v0.70.0
+      - name: Scan relay image with Trivy
+        run: |
+          # Table first so failing CVEs are visible in job logs (SARIF alone is opaque).
+          set +e
+          trivy image --input /tmp/relay.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format table \
+            --exit-code 1
+          table_rc=$?
+          trivy image --input /tmp/relay.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format sarif \
+            --output trivy-image-relay.sarif \
+            --exit-code 0
+          sarif_rc=$?
+          set -e
+          if [ "$table_rc" -ne 0 ] || [ "$sarif_rc" -ne 0 ]; then
+            exit 1
+          fi
+      - name: Upload Trivy relay SARIF
+        if: always() && hashFiles('trivy-image-relay.sarif') != ''
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: trivy-image-relay.sarif
+          category: trivy-image-relay
 
   push-auth:
     name: push-auth
@@ -1163,6 +1458,191 @@ jobs:
           cache-from: type=gha,scope=worker
           cache-to: type=gha,mode=max,scope=worker
 
+  push-context:
+    name: push-context
+    needs: [resolve-tag, scan-image-context]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: linux/amd64,linux/arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve push tags
+        id: tags
+        env:
+          IMAGE_TAG: ${{ needs.resolve-tag.outputs.tag }}
+          PUSH_LATEST: ${{ needs.resolve-tag.outputs.push_latest }}
+        run: |
+          repo_lc="${GITHUB_REPOSITORY,,}"
+          tags="ghcr.io/${repo_lc}/context:${IMAGE_TAG}"
+          if [ "${PUSH_LATEST}" = "true" ]; then
+            tags="${tags}"$'\n'"ghcr.io/${repo_lc}/context:latest"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build and push context image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: services/context/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=context
+          cache-to: type=gha,mode=max,scope=context
+
+  push-console:
+    name: push-console
+    needs: [resolve-tag, scan-image-console]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: linux/amd64,linux/arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve push tags
+        id: tags
+        env:
+          IMAGE_TAG: ${{ needs.resolve-tag.outputs.tag }}
+          PUSH_LATEST: ${{ needs.resolve-tag.outputs.push_latest }}
+        run: |
+          repo_lc="${GITHUB_REPOSITORY,,}"
+          tags="ghcr.io/${repo_lc}/console:${IMAGE_TAG}"
+          if [ "${PUSH_LATEST}" = "true" ]; then
+            tags="${tags}"$'\n'"ghcr.io/${repo_lc}/console:latest"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build and push console image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: services/console/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=console
+          cache-to: type=gha,mode=max,scope=console
+
+  push-relay:
+    name: push-relay
+    needs: [resolve-tag, scan-image-relay]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-buf
+      - name: Generate protobuf stubs
+        run: |
+          cd packages/proto
+          buf generate
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: linux/amd64,linux/arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve push tags
+        id: tags
+        env:
+          IMAGE_TAG: ${{ needs.resolve-tag.outputs.tag }}
+          PUSH_LATEST: ${{ needs.resolve-tag.outputs.push_latest }}
+        run: |
+          repo_lc="${GITHUB_REPOSITORY,,}"
+          tags="ghcr.io/${repo_lc}/relay:${IMAGE_TAG}"
+          if [ "${PUSH_LATEST}" = "true" ]; then
+            tags="${tags}"$'\n'"ghcr.io/${repo_lc}/relay:latest"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build and push relay image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: services/relay/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=relay
+          cache-to: type=gha,mode=max,scope=relay
+
   # Multi-arch honesty: amd64 tar is the PR gate; after push, scan the exact
   # index digest that was published (covers arm64 layers too).
   scan-pushed-worker:
@@ -1223,9 +1703,102 @@ jobs:
           sarif_file: trivy-image-worker-pushed.sarif
           category: trivy-image-worker-pushed
 
+  # One SPDX SBOM per published image (P1-09). A single job, not one per image:
+  # every push job already exposes the index digest it published, so one loop can
+  # bind each document to that digest. Syft is the generator release.yml already
+  # trusts (anchore/sbom-action). Scanning by index digest records that digest
+  # verbatim as the document root package version, which is what makes the asset
+  # attachable to an image instead of merely adjacent to it. Runs with
+  # always() so a failed publish reports "no digest" instead of skipping the
+  # SBOM silently; the guard below turns that into a named failure.
+  sbom-images:
+    name: sbom-images
+    needs:
+      - resolve-tag
+      - push-auth
+      - push-proxy
+      - push-embedder
+      - push-mcp-memory
+      - push-memory
+      - push-api
+      - push-worker
+      - push-context
+      - push-console
+      - push-relay
+    if: always() && github.event_name != 'pull_request' && needs.resolve-tag.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+      - name: Generate one SBOM per published image
+        env:
+          SYFT_CMD: ${{ steps.syft.outputs.cmd }}
+          AUTH_DIGEST: ${{ needs.push-auth.outputs.digest }}
+          PROXY_DIGEST: ${{ needs.push-proxy.outputs.digest }}
+          EMBEDDER_DIGEST: ${{ needs.push-embedder.outputs.digest }}
+          MCP_MEMORY_DIGEST: ${{ needs.push-mcp-memory.outputs.digest }}
+          MEMORY_DIGEST: ${{ needs.push-memory.outputs.digest }}
+          API_DIGEST: ${{ needs.push-api.outputs.digest }}
+          WORKER_DIGEST: ${{ needs.push-worker.outputs.digest }}
+          CONTEXT_DIGEST: ${{ needs.push-context.outputs.digest }}
+          CONSOLE_DIGEST: ${{ needs.push-console.outputs.digest }}
+          RELAY_DIGEST: ${{ needs.push-relay.outputs.digest }}
+        run: |
+          set -euo pipefail
+          repo_lc="${GITHUB_REPOSITORY,,}"
+          mkdir -p sboms
+          while read -r service digest; do
+            [ -n "$service" ] || continue
+            if [ -z "$digest" ]; then
+              echo "::error::no published digest for ${service}; refusing to emit an unbound SBOM"
+              exit 1
+            fi
+            "$SYFT_CMD" "registry:ghcr.io/${repo_lc}/${service}@${digest}" \
+              --output spdx-json \
+              --file "sboms/${service}.sbom.spdx.json"
+            jq -e --arg d "${digest}" \
+              '[.packages[] | select(.SPDXID | startswith("SPDXRef-DocumentRoot"))]
+               | length == 1 and .[0].versionInfo == $d' \
+              "sboms/${service}.sbom.spdx.json" >/dev/null
+          done <<EOF
+          auth ${AUTH_DIGEST}
+          proxy ${PROXY_DIGEST}
+          embedder ${EMBEDDER_DIGEST}
+          mcp-memory ${MCP_MEMORY_DIGEST}
+          memory ${MEMORY_DIGEST}
+          api ${API_DIGEST}
+          worker ${WORKER_DIGEST}
+          context ${CONTEXT_DIGEST}
+          console ${CONSOLE_DIGEST}
+          relay ${RELAY_DIGEST}
+          EOF
+      - name: Upload per-image SBOMs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-sboms
+          path: sboms/*.sbom.spdx.json
+          # Longer than the OCI tars: these become release assets and an
+          # operator may need the evidence for a release that failed later.
+          retention-days: 5
+
   attest-provenance:
     name: attest-provenance
-    needs: [push-auth, push-proxy, push-embedder, push-mcp-memory, push-memory, push-api, push-worker, scan-pushed-worker]
+    needs: [push-auth, push-proxy, push-embedder, push-mcp-memory, push-memory, push-api, push-worker,
+            push-context, push-console, push-relay, scan-pushed-worker]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -1298,6 +1871,27 @@ jobs:
           subject-digest: ${{ needs.push-worker.outputs.digest }}
           push-to-registry: true
 
+      - name: Attest context image provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ steps.repo_meta.outputs.repo_lc }}/context
+          subject-digest: ${{ needs.push-context.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest console image provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ steps.repo_meta.outputs.repo_lc }}/console
+          subject-digest: ${{ needs.push-console.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest relay image provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ steps.repo_meta.outputs.repo_lc }}/relay
+          subject-digest: ${{ needs.push-relay.outputs.digest }}
+          push-to-registry: true
+
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
@@ -1316,6 +1910,9 @@ jobs:
           cosign sign --yes "${REPO}/memory@${{ needs.push-memory.outputs.digest }}"
           cosign sign --yes "${REPO}/api@${{ needs.push-api.outputs.digest }}"
           cosign sign --yes "${REPO}/worker@${{ needs.push-worker.outputs.digest }}"
+          cosign sign --yes "${REPO}/context@${{ needs.push-context.outputs.digest }}"
+          cosign sign --yes "${REPO}/console@${{ needs.push-console.outputs.digest }}"
+          cosign sign --yes "${REPO}/relay@${{ needs.push-relay.outputs.digest }}"
 
 
   # notify is `if: always()` because it must report a run that published nothing,
@@ -1333,6 +1930,9 @@ jobs:
       - push-memory
       - push-api
       - push-worker
+      - push-context
+      - push-console
+      - push-relay
     # pull_request runs are scan-only. workflow_run runs where resolve-tag was
     # skipped publish nothing by design, so they stay outside this gate.
     if: always() && github.event_name != 'pull_request' && needs.resolve-tag.result == 'success'
@@ -1353,6 +1953,9 @@ jobs:
           PUSH_MEMORY: ${{ needs.push-memory.result }}
           PUSH_API: ${{ needs.push-api.result }}
           PUSH_WORKER: ${{ needs.push-worker.result }}
+          PUSH_CONTEXT: ${{ needs.push-context.result }}
+          PUSH_CONSOLE: ${{ needs.push-console.result }}
+          PUSH_RELAY: ${{ needs.push-relay.result }}
         run: |
           set -euo pipefail
           failed=()
@@ -1363,7 +1966,10 @@ jobs:
             "mcp-memory=${PUSH_MCP_MEMORY}" \
             "memory=${PUSH_MEMORY}" \
             "api=${PUSH_API}" \
-            "worker=${PUSH_WORKER}"; do
+            "worker=${PUSH_WORKER}" \
+            "context=${PUSH_CONTEXT}" \
+            "console=${PUSH_CONSOLE}" \
+            "relay=${PUSH_RELAY}"; do
             if [ "${pair#*=}" != "success" ]; then
               failed+=("${pair%%=*}=${pair#*=}")
             fi
@@ -1392,7 +1998,14 @@ jobs:
       - push-memory
       - push-api
       - push-worker
+      - push-context
+      - push-console
+      - push-relay
+      - scan-image-context
+      - scan-image-console
+      - scan-image-relay
       - scan-pushed-worker
+      - sbom-images
       - attest-provenance
     if: always() && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
@@ -1417,6 +2030,9 @@ jobs:
           MCP_MEMORY_DIGEST: ${{ needs.push-mcp-memory.outputs.digest }}
           MEMORY_DIGEST: ${{ needs.push-memory.outputs.digest }}
           API_DIGEST: ${{ needs.push-api.outputs.digest }}
+          CONTEXT_DIGEST: ${{ needs.push-context.outputs.digest }}
+          CONSOLE_DIGEST: ${{ needs.push-console.outputs.digest }}
+          RELAY_DIGEST: ${{ needs.push-relay.outputs.digest }}
           REPO_LC: ${{ github.repository }}
           RESULT_SCAN_AUTH: ${{ needs.scan-image-auth.result }}
           RESULT_SCAN_PROXY: ${{ needs.scan-image-proxy.result }}
@@ -1425,6 +2041,9 @@ jobs:
           RESULT_SCAN_MEMORY: ${{ needs.scan-image-memory.result }}
           RESULT_SCAN_API: ${{ needs.scan-image-api.result }}
           RESULT_SCAN_WORKER: ${{ needs.scan-image-worker.result }}
+          RESULT_SCAN_CONTEXT: ${{ needs.scan-image-context.result }}
+          RESULT_SCAN_CONSOLE: ${{ needs.scan-image-console.result }}
+          RESULT_SCAN_RELAY: ${{ needs.scan-image-relay.result }}
           RESULT_PUSH_AUTH: ${{ needs.push-auth.result }}
           RESULT_PUSH_PROXY: ${{ needs.push-proxy.result }}
           RESULT_PUSH_EMBEDDER: ${{ needs.push-embedder.result }}
@@ -1432,8 +2051,12 @@ jobs:
           RESULT_PUSH_MEMORY: ${{ needs.push-memory.result }}
           RESULT_PUSH_API: ${{ needs.push-api.result }}
           RESULT_PUSH_WORKER: ${{ needs.push-worker.result }}
+          RESULT_PUSH_CONTEXT: ${{ needs.push-context.result }}
+          RESULT_PUSH_CONSOLE: ${{ needs.push-console.result }}
+          RESULT_PUSH_RELAY: ${{ needs.push-relay.result }}
           RESULT_SCAN_PUSHED_WORKER: ${{ needs.scan-pushed-worker.result }}
           WORKER_DIGEST: ${{ needs.push-worker.outputs.digest }}
+          RESULT_SBOM: ${{ needs.sbom-images.result }}
           RESULT_ATTEST: ${{ needs.attest-provenance.result }}
         run: |
           repo_lc="${REPO,,}"
@@ -1449,6 +2072,9 @@ jobs:
           memory_image="ghcr.io/${repo_lc}/memory:${TAG}"
           api_image="ghcr.io/${repo_lc}/api:${TAG}"
           worker_image="ghcr.io/${repo_lc}/worker:${TAG}"
+          context_image="ghcr.io/${repo_lc}/context:${TAG}"
+          console_image="ghcr.io/${repo_lc}/console:${TAG}"
+          relay_image="ghcr.io/${repo_lc}/relay:${TAG}"
 
           cat <<EOF > body.md
           ## Docker Publish
@@ -1465,6 +2091,9 @@ jobs:
           - **Memory**: \`${memory_image}\`  \`${MEMORY_DIGEST}\`
           - **API**: \`${api_image}\`  \`${API_DIGEST}\`
           - **Worker**: \`${worker_image}\`  \`${WORKER_DIGEST}\`
+          - **Context**: \`${context_image}\`  \`${CONTEXT_DIGEST}\`
+          - **Console**: \`${console_image}\`  \`${CONSOLE_DIGEST}\`
+          - **Relay**: \`${relay_image}\`  \`${RELAY_DIGEST}\`
 
           ### Job results
           - scan-image-auth: **${RESULT_SCAN_AUTH}**
@@ -1474,6 +2103,9 @@ jobs:
           - scan-image-memory: **${RESULT_SCAN_MEMORY}**
           - scan-image-api: **${RESULT_SCAN_API}**
           - scan-image-worker: **${RESULT_SCAN_WORKER}**
+          - scan-image-context: **${RESULT_SCAN_CONTEXT}**
+          - scan-image-console: **${RESULT_SCAN_CONSOLE}**
+          - scan-image-relay: **${RESULT_SCAN_RELAY}**
           - push-auth: **${RESULT_PUSH_AUTH}**
           - push-proxy: **${RESULT_PUSH_PROXY}**
           - push-embedder: **${RESULT_PUSH_EMBEDDER}**
@@ -1481,6 +2113,10 @@ jobs:
           - push-memory: **${RESULT_PUSH_MEMORY}**
           - push-api: **${RESULT_PUSH_API}**
           - push-worker: **${RESULT_PUSH_WORKER}**
+          - push-context: **${RESULT_PUSH_CONTEXT}**
+          - push-console: **${RESULT_PUSH_CONSOLE}**
+          - push-relay: **${RESULT_PUSH_RELAY}**
+          - sbom-images: **${RESULT_SBOM}**
           - scan-pushed-worker: **${RESULT_SCAN_PUSHED_WORKER}**
           - attest-provenance: **${RESULT_ATTEST}**
 
