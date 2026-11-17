@@ -90,6 +90,7 @@ func (f *outboxDigestMigrationFixture) insertRows(t *testing.T, ctx context.Cont
 
 func (f *outboxDigestMigrationFixture) insertRow(t *testing.T, ctx context.Context, row migrationOutboxDigestRow) {
 	t.Helper()
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 	_, err := f.db.ExecContext(ctx, `
 		INSERT INTO ibex_core.evidence_outbox (
 			id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,

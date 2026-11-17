@@ -1,19 +1,27 @@
 # Accepted static-analysis findings
 
-Findings that are **accepted rather than fixed**, with the reason each is not actionable. This file exists so that
-"accepted" is checkable by the next person instead of being inferred from an empty issue list.
+Findings that are **not fixed outright** — suppressed inline at the call site, or accepted — with the reason each is not
+a defect to correct. This file exists so that a disposition is checkable by the next person instead of being inferred
+from an empty issue list.
 
 ## The rule
 
-A finding is closed in exactly one of two ways:
+A finding is closed in exactly one of three ways:
 
 1. **Fixed** — the code changes.
-2. **Accepted here** — a written justification records why it is not actionable.
+2. **Suppressed inline** — a false positive is narrowed to one rule at one call site, with the rule id and the reason
+   in a `nosemgrep` comment next to the code, and the reasoning recorded here so the suppression stays reviewable.
+   `engineering/agent-playbook.md` §6.1 requires the narrowest scope that covers the true positive, never whole-file
+   or whole-rule.
+3. **Accepted here** — a written justification records why it is not actionable, and the finding stays visible in the
+   scanner.
 
 A finding that cannot be fixed without changing an artefact the repository must not change is accepted here and marked
 as accepted in SonarQube. It is **never** suppressed inline: an inline suppression hides the finding from the next
-reader and from the next scanner run, which defeats the purpose of this record. If a finding below is later fixed or
-the reason stops holding, delete its row and say so in the change that removes it.
+reader and from the next scanner run, which defeats the purpose of this record. The Codacy false positives below are
+the other case: each is a single rule at a single call site, the reason sits next to the code, and the alternative —
+Codacy can only exclude a whole file — was rejected because it would hide every other line of the file. If a finding
+below is later fixed or the reason stops holding, delete its row and say so in the change that removes it.
 
 ---
 
@@ -22,11 +30,11 @@ the reason stops holding, delete its row and say so in the change that removes i
 | Tool | Findings | Disposition |
 |---|---|---|
 | SonarQube | 15 | Accepted — see `plsql:S1192` below |
-| Codacy (Opengrep and Pylint) | 42 | 1 fixed, 37 excluded by file, 4 accepted — see "Codacy `Error` findings" below |
+| Codacy (Opengrep and Pylint) | 42 | 1 fixed, 41 suppressed inline at the call site — see "Codacy `Error` findings" below |
 
-The Codacy set closes as **1 fixed**, **37 excluded with reason**, and **4 accepted**, which accounts
-for all 42 findings. The split between "excluded" and "accepted" is per tool, and the reason for it
-is recorded in that section.
+The Codacy set closes as **1 fixed** and **41 suppressed inline**, which accounts for all 42 findings.
+Each suppression names one rule at one call site and carries its reason in the comment; the reason for
+choosing that form over a file exclusion is recorded in that section.
 
 ---
 
@@ -137,7 +145,7 @@ remaining rows should be re-checked against the rewritten files; in the second t
 
 ---
 
-## Codacy `Error` findings (42 findings: 1 fixed, 37 excluded by file, 4 accepted)
+## Codacy `Error` findings (42 findings: 1 fixed, 41 suppressed inline)
 
 Codacy reports 42 `Error`-severity findings on `main`. Grouped by rule:
 
@@ -151,21 +159,30 @@ Codacy reports 42 `Error`-severity findings on `main`. Grouped by rule:
 | Disposition | Findings | Files | Mechanism |
 |---|---|---|---|
 | Fixed | 1 | 1 | rule-scoped `# pylint: disable` at the call site |
-| Excluded by file | 37 | 17 | `opengrep.exclude_paths` in `.codacy.yml` |
-| Accepted | 4 | 4 | recorded in this section |
+| Suppressed inline | 41 | 21 | `// nosemgrep: <rule>` at the call site, reason inline |
 | **Total** | **42** | | |
 
-### Why this split differs from the Sonar section
+### Why the suppression is inline rather than by file
 
-Codacy's only exclusion mechanism is the whole file, so a finding is either fixed, excluded with the
-rest of its file, or accepted here. The 37 fixture findings cost nothing to exclude: each is inside a
-`_test.go` file that is compiled only under `go test`, so excluding the file removes the false
-positives and no production signal. The four remaining findings sit in files that carry production
-behaviour, and excluding any of them would blind Opengrep to every other line of that file — a real
-finding added later to `store.go`, `ledger.go`, `budget.py`, or `pgcapability.sh` would never be
-reported. Those four are therefore accepted here rather than excluded, and the fixture list in
-`.codacy.yml` is enumerated file by file rather than written as `**/*_test.go` so a future real
-finding in an unrelated test file is still reported.
+Codacy's `.codacy.yml` can only ignore whole files or globs, not a single finding. Excluding the 17 `_test.go` files
+that carry the 37 fixture findings would also hide every *other* Opengrep finding in those files, and excluding
+`store.go`, `ledger.go`, `budget.py`, or `pgcapability.sh` would do the same to production code.
+`engineering/agent-playbook.md` §6.1 requires a suppression to be "the narrowest scope that covers the true positive …
+**never whole-file or whole-rule**. A blanket disable is itself a finding." Each of the 41 findings is therefore
+suppressed at its call site: one rule id, one reason, on the flagged line or the line immediately above a multi-line
+call. The rule id is the Semgrep id without the tool prefix (`go_sql_rule-concat-sqli`, not
+`Semgrep_go_sql_rule-concat-sqli`), matching the form the Opengrep SSRF suppression in this repository already uses.
+
+### Why `concat-sqli` fires on all 39 sites
+
+`Semgrep_go_sql_rule-concat-sqli` fires on **every parameterised Go query whose bound argument is a computed value**.
+Its sink is any call to `Exec`/`Query`/`QueryRow` and its sources include `fmt.Sprintf(...)`, string concatenation, and
+`strings.Builder.String()`, so a value built with one of those and then passed as a `$n` argument is reported as if the
+statement text carried it. **The statement itself is never inspected.** In all 39 cases the statement is a literal or a
+test-authored constant with `$n` placeholders — in two fixtures a test-authored fragment from a local table is
+concatenated into it — and the flagged value is a bound argument. Two findings carry a `fmt.Sprintf`-built payload
+that is bound as `$8::jsonb`/`$5::interval`, not statement text. Keeping that explanation here is what makes the
+suppression reviewable.
 
 ### Fixed: `services/mcp-memory/app/stdio_main.py:49` — Pylint `E1120`
 
@@ -177,7 +194,7 @@ service's wiring class, which takes `enforcer` and `registry`. This service's cl
 the same rule-scoped, documented disable that `services/mcp-memory/app/descriptors.py:42` and
 `services/mcp-operator/app/descriptors.py:52` already carry.
 
-### Accepted 1: `packages/evidenceoutbox/store.go:550` — `concat-sqli`
+### Suppressed 1: `packages/evidenceoutbox/store.go:550` — `concat-sqli`
 
 The flagged call is `tx.ExecContext(ctx, <statement>, rowID, w.OrgID, …, raw, digest, …)` in
 `enqueueOutbox`. The statement is a backtick string literal containing `$1`–`$11`; every value is a
@@ -189,7 +206,7 @@ bytes are passed as the `$8::jsonb` argument.
 What would change the answer: the payload bytes or any other value being formatted into the
 statement text instead of bound, or the rule ceasing to treat a bound argument as a sink.
 
-### Accepted 2: `packages/idempotency/ledger.go:135` — `concat-sqli`
+### Suppressed 2: `packages/idempotency/ledger.go:135` — `concat-sqli`
 
 Same rule, same mechanism. The flagged call is
 `tx.QueryRowContext(ctx, insertLedgerSQL, p.OrgID, p.AgentID, key, requestHash, fmt.Sprintf("%f seconds", …))`.
@@ -197,12 +214,12 @@ Same rule, same mechanism. The flagged call is
 line is the lease interval formatted with `fmt.Sprintf` and passed as the `$5::interval` argument.
 
 Codacy reports this as a fourth non-test finding under the same rule. It is the same false positive,
-so it is accepted rather than left open or excluded.
+so it is suppressed at the call site like the rest.
 
 What would change the answer: the lease interval, the key, or the request hash being formatted into
 the statement text instead of bound.
 
-### Accepted 3: `services/context/app/budget.py:121` — `raw-html-format`
+### Suppressed 3: `services/context/app/budget.py:121` — `raw-html-format`
 
 The flagged line is `return f'<ibex_memory nonce="{nonce}">'` in `_memory_open_tag_for_estimate`. Its
 only caller is `_framing_sentence_for_estimate`, whose only caller is `_framing_overhead_text`, which
@@ -214,7 +231,7 @@ estimator's placeholder and is never served to a browser.
 What would change the answer: a caller passing request-derived text as `nonce`, or this helper being
 reused to build HTML that is actually rendered.
 
-### Accepted 4: `infra/scripts/lib/pgcapability.sh:68` — `hard-coded-password`
+### Suppressed 4: `infra/scripts/lib/pgcapability.sh:68` — `hard-coded-password`
 
 The flagged line is `local password="${3:-}"`, the empty default for the optional third argument of
 `capability_dsn`. No literal credential is assigned: the value is either the caller's override or,
@@ -223,24 +240,28 @@ on the next branch, the output of `capability_password`. Every production caller
 used only by `infra/tests/pgcapability/test_pgcapability.py` to test percent-encoding of a hostile
 verifier.
 
-The existing `nosemgrep` comment is on line 71 and suppresses the `capability_password` call on line
-72, not this assignment on line 68, so it does not cover this finding.
+The `nosemgrep` comment that already existed on line 71 suppresses the `capability_password` call on
+line 72, not this assignment, so this finding needed its own comment. Both are present now: one
+suppression per rule at one call site, not one comment covering the function.
 
 What would change the answer: a literal password being assigned at this line, or the `${3:-}` override
 becoming reachable from a production caller.
 
 ### Residual risk
 
-- Four production sites keep reporting an `Error` for as long as the rule keeps firing, because they
-  are accepted rather than excluded. That is deliberate — any *new* Opengrep finding in those files is
-  still reported — but it means the Codacy `Error` total never reaches zero, so a rise in the total
-  has to be read against this record rather than against zero.
-- The 17 excluded files are re-analysed only if they are removed from the list. A real finding added
-  to one of those fixtures would be invisible until someone re-reads this record.
+- Each suppression is tied to the rule id string in its comment. If Opengrep renames a rule, the
+  comment silently stops suppressing and the finding returns. That is the intended failure mode — it
+  is visible, not silent — and the fix is to update the id here and at the call sites together.
+- No file is excluded for Opengrep, so a *new* finding in any of these 21 files is still reported.
+  That is the property a file-level exclude would have destroyed.
+- Whether Codacy honours `nosemgrep` in-source is confirmed by the next Codacy analysis on the pull
+  request, not by this record. If a finding persists with the correct rule id in place, the fallback is
+  to retain that finding with a written justification (as this section did before) rather than re-add a
+  file exclusion.
 
 ### Re-audit trigger
 
 Revisit this record if Opengrep's `concat-sqli` rule stops treating bound arguments as sinks, if
 `representative_nonce` stops being the only source of the framing nonce, if `capability_dsn` gains a
-caller that passes a literal password, or if any of the 17 excluded fixture files is edited to
-execute non-fixture SQL.
+caller that passes a literal password, or if any of the 21 suppressed sites is edited to build SQL
+text from a value instead of binding it.

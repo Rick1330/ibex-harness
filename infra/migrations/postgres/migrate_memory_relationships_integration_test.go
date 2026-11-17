@@ -55,6 +55,7 @@ func (f *relationshipsDB) insertMemory(seed relationshipMemorySeed) string {
 	f.t.Helper()
 	var memID string
 	err := withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		return tx.QueryRowContext(context.Background(), insertMemoryMinimalRelSQL,
 			seed.orgID, seed.agentID, seed.content, "hash-"+seed.content,
 		).Scan(&memID)
@@ -380,6 +381,7 @@ func assertExplainUsesIndex(t *testing.T, ctx context.Context, check explainInde
 		if _, err := tx.ExecContext(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
 			return err
 		}
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: "EXPLAIN " is prepended to a statement literal from the explainIndexCheck table and both flagged values are bound arguments.
 		rows, err := tx.QueryContext(ctx, `EXPLAIN `+check.query, check.arg1, check.arg2)
 		if err != nil {
 			return err

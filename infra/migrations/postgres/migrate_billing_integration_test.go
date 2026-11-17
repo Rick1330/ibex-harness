@@ -130,6 +130,7 @@ type orgCountQuery struct {
 
 func countInOrgTx(tx *sql.Tx, ctx context.Context, q orgCountQuery) (int, error) {
 	var n int
+	// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a test-authored literal with a $1 placeholder (the table name comes from a fixed local list) and the flagged value is a bound argument.
 	err := tx.QueryRowContext(ctx, q.sql, q.arg).Scan(&n)
 	return n, err
 }

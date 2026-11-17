@@ -98,6 +98,7 @@ func (f *labelsDB) insertMemory(m memoryWithCategory) string {
 	f.t.Helper()
 	var memID string
 	err := withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		return tx.QueryRowContext(context.Background(), insertMemoryWithCategorySQL,
 			m.orgID, m.agentID, m.content, "hash-"+m.content, m.tokens, m.category,
 		).Scan(&memID)
@@ -337,6 +338,7 @@ func seedLabeledMemory(t *testing.T, ctx context.Context, seed labeledMemorySeed
 			WHERE org_id = $1::uuid AND slug = $2`, seed.orgID, seed.agentSlug).Scan(&agentID); err != nil {
 			return err
 		}
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: the statement is a literal with $n placeholders and every flagged value is a bound argument.
 		if err := tx.QueryRowContext(ctx, insertMemoryWithCategorySQL,
 			seed.orgID, agentID, seed.content, "hash-"+seed.content, 1, seed.label,
 		).Scan(&memID); err != nil {

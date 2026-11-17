@@ -118,6 +118,7 @@ def _format_tools_text(tool_schemas: Sequence[str]) -> str:
 
 
 def _memory_open_tag_for_estimate(nonce: str) -> str:
+    # nosemgrep: python.django.security.injection.raw-html-format.raw-html-format -- nonce is "A" * length from representative_nonce, a clamped config integer, never user data; this is a token-estimator placeholder that is never rendered.
     return f'<ibex_memory nonce="{nonce}">'
 
 

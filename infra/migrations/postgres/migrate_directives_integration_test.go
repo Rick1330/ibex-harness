@@ -135,6 +135,7 @@ func insertSecondVersion(t *testing.T, ctx context.Context, db *sql.DB, seed ver
 	var versionID string
 	contentHash := "hash-" + seed.content
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		// nosemgrep: go_sql_rule-concat-sqli -- test fixture: insertDirectiveVersionV2SQL is a literal with $n placeholders and every flagged value is a bound argument.
 		return tx.QueryRowContext(ctx, insertDirectiveVersionV2SQL,
 			seed.directiveID, seed.orgID, seed.content, contentHash).Scan(&versionID)
 	})
