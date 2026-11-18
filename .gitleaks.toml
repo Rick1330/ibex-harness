@@ -43,7 +43,8 @@ regexes = [
   # the separator and the shell assignment as a 12-character value, so it reports the
   # line as a credential. The fixture no longer has that shape in the tree, but the
   # commit that introduced it is still in history and `gitleaks detect` scans
-  # history. Allowlist the exact value: a secret that merely contains this text has no
-  # word boundary after the `0` and is still reported.
-  '''\bmatcher_ok=0\b''',
+  # history. Allowlist the exact value, anchored to the whole extracted secret: a
+  # longer secret that contains this text — `matcher_ok=0.abcdef…` among them — is a
+  # different value and is still reported.
+  '''^matcher_ok=0$''',
 ]

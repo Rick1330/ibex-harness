@@ -214,6 +214,171 @@ class SiteLedgerTests(unittest.TestCase):
         self.assertIn("line 3", message)
         self.assertIn("...hostedRows", message)
 
+    def test_the_declaration_is_found_at_statement_position_not_in_a_comment(self) -> None:
+        # Searching for the name alone returned its first occurrence, which can sit
+        # inside a comment: a commented-out copy of the array above the real one was
+        # then the array compared, so the guard read a row the site does not render
+        # -- here a stale IMPLEMENTED where the live array states PROVISIONAL.
+        commented = (
+            "/* capabilityRows used to be:\n"
+            "const capabilityRows = [\n"
+            "  ['Memory substrate', 'IMPLEMENTED', 'Detail.', '/x'],\n"
+            "]\n"
+            "*/\n"
+        )
+        self.assertEqual(
+            check_status_vocabulary.parse_site_rows(
+                commented
+                + "const capabilityRows: readonly CapabilityRow[] = [\n"
+                + "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                + "]\n"
+            ),
+            {"Memory substrate": "PROVISIONAL"},
+        )
+
+    def test_a_comment_line_naming_the_declaration_is_not_the_declaration(self) -> None:
+        # A `//` mention is not a declaration, so the file holds no array the guard
+        # can read: it fails rather than reads the comment's rows as the site's.
+        with self.assertRaises(check_status_vocabulary.InputError) as caught:
+            check_status_vocabulary.parse_site_rows(
+                "// moved here from: const capabilityRows = [\n"
+                "  ['Memory substrate', 'IMPLEMENTED', 'Detail.', '/x'],\n"
+                "]\n"
+            )
+        self.assertIn("no `capabilityRows` array", str(caught.exception))
+
+    def test_an_initializer_selecting_another_array_is_rejected(self) -> None:
+        # The fallback is what a `find('[')` reader compared, while the site renders
+        # `publishedRows` whenever it is defined: agreement about an array the page
+        # does not use. Only a direct array initializer is accepted.
+        with self.assertRaises(check_status_vocabulary.InputError) as caught:
+            check_status_vocabulary.parse_site_rows(
+                "const capabilityRows: readonly CapabilityRow[] = publishedRows ?? [\n"
+                "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                "]\n"
+            )
+        message = str(caught.exception)
+        self.assertIn("line 1", message)
+        self.assertIn("direct array initializer", message)
+        self.assertIn("publishedRows", message)
+
+    def test_a_trailing_array_operation_is_rejected(self) -> None:
+        # A trailing operation hands the site rows this text does not contain, so the
+        # comparison would cover a different array than the page renders. Evaluating
+        # it would mean interpreting TypeScript, so the shape is rejected instead.
+        for suffix in (".map(row => row)", ".concat(hostedRows)", ".filter(Boolean)",
+                       ".flat()", " as const"):
+            with self.subTest(suffix=suffix):
+                with self.assertRaises(check_status_vocabulary.InputError) as caught:
+                    check_status_vocabulary.parse_site_rows(
+                        "const capabilityRows = [\n"
+                        "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                        f"]{suffix}\n"
+                    )
+                message = str(caught.exception)
+                self.assertIn("line 3", message)
+                self.assertIn("must end at its ']'", message)
+        # The same operation on the following line is the same defect.
+        with self.assertRaises(check_status_vocabulary.InputError) as caught:
+            check_status_vocabulary.parse_site_rows(
+                "const capabilityRows = [\n"
+                "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                "]\n"
+                "  .map(row => row)\n"
+            )
+        self.assertIn(".map", str(caught.exception))
+
+    def test_a_statement_terminator_after_the_array_is_rejected(self) -> None:
+        # Only whitespace or a `//` comment may follow the closing bracket. A `;` does
+        # not change the rows, but it is a form the guard does not read, and
+        # `ledger.ts` is written without statement terminators: it fails naming the
+        # line rather than passing as a shape nobody decided on.
+        with self.assertRaises(check_status_vocabulary.InputError) as caught:
+            check_status_vocabulary.parse_site_rows(
+                "const capabilityRows = [\n"
+                "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                "];\n"
+            )
+        self.assertIn("line 3", str(caught.exception))
+        self.assertIn(";", str(caught.exception))
+
+    def test_a_comment_after_the_opening_bracket_is_accepted(self) -> None:
+        # Whitespace or a `//` comment may follow the real opening bracket: it holds
+        # no entry, and the site's own formatting allows it there.
+        self.assertEqual(
+            check_status_vocabulary.parse_site_rows(
+                "const capabilityRows: readonly CapabilityRow[] = [ // the rows rendered\n"
+                "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                "]\n"
+            ),
+            {"Memory substrate": "PROVISIONAL"},
+        )
+
+    def test_a_bracket_inside_a_trailing_comment_is_not_the_opening_bracket(self) -> None:
+        # A check on the line's last character accepted `= oldRows // [`, and the
+        # entries below were then read from a bracket that opened nothing the site
+        # renders.
+        with self.assertRaises(check_status_vocabulary.InputError) as caught:
+            check_status_vocabulary.parse_site_rows(
+                "const capabilityRows: readonly CapabilityRow[] = oldRows // [\n"
+                "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                "]\n"
+            )
+        self.assertIn("direct array initializer", str(caught.exception))
+
+    def test_an_entry_sharing_the_declaration_line_is_rejected(self) -> None:
+        # No line reader ever sees an entry on the declaration's line, so it could
+        # not be accounted for; the declaration must end at its opening bracket.
+        with self.assertRaises(check_status_vocabulary.InputError) as caught:
+            check_status_vocabulary.parse_site_rows(
+                "const capabilityRows = [['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                "]\n"
+            )
+        self.assertIn("must end at its opening '['", str(caught.exception))
+
+    def test_a_python_only_line_terminator_does_not_split_a_typescript_line(self) -> None:
+        # `str.splitlines` splits on a form feed, a vertical tab, U+2028 and U+0085;
+        # TypeScript ends a line only at CR, LF, or CRLF. Splitting on the former left
+        # `['Retired capability', ...]` as its own line, which was parsed as a row --
+        # while TypeScript keeps it inside the comment, so nothing renders it.
+        for terminator in ("\f", "\v", "\u2028", "\u0085"):
+            with self.subTest(terminator=repr(terminator)):
+                self.assertEqual(
+                    check_status_vocabulary.parse_site_rows(
+                        "const capabilityRows = [\n"
+                        f"  // retired{terminator}"
+                        "['Retired capability', 'DEFERRED', 'x', '/y'],\n"
+                        "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                        "]\n"
+                    ),
+                    {"Memory substrate": "PROVISIONAL"},
+                )
+
+    def test_an_exported_declaration_is_read(self) -> None:
+        # The declaration is matched with or without `export`, because the rows may
+        # be exported: the shape is the statement, not the modifier.
+        self.assertEqual(
+            check_status_vocabulary.parse_site_rows(
+                "export const capabilityRows: readonly CapabilityRow[] = [\n"
+                "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                "]\n"
+            ),
+            {"Memory substrate": "PROVISIONAL"},
+        )
+
+    def test_a_crlf_ledger_is_read_with_the_same_line_numbers(self) -> None:
+        # CRLF is one TypeScript terminator, so it numbers one line: a rejection must
+        # name line 3 here, not line 6.
+        with self.assertRaises(check_status_vocabulary.InputError) as caught:
+            check_status_vocabulary.parse_site_rows(
+                "const capabilityRows = [\r\n"
+                "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\r\n"
+                "  ...hostedRows,\r\n"
+                "]\r\n"
+            )
+        self.assertIn("line 3", str(caught.exception))
+        self.assertIn("hostedRows", str(caught.exception))
+
     def test_two_entries_sharing_a_line_are_rejected_rather_than_half_read(self) -> None:
         # The line matcher read the first tuple and left the second uncounted, so a
         # capability could sit in the array and never be compared. The whole line is
@@ -541,16 +706,17 @@ class RepositoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.copy(Path(temporary))
             ledger = root / check_status_vocabulary.SITE_LEDGER
-            ledger.write_text(
-                ledger.read_text(encoding="utf-8").replace(
-                    "const capabilityRows: readonly CapabilityRow[] = [\n",
-                    "const capabilityRows: readonly CapabilityRow[] = [\n  ...hostedRows,\n",
-                ),
-                encoding="utf-8",
+            mutated = ledger.read_text(encoding="utf-8").replace(
+                "const capabilityRows: readonly CapabilityRow[] = [\n",
+                "const capabilityRows: readonly CapabilityRow[] = [\n  ...hostedRows,\n",
             )
+            # The expected line is derived from the mutated text: a blank line added
+            # above the declaration moves the spread, and the guard is still right.
+            expected = mutated[: mutated.index("...hostedRows")].count("\n") + 1
+            ledger.write_text(mutated, encoding="utf-8")
             code, stderr = self.run_against(root)
         self.assertEqual(code, 2)
-        self.assertIn("line 52", stderr)
+        self.assertIn(f"line {expected}", stderr)
         self.assertIn("hostedRows", stderr)
 
 
