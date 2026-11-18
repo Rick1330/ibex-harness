@@ -878,14 +878,213 @@ jobs:
       - name: Prove the profile with an authenticated edge request
         run: make v1-smoke
 
-      # Diagnostics only: service status and health, never container logs, which can
-      # carry credentials (the profile deliberately keeps the Redis password out of
-      # argv, but other services are not audited for that).
+      # Diagnostics only: service status and health. Container logs are dumped by
+      # the next step, through a redaction filter; this one stays log-free.
       - name: Profile status on failure
         if: failure()
         run: |
           make v1-ps || true
           docker compose -p ibex-v1-single-node ps --format json 2>/dev/null || true
+
+      # The smoke's chat assertion reports the symptom, not the cause: the proxy
+      # answered 200 with X-IBEX-Context-Fallback: true, which means it
+      # fail-opened to directive-only messages instead of injecting assembled
+      # context. Five degraded attempts over ten seconds with every container
+      # healthy rule out the cold-start race this was previously attributed to,
+      # so the proxy's own log line is the only evidence that names the reason.
+      #
+      # The line to look for in the `proxy` block below (JSON, one object per
+      # line; packages/contextclient/client.go, Client.fallback):
+      #   {"level":"WARN","message":"context assemble failed; fail-open",
+      #    "service":"proxy","grpc_code":"DeadlineExceeded","elapsed_ms":1801,...}
+      #   {"level":"ERROR","message":"context assemble unexpected failure; fail-open",...}
+      # `grpc_code` is the reason: DeadlineExceeded, Unavailable or Canceled mean
+      # the context service did not answer inside the 1800 ms budget; any other
+      # code is a non-transient failure. The same outcome is counted as
+      # ibex_proxy_context_assemble_fallback_total{reason="..."} on the proxy's
+      # /metrics, which this job does not scrape.
+      #
+      # Redaction: these logs are public in CI. The Go services redact by
+      # attribute key only (packages/logger/redact.go replaces the values of
+      # token/password/secret/authorization/... keys), so a credential embedded
+      # in a message or error string, and every Python service, sits outside that
+      # guarantee. The filter below is defence in depth on top of it: it masks
+      # Authorization/Cookie values, Bearer/Basic credentials, token/password/
+      # secret/api_key/credential style assignments, credentials embedded in
+      # URLs, and long opaque runs on a line that carried such a key. It prints
+      # only a count of what it masked, never a value.
+      - name: Profile service logs on failure (redacted)
+        if: failure()
+        run: |
+          # This step runs on an already-failing job, so it must not replace the
+          # smoke's exit code: every command is best-effort and the step exits 0.
+          set +e
+
+          project=ibex-v1-single-node
+          compose_file=infra/compose/v1-single-node/compose.yml
+          env_file=infra/compose/v1-single-node/.env
+          tail_lines=300
+
+          # Same runtime selection as infra/scripts/dev-tool.sh `compose()`, so
+          # this reaches the containers the way `make v1-up` created them.
+          case "${IBEX_RUNTIME:-auto}" in
+            docker) compose=(docker compose) ;;
+            podman) compose=(podman compose) ;;
+            podman-compose) compose=(podman-compose) ;;
+            auto)
+              if docker compose version >/dev/null 2>&1; then
+                compose=(docker compose)
+              elif podman compose version >/dev/null 2>&1; then
+                compose=(podman compose)
+              else
+                compose=(podman-compose)
+              fi
+              ;;
+            *)
+              echo "::warning::unknown IBEX_RUNTIME=${IBEX_RUNTIME}; cannot dump container logs"
+              exit 0
+              ;;
+          esac
+          # -f and --env-file mirror `compose_with_mode v1`; -p matches the
+          # project the status step above addresses.
+          compose_args=(-f "$compose_file" --env-file "$env_file" -p "$project")
+
+          filter="${RUNNER_TEMP:-/tmp}/redact-container-logs.py"
+          cat >"$filter" <<'PY'
+          import re
+          import sys
+
+          service = sys.argv[1] if len(sys.argv) > 1 else "unknown"
+
+          # A key is matched as one whole token and then split on _ - . so that
+          # `access_token` and `IBEX_RUNTIME_DB_PASSWORD` are credentials while
+          # `tokens_used` and `sha` are not. Substring matching would mask the
+          # very fields this step exists to read. Every pattern here is linear
+          # over the line: these logs are untrusted input.
+          KEY = re.compile(r"[A-Za-z0-9_.-]{1,80}")
+          KEY_ASSIGN = re.compile(
+              r"(?i)\b([A-Za-z0-9_.-]{1,80})([\"']?)(\s*[=:]\s*)"
+              r"(\"[^\"]*\"|'[^']*'|[^\s,;&\"']+)"
+          )
+          SCHEME = re.compile(r"(?i)\b(bearer|basic|digest)\s+[A-Za-z0-9._~+/=-]{4,}")
+          URL_CRED = re.compile(r"(://[^:/@\s]*:)([^@\s/]+)(@)")
+          OPAQUE = re.compile(r"\b(?:[A-Fa-f0-9]{32,}|[A-Za-z0-9+/=_-]{40,})\b")
+          HEX_RUN = re.compile(r"[0-9a-fA-F]{32,}")
+
+          SECRET_PARTS = {
+              "authorization", "bearer", "cookie", "token", "password", "passwd",
+              "secret", "apikey", "credential",
+          }
+          SECRET_PAIRS = {("api", "key"), ("private", "key")}
+
+          # The scheme word is not the secret, so it survives: SCHEME has already
+          # masked the token that follows it.
+          SCHEME_WORDS = {"bearer", "basic", "digest", "token", "[redacted]"}
+
+          state = {"masked": 0}
+
+
+          def is_secret_key(name):
+              parts = [p for p in re.split(r"[_.-]+", name.lower()) if p]
+              if any(p in SECRET_PARTS for p in parts):
+                  return True
+              return any(a in parts and b in parts for a, b in SECRET_PAIRS)
+
+
+          def mask_assign(match):
+              if not is_secret_key(match.group(1)):
+                  return match.group(0)
+              value = match.group(4)
+              bare = value.strip("\"'")
+              if bare.lower() in SCHEME_WORDS:
+                  # `authorization: Bearer <token>`: SCHEME masked the token.
+                  return match.group(0)
+              state["masked"] += 1
+              # Keep the delimiters so a masked JSON line still parses.
+              if len(value) >= 2 and value[0] in "\"'" and value[-1] == value[0]:
+                  masked = value[0] + "[REDACTED]" + value[0]
+              else:
+                  masked = "[REDACTED]"
+              return match.group(1) + match.group(2) + match.group(3) + masked
+
+
+          def mask_opaque(match):
+              run = match.group(0)
+              looks_secret = bool(HEX_RUN.fullmatch(run)) or (
+                  len(run) >= 40
+                  and any(c.isupper() for c in run)
+                  and any(c.islower() for c in run)
+                  and any(c.isdigit() for c in run)
+              )
+              if not looks_secret:
+                  # A long identifier is evidence, not a credential.
+                  return run
+              state["masked"] += 1
+              return "[REDACTED]"
+
+
+          def mask_line(line):
+              line, n = URL_CRED.subn(r"\1[REDACTED]\3", line)
+              state["masked"] += n
+              line = KEY_ASSIGN.sub(mask_assign, line)
+              line, n = SCHEME.subn(lambda m: m.group(1) + " [REDACTED]", line)
+              state["masked"] += n
+              if any(is_secret_key(m.group(0)) for m in KEY.finditer(line)):
+                  # An opaque run on a line that carried a credential is masked
+                  # too; a hash on a line without one is left alone.
+                  line = OPAQUE.sub(mask_opaque, line)
+              return line
+
+
+          sys.stdin.reconfigure(errors="replace")
+          sys.stdout.reconfigure(errors="replace")
+
+          lines = 0
+          for raw in sys.stdin:
+              lines += 1
+              sys.stdout.write(mask_line(raw))
+
+          sys.stdout.write(
+              "[redaction] %s: %d line(s), %d sensitive value(s) masked\n"
+              % (service, lines, state["masked"])
+          )
+          PY
+
+          # Services the chat assertion depends on: the proxy performs the
+          # fail-open, context is the gRPC peer it gives up on, memory backs
+          # context's retrieval, and tei embeds the query.
+          for svc in proxy context memory tei; do
+            echo
+            echo "===== logs: ${svc} (last ${tail_lines} lines, redacted) ====="
+            timeout 120 "${compose[@]}" "${compose_args[@]}" \
+              logs --no-color --tail "$tail_lines" "$svc" 2>&1 \
+              | python3 "$filter" "$svc" \
+              || echo "[logs] ${svc}: dump failed or timed out"
+          done
+
+          # The one-shots gate the profile (migrate gates every application
+          # container, bootstrap produces the PAT the smoke authenticates with).
+          # Their output is only worth reading when one of them exited non-zero.
+          for svc in migrate bootstrap; do
+            code="$("${compose[@]}" "${compose_args[@]}" \
+              ps -a --format '{{.ExitCode}}' "$svc" 2>/dev/null | head -n 1)"
+            case "$code" in
+              ''|0)
+                echo "[logs] ${svc}: exit ${code:-not recorded}; not dumped"
+                ;;
+              *)
+                echo
+                echo "===== logs: ${svc} (exited ${code}; last ${tail_lines} lines, redacted) ====="
+                timeout 120 "${compose[@]}" "${compose_args[@]}" \
+                  logs --no-color --tail "$tail_lines" "$svc" 2>&1 \
+                  | python3 "$filter" "$svc" \
+                  || echo "[logs] ${svc}: dump failed or timed out"
+                ;;
+            esac
+          done
+
+          # Never fail: the smoke's failure is the signal this step explains.
+          exit 0
 
   auth-validate-smoke:
     name: auth-validate-smoke

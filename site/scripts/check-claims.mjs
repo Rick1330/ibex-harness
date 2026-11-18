@@ -3,6 +3,12 @@ import { readFile, readdir } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// The template parser is the compiler the site is built with, imported statically so
+// a tree without it fails to load this check instead of reporting every component as
+// having no prose. It resolves from the workspace root, where the site's toolchain
+// hoists it.
+import { parse } from '@vue/compiler-sfc'
+
 const here = dirname(fileURLToPath(import.meta.url))
 const site = resolve(here, '..')
 const allowlistPath = join(here, 'claim-numbers.allowlist.json')
@@ -162,27 +168,33 @@ function clauseIndex(text) {
 }
 
 /**
- * The index of the first entry of the increasing list `sorted` that is at least
- * `value`, or -1 when no entry is.
+ * An entry's own value, for the searches that index plain numbers.
  */
-function firstAtLeast(sorted, value) {
+const itself = value => value
+
+/**
+ * The index of the first entry of the increasing list `sorted` whose `key` is at least
+ * `value`, or -1 when no entry is. The key accessor lets one search serve both the
+ * offset lists here and the source ranges a component's parser owns.
+ */
+function firstAtLeast(sorted, value, key = itself) {
   let low = 0
   let high = sorted.length
   while (low < high) {
     const middle = (low + high) >> 1
-    if (sorted[middle] < value) low = middle + 1
+    if (key(sorted[middle]) < value) low = middle + 1
     else high = middle
   }
   return low < sorted.length ? low : -1
 }
 
 /**
- * The index of the last entry of the increasing list `sorted` that is at most
+ * The index of the last entry of the increasing list `sorted` whose `key` is at most
  * `value`, or -1 when no entry is: the entry before the first one that is greater
  * than `value`.
  */
-function lastAtMost(sorted, value) {
-  const after = firstAtLeast(sorted, value + 1)
+function lastAtMost(sorted, value, key = itself) {
+  const after = firstAtLeast(sorted, value + 1, key)
   return after === -1 ? sorted.length - 1 : after - 1
 }
 
@@ -798,220 +810,144 @@ export function benchmarkClaimTexts(source) {
 }
 
 /**
- * The markup that ends a text node: a comment, a tag, or an interpolation. A
- * template renders a text node as the characters between two of these, so only
- * characters on the same side of one are joined. Two neighbouring elements are
- * never joined, and neither are the strings of a `<script>` block, because a tag
- * separates them: joining those would invent a phrase nobody wrote.
+ * A component's rendered prose is read from the compiler's own AST. `@vue/compiler-sfc`
+ * is the parser the site is built with, so the boundaries it draws are the ones the
+ * build uses: a `>` inside an attribute value does not end a tag, a `</template>` that
+ * an attribute or an interpolation spells does not close the block, a self-closing or
+ * empty `<template>` is one element, and a close tag with whitespace before its `>` is
+ * still a close tag. Every earlier approximation of that grammar here — quote-aware
+ * tag scanning, template depth matching, text-run offsets — was a second and weaker
+ * parser of the same language, and each review round found another corner of it.
+ */
+const textNodeType = 2
+const commentNodeType = 3
+
+/**
+ * The `lang` values a template may carry and still be read as HTML: none at all, an
+ * empty one, and `html`. The compiler reads `lang` as a string, so every other value
+ * names a language whose AST is not HTML, and the block is unreadable rather than
+ * parsed as HTML.
+ */
+const htmlLanguages = new Set([undefined, null, '', 'html'])
+
+/**
+ * One unreadable component: the reason, and the line it is reported on. The name is
+ * the component's, so it does not collide with the `unreadable` lists the ledger and
+ * benchmark readers return.
+ */
+const unreadableComponent = (line, text) => ({ error: { line, text } })
+
+/**
+ * Whether a block or AST the compiler may omit is there. The compiler reports an
+ * absent one as `null`; `undefined` is treated the same so a shape it omits
+ * differently reads as absent rather than crashing the scan.
+ */
+const isPresent = value => value !== undefined && value !== null
+
+/**
+ * The template AST of one component, or the reason it cannot be read.
  *
- * Each is read leftmost first, a comment winning over the tag that shares its `<`
- * and a tag still matching when the comment does not close — `<!-->` is a tag —
- * which is what the three alternatives meant. It is walked rather than matched
- * because both patterns that express it are quadratic on a body with many openers
- * and no closing delimiter, the shape a half-written comment or a `{{` in prose
- * has. A lazy `[\s\S]*?` retries the rest of the body from every opener, and the
- * tempered `(?:[^-]|-(?!->))*` still does, because a backtracking engine re-enters
- * a repetition it already failed.
+ * A template the compiler reports an error for is unreadable rather than scanned
+ * anyway: a file that does not compile has no rendered text this checker can claim to
+ * have read, and the error is the finding. A template written in another language
+ * (`<template lang="pug">`) is unreadable for the same reason — an HTML parse of it
+ * would be invented prose, not the template's.
  *
- * The walk reads every character at most once: a position that starts no markup
- * costs one comparison and the cursor moves on, a position that starts markup jumps
- * the cursor past its close, and a closing delimiter — or a tag's `>` outside a
- * quoted attribute value — is resolved from a table computed once, so no search is
- * ever made that could run to the end without finding one.
+ * The source is parsed once; the two questions that follow are asked by name, so each
+ * way a component can be unreadable has its own reason rather than another branch
+ * here.
  */
-export function markupSpans(body) {
-  const spans = []
-  const bounds = {
-    comment: body.lastIndexOf('-->'),
-    tagEnd: tagEndOffsets(body),
-    interpolation: body.lastIndexOf('}}'),
+function parseTemplate(source, filename) {
+  let parsed
+  try {
+    parsed = parse(source, { filename })
+  } catch (error) {
+    return unreadableComponent(1, `component does not parse: ${error?.message ?? error}`)
   }
-  let cursor = 0
-  while (cursor < body.length) {
-    const char = body[cursor]
-    const end = char === '<' || char === '{' ? markupEndAt(body, cursor, bounds) : -1
-    if (end < 0) {
-      cursor += 1
-      continue
-    }
-    spans.push({ index: cursor, length: end - cursor })
-    cursor = end
-  }
-  return spans
+  return readableComponent(parsed)
 }
 
 /**
- * Where the markup that opens at `at` ends, exclusive, or -1 when no delimiter
- * closes it. `bounds.comment` and `bounds.interpolation` hold the offset of the last
- * occurrence of their closer in the body, so a closer that does not exist after `at`
- * is never looked for: every search that is made finds its delimiter, and the
- * characters it reads are the ones the span then consumes. `bounds.tagEnd` holds, for
- * every offset, the `>` that ends a tag opened there — the first one outside a quoted
- * attribute value — so a `>` a value spells is text, not an end.
+ * The AST of a parsed component's template, or the reason there is none to read. A
+ * component with no template block renders no template prose, so it scans as an empty
+ * template rather than as unreadable.
  */
-function markupEndAt(body, at, bounds) {
-  if (body[at] === '<') {
-    if (at + 4 <= bounds.comment && body.startsWith('<!--', at)) return body.indexOf('-->', at + 4) + 3
-    const end = bounds.tagEnd[at + 1]
-    return end < 0 ? -1 : end + 1
+function readableComponent(parsed) {
+  const [failure] = parsed.errors
+  if (failure !== undefined) {
+    return unreadableComponent(failure.loc?.start.line ?? 1, `component does not parse: ${failure.message}`)
   }
-  const closes = at + 2 <= bounds.interpolation && body.startsWith('{{', at)
-  return closes ? body.indexOf('}}', at + 2) + 2 : -1
+  const template = parsed.descriptor.template
+  if (!isPresent(template)) return { ast: null }
+  return readableBlock(template)
 }
 
 /**
- * For every offset in `body`, the offset of the `>` that ends a tag opened there, or
- * -1 when no `>` closes it outside a quoted attribute value.
+ * The AST of one template block, or the reason the block cannot be read.
  *
- * A tag scan has three states — outside a value, inside a `"` value, inside a `'`
- * value — and all three are resolved in one backward pass, so ending a tag is a
- * lookup. That is what keeps the walk linear: a body full of unterminated quotes
- * cannot make every opener rescan the rest of the body, because no opener rescans
- * anything.
+ * A block with no AST of its own — a `<template src="…">` — renders text that lives in
+ * another file this scan does not read, so it is unreadable rather than empty.
  */
-function tagEndOffsets(body) {
-  const states = {
-    plain: new Int32Array(body.length + 1).fill(-1),
-    double: new Int32Array(body.length + 1).fill(-1),
-    single: new Int32Array(body.length + 1).fill(-1),
+function readableBlock(template) {
+  if (!htmlLanguages.has(template.lang)) {
+    return unreadableComponent(1, `component template language "${template.lang}" is not html`)
   }
-  for (let index = body.length - 1; index >= 0; index -= 1) stepTagEnds(body, index, states)
-  return states.plain
+  if (!isPresent(template.ast)) return unreadableComponent(1, 'component template has no inline AST to read')
+  return { ast: template.ast }
 }
 
 /**
- * Resolves the three quote states at `index` from the entries of the character after
- * it: a `>` ends the tag only outside a value, a `"` or `'` outside a value opens one,
- * and the matching quote returns to the unquoted state.
+ * Every node of a template AST, depth-first, each with whether it sits inside a
+ * `<pre>`, where Vue preserves whitespace instead of condensing it.
  */
-function stepTagEnds(body, index, states) {
-  const next = index + 1
-  const char = body[index]
-  if (char === '>') states.plain[index] = index
-  else if (char === '"') states.plain[index] = states.double[next]
-  else if (char === "'") states.plain[index] = states.single[next]
-  else states.plain[index] = states.plain[next]
-  states.double[index] = char === '"' ? states.plain[next] : states.double[next]
-  states.single[index] = char === "'" ? states.plain[next] : states.single[next]
-}
-
-const templateOpenTag = '<template'
-const templateCloseTag = '</template>'
-const scriptOpenTag = '<script'
-const tagNameEnd = /[\s>]/
-
-/**
- * Whether the tag that opens at `at` is the element `name` rather than a longer name
- * that begins the same way.
- */
-const opensElement = (source, at, name) => source.startsWith(name, at)
-  && tagNameEnd.test(source[at + name.length] ?? '')
-
-/**
- * Where the part of the file that opens at `at` ends, exclusive, when its characters
- * are not template markup: an HTML comment, or a `<script>` body. `-1` when `at`
- * opens neither.
- */
-function nonTemplateBlockEnd(source, at) {
-  if (source.startsWith('<!--', at)) {
-    const end = source.indexOf('-->', at + 4)
-    return end === -1 ? source.length : end + 3
-  }
-  if (!opensElement(source, at, scriptOpenTag)) return -1
-  const end = source.indexOf('</script', at)
-  return end === -1 ? source.length : end
+function templateNodes(node, inPre, found) {
+  found.push({ node, condense: !inPre })
+  const pre = inPre || node.tag === 'pre'
+  for (const child of node.children ?? []) templateNodes(child, pre, found)
+  return found
 }
 
 /**
- * The template token that opens at `at`, or `null` when the `<` starts neither a
- * `<template>` nor a `</template>`, or the tag never closes. `end` is where the token
- * ends and `opens` says whether it opens or closes a block.
+ * The source ranges of `locs` as half-open offsets, ordered by start. A range with no
+ * width owns nothing and is dropped.
  */
-function templateToken(source, at, tagEnd) {
-  if (source.startsWith(templateCloseTag, at)) {
-    return { at, end: at + templateCloseTag.length, opens: false }
-  }
-  if (!opensElement(source, at, templateOpenTag)) return null
-  const end = tagEnd[at + 1]
-  return end < 0 ? null : { at, end: end + 1, opens: true }
+function sourceRanges(locs) {
+  return locs
+    .map(loc => ({ from: loc.start.offset, to: loc.end.offset }))
+    .filter(range => range.to > range.from)
+    .sort((left, right) => left.from - right.from)
 }
 
 /**
- * Every template token in `source`, in order. HTML comments and `<script>` bodies are
- * skipped whole, so a `<template>` or `</template>` that a comment or a string spells
- * is not a token.
+ * The ranges of one template node that the raw-line reader must not report: its text,
+ * which the node reader reports instead, and the places that render no text at all —
+ * a comment, and every attribute or directive, whose value is markup rather than
+ * prose. Text nodes never contain each other, a comment holds nothing, and an
+ * attribute sits inside a tag, so the ranges are disjoint and one binary search
+ * decides any occurrence.
  */
-function templateTokens(source) {
-  const tokens = []
-  const tagEnd = tagEndOffsets(source)
-  let cursor = 0
-  while (cursor < source.length) {
-    const at = source.indexOf('<', cursor)
-    if (at === -1) return tokens
-    const blockEnd = nonTemplateBlockEnd(source, at)
-    if (blockEnd !== -1) {
-      cursor = blockEnd
-      continue
-    }
-    const token = templateToken(source, at, tagEnd)
-    if (token === null) {
-      cursor = at + 1
-      continue
-    }
-    tokens.push(token)
-    cursor = token.end
-  }
-  return tokens
+function quietRanges({ node }) {
+  const own = node.type === textNodeType || node.type === commentNodeType ? [node.loc] : []
+  const attributes = (node.props ?? []).map(prop => prop.loc).filter(loc => loc !== undefined)
+  return [...own, ...attributes]
 }
 
 /**
- * A component's top-level template body and the offset it starts at, or `null` when
- * the file has no complete template block.
- *
- * The block is found by depth over the tokens, so a nested `<template v-if>` inside
- * the tree belongs to the region and cannot end it early. It is not found by the
- * file's last `</template>`: a `</template>` that an HTML comment or a `<script>`
- * string spells sits after the real close, and taking it would read the script as
- * prose — a script comment that splits a phrase over two lines then reports a claim
- * the page never renders.
+ * Whether the half-open source range [`start`, `end`) lies inside one of the
+ * increasing, disjoint `ranges`.
  */
-function templateRegion(source) {
-  let depth = 0
-  let start = -1
-  for (const token of templateTokens(source)) {
-    if (token.opens) {
-      if (depth === 0) start = token.end
-      depth += 1
-      continue
-    }
-    if (depth === 0) continue
-    depth -= 1
-    if (depth === 0) return { start, body: source.slice(start, token.at) }
-  }
-  return null
-}
-
-/**
- * The half-open file offsets of every text run in a template body: the characters
- * between two pieces of markup, plus the run that follows the last one.
- */
-function textRunOffsets(region) {
-  const runs = []
-  let last = region.start
-  for (const markup of markupSpans(region.body)) {
-    const at = region.start + markup.index
-    runs.push({ from: last, to: at })
-    last = at + markup.length
-  }
-  return [...runs, { from: last, to: region.start + region.body.length }]
+function covers(ranges, start, end) {
+  const index = lastAtMost(ranges, start, range => range.from)
+  return index !== -1 && end <= ranges[index].to
 }
 
 /**
  * The character references a template may spell and the character each renders: the
  * numeric forms, decoded for any code point, and the named forms whose character a
  * rule reads — the spaces that join a phrase across a break, and the characters a
- * phrase is built from. A named reference outside this set is left as written,
- * because its character is not one any rule matches on.
+ * phrase is built from. A named reference outside this set is left as written, and
+ * `nodeModel` then reports the node at the line it starts on, because the character
+ * Vue renders for it is one this table cannot place in the source.
  *
  * Both quantifiers are bounded. An HTML reference is short, and an unbounded run
  * would retry the rest of the text from every `&`, the polynomial shape this file
@@ -1074,11 +1010,18 @@ const spaceCharacter = /\s/
 
 /**
  * The text a node renders and the source offset of every character in it: each
- * whitespace run collapses to one space, the way a browser collapses it, and the
- * space keeps the start of the whole run. Whitespace at either end is dropped, as a
- * browser drops it.
+ * whitespace run collapses to one space, the way Vue condenses it, and the space keeps
+ * the start of the whole run. Whitespace at either end is dropped, as Vue drops it.
+ * Inside a `<pre>` Vue preserves the run, so `condense` is false there and every
+ * character keeps its own offset.
  */
-function collapsedText(pieces) {
+function collapsedText(pieces, condense) {
+  if (!condense) {
+    return {
+      text: pieces.map(piece => piece.text).join(''),
+      starts: pieces.map(piece => piece.from),
+    }
+  }
   const out = []
   let space = null
   for (const piece of pieces) {
@@ -1097,68 +1040,71 @@ function collapsedText(pieces) {
 }
 
 /**
- * The prohibited phrases one node states, one per label, each at the line the phrase
- * starts on. A denial is decided against the node's whole clause, so a denial on one
- * source line excuses a claim the next line states, and an occurrence in a later
- * clause of the same node is still reported.
+ * `text` with every whitespace run as one space and its ends trimmed: the shape this
+ * reader's decoding and the compiler's agree on, so the two can be compared without
+ * a leading space being read as a disagreement.
  */
-function nodeOccurrences(model, lines) {
+const flatText = value => value.replace(/\s+/g, ' ').trim()
+
+/**
+ * The prohibited phrases a text states, one per label, each at the line `lineOf`
+ * returns for its match.
+ */
+function phraseOccurrences(text, lineOf) {
   const found = new Map()
-  for (const match of phraseMatches(model.text)) {
+  for (const match of phraseMatches(text)) {
     if (found.has(match.label)) continue
-    found.set(match.label, { label: match.label, line: lineAt(lines, model.starts[match.start]) })
+    found.set(match.label, { label: match.label, line: lineOf(match) })
   }
   return [...found.values()]
 }
 
 /**
- * One template text node, read once: the text a browser renders — character
- * references decoded and whitespace runs collapsed — the line its text starts on,
- * and the phrases it states at the line each one starts on. `null` when the node
- * renders no text.
+ * One template text node, read once: the text a browser renders, the line its text
+ * starts on, and the phrases it states at the line each one starts on. `null` when the
+ * node renders no text.
+ *
+ * The text is the node's own source range with character references decoded and
+ * whitespace condensed, because the per-character source map a line report needs only
+ * exists in the source. `node.content` is Vue's rendered value and is compared against
+ * it: when the two differ, a named reference this reader does not know has moved the
+ * map, so the node is scanned with Vue's text and reported at the line it starts on.
+ * The claim is then still found, at the one line the compiler can vouch for.
  */
-function nodeModel(source, run, lines) {
-  const model = collapsedText(textPieces(source, run))
+function nodeModel(source, { node, condense }, starts) {
+  const model = collapsedText(textPieces(source, { from: node.loc.start.offset, to: node.loc.end.offset }), condense)
   if (model.text === '') return null
-  return {
-    line: lineAt(lines, model.starts[0]),
-    text: model.text,
-    occurrences: nodeOccurrences(model, lines),
-  }
-}
-
-/**
- * A component's rendered text nodes and the source ranges they cover, read once: the
- * line reader leaves those ranges to the node reader, which has the whole node.
- */
-function templateModel(source, lines) {
-  const region = templateRegion(source)
-  if (region === null) return { entries: [], runs: [] }
-  const runs = textRunOffsets(region)
-  const entries = runs.map(run => nodeModel(source, run, lines)).filter(entry => entry !== null)
-  return { entries, runs }
-}
-
-/**
- * Each line, with the template text runs it overlaps. The line reader skips an
- * occurrence inside one: the node reader reports it once, at the line the phrase
- * starts on, with the clause a single line cannot see.
- */
-function withRuns(texts, runs, lines) {
-  const covered = new Map()
-  for (const run of runs) {
-    if (run.from === run.to) continue
-    const last = lineAt(lines, run.to - 1)
-    for (let line = lineAt(lines, run.from); line <= last; line += 1) {
-      covered.set(line, [...(covered.get(line) ?? []), run])
+  const rendered = flatText(node.content ?? '')
+  if (flatText(model.text) === rendered) {
+    return {
+      line: lineAt(starts, model.starts[0]),
+      text: model.text,
+      occurrences: phraseOccurrences(model.text, match => lineAt(starts, model.starts[match.start])),
     }
   }
-  return texts.map(text => (covered.has(text.line) ? { ...text, runs: covered.get(text.line) } : text))
+  const line = node.loc.start.line
+  return { line, text: rendered, occurrences: phraseOccurrences(rendered, () => line) }
+}
+
+/**
+ * A component's template, read once: one entry per text node, the source ranges the
+ * raw-line reader leaves alone, and the error that stopped the template from parsing.
+ */
+function templateModel(source, filename, starts) {
+  const parsed = parseTemplate(source, filename)
+  if (parsed.error !== undefined) return { entries: [], quiet: [], unreadable: [parsed.error] }
+  if (parsed.ast === null) return { entries: [], quiet: [], unreadable: [] }
+  const nodes = templateNodes(parsed.ast, false, [])
+  const entries = nodes
+    .filter(({ node }) => node.type === textNodeType)
+    .map(entry => nodeModel(source, entry, starts))
+    .filter(entry => entry !== null)
+  return { entries, quiet: sourceRanges(nodes.flatMap(quietRanges)), unreadable: [] }
 }
 
 /**
  * One scanned text per line, with its 1-based line number and the offset it starts
- * at, so a template text run can be matched to the lines it covers.
+ * at, so an occurrence on a line can be placed in the source.
  */
 export function lineTexts(source) {
   const starts = lineStarts(source)
@@ -1168,21 +1114,22 @@ export function lineTexts(source) {
 
 /**
  * The text of a prose file: one entry per line, plus — in a single-file component —
- * the rendered text of every template text node. The node entries are merged back
- * into line order, so a file's findings are reported top to bottom however the scan
- * reached them.
+ * the rendered text of every template text node.
+ *
+ * The node entries are the only place a template phrase is reported: the line entries
+ * carry the ranges the compiler owns, so an occurrence inside a text node is left to
+ * the node that has the whole of it, and an occurrence inside an attribute value or a
+ * comment — which render no text — is dropped. A script body is not owned, because a
+ * string there is a claim the page displays; the node reader never reads one.
  */
 function proseTexts(file, source) {
   const lines = lineTexts(source)
   if (!file.endsWith('.vue')) return lines
-  const starts = lineStarts(source)
-  const template = templateModel(source, starts)
-  const texts = [...withRuns(lines.texts, template.runs, starts), ...template.entries]
-  // Sorted in place on its own statement: reporting in source order is the point,
-  // and the array is a fresh local, so mutating it is intended rather than
-  // incidental.
-  texts.sort((left, right) => left.line - right.line)
-  return { unreadable: [], texts }
+  const template = templateModel(source, file, lineStarts(source))
+  return {
+    unreadable: template.unreadable,
+    texts: [...lines.texts.map(text => ({ ...text, quiet: template.quiet })), ...template.entries],
+  }
 }
 
 /**
@@ -1208,23 +1155,22 @@ function phraseClaims(claimText) {
 }
 
 /**
- * The labels one line or claim value states. An occurrence the node reader owns is
- * left to it: the node reports it once, at the line its phrase starts on, and decides
- * a denial with the clause the line cannot see.
+ * The labels one line or claim value states. An occurrence inside a range the
+ * compiler owns is not reported here: a text node reports it once, at the line its
+ * phrase starts on, with the clause a single line cannot see, and a range that
+ * renders no text at all reports nothing anywhere.
  */
 function lineLabels(claimText) {
-  const matches = phraseMatches(claimText.text).filter(match => !inNodeText(claimText, match))
+  const matches = phraseMatches(claimText.text).filter(match => !inQuietRange(claimText, match))
   return [...new Set(matches.map(match => match.label))]
 }
 
 /**
- * Whether an occurrence lies inside a template text node, whose reader owns it.
+ * Whether an occurrence lies inside a source range the raw-line reader does not own.
  */
-function inNodeText(claimText, match) {
-  if (claimText.runs === undefined) return false
-  const start = claimText.offset + match.start
-  const end = claimText.offset + match.end
-  return claimText.runs.some(run => run.from <= start && end <= run.to)
+function inQuietRange(claimText, match) {
+  if (claimText.quiet === undefined) return false
+  return covers(claimText.quiet, claimText.offset + match.start, claimText.offset + match.end)
 }
 
 /**
@@ -1241,10 +1187,18 @@ function claimsForText(file, claimText, numericScope) {
   return [...phrases, ...numbers].map(claim => ({ file, text, ...claim }))
 }
 
+/**
+ * Every violation of one file, ordered by the line each finding reports rather than by
+ * where its text starts: a text node that begins on line 2 can report a phrase on line
+ * 40, and a finding from line 10 must still come first. The array is a fresh local, so
+ * sorting it in place is intended rather than incidental.
+ */
 function claimsForFile(file, texts, siteRoot = site) {
   const numericScope = file.startsWith(join(siteRoot, layout.data))
   const name = relative(siteRoot, file)
-  return texts.flatMap(claimText => claimsForText(name, claimText, numericScope))
+  const claims = texts.flatMap(claimText => claimsForText(name, claimText, numericScope))
+  claims.sort((left, right) => left.line - right.line)
+  return claims
 }
 
 async function loadAllowlist() {
