@@ -570,7 +570,7 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | `IBEX_MEMORY_RERANK_MAX_RETRIES` | No | `0` | Retries inside the rerank budget | `0` keeps the read path inside its deadline |
 | `IBEX_MEMORY_RERANK_MAX_CANDIDATES` | No | `50` | Upper bound on documents sent to the reranker per search (`1..50`) | The reranker never sees the corpus |
 | `IBEX_MEMORY_RERANK_CLIENT_BATCH_SIZE` | No | `32` | Documents per `POST /rerank` request (`1..64`); larger windows are split into concurrent requests | Must not exceed the TEI server's `--max-client-batch-size` (default `32`). Above it, a search whose window holds more documents than the server limit gets `413` and degrades to the fused order; windows at or below the limit still succeed. Startup warns when the largest possible request would exceed `32` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP/HTTP collector endpoint (e.g. `http://collector:4318/v1/traces`); empty disables span export while keeping context propagation. `https://c.example?tenant=memory` becomes `https://c.example/v1/traces?tenant=memory`; a non-`http(s)` scheme disables export | Alias: `IBEX_OTEL_EXPORTER_OTLP_ENDPOINT`. Transport follows the scheme: `https://` is TLS and `http://` is cleartext. This is the only service where the scheme is honoured; the Go and worker exporters are always cleartext (P1-16, §14) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP/HTTP collector endpoint (e.g. `http://collector:4318/v1/traces`); empty disables span export while keeping context propagation. `https://c.example?tenant=memory` becomes `https://c.example/v1/traces?tenant=memory`; a non-`http(s)` scheme disables export | Alias: `IBEX_OTEL_EXPORTER_OTLP_ENDPOINT`. Transport follows the scheme: `https://` is TLS and `http://` is cleartext, as it does for the worker. The Go exporter is the exception: it strips the scheme and exports cleartext (P1-16, §14) |
 | `OTEL_SAMPLE_RATIO` | No | `0.01` | Root span sampling ratio (`0.0..1.0`) via `ParentBased(TraceIdRatioBased)`; invalid or out-of-range values fall back to `0.01` | Subordinate spans continue the parent sampling decision |
 | `OTEL_SERVICE_NAME` | No | `IBEX_SERVICE_NAME`, then `ibex-memory` | `service.name` resource attribute | ADR-0019 §2 fallback chain |
 | `OTEL_SERVICE_VERSION` | No | `dev` | `service.version` resource attribute | |
@@ -614,7 +614,8 @@ worker unless explicitly aliased in a future milestone.
 | `IBEX_WORKER_MEMORY_API_TOKEN` | Conditional | (none) | Bearer token with `memory:write` | Alias: `MEMORY_API_TOKEN` |
 | `CLICKHOUSE_DSN` | No | (none) | HTTP DSN for `ibex.llm_traces` | Empty → skip insert (fail-open) + metric. Alias: `IBEX_WORKER_CLICKHOUSE_DSN` |
 | `POSTGRES_DSN` | Conditional | (none) | Alias for worker dead-letter DSN | Required when dead-letter persistence enabled |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP gRPC collector endpoint | Same semantics as Go services (ADR-0019). **The export is cleartext** (`insecure=True`); no TLS option exists (P1-16, §14) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP gRPC collector endpoint | Same semantics as Go services (ADR-0019), but **the transport follows the endpoint scheme**: `https://host:4317` exports over TLS (system root CAs, or `OTEL_EXPORTER_OTLP_CERTIFICATE`), while `http://host:4317` and a schemeless `host:4317` export cleartext. `insecure=True` is passed but the exporter overrides it for an `https` endpoint (P1-16, §14) |
+| `OTEL_EXPORTER_OTLP_HEADERS` | No | (none) | Collector auth headers as gRPC metadata (`Authorization=Bearer%20<token>`) | A credential: sent with every export, readable on the wire whenever the endpoint is not `https://`. See §14 |
 | `OTEL_SAMPLE_RATIO` | No | `0.01` | Trace sampling ratio (0–1) | Worker reads directly (no `IBEX_WORKER_` prefix) |
 | `OTEL_SERVICE_NAME` | No | `ibex-worker` | OTel resource `service.name` | Fallback when unset |
 | `REDIS_URL` | No | `redis://127.0.0.1:6379/0` | Shared Redis base when worker URL unset | Dev default in `Settings` |
@@ -762,34 +763,58 @@ Used by: **all services**
 | `OTEL_SERVICE_NAME` | Yes* | from `IBEX_SERVICE_NAME` | OTel service name |
 | `OTEL_SERVICE_VERSION` | No | `dev` | Binary version tag |
 | `OTEL_DEPLOYMENT_ENVIRONMENT` | No | from `IBEX_ENV` | `development`, `staging`, `production` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP gRPC collector as `host:port` (e.g. `127.0.0.1:4317`); empty = noop. `http://` / `https://` prefixes are stripped (ADR-0051 local LGTM: `make observability-up`). **The export is cleartext** — see [Export transport is cleartext](#export-transport-is-cleartext-p1-16) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP gRPC collector as `host:port` (e.g. `127.0.0.1:4317`); empty = noop. `http://` / `https://` prefixes are stripped (ADR-0051 local LGTM: `make observability-up`) | **The export is cleartext, including for a pasted `https://` endpoint** — the scheme is stripped and `WithInsecure()` is passed unconditionally. `OTEL_EXPORTER_OTLP_INSECURE` cannot re-enable TLS; only a certificate variable can, and no profile sets one. See [Export transport and collector credentials](#export-transport-and-collector-credentials-p1-16) |
+| `OTEL_EXPORTER_OTLP_HEADERS` | No | (none) | Collector auth headers sent as gRPC metadata on every export (`key=value` pairs, comma-separated, URL-encoded) | A credential, not a label: readable on the wire wherever the export is cleartext — every Go service, and the worker on an `http://` or schemeless endpoint. See [Export transport and collector credentials](#export-transport-and-collector-credentials-p1-16) |
 | `OTEL_SAMPLE_RATIO` | No | `0.01` | Fraction of root spans sampled (`ParentBased` + `TraceIDRatio`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | No | `grpc` | Reserved; Phase 1 uses gRPC only |
 | `OTEL_PROPAGATORS` | No | `tracecontext,baggage` | Fixed in `packages/telemetry` (ADR-0019) |
 
 \*Required directly or via `IBEX_SERVICE_NAME` fallback.
 
-#### Export transport is cleartext (P1-16)
+#### Export transport and collector credentials (P1-16)
 
-The Go and worker OTLP exporters are constructed without TLS and there is no
-setting that adds it:
+The two gRPC exporters behave differently, and the difference decides whether a
+span is readable on the wire.
 
-- `packages/telemetry/exporter.go` passes `otlptracegrpc.WithInsecure()`
-  unconditionally, after `normalizeOTLPEndpoint` strips any `http://` or
-  `https://` prefix. A pasted `https://collector:4317` therefore exports
-  **unencrypted** to `collector:4317`.
-- `services/worker/app/telemetry.py` passes `insecure=True` to
-  `OTLPSpanExporter(endpoint=..., insecure=True)`.
+- **Go (`packages/telemetry`): the endpoint scheme means nothing, and the export
+  is cleartext unless a certificate variable is set.** `normalizeOTLPEndpoint`
+  strips any `http://` or `https://` prefix before the value reaches
+  `otlptracegrpc.WithEndpoint`, and `otlptracegrpc.WithInsecure()` is passed
+  unconditionally (`packages/telemetry/env.go`, `packages/telemetry/exporter.go`).
+  A pasted `https://collector:4317` therefore exports **unencrypted** to
+  `collector:4317`, and `OTEL_EXPORTER_OTLP_INSECURE=false` cannot change that:
+  the explicit `WithInsecure()` is applied after the exporter's environment
+  handling. The one variable that does change the transport is
+  `OTEL_EXPORTER_OTLP_CERTIFICATE`, or the `…_CLIENT_CERTIFICATE` /
+  `…_CLIENT_KEY` pair: it installs a TLS credential that the exporter prefers
+  over `Insecure`, so the connection becomes TLS to the stripped `host:port` —
+  still without the scheme having any say. No profile in this repository sets
+  any of those variables.
+- **The worker (`services/worker/app/telemetry.py`): the endpoint scheme decides.**
+  It passes `insecure=True`, but the OTLP gRPC exporter overrides that flag when
+  the scheme is `https` (`opentelemetry-exporter-otlp-proto-grpc` 1.45.2,
+  `OTLPExporterMixin.__init__`: `if parsed_url.scheme == "https": insecure = False`).
+  An `https://host:4317` worker endpoint opens a TLS channel verified against the
+  system root CAs, or against `OTEL_EXPORTER_OTLP_CERTIFICATE` when that is set.
+  Only `http://host:4317` and a schemeless `host:4317` export cleartext, and
+  `OTEL_EXPORTER_OTLP_INSECURE` cannot change either case, because the worker
+  passes `insecure` explicitly.
 
-No TLS option, no certificate or CA setting, and no test for one exist.
+**What leaves the process.** When the endpoint is set, every export carries the
+span names and attributes the sending service records — for the Go services the
+`{method} {route_template}` span name plus the HTTP method, status code, and
+request id — along with the resource attributes `service.name`,
+`service.version`, and `deployment.environment`. On a cleartext channel anyone on
+the path can read and modify them.
 
-**What leaves the process.** When the endpoint is set, spans are sent
-unencrypted: the span name (`{method} {route_template}`), the HTTP method,
-status code, and request id, plus the resource attributes `service.name`,
-`service.version`, and `deployment.environment`. On a shared or untrusted
-network anyone on the path can read and modify them. The redaction the services
-apply to logs and to the exporter's own failure records does not encrypt the
-wire.
+**Collector credentials travel with them.** Both exporters attach an
+`OTEL_EXPORTER_OTLP_HEADERS` value — for example
+`Authorization=Bearer%20<token>` — as gRPC metadata on every `Export` RPC. Over a
+cleartext channel, which is every Go export and a worker export to `http://` or a
+schemeless endpoint, anyone on the path can read that token and replay it against
+the collector. Only a worker export to an `https://` endpoint carries it inside
+TLS. The redaction the services apply to logs and to the exporter's own failure
+records does not encrypt the wire, and it does not reach the RPC metadata at all.
 
 **Where it is a no-op.** The supported deployment profile, `v1-single-node`
 (ADR-0097), sets no `OTEL_EXPORTER_OTLP_ENDPOINT`, so no exporter is built and
@@ -797,16 +822,18 @@ no span leaves the process. `infra/compose/test` leaves it unset too. Only
 `infra/compose/dev` defaults it to `http://host.docker.internal:4317`, which is
 a container-to-host hop on a developer machine.
 
-**The memory service is different.** It uses the OTLP/HTTP exporter, which
-derives TLS from the endpoint scheme, so an `https://` endpoint there is
-encrypted. That is not a precedent for the Go and worker exporters: they have no
-equivalent path, and stripping the scheme is not the same as honouring it.
+**The memory service** uses the OTLP/HTTP exporter, which derives TLS from the
+endpoint scheme too: an `https://` endpoint there is encrypted, `http://` is
+not, and a non-`http(s)` scheme disables export rather than downgrading it.
 
-**How to treat it until this changes.** Point the endpoint at a collector on the
-same host or a trusted network only, and do not enable export across a network
-boundary as a secure configuration. Recording the limitation is the decision for
-1.0; adding TLS is `P1-16`'s remaining work and would need a CA setting, a test,
-and a documented default.
+**How to treat it until this changes.** For the Go services, point the endpoint at
+a collector on the same host or a trusted network only, and do not enable export
+across a network boundary as a secure configuration. For the worker, an `https://`
+endpoint is a real TLS channel and the only encrypted path any IBEX service
+configures today. The Go client can be driven to TLS only through a certificate
+variable that no profile sets and no test covers; making TLS a first-class,
+tested option of the Go exporter is `P1-16`'s remaining work, and it would need a
+CA setting and a documented default.
 
 **Sampling policy recommendation:**
 

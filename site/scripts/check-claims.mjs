@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,34 +9,37 @@ const allowlistPath = join(here, 'claim-numbers.allowlist.json')
 const allowlistName = 'scripts/claim-numbers.allowlist.json'
 
 /**
- * Rendered prose: every page, docs page, and blog post, and every component whose
- * template and `<script>` strings render inside them. A claim hard-coded in a
- * component reaches the reader exactly as one written in markdown does, so it is
- * scanned by the same rule set.
+ * Where the scan reads, relative to a site root, and what each root is for.
+ *
+ * - `prose`: rendered prose — every page, docs page, and blog post, and every
+ *   component whose template and `<script>` strings render inside them. A claim
+ *   hard-coded in a component reaches the reader exactly as one written in
+ *   markdown does, so it is scanned by the same rule set.
+ * - `data`: typed data — the claim-bearing strings a page renders and the numbers
+ *   it plots. A number a reader could take as a result is authored here or
+ *   imported from a committed artifact, so this is the surface the numeric-claim
+ *   rule gates. Page templates and components hold artifact values and static
+ *   axis/label strings, not new results; widening the numeric rule past this root
+ *   would require an allowlist entry for every documented target and every `pNN`
+ *   field name in the docs tree.
+ * - `ledger`: the one file in `data` whose claims are read from object fields and
+ *   labelled tuples rather than from whole lines.
+ * - `benchmarks`: published benchmark artifacts. `validate_published_data.py`
+ *   owns their schema, so this checker reads only the string values a reader sees
+ *   — a `note`, a `recall` definition, a gate check name — and applies the prose
+ *   rules to them. The numbers in these files are the schema's business, not a
+ *   sentence's, so the numeric rule stays out of this root.
+ *
+ * Declaring the layout once lets `scan` take any site root: the real tree and a
+ * test fixture holding the same layout are walked and dispatched by the same code,
+ * so a test exercises the roots this check actually reads.
  */
-const proseRoots = ['app/pages', 'content/docs', 'content/blog', 'app/components']
-  .map(root => join(site, root))
-
-/**
- * Typed data: the claim-bearing strings a page renders and the numbers it plots.
- * A number a reader could take as a result is authored here or imported from a
- * committed artifact, so this is the surface the numeric-claim rule gates. Page
- * templates and components hold artifact values and static axis/label strings, not
- * new results; widening the numeric rule past this root would require an allowlist
- * entry for every documented target and every `pNN` field name in the docs tree.
- */
-const numericRoot = join(site, 'app/data')
-const ledgerFile = join(numericRoot, 'ledger.ts')
-
-/**
- * Published benchmark artifacts. `validate_published_data.py` owns their schema, so
- * this checker reads only the string values a reader sees — a `note`, a `recall`
- * definition, a gate check name — and applies the prose rules to them. The numbers
- * in these files are the schema's business, not a sentence's, so the numeric rule
- * stays out of this root.
- */
-const benchmarkRoot = join(site, 'public/benchmarks')
-const benchmarkFile = name => name.endsWith('.json')
+const layout = {
+  prose: ['app/pages', 'content/docs', 'content/blog', 'app/components'],
+  data: 'app/data',
+  ledger: 'app/data/ledger.ts',
+  benchmarks: 'public/benchmarks',
+}
 
 /**
  * ADRs and archived roadmaps are records of a past decision, not live claims.
@@ -118,10 +121,11 @@ const artifactReference = /(?:\/benchmarks|benchmark-data|run\s+\d+|gold set)/i
 const numericLabel = 'numeric claim without an artifact reference'
 const scoreLabel = 'dimensionless score without an artifact reference'
 const allowlistableLabels = new Set([numericLabel, scoreLabel])
-const unreadableLabel = 'claim value that cannot be inspected (needs a static string literal)'
+export const unreadableLabel = 'claim value that cannot be inspected (needs a static string literal)'
 
 const proseFile = name => /\.(?:md|vue)$/.test(name)
 const dataFile = name => name.endsWith('.ts') && !name.endsWith('.test.ts')
+const benchmarkFile = name => name.endsWith('.json')
 const isText = value => typeof value === 'string'
 const isFilledText = value => isText(value) && value.length > 0
 
@@ -169,7 +173,7 @@ function clauseAround(text, index, length) {
  * production-ready" has one denied and one undenied occurrence, so it fails.
  * Repeated labels collapse to one finding per scanned text.
  */
-function phraseViolations(text) {
+export function phraseViolations(text) {
   const labels = prohibited.flatMap(rule => [...text.matchAll(rule.pattern)]
     .filter(match => !denials.test(clauseBefore(text, match.index)))
     .map(() => rule.label))
@@ -646,7 +650,7 @@ function readJsonEscape(source, index) {
  * kept in the value: it makes the file invalid JSON, which is the validator's
  * finding, and the caller's line count still has to account for it.
  */
-function readJsonString(source, start) {
+export function readJsonString(source, start) {
   let value = ''
   let index = start + 1
   while (index < source.length) {
@@ -701,7 +705,7 @@ function newlinesBetween(source, start, end) {
  * be read stops the scan and is reported, so a malformed artifact fails the check
  * instead of passing unscanned.
  */
-function benchmarkClaimTexts(source) {
+export function benchmarkClaimTexts(source) {
   const texts = []
   let cursor = 0
   let line = 1
@@ -724,17 +728,19 @@ function benchmarkClaimTexts(source) {
 /**
  * One scanned text per line, with its 1-based line number.
  */
-function lineTexts(source) {
+export function lineTexts(source) {
   return { texts: source.split(/\r?\n/).map((text, index) => ({ line: index + 1, text })), unreadable: [] }
 }
 
 /**
  * The text a rule runs against: every line of a prose file, the claim values of
- * `ledger.ts`, and the string values of a published benchmark artifact.
+ * `ledger.ts`, and the string values of a published benchmark artifact. The root is
+ * a parameter so a fixture tree is scanned by this dispatch rather than by a copy
+ * of it.
  */
-function scannedTexts(file, source) {
-  if (file === ledgerFile) return ledgerClaimTexts(source)
-  if (file.startsWith(benchmarkRoot)) return benchmarkClaimTexts(source)
+export function scannedTexts(file, source, siteRoot = site) {
+  if (file === join(siteRoot, layout.ledger)) return ledgerClaimTexts(source)
+  if (file.startsWith(join(siteRoot, layout.benchmarks))) return benchmarkClaimTexts(source)
   return lineTexts(source)
 }
 
@@ -751,9 +757,9 @@ function claimsForText(file, claimText, numericScope) {
   return [...phrases, ...numbers].map(claim => ({ file, line, ...claim, text }))
 }
 
-function claimsForFile(file, texts) {
-  const numericScope = file.startsWith(numericRoot)
-  const name = relative(site, file)
+function claimsForFile(file, texts, siteRoot = site) {
+  const numericScope = file.startsWith(join(siteRoot, layout.data))
+  const name = relative(siteRoot, file)
   return texts.flatMap(claimText => claimsForText(name, claimText, numericScope))
 }
 
@@ -792,93 +798,119 @@ const matchesClaim = (entry, claim) => [
   tokenMatches(entry, claim),
 ].every(Boolean)
 
-const allowlist = await loadAllowlist()
-const consumed = new Set()
-
-/**
- * The first unused, well-formed entry that excuses this occurrence is taken and
- * marked consumed, so a second occurrence cannot spend the same entry.
- */
-function takeAllowlistEntry(claim) {
-  for (let index = 0; index < allowlist.length; index += 1) {
-    if (consumed.has(index)) continue
-    const entry = allowlist[index]
-    if (!hasRequiredFields(entry)) continue
-    if (matchesClaim(entry, claim)) {
-      consumed.add(index)
-      return true
-    }
-  }
-  return false
-}
-
-function allowlistFailures() {
-  const malformed = allowlist
-    .filter(entry => !hasRequiredFields(entry))
-    .map(entry => ({
-      file: allowlistName,
-      line: 0,
-      label: 'malformed allowlist entry (needs file, line, token, reason)',
-      text: JSON.stringify(entry),
-    }))
-  const stale = allowlist.flatMap((entry, index) => hasRequiredFields(entry) && !consumed.has(index)
-    ? [{
-      file: allowlistName,
-      line: 0,
-      label: 'stale allowlist entry (no numeric claim with that file, line, and token)',
-      text: `${entry.file}:${entry.line} ${entry.token}`,
-    }]
-    : [])
-  return [...malformed, ...stale]
-}
-
 /**
  * Every root the scan reads, paired with the filter that accepts its files. A prose
  * root holds one file per rendered page, `app/data` holds the typed claim data, and
  * `public/benchmarks` holds the published artifacts.
  */
-const scanRoots = [
-  ...proseRoots.map(root => ({ root, accept: proseFile })),
-  { root: numericRoot, accept: dataFile },
-  { root: benchmarkRoot, accept: benchmarkFile },
-]
-const files = (await Promise.all(scanRoots.map(({ root, accept }) => walk(root, accept)))).flat()
-const sources = await Promise.all(files.map(file => readFile(file, 'utf8')))
-
-/**
- * Every file is read once, concurrently, and then scanned in the same
- * deterministic order the walk produced. No callback awaits, so a slow file
- * cannot serialise the scan.
- */
-const scanned = files.map((file, index) => ({ file, ...scannedTexts(file, sources[index]) }))
-
-const unreadable = scanned.flatMap(entry => entry.unreadable.map(item => ({
-  file: relative(site, entry.file),
-  line: item.line,
-  label: unreadableLabel,
-  text: item.text,
-})))
-
-const claims = scanned.flatMap(entry => claimsForFile(entry.file, entry.texts))
-
-/**
- * A phrase claim is never allowlisted; a numeric or score claim needs its own
- * entry. Consuming entries inside the filter is deliberate: it runs once per
- * claim, in file order, and leaves `consumed` ready for the staleness check.
- */
-const isFailure = claim => !allowlistableLabels.has(claim.label) || !takeAllowlistEntry(claim)
-const failures = [...unreadable, ...claims.filter(isFailure), ...allowlistFailures()]
-
-/**
- * A numeric failure names the exact token it objects to, because the allowlist
- * excuses one occurrence at a time and the line may hold several numbers.
- */
-const describeFailure = failure => (failure.token ? `${failure.label} [${failure.token}]` : failure.label)
-
-if (failures.length) {
-  console.error(`Claim check failed (${failures.length}):`)
-  for (const failure of failures) console.error(`  ${failure.file}:${failure.line} ${describeFailure(failure)}\n  ${failure.text}`)
-  process.exit(1)
+function scanRoots(siteRoot = site) {
+  return [
+    ...layout.prose.map(root => ({ root: join(siteRoot, root), accept: proseFile })),
+    { root: join(siteRoot, layout.data), accept: dataFile },
+    { root: join(siteRoot, layout.benchmarks), accept: benchmarkFile },
+  ]
 }
 
-console.log('Claim check passed: no unsupported production, availability, or guarantee claims; every numeric claim names its artifact.')
+/**
+ * Every claim and every unreadable value under a site root.
+ *
+ * Every file is read once, concurrently, and then scanned in the same deterministic
+ * order the walk produced. No callback awaits, so a slow file cannot serialise the
+ * scan.
+ */
+export async function scan(siteRoot = site) {
+  const roots = scanRoots(siteRoot)
+  const files = (await Promise.all(roots.map(({ root, accept }) => walk(root, accept)))).flat()
+  const sources = await Promise.all(files.map(file => readFile(file, 'utf8')))
+  const scanned = files.map((file, index) => ({ file, ...scannedTexts(file, sources[index], siteRoot) }))
+  const unreadable = scanned.flatMap(entry => entry.unreadable.map(item => ({
+    file: relative(siteRoot, entry.file),
+    line: item.line,
+    label: unreadableLabel,
+    text: item.text,
+  })))
+  const claims = scanned.flatMap(entry => claimsForFile(entry.file, entry.texts, siteRoot))
+  return { unreadable, claims }
+}
+
+async function main() {
+  const { unreadable, claims } = await scan(site)
+  const allowlist = await loadAllowlist()
+  const consumed = new Set()
+
+  /**
+   * The first unused, well-formed entry that excuses this occurrence is taken and
+   * marked consumed, so a second occurrence cannot spend the same entry.
+   */
+  function takeAllowlistEntry(claim) {
+    for (let index = 0; index < allowlist.length; index += 1) {
+      if (consumed.has(index)) continue
+      const entry = allowlist[index]
+      if (!hasRequiredFields(entry)) continue
+      if (matchesClaim(entry, claim)) {
+        consumed.add(index)
+        return true
+      }
+    }
+    return false
+  }
+
+  function allowlistFailures() {
+    const malformed = allowlist
+      .filter(entry => !hasRequiredFields(entry))
+      .map(entry => ({
+        file: allowlistName,
+        line: 0,
+        label: 'malformed allowlist entry (needs file, line, token, reason)',
+        text: JSON.stringify(entry),
+      }))
+    const stale = allowlist.flatMap((entry, index) => hasRequiredFields(entry) && !consumed.has(index)
+      ? [{
+        file: allowlistName,
+        line: 0,
+        label: 'stale allowlist entry (no numeric claim with that file, line, and token)',
+        text: `${entry.file}:${entry.line} ${entry.token}`,
+      }]
+      : [])
+    return [...malformed, ...stale]
+  }
+
+  /**
+   * A phrase claim is never allowlisted; a numeric or score claim needs its own
+   * entry. Consuming entries inside the filter is deliberate: it runs once per
+   * claim, in file order, and leaves `consumed` ready for the staleness check.
+   */
+  const isFailure = claim => !allowlistableLabels.has(claim.label) || !takeAllowlistEntry(claim)
+  const failures = [...unreadable, ...claims.filter(isFailure), ...allowlistFailures()]
+
+  /**
+   * A numeric failure names the exact token it objects to, because the allowlist
+   * excuses one occurrence at a time and the line may hold several numbers.
+   */
+  const describeFailure = failure => (failure.token ? `${failure.label} [${failure.token}]` : failure.label)
+
+  if (failures.length) {
+    console.error(`Claim check failed (${failures.length}):`)
+    for (const failure of failures) console.error(`  ${failure.file}:${failure.line} ${describeFailure(failure)}\n  ${failure.text}`)
+    process.exit(1)
+  }
+
+  console.log('Claim check passed: no unsupported production, availability, or guarantee claims; every numeric claim names its artifact.')
+}
+
+/**
+ * The scan runs only when this file is the entry point, so the readers above can be
+ * imported and exercised directly. Both paths are resolved through the filesystem,
+ * because comparing the URL form alone would miss a symlinked invocation and let the
+ * check exit 0 without scanning anything.
+ */
+function invokedDirectly() {
+  if (process.argv[1] === undefined) return false
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+}
+
+if (invokedDirectly()) await main()

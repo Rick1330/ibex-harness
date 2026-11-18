@@ -120,6 +120,15 @@ jobs:
       # `finished_at` is not a timezone-aware timestamp, so an artifact from another
       # commit can never promote a bundle here.
       #
+      # The lookup is bounded polling, not a single call. `gh run list` only reports a
+      # run that is already registered, so it returns nothing for a run that exists but
+      # is still in progress; ci.yml and this workflow both start from the release merge
+      # with no dependency edge between them, so one release finishing while CI was still
+      # running recorded `unverified` for an artifact uploaded moments later, and nothing
+      # retried. The wait is bounded at 6 minutes (24 checks x 15 s) so a stalled or
+      # absent run delays a release by minutes at most, never indefinitely; v1-smoke
+      # alone is allowed 90 minutes, so waiting for the whole matrix is not the goal.
+      #
       # Absence is not an error: a tag cut after the artifact's 14-day retention, or a
       # commit CI never built, leaves the bundle `unverified`, which is the truthful
       # status. It is also not a silent pass — the warning names the reason.
@@ -131,20 +140,66 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          run_json="$(gh run list --repo "$REPOSITORY" --workflow ci.yml \
-            --commit "$COMMIT" --event push --branch main --limit 5 \
-            --json databaseId,headSha,status,conclusion)"
-          run_id="$(jq -r --arg sha "$COMMIT" \
-            'map(select(.headSha == $sha and .status == "completed")) | .[0].databaseId // empty' \
-            <<<"$run_json")"
+          # Bounded wait for this commit's CI push run to finish. Both knobs exist so
+          # infra/scripts/test-ci-tiering.sh can exercise the loop without sleeping; the
+          # defaults are the release behaviour and no workflow sets them.
+          attempts="${IBEX_SMOKE_RUN_ATTEMPTS:-24}"   # 24 x 15 s = 6 minutes
+          interval="${IBEX_SMOKE_RUN_INTERVAL:-15}"
+          # A run that has not appeared after three checks (two waits, 30 s) is not
+          # slow, it does not exist. Stop waiting and say so instead of spending the
+          # whole bound on a commit CI never built.
+          absent_checks=3
+
+          run_id=""
+          conclusion=""
+          saw_run=0
+          for (( attempt = 1; attempt <= attempts; attempt++ )); do
+            run_json="$(gh run list --repo "$REPOSITORY" --workflow ci.yml \
+              --commit "$COMMIT" --event push --branch main --limit 5 \
+              --json databaseId,headSha,status,conclusion)" || run_json='[]'
+            [[ -n "$run_json" ]] || run_json='[]'
+            exists="$(jq -r --arg sha "$COMMIT" \
+              'map(select(.headSha == $sha)) | length' <<<"$run_json")"
+            run_id="$(jq -r --arg sha "$COMMIT" \
+              'map(select(.headSha == $sha and .status == "completed")) | .[0].databaseId // empty' \
+              <<<"$run_json")"
+            if [[ -n "$run_id" ]]; then
+              conclusion="$(jq -r --arg sha "$COMMIT" \
+                'map(select(.headSha == $sha and .status == "completed")) | .[0].conclusion // "unknown"' \
+                <<<"$run_json")"
+              break
+            fi
+            if (( exists > 0 )); then
+              saw_run=1
+              state="is not complete yet"
+            elif (( attempt >= absent_checks )); then
+              break
+            else
+              state="has not appeared yet"
+            fi
+            if (( attempt < attempts )); then
+              echo "CI push run on main for ${COMMIT} ${state} (check ${attempt}/${attempts}); waiting ${interval}s"
+              sleep "$interval"
+            fi
+          done
+
           if [[ -z "$run_id" ]]; then
-            echo "::warning::no completed CI push run on main for ${COMMIT}; bundle status stays unverified"
+            if (( saw_run )); then
+              echo "::warning::the CI push run on main for ${COMMIT} did not complete within $(( attempts * interval ))s; bundle status stays unverified"
+            else
+              echo "::warning::no CI push run on main for ${COMMIT} (CI was never run for the commit, or the run and its artifact are older than retention); bundle status stays unverified"
+            fi
             exit 0
           fi
-          conclusion="$(jq -r --arg sha "$COMMIT" \
-            'map(select(.headSha == $sha and .status == "completed")) | .[0].conclusion' \
-            <<<"$run_json")"
+
           echo "CI run ${run_id} for ${COMMIT} concluded: ${conclusion}"
+          if [[ "$conclusion" != "success" ]]; then
+            # A red run is not evidence for the smoke. The artifact may exist, but
+            # promoting a bundle from a run that failed is exactly the overstatement
+            # this manifest is supposed to prevent.
+            echo "::warning::CI run ${run_id} for ${COMMIT} concluded ${conclusion}, so its bundle smoke is not evidence; bundle status stays unverified"
+            exit 0
+          fi
           if ! gh run download "$run_id" --repo "$REPOSITORY" \
             --name bundle-smoke-result --dir smoke-results; then
             echo "::warning::CI run ${run_id} carries no bundle-smoke-result artifact for ${COMMIT} (smoke skipped, failed before it wrote a result, or the artifact expired); bundle status stays unverified"

@@ -202,7 +202,7 @@ Each row is closed by a change that exists in this tree; per the stage closure r
 | P0-21 | Route-level operator negatives green; no two-tenant browser journey, no proxy/chat negative | 34:116; 31:56 | product | 27:86 |
 | P1-14 | `mcp-memory` returns `allowed_hosts=[]` with DNS-rebinding protection on | 34:119 | infrastructure | 27:105 |
 | P1-15 | Auth gRPC server TLS exists outside `development` but no negative test asserts it | `services/auth/cmd/auth/main.go`:396,424-437 | code | 27:106 |
-| P1-16 | OTLP export is cleartext unconditionally | 27:107 | code | 27:107 |
+| P1-16 | Go OTLP export ignores the endpoint scheme and is cleartext unless a certificate variable is set (the worker's follows the scheme) | 27:107 | code | 27:107 |
 | P1-17 | No service-token rotation; `DEPLOYMENT.md` claims 24 h overlap the code lacks | 27:108 | code | 27:108 |
 | P1-18 | `osv-scanner.toml` ignores a nitro advisory absent from the waiver table | 27:109 | owner decision | 27:109 |
 | P1-21 | `failed_tasks` has no RLS/prune and stores args/tracebacks that can embed content | 27:111 | code | 27:111 |

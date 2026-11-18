@@ -326,6 +326,10 @@ v1_edge_ca() {
 # status alone cannot say whether context assembly ran: the proxy is fail-open
 # and serves the completion anyway when assembly degrades.
 #
+# A seventh argument is an Idempotency-Key to send. The chat arm passes the
+# fresh key v1_smoke_idem_key produces; every other call leaves it empty and is
+# sent without the header.
+#
 # The bootstrap PAT is an admin credential, so it must not appear in curl's
 # argv: OpenCode (and any process monitor) logs argv. The bearer header is
 # written to a 0600 curl config file and passed with --config; only the file
@@ -338,7 +342,7 @@ v1_edge_ca() {
 # assertion below reports it as a failed probe, and v1_smoke's own loop decides
 # whether to try again — the smoke never dies inside curl.
 v1_smoke_http() {
-  local url="$1" token="$2" agent="$3" body="$4" payload="${5:-}" headers="${6:-}"
+  local url="$1" token="$2" agent="$3" body="$4" payload="${5:-}" headers="${6:-}" idem="${7:-}"
   local -a args=(
     --cacert "$(v1_edge_ca)" -sS
     --connect-timeout 5 --max-time 20
@@ -353,6 +357,7 @@ v1_smoke_http() {
     args+=(--config "$cfg")
   fi
   [[ -n "$agent" ]] && args+=(-H "X-IBEX-Agent-ID: $agent")
+  [[ -n "$idem" ]] && args+=(-H "Idempotency-Key: $idem")
   if [[ -n "$payload" ]]; then
     args+=(-X POST -H "Content-Type: application/json" --data-binary "@$payload")
   fi
@@ -449,6 +454,65 @@ sys.exit(0 if all(value == "false" for value in values) else 3)
 PY
 }
 
+# v1_smoke_idem_key prints a fresh Idempotency-Key for one chat call. The key
+# must differ on every invocation: the proxy's durable ledger replays the stored
+# response for a repeated key, and Replay writes only the status, Content-Type
+# and body (services/proxy/internal/http/chat/idempotency.go:318-322) — not the
+# X-IBEX-Context-* headers the chat arm asserts — so a fixed key would answer a
+# re-run from the ledger and fail the context check with no state change. uuid4
+# comes from the python3 the script already uses to mint an org id (:467), so
+# this adds no dependency.
+v1_smoke_idem_key() {
+  python3 -c 'import uuid; print(uuid.uuid4())'
+}
+
+# v1_smoke_api_error summarises the error envelope the proxy wrote to the body,
+# as " (code=CODE)" or " (code=CODE, field=FIELD)". It exists because the CI
+# failure this smoke reported was a bare status: a 400 with no code meant the
+# full diagnosis had to be redone by hand from a response body nobody kept.
+#
+# Only those two fields are read. The response to a chat request can carry
+# directive or memory content, and a CI log is not where that belongs; the
+# bearer token is never in the body. Each value is filtered to the shape an
+# error code or a field path actually has, so a body cannot inject a newline or
+# a control sequence into the message. Anything that does not parse as the
+# documented envelope prints nothing and the caller keeps its status-only
+# message.
+v1_smoke_api_error() {
+  python3 - "$1" <<'PY'
+import json
+import re
+import sys
+
+SAFE = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def safe(value, limit):
+    text = value if isinstance(value, str) else ""
+    return SAFE.sub("", text[:limit])
+
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        payload = json.load(handle)
+except (OSError, ValueError):
+    sys.exit(0)
+error = payload.get("error") if isinstance(payload, dict) else None
+if not isinstance(error, dict):
+    sys.exit(0)
+code = safe(error.get("code"), 64)
+if not code:
+    sys.exit(0)
+summary = f" (code={code}"
+fields = error.get("field_errors")
+if isinstance(fields, list) and fields and isinstance(fields[0], dict):
+    field = safe(fields[0].get("field"), 128)
+    if field:
+        summary += f", field={field}"
+sys.stdout.write(summary + ")")
+PY
+}
+
 # v1_smoke_assert proves the profile serves an authenticated request on the chat
 # path — not only the auth-probe — and that the two negative paths stay closed.
 # The chat arm accepts a 200 only when the response reports a non-degraded
@@ -489,10 +553,28 @@ v1_smoke_assert() {
   # therefore a failure: an unproven assembly is not a passing one. `true` is
   # also a failure — the chat path completed by degrading, and the gate says
   # the profile serves the request without that.
-  local payload="$body.chat-request.json" headers="$body.chat-headers.txt" hrc=0
+  #
+  # The request must carry an Idempotency-Key. A non-streaming chat completion
+  # is required to have one while the durable ledger is wired
+  # (services/proxy/internal/http/chat/idempotency.go:134-143); without it the
+  # handler answers 400 VALIDATION_ERROR and the provider is never called. The
+  # ledger is non-nil whenever a Postgres handle exists
+  # (services/proxy/internal/bootstrap/wire.go:381), and the profile always
+  # configures POSTGRES_DSN, so the header is mandatory here rather than
+  # optional.
+  #
+  # The key is fresh per call. A repeated key replays the stored response, and a
+  # replay writes only status, Content-Type and body (:318-322) — never the
+  # X-IBEX-Context-* headers asserted below — so a fixed key would turn every
+  # re-run into exit 2 with the proxy unchanged and the assembly path unproven.
+  local payload="$body.chat-request.json" headers="$body.chat-headers.txt" hrc=0 idem
   printf '%s' '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' >"$payload"
-  status="$(v1_smoke_http "$base/v1/chat/completions" "$pat" "$agent" "$body" "$payload" "$headers" || true)"
-  [[ "$status" == "200" ]] || { echo "chat completion with the bootstrap PAT returned $status, want 200" >&2; return 1; }
+  idem="$(v1_smoke_idem_key)"
+  status="$(v1_smoke_http "$base/v1/chat/completions" "$pat" "$agent" "$body" "$payload" "$headers" "$idem" || true)"
+  [[ "$status" == "200" ]] || {
+    echo "chat completion with the bootstrap PAT returned $status, want 200$(v1_smoke_api_error "$body")" >&2
+    return 1
+  }
   v1_smoke_body_chat "$body" || { echo "chat completion body is not one assistant message (choices[0].message.role)" >&2; return 1; }
   v1_smoke_context_fallback "$headers" || hrc=$?
   case "$hrc" in
@@ -612,6 +694,14 @@ v1_smoke() {
 # (packages/provider/mockllm/provider.go: mockJSONBody), so the parser is tested
 # against what the profile serves in its current posture.
 #
+# Three arms cover the request the chat call must make rather than the response
+# it gets back: the sent headers must carry a uuid4 Idempotency-Key, two calls
+# must generate different keys, and a 400 must name its error code and the
+# rejected field. The first two exist because the proxy requires the header once
+# the durable ledger is wired and the stub answers either way, so without them
+# the self-test passed while the real gate failed; the third is the message that
+# would have said so in one line.
+#
 # Two further arms cover the retry budget that gates those checks: a zero and a
 # non-numeric IBEX_V1_SMOKE_ATTEMPTS must both return the configuration-error
 # code 5 rather than the skip code 4, with a readable PAT stubbed in place so
@@ -631,7 +721,10 @@ v1_smoke_selftest() {
   # One stub answers both probes. `stub_chat` selects the arm, so each negative
   # case differs from the accepted one by a single value rather than by a copied
   # curl replacement. The token is read from the 0600 config file, which is the
-  # path v1_smoke_http actually uses.
+  # path v1_smoke_http actually uses. The chat request headers are written to
+  # `$tmp/chat-request-headers.txt`, so the arm asserting that the chat call
+  # carries an Idempotency-Key reads what curl was actually handed rather than
+  # trusting the call site.
   #
   # The chat headers mirror what the proxy writes (chat_context_assemble.go:364-370):
   # the accepted arm carries all three X-IBEX-Context-* headers with fallback
@@ -650,13 +743,15 @@ v1_smoke_selftest() {
 
   stub_curl() {
     local out="" url="" token="" cfg="" hdr="" status=200 body=""
+    local -a sent=()
     while (( $# )); do
       case "$1" in
         -o) out="$2"; shift 2 ;;
         -D) hdr="$2"; shift 2 ;;
         --cacert|-w|--connect-timeout|--max-time) shift 2 ;;
         --config) cfg="$2"; shift 2 ;;
-        -X|--data-binary|-H) shift 2 ;;
+        -X|--data-binary) shift 2 ;;
+        -H) sent+=("$2"); shift 2 ;;
         -sS) shift ;;
         *) url="$1"; shift ;;
       esac
@@ -665,11 +760,15 @@ v1_smoke_selftest() {
       token="$(sed -n 's/^header = "Authorization: Bearer \(.*\)"$/\1/p' "$cfg")"
     fi
     if [[ "$url" == *"/v1/chat/completions" ]]; then
+      if [[ ${#sent[@]} -gt 0 ]]; then
+        printf '%s\n' "${sent[@]}" >"$tmp/chat-request-headers.txt"
+      fi
       if [[ -z "$token" ]]; then
         status=401; body='{"error":{"code":"MISSING_TOKEN"}}'
       else
         case "$stub_chat" in
           non-200) status=500; body='{"error":{"code":"INTERNAL_ERROR"}}' ;;
+          validation) status=400; body='{"error":{"code":"VALIDATION_ERROR","message":"Request validation failed","field_errors":[{"field":"header.Idempotency-Key","code":"REQUIRED","message":"Idempotency-Key is required for chat completions"}]}}' ;;
           wrong-role) body='{"id":"mock","object":"chat.completion","choices":[{"index":0,"message":{"role":"user","content":"ok"}}]}' ;;
           no-choices) body='{"id":"mock","object":"chat.completion","choices":[]}' ;;
           not-an-object) body='[]' ;;
@@ -702,6 +801,27 @@ v1_smoke_selftest() {
     echo "FAIL: v1-smoke self-test rejected a well-formed stub" >&2
     return 1
   fi
+
+  # The accepted chat call must have carried an Idempotency-Key, and it must look
+  # like the uuid4 v1_smoke_idem_key mints. Without this arm the header could be
+  # dropped from the call site and the self-test would still pass, because the
+  # stub answers a chat request whatever headers it is given — which is exactly
+  # how the requirement reached CI unexercised.
+  if ! grep -Eq '^Idempotency-Key: [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' \
+    "$tmp/chat-request-headers.txt" 2>/dev/null; then
+    echo "FAIL: v1-smoke self-test saw no uuid4 Idempotency-Key on the chat request (headers: $(cat "$tmp/chat-request-headers.txt" 2>/dev/null || echo none))" >&2
+    return 1
+  fi
+  echo "PASS: v1-smoke self-test sends a uuid4 Idempotency-Key on the chat request"
+
+  # A key that repeats would replay the stored response instead of running the
+  # provider, and a replay carries no X-IBEX-Context-* headers, so the chat arm
+  # would fail on every run after the first. Two calls must therefore differ.
+  if [[ "$(v1_smoke_idem_key)" == "$(v1_smoke_idem_key)" ]]; then
+    echo "FAIL: v1-smoke self-test generated the same Idempotency-Key twice; a repeated key replays the ledger and drops the context headers" >&2
+    return 1
+  fi
+  echo "PASS: v1-smoke self-test generates a distinct Idempotency-Key per call"
 
   # A negative arm passes only when the assertion fails. An accepted stub here
   # is the defect: the parser would let the gate pass on something it must
@@ -736,6 +856,29 @@ v1_smoke_selftest() {
   assert_rejected "a 200 chat completion that carries no X-IBEX-Context-Fallback header (assembly unproven)" || return 1
   stub_chat="fallback-unexpected"
   assert_rejected "a 200 chat completion whose X-IBEX-Context-Fallback is neither true nor false" || return 1
+
+  # A non-200 must say why, not only what. The v1 smoke failed in CI with a bare
+  # "returned 400" and the diagnosis had to be redone by hand from a response
+  # body no one kept; the message now names the proxy's own error code and the
+  # field the proxy rejected.
+  assert_rejected_names_error() {
+    local label="$1" code="$2" field="$3" msg got=0
+    msg="$(
+      curl() { stub_curl "$@"; }
+      v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json" 2>&1
+    )" || got=$?
+    if (( got != 1 )); then
+      echo "FAIL: v1-smoke self-test returned $got for $label, want 1" >&2
+      return 1
+    fi
+    if [[ "$msg" != *"code=$code"* || "$msg" != *"field=$field"* ]]; then
+      echo "FAIL: v1-smoke self-test failure message for $label does not name code=$code and field=$field (got: $msg)" >&2
+      return 1
+    fi
+    echo "PASS: v1-smoke self-test failure message for $label names code=$code and field=$field"
+  }
+  stub_chat="validation"
+  assert_rejected_names_error "a 400 whose field_errors names header.Idempotency-Key" VALIDATION_ERROR header.Idempotency-Key || return 1
 
   # The retry budget is validated before the first loop, so a zero or
   # non-numeric IBEX_V1_SMOKE_ATTEMPTS is a configuration error (exit 5), not

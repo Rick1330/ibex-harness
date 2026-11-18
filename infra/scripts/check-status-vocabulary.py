@@ -30,7 +30,10 @@ Three properties are checked, offline and stdlib-only:
 3. **No unaccounted row.** Every row of every surface must belong to a declared
    capability, and a declared capability must still be found where it is
    declared. A capability added, renamed, or dropped in one surface fails here
-   instead of passing unscanned, which is the drift this guard exists for.
+   instead of passing unscanned, which is the drift this guard exists for. A row
+   or a label the reader cannot parse, or a label listed twice, is an input error
+   rather than an entry to skip: skipping it would leave it out of the comparison
+   while it stayed visible to a reader.
 
 What is *not* compared, and why:
 
@@ -242,7 +245,8 @@ CELL_SPLIT = re.compile(r"(?<!\\)\|")
 STATUS_UNION = re.compile(r"export type Status = ([^\n]+)")
 META_ENTRY = re.compile(r"^ {2}([A-Z][A-Z_]*): \{$", re.MULTILINE)
 LEDGER_CLASS = re.compile(r"ledgerClass: '([^']+)'")
-CAPABILITY_ROW = re.compile(r"^\s*\[\s*'([^']+)'\s*,\s*'([A-Z][A-Z_]*)'\s*,", re.MULTILINE)
+CAPABILITY_ROW = re.compile(r"^\s*\[\s*'([^']+)'\s*,\s*'([A-Z][A-Z_]*)'\s*,")
+CAPABILITY_ENTRY = re.compile(r"^\s*\[")
 VOCABULARY_BULLET = re.compile(r"^[-*]\s+\*\*([A-Z][A-Z_]*)\*\*", re.MULTILINE)
 CLASS_TOKEN = re.compile(r"`([a-z][a-z-]*)`")
 DECORATION = re.compile(r"[`\s]")
@@ -265,12 +269,12 @@ def _is_separator(line: str) -> bool:
     return bool(cells) and all(SEPARATOR_CELL.match(cell) for cell in cells)
 
 
-def _table_blocks(source: str) -> Iterable[list[str]]:
-    """Every run of consecutive pipe-table lines in `source`."""
-    block: list[str] = []
-    for line in source.splitlines():
+def _table_blocks(source: str) -> Iterable[list[tuple[int, str]]]:
+    """Every run of consecutive pipe-table lines, each line with its 1-based number."""
+    block: list[tuple[int, str]] = []
+    for number, line in enumerate(source.splitlines(), start=1):
         if TABLE_LINE.match(line):
-            block.append(line)
+            block.append((number, line))
             continue
         if block:
             yield block
@@ -279,11 +283,11 @@ def _table_blocks(source: str) -> Iterable[list[str]]:
         yield block
 
 
-def _is_table_block(block: Sequence[str], columns: Sequence[str]) -> bool:
+def _is_table_block(block: Sequence[tuple[int, str]], columns: Sequence[str]) -> bool:
     """Whether a block's first two lines are the header of a table of `columns`."""
-    if len(block) < 2 or not _is_separator(block[1]):
+    if len(block) < 2 or not _is_separator(block[1][1]):
         return False
-    return _cells(block[0])[: len(columns)] == list(columns)
+    return _cells(block[0][1])[: len(columns)] == list(columns)
 
 
 def _parse_row(line: str, header_size: int, label: str) -> list[str]:
@@ -298,17 +302,22 @@ def _parse_row(line: str, header_size: int, label: str) -> list[str]:
     return cells
 
 
-def _body_rows(block: Sequence[str], label: str) -> list[list[str]]:
-    """The rows below the header separator, each checked against the header's width."""
-    header_size = len(_cells(block[0]))
-    return [_parse_row(line, header_size, label) for line in block[2:]]
+def _body_rows(block: Sequence[tuple[int, str]], label: str) -> list[tuple[int, list[str]]]:
+    """The rows below the header separator, each checked against the header's width.
+
+    Each row keeps the line number it sits on, so a rejection can name the line a
+    reader has to look at rather than only the file.
+    """
+    header_size = len(_cells(block[0][1]))
+    return [(number, _parse_row(line, header_size, label)) for number, line in block[2:]]
 
 
-def find_table(source: str, columns: Sequence[str], label: str) -> list[list[str]]:
+def find_table_rows(source: str, columns: Sequence[str], label: str) -> list[tuple[int, list[str]]]:
     """The body rows of the first table whose leading headers are `columns`.
 
     The table is found by its column headers rather than by position, so a
-    section added above it cannot make the guard read the wrong table.
+    section added above it cannot make the guard read the wrong table. Each row
+    is returned with its 1-based line number.
     """
     for block in _table_blocks(source):
         if _is_table_block(block, columns):
@@ -323,18 +332,36 @@ def parse_baseline_table(
     label: str,
 ) -> dict[str, str]:
     """The capability-to-status-cell rows of one baseline table."""
-    rows = find_table(source, (capability_column, status_column), label)
-    names = [row[0] for row in rows]
+    rows = find_table_rows(source, (capability_column, status_column), label)
+    names = [cells[0] for _, cells in rows]
     duplicated = next((name for name in names if names.count(name) > 1), None)
     if duplicated is not None:
         raise InputError(f"{label}: '{duplicated}' is listed twice")
-    return {row[0]: row[1] for row in rows}
+    return {cells[0]: cells[1] for _, cells in rows}
 
 
 def parse_docs_vocabulary(source: str) -> dict[str, str]:
-    """The label-to-ledger-class map of the public status vocabulary table."""
-    rows = find_table(source, ("Label", "Ledger class"), DOCS_LEDGER)
-    return {DECORATION.sub("", row[0]): DECORATION.sub("", row[1]) for row in rows}
+    """The label-to-ledger-class map of the public status vocabulary table.
+
+    A label listed twice is an input error rather than a later row replacing an
+    earlier one. The table is read into a map, so a duplicate would keep the last
+    class, drop the earlier one from the comparison, and leave both rows visible
+    to a reader: a stale `IMPLEMENTED` row stating `provisional` above the correct
+    row would make the guard report agreement between the surfaces.
+    """
+    rows = find_table_rows(source, ("Label", "Ledger class"), DOCS_LEDGER)
+    vocabulary: dict[str, str] = {}
+    listed_on: dict[str, int] = {}
+    for number, cells in rows:
+        label = DECORATION.sub("", cells[0])
+        if label in listed_on:
+            raise InputError(
+                f"{DOCS_LEDGER}: label '{label}' is listed twice "
+                f"(lines {listed_on[label]} and {number})"
+            )
+        listed_on[label] = number
+        vocabulary[label] = DECORATION.sub("", cells[1])
+    return vocabulary
 
 
 def parse_status_union(source: str) -> list[str]:
@@ -361,19 +388,79 @@ def parse_site_vocabulary(source: str) -> dict[str, str]:
 
 
 def parse_site_rows(source: str) -> dict[str, str]:
-    """The capability rows the site renders, name to status label."""
+    """The capability rows the site renders, name to status label.
+
+    An entry the reader cannot parse is an input error, not a row to skip. Skipping
+    it would leave the capability out of `compare_rows`, which is the check that
+    every row of every surface belongs to a declared capability: a row written in
+    a form the reader does not handle -- a double-quoted tuple, a status no label
+    declares -- would then pass the guard unscanned, and the surface would claim a
+    status no other surface was ever compared against.
+
+    The entry format is rejected rather than widened, because widening only moves
+    the same hole to the next form (a template literal, a spread, a single-quoted
+    string carrying an escaped quote) while a rejected entry is a fact the guard
+    can always state. `ledger.ts` is formatted with single quotes, so an entry in
+    another form is also a deviation worth failing on.
+    """
+    block, first_line = _capability_block(source)
+    rows = _capability_entries(block, first_line)
+    if not rows:
+        raise InputError(f"{SITE_LEDGER}: `capabilityRows` lists no capability")
+    return _unique_entries(rows)
+
+
+def _capability_block(source: str) -> tuple[str, int]:
+    """The `capabilityRows` array text, and the line number its opening line sits on.
+
+    The array runs from the line that opens it to the first line that closes it,
+    so text after the array is not scanned for entries. The line number is carried
+    so a rejected entry can name the line a reader has to look at.
+    """
     start = source.find("const capabilityRows")
     if start == -1:
         raise InputError(f"{SITE_LEDGER}: no `capabilityRows` array")
     end = source.find("\n]", start)
     block = source[start:] if end == -1 else source[start:end]
-    rows = CAPABILITY_ROW.findall(block)
-    if not rows:
-        raise InputError(f"{SITE_LEDGER}: `capabilityRows` lists no capability")
+    return block, source.count("\n", 0, start) + 1
+
+
+def _capability_entries(block: str, first_line: int) -> list[tuple[str, str]]:
+    """Every line of `block` that opens a tuple entry, parsed, with its line number.
+
+    The array's opening line and any comment line open no entry and are passed
+    over. A line that does open one must parse: `_capability_row` raises rather
+    than letting the entry fall out of the comparison unread.
+    """
+    return [
+        _capability_row(line, first_line + offset)
+        for offset, line in enumerate(block.splitlines())
+        if CAPABILITY_ENTRY.match(line)
+    ]
+
+
+def _unique_entries(rows: Sequence[tuple[str, str]]) -> dict[str, str]:
+    """The entries as a name-to-status map; a name listed twice is an InputError.
+
+    The map keeps one status per name, so a duplicate would let a corrected row
+    sit beside a stale one and leave the guard comparing whichever it read last.
+    """
     names = [name for name, _ in rows]
     if len(set(names)) != len(names):
         raise InputError(f"{SITE_LEDGER}: `capabilityRows` lists a name twice")
     return dict(rows)
+
+
+def _capability_row(line: str, number: int) -> tuple[str, str]:
+    """The name and status of one `capabilityRows` entry, or an InputError naming it."""
+    match = CAPABILITY_ROW.match(line)
+    if match is None:
+        raise InputError(
+            f"{SITE_LEDGER}: the capabilityRows entry on line {number} cannot be read: "
+            f"{line.strip()}"
+        )
+    name, status = match.groups()
+    return name, status
 
 
 def parse_vocabulary_list(source: str) -> list[str]:

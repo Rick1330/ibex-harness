@@ -546,8 +546,18 @@ services:
       # First start downloads ~2.3 GB and loads a CPU ONNX model. The window is
       # deliberately generous: a slow host must not be marked unhealthy while
       # the model is still downloading or loading.
-      retries: 360
-      start_period: 7200s
+      #
+      # Both values are interpolated so a caller can tighten the window without
+      # editing the profile (the defaults stay the operator posture). This healthcheck
+      # is the only bound on a stalled download: `embedder` carries
+      # `depends_on: tei: condition: service_healthy` and memory, worker and context
+      # inherit that edge, so `docker compose up -d` blocks here — not in the waiter
+      # `make v1-up` runs afterwards, and not in any application-level budget. ci.yml
+      # sets 600s/30 for its job so a download that never finishes is reported as an
+      # unhealthy TEI with `make v1-ps` output instead of the runner being killed at
+      # the job timeout.
+      retries: ${IBEX_V1_TEI_HEALTH_RETRIES:-360}
+      start_period: ${IBEX_V1_TEI_START_PERIOD:-7200s}
     networks:
       - internal
 
