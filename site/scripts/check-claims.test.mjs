@@ -7,13 +7,16 @@ import { fileURLToPath } from 'node:url'
 
 import {
   benchmarkClaimTexts,
-  markupSpans,
   phraseViolations,
   readJsonString,
   scan,
   scannedTexts,
   unreadableLabel,
 } from './check-claims.mjs'
+
+// The compiler is the reference for what a template renders, so the reader's own
+// decoding is compared against it here rather than against a second pattern.
+import { parse } from '@vue/compiler-sfc'
 
 /**
  * Every root `scan` reads. A fixture must hold all of them, because the scan walks
@@ -167,25 +170,9 @@ describe('the reader each root gets', () => {
 })
 
 /**
- * The pattern the scanner replaces, kept as the oracle. Where a text node ends is a
- * decision about which words end up adjacent, so the pattern's spans are the
- * contract; only its runtime is why the scan is written by hand.
- *
- * The pattern is not quote-aware: a `>` inside an attribute value ends its tag early,
- * which is one of the defects the scanner fixes. Masking that `>` in the body the
- * pattern is given keeps every offset the same, so the pattern still pins exactly
- * where each tag and each text run ends — the first `>` outside a quoted value.
- */
-const referenceMarkup = /<!--[\s\S]*?-->|<[^>]*>|\{\{[\s\S]*?\}\}/g
-const referenceSpans = body => [...body.matchAll(referenceMarkup)]
-  .map(match => ({ index: match.index, length: match[0].length }))
-const attributeValue = /=(?:"[^"]*"|'[^']*')/g
-const maskedForReference = source => source.replace(attributeValue, value => value.replaceAll('>', ' '))
-
-/**
  * Every single-file component under `site/app`: the input the claim scan reads in
- * this repository, so equivalence is pinned on real bodies and not only on
- * constructed ones.
+ * this repository, so the reader is pinned on real bodies and not only on constructed
+ * ones.
  */
 async function siteComponentSources() {
   const app = fileURLToPath(new URL('../app/', import.meta.url))
@@ -193,90 +180,195 @@ async function siteComponentSources() {
   return Promise.all(files.map(name => readFile(join(app, name), 'utf8')))
 }
 
-describe('the markup that ends a text node', () => {
-  /**
-   * Bodies chosen for each boundary the three delimiters draw: a `>` inside a
-   * comment, a comment opener that is only a tag, an opener that never closes, an
-   * interpolation holding markup, and the script and nested-template blocks the scan
-   * has to keep apart.
-   */
-  const bodies = [
-    '<!-- a > b -->',
-    '<!-->',
-    '<!-- a -- > b -->',
-    '<!--',
-    '<!--x',
-    '<!-- {{ x }} -->',
-    '<!--<!--<!--',
-    '<script>\nconst a = "<b>"\n</script>',
-    '<template v-if="a"><template v-else><p>{{ x }}</p></template></template>',
-    '{{ x }}',
-    '{{x}',
-    '{{',
-    '{{{x}}}',
-    '<p>guaranteed</p>\n<p>uptime</p>',
-    '<a\n  href="x"\n>text</a>',
-    '',
-  ]
+/**
+ * The rendered text of every text node the compiler finds in `source`, flattened so a
+ * leading or trailing space is not read as a disagreement between two decoders.
+ */
+function compilerTexts(source) {
+  const { descriptor, errors } = parse(source, { filename: 'Component.vue' })
+  if (errors.length > 0) throw new Error(errors[0].message)
+  const texts = []
+  const walk = node => {
+    if (node.type === 2) texts.push(node.content.replace(/\s+/g, ' ').trim())
+    for (const child of node.children ?? []) walk(child)
+  }
+  walk(descriptor.template.ast)
+  return texts.filter(text => text !== '')
+}
 
-  it('draws the same boundary as the pattern it replaces, on every awkward body', () => {
-    for (const body of bodies) assert.deepEqual(markupSpans(body), referenceSpans(body), body)
-  })
+/**
+ * The same list as the scan reads it: the text of every template text node, flattened
+ * the same way.
+ */
+const scannedNodeTexts = source => scannedTexts('/anywhere/app/components/Widget.vue', source, '/anywhere')
+  .texts.filter(text => text.occurrences !== undefined)
+  .map(text => text.text.replace(/\s+/g, ' ').trim())
 
-  it('draws the same boundary as the pattern on every string of up to five delimiters', () => {
-    // Exhaustive over the alphabet the boundaries are made of, so a combination the
-    // named bodies miss is still covered: 9331 strings of length 0 to 5.
-    const alphabet = [...'<!->{}']
-    let checked = 0
-    const sweep = prefix => {
-      assert.deepEqual(markupSpans(prefix), referenceSpans(prefix), prefix)
-      checked += 1
-      if (prefix.length === 5) return
-      for (const char of alphabet) sweep(prefix + char)
-    }
-    sweep('')
-    assert.equal(checked, 9331)
-  })
-
-  it('draws the same boundary as the pattern on every component in the site tree', async () => {
+describe('the template the compiler parses', () => {
+  it('reads every component in the site the way the compiler renders it', async () => {
+    // The reader decodes the node's own source range to keep a source map for the
+    // lines it reports; this pins that its decoding is Vue's, on every real body.
     const sources = await siteComponentSources()
     assert.ok(sources.length > 0)
-    for (const source of sources) {
-      assert.deepEqual(markupSpans(source), referenceSpans(maskedForReference(source)), source)
-    }
+    for (const source of sources) assert.deepEqual(scannedNodeTexts(source), compilerTexts(source))
   })
 
-  it('ends a tag at the first `>` outside a quoted attribute value', () => {
-    // The value spells a `>` before the phrase, so a scan that ended the tag there
-    // would read the rest of the value — and the words in it — as rendered prose.
-    // The paragraph renders `Measured` and nothing else.
-    const body = '<p data-note="see > guaranteed\n uptime">Measured</p>'
-    assert.deepEqual(markupSpans(body), [
-      { index: 0, length: 40 },
-      { index: 48, length: 4 },
-    ])
+  it('closes the block where the compiler does, whatever an attribute or an interpolation spells', async () => {
+    // `</template>` spelled in an attribute value, in an interpolation, and in a slot
+    // name is text to a scanner and none of them to the compiler. Ending the block at
+    // the first one it saw made the rest of the file prose.
+    const claims = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <div v-if="x > 1" data-note="\'</template>\'">',
+        "    {{ '</template>' }}",
+        '    <template #slot></template>',
+        '    <p>guaranteed uptime</p>',
+        '  </div>',
+        '</template>',
+      ].join('\n'),
+    }, async root => (await scan(root)).claims)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[5, 'guarantee claim']])
   })
 
-  it('ends a run at the same place the pattern does when nothing closes the openers', () => {
-    // 240 kB of comment and interpolation openers with nothing that closes them: the
-    // pattern retries the rest of the body from every opener, which is 8.9 s of
-    // backtracking on this input rather than a finding. The assertion is the spans,
-    // not the clock: nothing closes, so the body holds no markup at all.
-    const unclosed = `${'<!--'.repeat(40_000)}${'{{'.repeat(40_000)}`
-    assert.deepEqual(markupSpans(unclosed), [])
-    // A tag after the run ends it at the first `<`, whatever follows it, and at the
-    // first `>`: an opener that cannot close is text. Pinned because it is the
-    // boundary the alternatives drew and the scan has to keep.
-    assert.deepEqual(markupSpans(`${unclosed}<p>x</p>`), [
-      { index: 0, length: 240_003 },
-      { index: 240_004, length: 4 },
-    ])
-    // An opener that cannot close but is followed by a `>` is a tag per occurrence,
-    // so this 280 kB body is 40 000 spans and not one: the shape a scan that looked
-    // for the comment close again at every opener would crawl on.
-    const tags = markupSpans('<!--<a>'.repeat(40_000))
-    assert.equal(tags.length, 40_000)
-    assert.deepEqual(tags.at(-1), { index: 279_993, length: 7 })
+  it('reads a self-closing template and an empty one as elements', async () => {
+    // Both are elements, not block openers: counting them as openers left the depth
+    // wrong for the rest of the file, so a later `</template>` closed a block that was
+    // never open.
+    const claims = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <template v-if="a" />',
+        '  <template></template>',
+        '  <p>production-ready</p>',
+        '</template>',
+      ].join('\n'),
+    }, async root => (await scan(root)).claims)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[4, 'positive production-readiness claim']])
+  })
+
+  it('reads a close tag with whitespace before its `>`', async () => {
+    // The block still closes, so the file parses: an unclosed block would be reported
+    // as unreadable and the claim in it would not be read at all.
+    const { unreadable, claims } = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <p>production-ready</p>',
+        '</template >',
+      ].join('\n'),
+    }, root => scan(root))
+    assert.deepEqual(unreadable, [])
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2, 'positive production-readiness claim']])
+  })
+
+  it('reads a generated template of thousands of elements once', async () => {
+    // A generated SVG has thousands of elements, each with attributes. The line reader
+    // shares one range list with its file instead of copying a line's list per run, so
+    // the work stays proportional to the file: 2000 elements, one claim, on its line.
+    const lines = ['<template>']
+    for (let index = 0; index < 2000; index += 1) lines.push('  <g :data-id="\'g\'"><text>measured</text></g>')
+    lines.push('  <p>production-ready</p>', '</template>')
+    const claims = await withSite({ 'app/components/Widget.vue': lines.join('\n') },
+      async root => (await scan(root)).claims)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2002, 'positive production-readiness claim']])
+  })
+
+  it('reports a component it cannot parse as unreadable', async () => {
+    // A template this checker cannot parse is a template whose prose it cannot claim to
+    // have read, so the file is a finding rather than silently prose-free. The raw-line
+    // reader still reads the file's lines — it does not depend on the parse, and a
+    // phrase spelled on one line is one a reader would see — but the failure is the
+    // finding that stops the check.
+    const { unreadable, claims } = await withSite({
+      'app/components/Widget.vue': '<template>\n  <p>guaranteed uptime</p>\n',
+    }, root => scan(root))
+    assert.equal(unreadable.length, 1)
+    assert.equal(unreadable[0].file, 'app/components/Widget.vue')
+    assert.equal(unreadable[0].label, unreadableLabel)
+    assert.match(unreadable[0].text, /does not parse/)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2, 'guarantee claim']])
+  })
+
+  it('reports a template in another language as unreadable instead of parsing it as HTML', async () => {
+    // An HTML parse of a pug template is invented prose. The file renders text this
+    // checker cannot read, which is a finding, not a skip.
+    const { unreadable, claims } = await withSite({
+      'app/components/Widget.vue': '<template lang="pug">\np Measured\n</template>\n',
+    }, root => scan(root))
+    assert.deepEqual(claims, [])
+    assert.equal(unreadable.length, 1)
+    assert.equal(unreadable[0].label, unreadableLabel)
+    assert.match(unreadable[0].text, /pug/)
+  })
+
+  it('keeps the whitespace of a pre, so a line break there is not a phrase', async () => {
+    // Vue preserves whitespace inside `<pre>`, so a reader sees two lines and the page
+    // never states the phrase. Condensing it there would invent a claim the same words
+    // in a paragraph do state.
+    const claims = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <pre>production',
+        '  ready</pre>',
+        '  <p>production',
+        '  ready</p>',
+        '</template>',
+      ].join('\n'),
+    }, async root => (await scan(root)).claims)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[4, 'positive production-readiness claim']])
+  })
+
+  it('reports a node it cannot map exactly at the line the node starts on', async () => {
+    // `&mdash;` renders a character this reader does not decode, so the offset map from
+    // the node's text back to the source is not recoverable. The claim is still
+    // reported, at the line the node starts on — the most the compiler can vouch for —
+    // rather than missed, or given a column that is not its own.
+    const claims = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <p>',
+        '    measured &mdash; still',
+        '    guaranteed uptime</p>',
+        '</template>',
+      ].join('\n'),
+    }, async root => (await scan(root)).claims)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2, 'guarantee claim']])
+  })
+
+  it('reports a template that lives in another file as unreadable', async () => {
+    // `<template src="…">` renders text held in a file this scan does not read, so the
+    // component is unreadable rather than empty.
+    const { unreadable, claims } = await withSite({
+      'app/components/Widget.vue': '<template src="./Widget.html"></template>\n',
+    }, root => scan(root))
+    assert.deepEqual(claims, [])
+    assert.equal(unreadable.length, 1)
+    assert.match(unreadable[0].text, /no inline AST/)
+  })
+
+  it('reports nothing for a phrase an attribute value holds on one line', async () => {
+    // A value is markup, not prose: the paragraph renders `Measured` and nothing else.
+    const result = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <p data-note="production-ready">Measured</p>',
+        '</template>',
+      ].join('\n'),
+    }, root => scan(root))
+    assert.deepEqual(result, { unreadable: [], claims: [] })
+  })
+
+  it('reports nothing for a phrase a comment holds', async () => {
+    // A comment renders nothing, so a claim in one is not a claim the page makes.
+    const result = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <!-- production-ready -->',
+        '  <p>Measured</p>',
+        '</template>',
+      ].join('\n'),
+    }, root => scan(root))
+    assert.deepEqual(result, { unreadable: [], claims: [] })
   })
 })
 
@@ -468,6 +560,29 @@ describe('a scanned site tree', () => {
     const claims = await withSite({ 'app/components/Widget.vue': lines.join('\n') },
       async root => (await scan(root)).claims)
     assert.deepEqual(claims.map(claim => claim.line), Array.from({ length: 50 }, (_, index) => 3 + index * 2))
+  })
+
+  it('orders findings by the line they report, not by the rule that found them', async () => {
+    // One node states both phrases, and the rule for `production-ready` runs before the
+    // rule for `guaranteed uptime`, so the node's occurrence list is rule-ordered. The
+    // claim on line 4 must still be reported before the one on line 7.
+    const claims = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <p>',
+        '    measured',
+        '    guaranteed uptime',
+        '    and',
+        '    also',
+        '    production-ready',
+        '  </p>',
+        '</template>',
+      ].join('\n'),
+    }, async root => (await scan(root)).claims)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [
+      [4, 'guarantee claim'],
+      [7, 'positive production-readiness claim'],
+    ])
   })
 
   it('reports nothing for a phrase no single text node states', async () => {

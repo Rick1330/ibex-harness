@@ -261,6 +261,13 @@ digest_step_id() {
 #   * `COPY ["package.json", "./"]` is the JSON form of the same instruction. Its
 #     tokens carry brackets, quotes and commas, so no token ever matched a
 #     repository file and the whole instruction was skipped.
+#   * A bracket expression is Docker pattern syntax, not punctuation. The tokenizer
+#     rewrote `[`, `]`, `"` and `,` to spaces, so `COPY services/console/Dockerfil[e]
+#     /out/` became two tokens — `services/console/Dockerfil` and `e` — and neither is
+#     the file: the wildcard sweep resolved nothing and reported no gap. Words are now
+#     split the way the Dockerfile parser splits them (whitespace separates, quotes
+#     group, a backslash escapes) and a bracket expression reaches filepath.Match
+#     verbatim, where it is a character class.
 copy_source_tokens() {
   awk '
     { if (pending != "") { $0 = pending " " $0; pending = "" } }
@@ -268,15 +275,67 @@ copy_source_tokens() {
     { print }
     END { if (pending != "") print pending }
   ' "$1" | awk '
-    /^COPY / {
-      gsub(/[][",]/, " ")
-      last = NF
-      if (last < 3) next
-      for (i = 2; i < last; i++) if ($i ~ /^--from=/) next
-      for (i = 2; i < last; i++) {
-        if ($i ~ /^--/) continue
-        print $i
+    # Split one instruction body into words the way the Dockerfile parser does:
+    # whitespace separates, a quote groups, a backslash escapes the next character,
+    # and every other character — `[`, `]` and `,` included — is part of the word.
+    # Docker hands the resulting word to filepath.Match, where `[e]` is a class.
+    function words_of(s, out,   i, n, c, w, have, quote, k) {
+      n = length(s); w = ""; have = 0; quote = ""; k = 0
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (quote != "") {
+          if (c == quote) quote = ""
+          else w = w c
+          have = 1
+          continue
+        }
+        if (c == "\"" || c == "\047") { quote = c; have = 1; continue }
+        if (c == "\\" && i < n) { i = i + 1; w = w substr(s, i, 1); have = 1; continue }
+        if (c ~ /[[:space:]]/) {
+          if (have) { k = k + 1; out[k] = w; w = ""; have = 0 }
+          continue
+        }
+        w = w c; have = 1
       }
+      if (have) { k = k + 1; out[k] = w }
+      return k
+    }
+    # The JSON form: only the quoted strings are elements, so the brackets and commas
+    # that are syntax never join a source and a class inside a string survives. An
+    # element that is not a string is invalid JSON, which Docker rejects; it adds no
+    # source here instead of shifting the destination.
+    function json_words(s, out,   i, n, c, w, in_string, k) {
+      n = length(s); w = ""; in_string = 0; k = 0
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (!in_string) { if (c == "\"") in_string = 1; continue }
+        if (c == "\\" && i < n) { i = i + 1; w = w substr(s, i, 1); continue }
+        if (c == "\"") { k = k + 1; out[k] = w; w = ""; in_string = 0; continue }
+        w = w c
+      }
+      return k
+    }
+    # Flags precede the sources, so they are stripped before the remainder is read as
+    # the JSON form when it starts with `[`. A `--from` source is another stage or
+    # image, not a repository input.
+    function strip_flags(s,   f) {
+      f = ""
+      while (match(s, /^--[^[:space:]]+[[:space:]]+/)) {
+        f = f " " substr(s, 1, RLENGTH)
+        s = substr(s, RLENGTH + 1)
+      }
+      FLAGS = f
+      return s
+    }
+    /^COPY([[:space:]]|$)/ {
+      rest = $0
+      sub(/^COPY[[:space:]]*/, "", rest)
+      rest = strip_flags(rest)
+      if (FLAGS ~ /--from=/) next
+      if (substr(rest, 1, 1) == "[") count = json_words(rest, word)
+      else count = words_of(rest, word)
+      if (count < 2) next
+      for (i = 1; i < count; i++) print word[i]
     }
   '
 }
@@ -295,6 +354,19 @@ normalise_copy_source() {
   printf '%s\n' "$source"
 }
 
+# Every match of one COPY pattern inside one directory, one per line. Docker applies
+# filepath.Match to the directory listing, so a leading dot is not special:
+# `COPY config/*.json` copies config/.defaults.json as well as config/settings.json.
+# A shell's default pathname expansion skips dotfiles, so `compgen -G` without
+# `dotglob` emitted only the second file: a dotfile change built a different image
+# with no trigger, one file at a time, exactly like an unmatched pattern. `dotglob`
+# is set inside the subshell, so no caller inherits it. `*` and `?` still stop at a
+# `/`, and `**` is read as two stars, which is what filepath.Match does with them.
+expand_copy_glob() {
+  local base="$1" pattern="$2"
+  ( cd "$base" && shopt -s dotglob && compgen -G "$pattern" || true )
+}
+
 # The repository files one COPY source stands for, resolved against the build context
 # (`context` is repository-relative; `.` is the root every image here builds from).
 # A literal source is emitted when it exists. A wildcard source — `COPY *.json /app/`,
@@ -310,12 +382,10 @@ copy_source_paths() {
   fi
   case "$source" in
     *'*'*|*'?'*|*'['*)
-      # `compgen -G` stops `*` at a `/`, as Docker's filepath.Match does, and reads
-      # `**` as two stars rather than a globstar — the same reading Docker gives it.
       while IFS= read -r match; do
         [[ -n "$match" ]] || continue
         printf '%s\n' "${prefix}${match#./}"
-      done < <(cd "$ROOT/${context}" && compgen -G "$source" || true)
+      done < <(expand_copy_glob "$ROOT/${context}" "$source")
       ;;
     *)
       if [[ -e "$ROOT/${context%/}/${source}" ]]; then
@@ -338,7 +408,10 @@ copy_sources() {
 
 # Wildcard COPY sources that match nothing. A pattern the tree cannot satisfy is an
 # input this guard cannot enumerate, so it is reported by name with the Dockerfile
-# that carries it: an unresolved pattern is a hole in the assertion, not a pass.
+# that carries it and the build context it was resolved against: an unresolved
+# pattern is a hole in the assertion, not a pass, and a diagnostic that names only
+# the Dockerfile cannot tell a real gap from a pattern resolved against the wrong
+# directory.
 copy_pattern_gaps() {
   local dockerfile="$1" context="${2:-.}" token source matches
   while read -r token; do
@@ -349,8 +422,8 @@ copy_pattern_gaps() {
       *) continue ;;
     esac
     matches="$(copy_source_paths "$context" "$source")"
-    [[ -n "$matches" ]] || printf "COPY source '%s' in %s matches no file\n" \
-      "$source" "${dockerfile#"$ROOT"/}"
+    [[ -n "$matches" ]] || printf "COPY source '%s' in %s (build context %s) matches no file\n" \
+      "$source" "${dockerfile#"$ROOT"/}" "$context"
   done < <(copy_source_tokens "$dockerfile")
   return 0
 }
@@ -367,6 +440,149 @@ root_copy_sources() {
     printf '%s\n' "$source"
   done < <(copy_sources "$1")
 }
+
+# --- build contexts --------------------------------------------------------
+# A COPY source is relative to the image's build context, not to the repository
+# root, and one image in this tree does not build from the root: the profile's
+# Postgres image builds from infra/compose/v1-single-node/postgres. Resolving every
+# Dockerfile against the root made a pattern there match an unrelated root file (a
+# false input, silently gated by the wrong trigger) or match nothing at all (a false
+# gap, or a wildcard the sweep claims to have checked and did not). The context comes
+# from the file that builds the image:
+#   1. the profile compose file's `build.context`, which is what `make v1-*` builds;
+#   2. docker-publish.yml's `context:`, which is what publishes the image;
+#   3. the Dockerfile's own directory, Compose's default for a `build:` directory
+#      that names no dockerfile.
+# Compose is loaded last so it wins for a Dockerfile both files name. An undeclared
+# Dockerfile resolves with (3), and every diagnostic names the context it used, so a
+# wrong guess is visible instead of silent.
+V1_COMPOSE="$ROOT/infra/compose/v1-single-node/compose.yml"
+declare -A dockerfile_contexts=()
+
+# Repository-relative form of the directory `path`, written relative to `base`. Both
+# live under ROOT; a path that resolves outside it is not a build context for this
+# guard. `cd` is the check that the directory exists and where it really points.
+repo_relative() {
+  local base="$1" path="$2" resolved
+  resolved="$(cd "$base" 2>/dev/null && cd "$path" 2>/dev/null && pwd)" || return 1
+  [[ "$resolved" == "$ROOT" || "$resolved" == "$ROOT"/* ]] || return 1
+  resolved="${resolved#"$ROOT"}"
+  printf '%s\n' "${resolved#/}"
+}
+
+# Fold `.` and `..` out of a repository-relative path. A Dockerfile path is a file,
+# so it cannot be resolved with `cd`; its context has already been resolved, and the
+# rest is string folding.
+normalise_relative() {
+  local path="$1" segment joined=''
+  local -a parts out=()
+  IFS='/' read -r -a parts <<<"$path"
+  for segment in "${parts[@]}"; do
+    case "$segment" in
+      ''|.) continue ;;
+      ..) (( ${#out[@]} > 0 )) && unset 'out[${#out[@]}-1]'; continue ;;
+    esac
+    out+=("$segment")
+  done
+  for segment in "${out[@]}"; do joined+="${segment}/"; done
+  printf '%s\n' "${joined%/}"
+}
+
+# One `context<TAB>dockerfile` line per `build:` block, with an empty dockerfile when
+# the block declares none. Both keys live in the same block, so a `dockerfile:` can
+# never be attributed to the service above it.
+compose_build_blocks() {
+  awk '
+    function value(line) {
+      sub(/^[^:]*:[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      gsub(/^"|"$/, "", line)
+      return line
+    }
+    function emit() {
+      if (context != "") print context "\t" dockerfile
+      context = ""
+      dockerfile = ""
+      inbuild = 0
+    }
+    /^[[:space:]]*#/ { next }
+    /^[^[:space:]]/ { emit(); next }
+    /^  [A-Za-z0-9_.-]+:[[:space:]]*$/ { emit(); next }
+    /^[[:space:]]+build:[[:space:]]*[^[:space:]]/ { emit(); context = value($0); emit(); next }
+    /^[[:space:]]+build:[[:space:]]*$/ { emit(); inbuild = 1; next }
+    inbuild && /^[[:space:]]+context:/ { context = value($0); next }
+    inbuild && /^[[:space:]]+dockerfile:/ { dockerfile = value($0); next }
+    inbuild && /^[[:space:]]+[A-Za-z0-9_.-]+:/ { emit() }
+    END { emit() }
+  ' "$1"
+}
+
+# The contexts docker-publish.yml builds from. `context:` and `file:` belong to the
+# same step, and `file:` is a path inside the context (BuildKit's meaning), so the
+# pair is read as a pair.
+load_publish_contexts() {
+  local context dockerfile context_rel dockerfile_rel
+  while IFS=$'\t' read -r context dockerfile; do
+    [[ -n "$context" && -n "$dockerfile" ]] || continue
+    if ! context_rel="$(repo_relative "$ROOT" "$context")"; then
+      printf 'cannot resolve the build context %s declared in %s\n' \
+        "$context" "${DOCKER#"$ROOT"/}" >&2
+      continue
+    fi
+    dockerfile_rel="$(normalise_relative "${context_rel}/${dockerfile}")"
+    dockerfile_contexts["$dockerfile_rel"]="${context_rel:-.}"
+  done < <(awk '
+    /^[[:space:]]+context:[[:space:]]*/ {
+      sub(/^[[:space:]]+context:[[:space:]]*/, ""); ctx = $0; next
+    }
+    /^[[:space:]]+file:[[:space:]]*.*Dockerfile[[:space:]]*$/ {
+      sub(/^[[:space:]]+file:[[:space:]]*/, ""); sub(/[[:space:]]+$/, ""); print ctx "\t" $0
+    }
+  ' "$DOCKER")
+}
+
+# The contexts the v1 profile builds from. Compose writes `context:` relative to the
+# compose file and `dockerfile:` relative to that context, so both are resolved the
+# way Compose resolves them; a service with no `dockerfile:` builds
+# `<context>/Dockerfile`, which is how the Postgres image is built.
+load_profile_contexts() {
+  local compose_dir context dockerfile context_rel dockerfile_rel
+  compose_dir="$(dirname "$V1_COMPOSE")"
+  while IFS=$'\t' read -r context dockerfile; do
+    [[ -n "$context" ]] || continue
+    if ! context_rel="$(repo_relative "$compose_dir" "$context")"; then
+      printf 'cannot resolve the build context %s declared in %s\n' \
+        "$context" "${V1_COMPOSE#"$ROOT"/}" >&2
+      continue
+    fi
+    dockerfile_rel="$(normalise_relative "${context_rel}/${dockerfile:-Dockerfile}")"
+    dockerfile_contexts["$dockerfile_rel"]="${context_rel:-.}"
+  done < <(compose_build_blocks "$V1_COMPOSE")
+}
+
+load_publish_contexts
+load_profile_contexts
+
+# The context one Dockerfile builds from, repository-relative.
+dockerfile_context() {
+  local dockerfile="$1" context
+  context="${dockerfile_contexts[$dockerfile]-}"
+  if [[ -n "$context" ]]; then
+    printf '%s\n' "$context"
+    return 0
+  fi
+  dirname "$dockerfile"
+}
+
+# Every Dockerfile the sweep and the coverage assertion reason about.
+mapfile -t all_dockerfiles < <(
+  find "$ROOT/services" "$ROOT/infra" -name Dockerfile -type f 2>/dev/null |
+    sed "s|^$ROOT/||" | sort
+)
+if (( ${#all_dockerfiles[@]} == 0 )); then
+  bad "no Dockerfiles were found under services/ and infra/: the wildcard COPY sweep is broken"
+fi
 
 # --- published images are gated and evidenced ------------------------------
 # P1-50: a push-* job is the only way an image reaches the registry, so every
@@ -601,21 +817,52 @@ fi
 # v1 assertion judges — but a pattern the tree cannot satisfy must be reported, because
 # an input this guard cannot enumerate is a hole rather than a pass. The sweep is over
 # every Dockerfile in services/ and infra/, not just the profile's, so a wildcard is
-# visible wherever it appears.
-mapfile -t all_dockerfiles < <(
-  find "$ROOT/services" "$ROOT/infra" -name Dockerfile -type f 2>/dev/null |
-    sed "s|^$ROOT/||" | sort
-)
-if (( ${#all_dockerfiles[@]} == 0 )); then
-  bad "no Dockerfiles were found under services/ and infra/: the wildcard COPY sweep is broken"
+# visible wherever it appears, and each Dockerfile's patterns are resolved against the
+# context that Dockerfile builds from (see the build-context section above) rather
+# than against the repository root.
+
+# A context that is not a directory would make the sweep check nothing, and a map
+# that never produces a non-root context would leave the per-image resolution
+# untested on the real tree.
+context_failures=()
+non_root_contexts=()
+for dockerfile in "${all_dockerfiles[@]}"; do
+  context="$(dockerfile_context "$dockerfile")"
+  if [[ ! -d "$ROOT/${context}" ]]; then
+    context_failures+=("$dockerfile resolves to ${context}, which is not a directory")
+  elif [[ "$context" != '.' ]]; then
+    non_root_contexts+=("$dockerfile builds from $context")
+  fi
+done
+if (( ${#context_failures[@]} == 0 )); then
+  pass "every one of ${#all_dockerfiles[@]} Dockerfiles resolves to an existing build context"
+else
+  bad "build contexts that do not exist: ${context_failures[*]}"
 fi
-mapfile -t pattern_gap_list < <(
-  for dockerfile in "${all_dockerfiles[@]}"; do
-    copy_pattern_gaps "$ROOT/$dockerfile"
+if (( ${#non_root_contexts[@]} > 0 )); then
+  pass "a non-root build context is resolved per image: ${non_root_contexts[*]}"
+else
+  bad "no Dockerfile resolved to a non-root context: the context map is not reading the compose file"
+fi
+
+# Wildcard gaps for a list of Dockerfiles, each resolved against its own build
+# context. This is the only place the sweep is wired, so the fixture below drives the
+# same call site rather than a copy of it: a sweep that dropped the context would
+# resolve every pattern against the root and the fixture would see it.
+sweep_pattern_gaps() {
+  local dockerfile context
+  for dockerfile in "$@"; do
+    case "$dockerfile" in
+      /*) ;;
+      *) dockerfile="$ROOT/$dockerfile" ;;
+    esac
+    context="$(dockerfile_context "$dockerfile")"
+    copy_pattern_gaps "$dockerfile" "$context"
   done
-)
+}
+mapfile -t pattern_gap_list < <(sweep_pattern_gaps "${all_dockerfiles[@]}")
 if (( ${#pattern_gap_list[@]} == 0 )); then
-  pass "every wildcard COPY source across ${#all_dockerfiles[@]} Dockerfiles resolves to at least one file"
+  pass "every wildcard COPY source across ${#all_dockerfiles[@]} Dockerfiles resolves to at least one file in its own build context"
 else
   bad "unresolvable COPY sources: ${pattern_gap_list[*]}"
 fi
@@ -651,10 +898,101 @@ COPY nowhere/*.json /out/
 EOF
 unmatched_gaps="$(copy_pattern_gaps "$unmatched_dockerfile")"
 if [[ "$unmatched_gaps" == \
-  "COPY source 'nowhere/*.json' in ${unmatched_dockerfile#"$ROOT"/} matches no file" ]]; then
-  pass "a wildcard COPY source that matches nothing is named with its pattern and Dockerfile"
+  "COPY source 'nowhere/*.json' in ${unmatched_dockerfile#"$ROOT"/} (build context .) matches no file" ]]; then
+  pass "a wildcard COPY source that matches nothing is named with its pattern, Dockerfile and context"
 else
   bad "an unmatched wildcard COPY source was not reported cleanly: ${unmatched_gaps:-<nothing reported>}"
+fi
+
+# A bracket expression is Docker pattern syntax, not punctuation: `COPY
+# services/console/Dockerfil[e] /out/` copies services/console/Dockerfile. The
+# tokenizer used to rewrite `[`, `]`, `"` and `,` to spaces, so the source became two
+# tokens — `services/console/Dockerfil` and `e` — and neither is a file: the sweep
+# resolved nothing and reported no gap. Both the shell and the JSON form are checked,
+# because each reaches the tokenizer by a different path.
+bracket_dockerfile="$fixture_dir/bracket.Dockerfile"
+cat >"$bracket_dockerfile" <<'EOF'
+FROM alpine
+COPY services/console/Dockerfil[e] /out/
+COPY ["services/proxy/Dockerfil[e]", "/out/"]
+EOF
+bracket_sources="$(copy_sources "$bracket_dockerfile")"
+if [[ "$(sort <<<"$bracket_sources" | tr '\n' ' ')" == \
+  "services/console/Dockerfile services/proxy/Dockerfile " ]]; then
+  pass "a bracket expression in a COPY source survives tokenisation and resolves to its file"
+else
+  bad "a bracket expression in a COPY source was mangled into '$(tr '\n' ' ' <<<"$bracket_sources")'"
+fi
+if [[ -z "$(copy_pattern_gaps "$bracket_dockerfile")" ]]; then
+  pass "a bracket-expression COPY source with a match is not reported as unresolved"
+else
+  bad "a bracket-expression COPY source was reported as unresolved: $(copy_pattern_gaps "$bracket_dockerfile")"
+fi
+
+# Docker applies the pattern to the directory listing, so a leading dot is not
+# special: `COPY config/*.json` copies config/.defaults.json as well as
+# config/settings.json. `compgen -G` without `dotglob` emitted only the second, which
+# is a build input with no trigger. The control below runs the pre-fix expansion on
+# the same fixture, so the assertion is known to be about the dotglob and not about
+# the fixture. `expand_copy_glob` is the only place the expansion happens;
+# `copy_source_paths` delegates to it.
+dotfile_dir="$fixture_dir/dotfiles"
+mkdir -p "$dotfile_dir/config"
+printf '{}\n' >"$dotfile_dir/config/settings.json"
+printf '{}\n' >"$dotfile_dir/config/.defaults.json"
+dotfile_matches="$(expand_copy_glob "$dotfile_dir" 'config/*.json')"
+if [[ "$(sort <<<"$dotfile_matches" | tr '\n' ' ')" == \
+  "config/.defaults.json config/settings.json " ]]; then
+  pass "a wildcard COPY source expands to a dotfile, as Docker does"
+else
+  bad "a wildcard COPY source did not expand to a dotfile: '$(tr '\n' ' ' <<<"$dotfile_matches")'"
+fi
+plain_matches="$( cd "$dotfile_dir" && compgen -G 'config/*.json' || true )"
+if [[ "$(grep -c . <<<"$plain_matches")" == 1 ]]; then
+  pass "the control shows the pre-fix expansion on that fixture omits the dotfile"
+else
+  bad "the dotfile control did not reproduce the old behaviour: '$(tr '\n' ' ' <<<"$plain_matches")'"
+fi
+
+# A pattern resolves against the Dockerfile's own build context. The profile's
+# Postgres image is the one image in the tree that does not build from the root, so it
+# is the case that separates the two readings: against its context, `Dockerfil*`
+# matches the Dockerfile and `*.yml` matches nothing; against the root, `Dockerfil*`
+# matches nothing (a false gap that would have failed the suite) and `*.yml` matches
+# codecov.yml (a false input, silently judged by the wrong trigger).
+context_dockerfile="$fixture_dir/context.Dockerfile"
+cat >"$context_dockerfile" <<'EOF'
+FROM alpine
+COPY Dockerfil* /out/
+COPY *.yml /etc/
+EOF
+postgres_context="infra/compose/v1-single-node/postgres"
+context_sources="$(copy_sources "$context_dockerfile" "$postgres_context")"
+if [[ "$context_sources" == "${postgres_context}/Dockerfile" ]]; then
+  pass "a COPY pattern resolves against the image's own build context"
+else
+  bad "a COPY pattern did not resolve against ${postgres_context}: '$(tr '\n' ' ' <<<"$context_sources")'"
+fi
+# The fixture Dockerfile is registered with the Postgres context and then run through
+# the sweep the real tree uses. A sweep that passed only the Dockerfile would resolve
+# both patterns against the root: `Dockerfil*` would be reported as an unmatched
+# pattern and `*.yml` would match unrelated root files, so this assertion fails.
+dockerfile_contexts["$context_dockerfile"]="$postgres_context"
+context_gaps="$(sweep_pattern_gaps "$context_dockerfile")"
+if [[ "$context_gaps" == \
+  "COPY source '*.yml' in ${context_dockerfile#"$ROOT"/} (build context ${postgres_context}) matches no file" ]]; then
+  pass "the sweep reports an unmatched pattern with its Dockerfile and the context it used"
+else
+  bad "the sweep did not report an unmatched pattern with its context: ${context_gaps:-<nothing reported>}"
+fi
+root_sources="$(copy_sources "$context_dockerfile")"
+root_gaps="$(copy_pattern_gaps "$context_dockerfile")"
+if grep -Fxq 'codecov.yml' <<<"$root_sources" &&
+  ! grep -Fxq "${postgres_context}/Dockerfile" <<<"$root_sources" &&
+  grep -Fq "COPY source 'Dockerfil*' in ${context_dockerfile#"$ROOT"/} (build context .) matches no file" <<<"$root_gaps"; then
+  pass "the control shows the root context matches unrelated root files and misses the image's own"
+else
+  bad "the root-context control did not reproduce the old reading: sources '$(tr '\n' ' ' <<<"$root_sources")' gaps '${root_gaps:-<none>}'"
 fi
 
 missing_publish_inputs=()
@@ -682,8 +1020,9 @@ fi
 # written by hand: a hand-written list loses an entry exactly once and then stays
 # wrong, which is how the three findings above happened. Every tracked file under
 # every copied source is checked, so `COPY packages` covers the whole tree and a
-# new nested COPY is caught without touching this file.
-V1_COMPOSE="$ROOT/infra/compose/v1-single-node/compose.yml"
+# new nested COPY is caught without touching this file. Each Dockerfile's sources are
+# resolved against its own build context, which the section above derived from this
+# same compose file.
 
 # Every Dockerfile the profile builds: the ones its compose file names, plus any
 # `Dockerfile` beside a build context inside the profile directory (Compose
@@ -718,17 +1057,18 @@ repo_input_files() {
 # file names but the tree does not have is reported on stderr rather than skipped:
 # an unresolvable input is a hole in this assertion, not a pass.
 profile_build_inputs() {
-  local dockerfile source
+  local dockerfile context source
   while read -r dockerfile; do
     [[ -n "$dockerfile" ]] || continue
     if [[ ! -f "$ROOT/${dockerfile}" ]]; then
       printf 'profile Dockerfile %s does not exist\n' "$dockerfile" >&2
       continue
     fi
+    context="$(dockerfile_context "$dockerfile")"
     while read -r source; do
       [[ -n "$source" ]] || continue
       repo_input_files "$source"
-    done < <(copy_sources "$ROOT/${dockerfile}")
+    done < <(copy_sources "$ROOT/${dockerfile}" "$context")
   done < <(profile_dockerfiles)
 }
 
@@ -1115,10 +1455,12 @@ names_every_declared_context() {
 }
 
 # The live main rule publishes the same contexts twice, under `contexts` and under
-# `checks` (verified against the API). The read must therefore de-duplicate: applied to
-# a response that carries both keys, the guard's own expression must name every context
-# exactly once. The expression is taken from the script rather than copied here, so this
-# assertion follows the read that actually ships.
+# `checks` (verified against the API), so the read must de-duplicate: applied to a
+# response that carries both keys with the same list, the guard's own expression must
+# name every context exactly once. The expression is taken from the script rather than
+# copied here, so this assertion follows the read that actually ships. De-duplication is
+# all this fixture can prove — both keys hold the same list, so an expression that read
+# either key alone would pass it too. The next fixture is the one that proves the union.
 live_jq_expression="$(sed -n "s/^[[:space:]]*--jq '\(.*\)'.*$/\1/p" "$REQUIRED_GATES" | head -1)"
 protection_both_keys="$fixture_dir/protection-both-keys.json"
 declared_json="$(printf '%s\n' "${declared_contexts[@]}" | jq -R . | jq -s .)"
@@ -1128,9 +1470,89 @@ jq -n --argjson c "$declared_json" \
 read_contexts="$(jq -r "$live_jq_expression" "$protection_both_keys" 2>&1)"
 if [[ -n "$live_jq_expression" ]] &&
   [[ "$(sort <<<"$read_contexts")" == "$(printf '%s\n' "${declared_contexts[@]}" | sort)" ]]; then
-  pass "the live read takes the union of both context shapes, de-duplicated"
+  pass "the live read de-duplicates a rule that carries the same contexts under both keys"
 else
-  bad "the live read is not the de-duplicated union of contexts and checks: [${read_contexts}]"
+  bad "the live read did not de-duplicate the same contexts under both keys: [${read_contexts}]"
+fi
+
+# A union needs a fixture whose two shapes hold different contexts. Each declared
+# context is placed in exactly one of them, so an expression that reads only `contexts`
+# or only `checks` cannot produce the full set and only a read of both can.
+contexts_only=()
+checks_only=()
+for i in "${!declared_contexts[@]}"; do
+  if (( i % 2 == 0 )); then
+    contexts_only+=("${declared_contexts[i]}")
+  else
+    checks_only+=("${declared_contexts[i]}")
+  fi
+done
+protection_split="$fixture_dir/protection-split-keys.json"
+jq -n \
+  --argjson c "$(printf '%s\n' "${contexts_only[@]}" | jq -R . | jq -s .)" \
+  --argjson k "$(printf '%s\n' "${checks_only[@]}" | jq -R . | jq -s 'map({context: .})')" \
+  '{required_status_checks: {strict: true, contexts: $c, checks: $k}}' \
+  >"$protection_split"
+split_contexts="$(jq -r "$live_jq_expression" "$protection_split" 2>&1)"
+if (( ${#contexts_only[@]} > 0 && ${#checks_only[@]} > 0 )) &&
+  [[ -n "$live_jq_expression" ]] &&
+  [[ "$(sort <<<"$split_contexts")" == "$(printf '%s\n' "${declared_contexts[@]}" | sort)" ]]; then
+  pass "the live read takes the union of contexts and checks when the two shapes differ"
+else
+  bad "the live read did not take the union of two shapes that differ: [${split_contexts}]"
+fi
+
+# The two single-field expressions the union replaces. On this fixture each loses the
+# contexts that live only in the shape it does not read, which is what makes the union
+# assertion above bite: with the old same-list fixture both of these produced the full
+# set and passed.
+contexts_field_read="$(jq -r \
+  '[(.required_status_checks.contexts // [])[]] | map(select(. != null and . != "")) | unique | .[]' \
+  "$protection_split")"
+checks_field_read="$(jq -r \
+  '[(.required_status_checks.checks // [])[].context] | map(select(. != null and . != "")) | unique | .[]' \
+  "$protection_split")"
+if [[ "$(sort <<<"$contexts_field_read")" == "$(printf '%s\n' "${contexts_only[@]}" | sort)" ]] &&
+  [[ "$(sort <<<"$checks_field_read")" == "$(printf '%s\n' "${checks_only[@]}" | sort)" ]] &&
+  [[ "$(sort <<<"$contexts_field_read")" != "$(sort <<<"$split_contexts")" ]] &&
+  [[ "$(sort <<<"$checks_field_read")" != "$(sort <<<"$split_contexts")" ]]; then
+  pass "a read of one context shape alone misses the other's contexts, so only the union passes"
+else
+  bad "a one-field expression produced the union read on a fixture whose keys hold different contexts"
+fi
+
+# The gate itself reports both: every declared context is enforced by the split rule,
+# including the one that exists only under `contexts` and the one that exists only
+# under `checks`.
+run_live_gate "$protection_split"
+if (( gate_rc == 0 )) && grep -Fq 'are enforced by the live main rule' <<<"$gate_out"; then
+  pass "contexts that appear in only one of the two shapes are both reported enforced"
+else
+  bad "a live rule that splits the contexts across both shapes did not pass (exit ${gate_rc}): ${gate_out:-<no output>}"
+fi
+
+# The control: remove the context that lives only under `contexts` and the one that
+# lives only under `checks`. The gate must name both, which is what "reported enforced"
+# means for a context that has no duplicate in the other shape.
+split_control_context="${contexts_only[0]:-}"
+split_control_check="${checks_only[0]:-}"
+if [[ -n "$split_control_context" && -n "$split_control_check" ]]; then
+  protection_split_missing="$fixture_dir/protection-split-missing.json"
+  jq --arg drop_contexts "$split_control_context" --arg drop_checks "$split_control_check" \
+    '.required_status_checks.contexts -= [$drop_contexts]
+     | .required_status_checks.checks -= [{"context": $drop_checks}]' \
+    "$protection_split" >"$protection_split_missing"
+  run_live_gate "$protection_split_missing"
+  split_missing_line="$(grep -F 'Declared but NOT enforced by the live main branch rule:' <<<"$gate_out" || true)"
+  if (( gate_rc != 0 )) &&
+    grep -Fq "$split_control_context" <<<"$split_missing_line" &&
+    grep -Fq "$split_control_check" <<<"$split_missing_line"; then
+    pass "a context removed from the only shape that carried it is reported unenforced"
+  else
+    bad "a context removed from its only shape was not reported unenforced (exit ${gate_rc}): ${gate_out:-<no output>}"
+  fi
+else
+  bad "the declared inventory has fewer than two contexts, so the union of the two shapes cannot be proven"
 fi
 
 # 0. The same read on a rule that enforces everything must pass: the control for the
