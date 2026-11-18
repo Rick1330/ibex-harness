@@ -33,7 +33,10 @@ Three properties are checked, offline and stdlib-only:
    instead of passing unscanned, which is the drift this guard exists for. A row
    or a label the reader cannot parse, or a label listed twice, is an input error
    rather than an entry to skip: skipping it would leave it out of the comparison
-   while it stayed visible to a reader.
+   while it stayed visible to a reader. The same holds for every element of
+   ``capabilityRows``: one that is not one single-quoted tuple on its own line --
+   a spread, a second tuple on the line, a tuple broken across lines -- is
+   rejected naming its line rather than dropped from the comparison.
 
 What is *not* compared, and why:
 
@@ -245,8 +248,7 @@ CELL_SPLIT = re.compile(r"(?<!\\)\|")
 STATUS_UNION = re.compile(r"export type Status = ([^\n]+)")
 META_ENTRY = re.compile(r"^ {2}([A-Z][A-Z_]*): \{$", re.MULTILINE)
 LEDGER_CLASS = re.compile(r"ledgerClass: '([^']+)'")
-CAPABILITY_ROW = re.compile(r"^\s*\[\s*'([^']+)'\s*,\s*'([A-Z][A-Z_]*)'\s*,")
-CAPABILITY_ENTRY = re.compile(r"^\s*\[")
+CAPABILITY_ROW = re.compile(r"^\s*\[\s*'([^']+)'\s*,\s*'([A-Z][A-Z_]*)'\s*,[^[]*\]\s*(?:,\s*)?$")
 VOCABULARY_BULLET = re.compile(r"^[-*]\s+\*\*([A-Z][A-Z_]*)\*\*", re.MULTILINE)
 CLASS_TOKEN = re.compile(r"`([a-z][a-z-]*)`")
 DECORATION = re.compile(r"[`\s]")
@@ -390,18 +392,23 @@ def parse_site_vocabulary(source: str) -> dict[str, str]:
 def parse_site_rows(source: str) -> dict[str, str]:
     """The capability rows the site renders, name to status label.
 
-    An entry the reader cannot parse is an input error, not a row to skip. Skipping
-    it would leave the capability out of `compare_rows`, which is the check that
-    every row of every surface belongs to a declared capability: a row written in
-    a form the reader does not handle -- a double-quoted tuple, a status no label
-    declares -- would then pass the guard unscanned, and the surface would claim a
-    status no other surface was ever compared against.
+    Every top-level element of `capabilityRows` is either compared or rejected;
+    none is skipped. What is read is one single-quoted tuple per line, opening the
+    line, with blank lines and `//` comments passed over. What is rejected, with an
+    InputError naming the line, is every other shape: a spread of another
+    `CapabilityRow[]` (`...someRows`), two entries sharing one line, an entry broken
+    across lines, a double-quoted or backticked tuple, a template literal, a block
+    comment, and an entry whose own strings carry a `[`.
+
+    A skipped element was the hole: a spread renders on the site and never reached
+    `compare_rows`, which is the check that every row belongs to a declared
+    capability, so the guard reported agreement over rows it had not read.
 
     The entry format is rejected rather than widened, because widening only moves
-    the same hole to the next form (a template literal, a spread, a single-quoted
+    the same hole to the next form (a spread, a template literal, a single-quoted
     string carrying an escaped quote) while a rejected entry is a fact the guard
-    can always state. `ledger.ts` is formatted with single quotes, so an entry in
-    another form is also a deviation worth failing on.
+    can always state. `ledger.ts` is formatted with single quotes, one entry per
+    line, so an entry in another form is also a deviation worth failing on.
     """
     block, first_line = _capability_block(source)
     rows = _capability_entries(block, first_line)
@@ -426,17 +433,51 @@ def _capability_block(source: str) -> tuple[str, int]:
 
 
 def _capability_entries(block: str, first_line: int) -> list[tuple[str, str]]:
-    """Every line of `block` that opens a tuple entry, parsed, with its line number.
+    """Every entry of `block`, parsed, with the line number it sits on.
 
-    The array's opening line and any comment line open no entry and are passed
-    over. A line that does open one must parse: `_capability_row` raises rather
-    than letting the entry fall out of the comparison unread.
+    Every line is accounted for, because the three groups are exhaustive: the
+    declaration line must end at its opening bracket, a blank line or a `//`
+    comment holds no entry, and every other line must be exactly one entry. A
+    line that matches none of them -- a spread, a second entry sharing a line, an
+    entry broken across lines, a block comment -- is an InputError naming the
+    line, never a line to pass over.
     """
-    return [
-        _capability_row(line, first_line + offset)
-        for offset, line in enumerate(block.splitlines())
-        if CAPABILITY_ENTRY.match(line)
-    ]
+    rows: list[tuple[str, str]] = []
+    for offset, line in enumerate(block.splitlines()):
+        number = first_line + offset
+        if offset == 0:
+            _check_declaration_line(line, number)
+        elif _is_trivia(line):
+            continue
+        else:
+            rows.append(_capability_row(line, number))
+    return rows
+
+
+def _check_declaration_line(line: str, number: int) -> None:
+    """Require the `capabilityRows` declaration to end at its opening bracket.
+
+    An entry sharing the declaration's line would be an entry no line reader ever
+    sees, so it is rejected rather than read: one entry per line is the only
+    layout the guard can account for.
+    """
+    if line.rstrip().endswith("["):
+        return
+    raise InputError(
+        f"{SITE_LEDGER}: the capabilityRows declaration on line {number} must end at its "
+        f"opening '[': {line.strip()}"
+    )
+
+
+def _is_trivia(line: str) -> bool:
+    """Whether a line inside the array holds no entry: it is blank, or a `//` comment.
+
+    A `/* */` block comment is not trivia here: skipping one needs multi-line
+    state, and a line the reader cannot classify is rejected rather than guessed
+    at, so it is reported with the message for an unreadable entry.
+    """
+    stripped = line.strip()
+    return not stripped or stripped.startswith("//")
 
 
 def _unique_entries(rows: Sequence[tuple[str, str]]) -> dict[str, str]:
@@ -452,7 +493,16 @@ def _unique_entries(rows: Sequence[tuple[str, str]]) -> dict[str, str]:
 
 
 def _capability_row(line: str, number: int) -> tuple[str, str]:
-    """The name and status of one `capabilityRows` entry, or an InputError naming it."""
+    """The name and status of one `capabilityRows` entry, or an InputError naming it.
+
+    The entry must be one single-quoted tuple that opens its line and ends it. The
+    line is matched whole, so a second entry after the first on the same line is a
+    rejection rather than a name-and-status pair read from the first and a second
+    entry left uncounted. A `[` inside an entry's own strings is not supported for
+    the same reason the other shapes are not: the reader cannot tell a bracket in a
+    claim from the bracket that opens the next entry, so it rejects the line rather
+    than guess which.
+    """
     match = CAPABILITY_ROW.match(line)
     if match is None:
         raise InputError(

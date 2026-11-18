@@ -443,9 +443,12 @@ fi
 # layout while the merged source used the new one. The lists below are derived
 # from the Dockerfiles so a COPY line that grows a file fails here instead of
 # being found after a release.
+# The terminator accepts a digit in the key: the top-level keys are not all
+# `^[a-z]+$` — `v1:` is followed by no such key, so a block read that stops on
+# `^[a-z]+:$` ran past `v1:` and swallowed it into whichever block came before.
 filter_block() {
   local file="$1" key="$2"
-  awk -v k="${key}:" '$0 == k { f = 1 } f && /^[a-z]+:$/ && $0 != k { exit } f { print }' "$file"
+  awk -v k="${key}:" '$0 == k { f = 1 } f && /^[a-z0-9_-]+:$/ && $0 != k { exit } f { print }' "$file"
 }
 FILTERS="$ROOT/.github/path-filters.yml"
 # One line per input the console build copies but no trigger names, across the
@@ -603,16 +606,70 @@ profile_build_inputs() {
   done < <(profile_dockerfiles)
 }
 
-# dorny/paths-filter patterns are minimatch globs. In a bash `case` pattern `*`
-# already matches `/`, so `**` collapses to `*` and the forms this file uses
-# (literals, `*`, `**`) behave identically. Path character classes are not used in
-# .github/path-filters.yml; if one is added it has to be handled here too.
+# dorny/paths-filter matches with picomatch, where `*` and `?` stop at a `/` and
+# `**` crosses segments. A bash `case` pattern is not that matcher: in `case`, `*`
+# already matches `/`, so collapsing `**` to `*` made the old version accept
+# `services/worker/app/x.py` for the pattern `services/*`, which picomatch rejects.
+# The guard was looser than the filter it checks, so a real `services/*` entry would
+# have passed here while v1-smoke skipped. The translation below is the same one
+# .github/scripts/test-evaluate-memory-benchmark-gate.sh uses to check the
+# memory_bench filter, kept in step with it for the shapes this file's filters use:
+# a literal, `dir/**`, `dir/*.ext`, `**/name.ext`, and a bare `**`.
+#
+# `**` is globstar only when it is a whole segment, as in picomatch; anywhere else
+# it is an ordinary `*`. Path character classes (`[0-9]`) and brace expansion are
+# not used in .github/path-filters.yml; adding one needs handling here too.
+glob_segment_ere() {
+  local seg="$1" out="" i
+  for ((i = 0; i < ${#seg}; i++)); do
+    case "${seg:i:1}" in
+      '*') out+='[^/]*' ;;
+      '?') out+='[^/]' ;;
+      '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' | "\\") out+="\\${seg:i:1}" ;;
+      *) out+="${seg:i:1}" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+glob_to_ere() {
+  local pattern="$1" seg i need_sep=0 out=""
+  local -a segs
+  IFS='/' read -r -a segs <<<"$pattern"
+  for ((i = 0; i < ${#segs[@]}; i++)); do
+    seg="${segs[i]}"
+    if [[ "$seg" == '**' ]]; then
+      if (( ${#segs[@]} == 1 )); then
+        out+='.+'                        # bare `**`: any path
+      elif (( i == 0 )); then
+        out+='(.*/)?'                    # `**/x` also matches `x`
+      elif (( i + 1 == ${#segs[@]} )); then
+        out+='(/.*)?'                    # `dir/**` also matches `dir` itself
+      else
+        out+='/(.*/)?'                   # `a/**/b` also matches `a/b`
+      fi
+      need_sep=0
+      continue
+    fi
+    (( need_sep )) && out+='/'
+    out+="$(glob_segment_ere "$seg")"
+    need_sep=1
+  done
+  printf '%s' "$out"
+}
+
+# The compiled form is cached per pattern: the gap checks below ask the same
+# handful of patterns about every build input, and translating one per pair costs
+# more than matching the whole list.
+declare -A glob_ere_cache=()
 glob_matches() {
-  local pattern="${1//\*\*/\*}" path="$2"
-  case "$path" in
-    $pattern) return 0 ;;
-  esac
-  return 1
+  local pattern="$1" path="$2" re
+  re="${glob_ere_cache["$pattern"]-}"
+  if [[ -z "$re" ]]; then
+    re="^$(glob_to_ere "$pattern")\$"
+    glob_ere_cache["$pattern"]="$re"
+  fi
+  [[ "$path" =~ $re ]]
 }
 
 filter_globs() {
@@ -649,17 +706,42 @@ v1_input_gaps() {
 
 # The matcher itself, before it is used to judge the filter: a pattern that cannot
 # reach a nested path, or one that matches anything, would make the assertion pass
-# for the wrong reason.
-matcher_ok=1
-glob_matches 'infra/compose/v1-single-node/**' 'infra/compose/v1-single-node/postgres/Dockerfile' || matcher_ok=0
-glob_matches 'services/**' 'services/console/Dockerfile' || matcher_ok=0
-glob_matches 'infra/scripts/api-*.sh' 'infra/scripts/api-breaking.sh' || matcher_ok=0
-glob_matches 'services/**' 'infra/provider-capabilities/manifest.v1.json' && matcher_ok=0
-glob_matches 'infra/scripts/api-*.sh' 'infra/scripts/db-migrate.sh' && matcher_ok=0
-if (( matcher_ok )); then
-  pass "the filter matcher reaches nested paths, honours literals, and does not match across trees"
+# for the wrong reason. `want` is the verdict picomatch gives for the pair:
+# 0 = the pattern must match, 1 = it must not.
+matcher_failures=()
+expect_glob() {
+  local want="$1" pattern="$2" path="$3" got=1 verdict
+  glob_matches "$pattern" "$path" && got=0
+  [[ "$got" == "$want" ]] && return 0
+  if (( want == 0 )); then verdict='does not match'; else verdict='matches'; fi
+  matcher_failures+=("$pattern $verdict $path")
+}
+
+expect_glob 0 'infra/compose/v1-single-node/**' 'infra/compose/v1-single-node/postgres/Dockerfile'
+expect_glob 0 'services/**' 'services/console/Dockerfile'
+expect_glob 0 'infra/scripts/api-*.sh' 'infra/scripts/api-breaking.sh'
+expect_glob 1 'services/**' 'infra/provider-capabilities/manifest.v1.json'
+expect_glob 1 'infra/scripts/api-*.sh' 'infra/scripts/db-migrate.sh'
+# `*` stops at a segment boundary; `**` crosses it. The old matcher could not tell
+# this pair apart — it rewrote `**` to `*` and matched with `case`, where `*` already
+# matches `/` — so it accepted services/worker/app/x.py for the pattern `services/*`,
+# and would have declared the v1 filter complete for an entry a real paths-filter
+# run does not match.
+expect_glob 1 'services/*' 'services/worker/app/x.py'
+expect_glob 0 'services/**' 'services/worker/app/x.py'
+# A star in the middle position is one directory, not any depth.
+expect_glob 0 'services/*/Dockerfile' 'services/worker/Dockerfile'
+expect_glob 1 'services/*/Dockerfile' 'services/a/b/Dockerfile'
+# A leading `**/` also matches a path with no directory in front of it: that is how
+# the docs filter reaches a root-level markdown file.
+expect_glob 0 '**/*.json' 'package.json'
+expect_glob 0 '**/*.json' 'engineering/architecture-v2/contracts/deprecations.json'
+expect_glob 1 '**/*.json' 'engineering/architecture-v2/contracts/deprecations.yml'
+
+if (( ${#matcher_failures[@]} == 0 )); then
+  pass "the filter matcher follows picomatch: literals, one segment per *, any depth per **"
 else
-  bad "the filter matcher misjudged a known pattern/path pair"
+  bad "the filter matcher misjudged: ${matcher_failures[*]}"
 fi
 
 mapfile -t v1_gaps < <(v1_input_gaps "$FILTERS")
@@ -685,6 +767,55 @@ if [[ "$(v1_input_gaps "$v1_fixture_filters")" == 'site/package.json is not a v1
   pass "dropping a single copied file from the v1 filter fails the assertion, naming only that file"
 else
   bad "dropping site/package.json from the v1 filter did not fail the assertion cleanly: $(v1_input_gaps "$v1_fixture_filters")"
+fi
+
+# --- .dockerignore is a build input of every image -------------------------
+# Every image in this repository builds from the repository root: `context: .` in
+# docker-publish.yml, `../../..` in infra/compose/v1-single-node/compose.yml and in
+# infra/compose/bundles/memory-context.yml. Docker reads the .dockerignore at the
+# root of that context, so editing it changes what every one of those builds may
+# copy. It matched no filter, so a PR editing only this file built a different
+# image while run_docker, run_v1 and run_compose all stayed false: the publish
+# skipped, and v1-smoke and bundle-smoke reported a skip that the aggregates accept.
+# A filter that deliberately keeps it out would have to keep it out of every build
+# context as well, which the shared root context does not allow.
+image_filters=(docker v1 compose)
+dockerignore_gaps() {
+  local filters="$1" key pattern covered
+  for key in "${image_filters[@]}"; do
+    covered=0
+    while IFS= read -r pattern; do
+      [[ -n "$pattern" ]] || continue
+      if glob_matches "$pattern" '.dockerignore'; then
+        covered=1
+        break
+      fi
+    done < <(filter_globs "$filters" "$key")
+    (( covered )) || printf '.dockerignore is not a %s trigger\n' "$key"
+  done
+  return 0
+}
+
+mapfile -t dockerignore_missing < <(dockerignore_gaps "$FILTERS")
+if (( ${#dockerignore_missing[@]} == 0 )); then
+  pass ".dockerignore is a trigger for every image build (${image_filters[*]})"
+else
+  bad "a .dockerignore-only change does not run an image build: ${dockerignore_missing[*]}"
+fi
+
+# The control: the same check against a copy with the entry removed must name every
+# filter it lost. Without it this assertion could be passing because the matcher
+# matches everything, which is the defect the matcher fixtures above guard against.
+grep -Fv "  - '.dockerignore'" "$FILTERS" >"$v1_fixture_filters"
+dockerignore_dropped="$(dockerignore_gaps "$v1_fixture_filters")"
+drop_reported=1
+for key in "${image_filters[@]}"; do
+  grep -Fxq ".dockerignore is not a ${key} trigger" <<<"$dockerignore_dropped" || drop_reported=0
+done
+if (( drop_reported )); then
+  pass "dropping .dockerignore fails the trigger check for each of the ${#image_filters[@]} image builds"
+else
+  bad "dropping .dockerignore did not fail the trigger check cleanly: ${dockerignore_dropped:-<nothing reported>}"
 fi
 
 # --- declared vs live required contexts ------------------------------------
@@ -742,6 +873,106 @@ if (( empty_rc != 0 )) && (( empty_unnamed == 0 )); then
   pass "a readable live rule with zero checks fails and names all ${#declared_contexts[@]} declared contexts"
 else
   bad "a readable live rule with zero checks reported success (exit ${empty_rc}) or did not name every declared context: ${empty_out:-<no output>}"
+fi
+
+# The comparison is only as good as the read behind it, and IBEX_LIVE_REQUIRED_CONTEXTS
+# bypasses the read. These cases drive `gh` itself, because "the response has no
+# contexts key" and "the rule enforces nothing" are the same enforcement and must
+# reach the same exit: gh exits non-zero when jq cannot evaluate the expression, so
+# the old `.required_status_checks.contexts[]` printed the "not readable" warning and
+# exited 0 — all declared contexts unenforced, nothing reported. A failed request is
+# the one case that stays a warning: it is genuinely "could not read".
+gate_bin="$fixture_dir/gate-bin"
+mkdir -p "$gate_bin"
+cat >"$gate_bin/gh" <<'GATE_STUB'
+#!/usr/bin/env bash
+# Stand-in for `gh api <path> --jq <expr>`: applies expr to the protection JSON the
+# case points at, and fails when jq cannot evaluate it, which is what gh does.
+# GH_STUB_RC makes the request itself fail (a non-200, an absent token).
+set -euo pipefail
+[[ "${1:-}" == "api" ]] || exit 1
+if [[ -n "${GH_STUB_RC:-}" ]]; then
+  exit "${GH_STUB_RC}"
+fi
+expr=""
+while (( $# )); do
+  case "$1" in
+    --jq) expr="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+jq -r "$expr" "${GH_STUB_PROTECTION:?}" || exit 1
+GATE_STUB
+chmod +x "$gate_bin/gh"
+
+gate_rc=0
+gate_out=""
+run_live_gate() {
+  local protection="$1" fail="${2:-}"
+  local -a env_args=(
+    -u IBEX_LIVE_REQUIRED_CONTEXTS -u GITHUB_STEP_SUMMARY
+    PATH="$gate_bin:$PATH"
+    GITHUB_REPOSITORY=owner/repo
+    GH_STUB_PROTECTION="$protection"
+  )
+  [[ -n "$fail" ]] && env_args+=(GH_STUB_RC="$fail")
+  gate_rc=0
+  gate_out="$(env "${env_args[@]}" bash "$REQUIRED_GATES" 2>&1)" || gate_rc=$?
+}
+
+# Every declared context must be named by the failure, not just some of them.
+names_every_declared_context() {
+  local line context
+  line="$(grep -F 'Declared but NOT enforced by the live main branch rule:' <<<"$1" || true)"
+  [[ -n "$line" ]] || return 1
+  for context in "${declared_contexts[@]}"; do
+    grep -Fq "$context" <<<"$line" || return 1
+  done
+}
+
+# 0. The same read on a rule that enforces everything must pass: the control for the
+#    three cases below, and the only one of the four that runs the happy path.
+protection_full="$fixture_dir/protection-full.json"
+printf '%s\n' "${declared_contexts[@]}" |
+  jq -R . | jq -s '{required_status_checks: {strict: true, contexts: .}}' >"$protection_full"
+run_live_gate "$protection_full"
+if (( gate_rc == 0 )) && grep -Fq 'are enforced by the live main rule' <<<"$gate_out"; then
+  pass "a readable live rule that enforces every declared context passes"
+else
+  bad "a readable live rule that enforces every declared context did not pass (exit ${gate_rc}): ${gate_out:-<no output>}"
+fi
+
+# 1. No `contexts` key at all: a readable response, with nothing enforced in it.
+protection_missing="$fixture_dir/protection-no-contexts.json"
+printf '%s\n' '{"required_status_checks": {"strict": true, "checks": [{"context": "gitleaks"}]}}' \
+  >"$protection_missing"
+run_live_gate "$protection_missing"
+if (( gate_rc != 0 )) && names_every_declared_context "$gate_out"; then
+  pass "a live rule with no contexts key fails and names all ${#declared_contexts[@]} declared contexts"
+else
+  bad "a live rule with no contexts key reported success (exit ${gate_rc}) or did not name every declared context: ${gate_out:-<no output>}"
+fi
+
+# 2. The whole block is null: a rule configured with no required checks at all.
+protection_null="$fixture_dir/protection-null.json"
+printf '%s\n' '{"required_status_checks": null}' >"$protection_null"
+run_live_gate "$protection_null"
+if (( gate_rc != 0 )) && names_every_declared_context "$gate_out"; then
+  pass "a live rule with a null required_status_checks fails and names every declared context"
+else
+  bad "a live rule with a null required_status_checks reported success (exit ${gate_rc}) or did not name every declared context: ${gate_out:-<no output>}"
+fi
+
+# 3. The request itself fails, which is "could not read" and stays a warning: the
+#    script has no evidence either way, and failing would make the job unpassable
+#    without a repository-admin token.
+run_live_gate "$protection_full" 22
+if (( gate_rc == 0 )) &&
+  grep -Fq 'not readable with this credential' <<<"$gate_out" &&
+  ! grep -Fq 'Declared but NOT enforced' <<<"$gate_out"; then
+  pass "a failed protection read warns and exits 0 instead of reporting an unenforced context"
+else
+  bad "a failed protection read did not take the warning path (exit ${gate_rc}): ${gate_out:-<no output>}"
 fi
 
 # A different context that embeds a declared name is not that context. The old

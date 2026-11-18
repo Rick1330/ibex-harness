@@ -37,4 +37,13 @@ regexes = [
   # "RS256-signed". gitleaks' generic-api-key heuristic matches that hyphenated
   # phrase; it is a documentation adjective, not a credential.
   '''\bRS256-signed\b''',
+  # infra/scripts/test-ci-tiering.sh used to prove its filter matcher with
+  #   glob_matches 'infra/scripts/api-*.sh' 'infra/scripts/api-breaking.sh' || matcher_ok=0
+  # generic-api-key reads `api` as the keyword, the quoted path as the key, `||` as
+  # the separator and the shell assignment as a 12-character value, so it reports the
+  # line as a credential. The fixture no longer has that shape in the tree, but the
+  # commit that introduced it is still in history and `gitleaks detect` scans
+  # history. Allowlist the exact value: a secret that merely contains this text has no
+  # word boundary after the `0` and is still reported.
+  '''\bmatcher_ok=0\b''',
 ]

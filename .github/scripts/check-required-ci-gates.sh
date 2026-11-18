@@ -112,8 +112,15 @@ live_required_contexts() {
   local repo
   repo="$(repository_slug)" || return 1
   [[ -n "$repo" ]] || return 1
+  # A missing or null value is a readable rule with nothing enforced, not a failed
+  # read. `.required_status_checks.contexts[]` errors on both (jq exits non-zero,
+  # gh returns non-zero, the caller's `if` takes the warning branch and exits 0), so
+  # a rule that enforces no context at all reported success while every declared
+  # context stayed unenforced. `// []` makes that a successful read of zero checks,
+  # which the empty-list branch below reports. A genuine failure (no gh, no auth,
+  # non-200) still exits non-zero here and still takes the warning branch.
   gh api "repos/${repo}/branches/main/protection" \
-    --jq '.required_status_checks.contexts[]' 2>/dev/null
+    --jq '(.required_status_checks.contexts // [])[]' 2>/dev/null
 }
 
 # Retrieval failure and a successfully-read-but-empty rule are different facts, and the
