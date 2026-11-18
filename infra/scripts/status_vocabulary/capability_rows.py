@@ -23,21 +23,30 @@ from .lexer import (
     line_end,
     line_number,
     lines_between,
+    module_match,
     skip_string,
     skip_trivia,
     starts_trivia,
 )
 
-# The declaration, at statement position: the name must follow `const`/`let`/`var`
-# that opens its line, so a mention inside a comment is not taken for the
-# declaration, and the name must be followed by something that cannot continue an
-# ECMAScript identifier. `\b` matched between `s` and `$`, so `capabilityRows$archive`
-# was accepted as the declaration and its rows were compared instead. See
+# The declaration, at statement position: the kind of binding must follow the line
+# start, so a mention inside a comment is not taken for the declaration, and the name
+# must be followed by something that cannot continue an ECMAScript identifier. `\b`
+# matched between `s` and `$`, so `capabilityRows$archive` was accepted as the
+# declaration and its rows were compared instead. See `capability_declaration`.
+# The binding kind is captured because only `const` is read: see
 # `capability_declaration`.
 CAPABILITY_DECLARATION = re.compile(
-    r"^[ \t]*(?:export[ \t]+)?(?:const|let|var)[ \t]+capabilityRows(?![$\w])", re.MULTILINE
+    r"^[ \t]*(?:export[ \t]+)?(const|let|var)[ \t]+capabilityRows(?![$\w])", re.MULTILINE
 )
-CAPABILITY_ROW = re.compile(r"^\s*\[\s*'([^']+)'\s*,\s*'([A-Z][A-Z_]*)'\s*,[^[]*\]\s*(?:,\s*)?$")
+# One entry: the name, the status, then the detail and href, whose text is not read.
+# The bracket that ends the tuple is the first one on the line, so nothing may sit
+# between the entry's closing `]` and the end of its line but a trailing comma:
+# `], extraRow, // ]` -- an element hidden behind a bracket in the comment -- is
+# rejected rather than half read.
+CAPABILITY_ROW = re.compile(
+    r"^\s*\[\s*'([^']+)'\s*,\s*'([A-Z][A-Z_]*)'\s*,[^\[\]]*\]\s*(?:,\s*)?$"
+)
 
 
 def parse_site_rows(source: str) -> dict[str, str]:
@@ -49,7 +58,8 @@ def parse_site_rows(source: str) -> dict[str, str]:
     InputError naming the line, is every other shape: a spread of another
     `CapabilityRow[]` (`...someRows`), two entries sharing one line, an entry broken
     across lines, a double-quoted or backticked tuple, a template literal, a block
-    comment, and an entry whose own strings carry a `[`.
+    comment, an entry whose own strings carry a `[` or a `]`, and a line carrying a
+    further element after the tuple.
 
     A skipped element was the hole: a spread renders on the site and never reached
     `compare_rows`, which is the check that every row belongs to a declared
@@ -58,11 +68,11 @@ def parse_site_rows(source: str) -> dict[str, str]:
     The array is resolved before its entries are read, because comparing one array
     while the site renders another is the same hole in a different place: the
     declaration is found at module level rather than by the first mention of the
-    name, only a direct array initializer is accepted, and only whitespace or a `//`
-    comment may follow the closing `]`. A token after that `]` which continues the
-    initializer -- `[`, `(`, `.`, or a template literal, on the same line or the next
-    -- is rejected for the same reason: the rows compared would not be the rows
-    rendered.
+    name, it must be a `const` binding, only a direct array initializer is accepted,
+    and only whitespace or a `//` comment may follow the closing `]`. A token after
+    that `]` which continues the initializer -- `[`, `(`, `.`, `?`, or a template
+    literal, on the same line or the next -- is rejected for the same reason: the rows
+    compared would not be the rows rendered.
 
     The entry format is rejected rather than widened, because widening only moves
     the same hole to the next form (a spread, a template literal, a single-quoted
@@ -108,7 +118,7 @@ def capability_array(source: str) -> tuple[int, int]:
 
 
 def capability_declaration(source: str) -> re.Match[str]:
-    """The module-level declaration of `capabilityRows`, not a mention of it.
+    """The module-level `const` declaration of `capabilityRows`, not a mention of it.
 
     Searching for the name alone returned its first occurrence, which can sit inside
     a comment: a commented-out copy of the array above the real one would then be the
@@ -118,15 +128,26 @@ def capability_declaration(source: str) -> re.Match[str]:
     candidate is taken only when it is code and no scope is open. A helper that
     declares its own `capabilityRows` is skipped: the export reads the module-level
     binding, so comparing the local one would compare rows nothing renders.
+
+    Only `const` is accepted. A `let` or `var` binding can be assigned again after the
+    array -- `let capabilityRows = [ ... ]` then `capabilityRows = []` -- and the
+    export reads the reassigned value, so the guard would compare the initial rows
+    while the page renders none. Requiring `const` is the whole rule: a `let` holding
+    a literal that never changes is not a shape worth reading, and the rejection names
+    the line and the kind found.
     """
-    lexer = Lexer()
-    scanned = 0
-    for match in CAPABILITY_DECLARATION.finditer(source):
-        lexer.advance(source, scanned, match.start())
-        scanned = match.start()
-        if lexer.module_level:
-            return match
-    raise InputError(f"{SITE_LEDGER}: no `capabilityRows` array")
+    match = module_match(source, CAPABILITY_DECLARATION)
+    if match is None:
+        raise InputError(f"{SITE_LEDGER}: no `capabilityRows` array")
+    kind = match.group(1)
+    if kind != "const":
+        raise InputError(
+            f"{SITE_LEDGER}: the capabilityRows declaration on line "
+            f"{line_number(source, match.start())} is `{kind}`; it must be `const`, "
+            "because a reassignable binding can be handed a different array after the "
+            "one that was read"
+        )
+    return match
 
 
 def first_code_token(source: str, start: int, end: int, wanted: str) -> int:
@@ -192,13 +213,14 @@ def next_is_operation(source: str, index: int) -> bool:
     """Whether the token at `index` continues the array's initializer.
 
     TypeScript does not end a statement at a line break, so a `]` followed by `.`,
-    `[`, `(`, or a template literal is one expression: `.map(...)`,
-    `['filter'](row => ...)`, `?.flat()`, `` ]`...` ``. Each hands the site rows this
+    `[`, `(`, `?`, or a template literal is one expression: `.map(...)`,
+    `['filter'](row => ...)`, `?.map(...)`, `` ]`...` ``. Each hands the site rows this
     text does not contain -- a filter drops a row, an index reads a different one --
-    so the comparison would cover an array the page never renders. Only `.` was
-    checked, and `['filter'](...)` on the next line was accepted.
+    so the comparison would cover an array the page never renders. `?` is included
+    because `]` followed by `?.` is optional chaining, which is the same continuation
+    as `.`; only `.` was checked, and `['filter'](...)` on the next line was accepted.
     """
-    return source[index : index + 1] in (".", "[", "(", "`")
+    return source[index : index + 1] in (".", "[", "(", "`", "?")
 
 
 def capability_entries(source: str, opening: int, closing: int) -> list[tuple[str, str]]:
@@ -246,10 +268,13 @@ def capability_row(line: str, number: int) -> tuple[str, str]:
     The entry must be one single-quoted tuple that opens its line and ends it. The
     line is matched whole, so a second entry after the first on the same line is a
     rejection rather than a name-and-status pair read from the first and a second
-    entry left uncounted. A `[` inside an entry's own strings is not supported for
-    the same reason the other shapes are not: the reader cannot tell a bracket in a
-    claim from the bracket that opens the next entry, so it rejects the line rather
-    than guess which.
+    entry left uncounted. A `[` or `]` inside an entry's own strings is not supported
+    for the same reason the other shapes are not: the reader cannot tell a bracket in
+    a claim from the bracket that ends the tuple, so it rejects the line rather than
+    guess which. The bracket that ends the tuple is the first one on the line, so
+    `['X', 'A', 'd', '/y'], extraRow, // ]` -- an element hidden behind a bracket in
+    the trailing comment -- leaves that element visible to the reader and rejected
+    here rather than compared as a single row.
     """
     match = CAPABILITY_ROW.match(line)
     if match is None:

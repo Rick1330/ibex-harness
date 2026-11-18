@@ -14,7 +14,6 @@ from collections.abc import Iterable, Sequence
 
 from .contract import DOCS_LEDGER, DOCS_VOCABULARY, InputError
 
-TABLE_LINE = re.compile(r"^\s*\|.*\|\s*$")
 SEPARATOR_CELL = re.compile(r"^:?-{3,}:?$")
 CELL_SPLIT = re.compile(r"(?<!\\)\|")
 DECORATION = re.compile(r"[`\s]")
@@ -35,11 +34,25 @@ def is_separator(line: str) -> bool:
     return bool(found) and all(SEPARATOR_CELL.match(cell) for cell in found)
 
 
+def is_table_row(line: str) -> bool:
+    """Whether `line` is a row of a GFM pipe table.
+
+    GFM makes the leading and trailing pipes optional, so a line written as
+    `Memory substrate | IMPLEMENTED | Hosted HA.` is a row of the table above it. The
+    reader used to require both outer pipes, so such a row ended the block before it
+    and went uncompared while a reader still saw it. A line carrying no `|` is not a
+    row, which is what keeps prose between two tables from joining them; a line that
+    does carry one but is not as wide as the header is rejected by `parse_row` rather
+    than dropped.
+    """
+    return "|" in line
+
+
 def table_blocks(source: str) -> Iterable[list[tuple[int, str]]]:
     """Every run of consecutive pipe-table lines, each line with its 1-based number."""
     block: list[tuple[int, str]] = []
     for number, line in enumerate(source.splitlines(), start=1):
-        if TABLE_LINE.match(line):
+        if is_table_row(line):
             block.append((number, line))
             continue
         if block:

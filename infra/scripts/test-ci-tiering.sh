@@ -357,14 +357,26 @@ normalise_copy_source() {
 # Every match of one COPY pattern inside one directory, one per line. Docker applies
 # filepath.Match to the directory listing, so a leading dot is not special:
 # `COPY config/*.json` copies config/.defaults.json as well as config/settings.json.
-# A shell's default pathname expansion skips dotfiles, so `compgen -G` without
-# `dotglob` emitted only the second file: a dotfile change built a different image
-# with no trigger, one file at a time, exactly like an unmatched pattern. `dotglob`
-# is set inside the subshell, so no caller inherits it. `*` and `?` still stop at a
-# `/`, and `**` is read as two stars, which is what filepath.Match does with them.
+# `dotglob` is what makes filename expansion include dotfiles, but `compgen -G` only
+# honours it on some Bash versions: measured on 5.3.9 it does, measured on 5.2.15 (the
+# CI runner) it emitted only the second file, so a dotfile-only change built a
+# different image with no trigger. Pathname expansion is used directly instead:
+# `dotglob` is documented to apply to filename expansion on every version. `nullglob`
+# makes a pattern that matches nothing emit nothing rather than the literal pattern,
+# and an empty IFS keeps a source containing a space in one word. Both options are set
+# inside the subshell, so no caller inherits them. `*` and `?` still stop at a `/`, and
+# `**` is read as two stars, which is what filepath.Match does with them.
 expand_copy_glob() {
-  local base="$1" pattern="$2"
-  ( cd "$base" && shopt -s dotglob && compgen -G "$pattern" || true )
+  local base="$1" pattern="$2" match
+  (
+    cd "$base" 2>/dev/null || exit 0
+    shopt -s dotglob nullglob
+    IFS=
+    # shellcheck disable=SC2086 # the pattern is unquoted on purpose: this is the expansion
+    for match in $pattern; do
+      printf '%s\n' "$match"
+    done
+  )
 }
 
 # The repository files one COPY source stands for, resolved against the build context
@@ -564,15 +576,36 @@ load_profile_contexts() {
 load_publish_contexts
 load_profile_contexts
 
-# The context one Dockerfile builds from, repository-relative.
+# The key the context map is registered under: a repository-relative Dockerfile path.
+# `all_dockerfiles` is relative, while the fixtures below register and call with an
+# absolute path, so this is the one place a Dockerfile path is folded to the map's
+# spelling. A path outside the repository is left as it is: the map cannot hold a
+# meaningful key for it.
+dockerfile_key() {
+  local dockerfile="$1"
+  case "$dockerfile" in
+    "$ROOT"/*) printf '%s\n' "${dockerfile#"$ROOT"/}" ;;
+    /*) printf '%s\n' "$dockerfile" ;;
+    *) normalise_relative "$dockerfile" ;;
+  esac
+}
+
+# The context one Dockerfile builds from, repository-relative. The lookup and the
+# registration both go through dockerfile_key, so the relative and the absolute
+# spelling of one Dockerfile cannot resolve differently. Before that, the sweep made
+# every path absolute, missed every registered key, fell back to the absolute
+# directory, and copy_source_paths prefixed ROOT to it again — so it swept
+# $ROOT/$ROOT/... and reported no gap because it examined no directory. An undeclared
+# Dockerfile still falls back to its own directory, and the assertion below names it.
 dockerfile_context() {
-  local dockerfile="$1" context
-  context="${dockerfile_contexts[$dockerfile]-}"
+  local key context
+  key="$(dockerfile_key "$1")"
+  context="${dockerfile_contexts[$key]-}"
   if [[ -n "$context" ]]; then
     printf '%s\n' "$context"
     return 0
   fi
-  dirname "$dockerfile"
+  dirname "$key"
 }
 
 # Every Dockerfile the sweep and the coverage assertion reason about.
@@ -845,18 +878,77 @@ else
   bad "no Dockerfile resolved to a non-root context: the context map is not reading the compose file"
 fi
 
+# The map is keyed by repository-relative path and the sweep is handed both that form
+# and an absolute one. A key that does not agree with the lookup is a silent miss:
+# dockerfile_context falls back to dirname, copy_source_paths prefixes ROOT to it, and
+# the sweep examines $ROOT/$ROOT/... — a directory that does not exist — reporting no
+# gap because it checked nothing. Both spellings are asserted here, in both directions.
+context_key_failures=()
+for context_key in "${!dockerfile_contexts[@]}"; do
+  # A fixture registers an absolute key outside the repository; only an in-repo key
+  # has a second spelling to agree with.
+  [[ "$context_key" == /* ]] && continue
+  context_declared="${dockerfile_contexts[$context_key]}"
+  for context_spelling in "$context_key" "$ROOT/$context_key"; do
+    context_resolved="$(dockerfile_context "$context_spelling")"
+    [[ "$context_resolved" == "$context_declared" ]] ||
+      context_key_failures+=("$context_spelling resolves to ${context_resolved}, the map registers ${context_declared}")
+  done
+done
+if (( ${#context_key_failures[@]} == 0 )); then
+  pass "every registered Dockerfile resolves to its declared context from either spelling"
+else
+  bad "a registered Dockerfile resolves to a different context than the map declares: ${context_key_failures[*]}"
+fi
+
+# Every Dockerfile the sweep visits must resolve a context that is repository-relative,
+# exists, and does not carry the repository root a second time. A registered Dockerfile
+# must resolve to the declared context from either spelling; one with no declared build
+# path falls back to its own directory and is named here, so the fallback is visible
+# instead of silent. This is the assertion the absolute key could not survive: the
+# sweep resolved the Postgres image to an absolute directory and every other image to
+# $ROOT/<dirname> of a path that was already absolute.
+resolved_context_failures=()
+undeclared_contexts=()
+for dockerfile in "${all_dockerfiles[@]}"; do
+  context="$(dockerfile_context "$dockerfile")"
+  context_key="$(dockerfile_key "$dockerfile")"
+  context_by_absolute="$(dockerfile_context "$ROOT/$dockerfile")"
+  if [[ "$context" == /* || "$context" == *"$ROOT"* ]]; then
+    resolved_context_failures+=("$dockerfile resolves to ${context}: absolute, or carrying the repository root")
+  elif [[ ! -d "$ROOT/${context}" ]]; then
+    resolved_context_failures+=("$dockerfile resolves to ${context}, which is not a directory under the repository root")
+  elif [[ "$context_by_absolute" != "$context" ]]; then
+    resolved_context_failures+=("$dockerfile resolves to ${context} by name and ${context_by_absolute} by absolute path")
+  elif [[ -n "${dockerfile_contexts[$context_key]-}" && "$context" != "${dockerfile_contexts[$context_key]}" ]]; then
+    resolved_context_failures+=("$dockerfile resolves to ${context}, the map registers ${dockerfile_contexts[$context_key]}")
+  elif [[ -z "${dockerfile_contexts[$context_key]-}" ]]; then
+    undeclared_contexts+=("$dockerfile (${context})")
+  fi
+done
+if (( ${#resolved_context_failures[@]} == 0 )); then
+  pass "the sweep resolves a repository-relative, existing build context for all ${#all_dockerfiles[@]} Dockerfiles"
+else
+  bad "the sweep does not resolve a usable build context: ${resolved_context_failures[*]}"
+fi
+if (( ${#undeclared_contexts[@]} > 0 )); then
+  pass "Dockerfiles with no declared build path fall back to their own directory: ${undeclared_contexts[*]}"
+fi
+
 # Wildcard gaps for a list of Dockerfiles, each resolved against its own build
 # context. This is the only place the sweep is wired, so the fixture below drives the
 # same call site rather than a copy of it: a sweep that dropped the context would
-# resolve every pattern against the root and the fixture would see it.
+# resolve every pattern against the root and the fixture would see it. The context is
+# resolved from the path as given — dockerfile_context folds it to the map key — and
+# only the read path is made absolute, so a caller's spelling cannot change the answer.
 sweep_pattern_gaps() {
   local dockerfile context
   for dockerfile in "$@"; do
+    context="$(dockerfile_context "$dockerfile")"
     case "$dockerfile" in
       /*) ;;
       *) dockerfile="$ROOT/$dockerfile" ;;
     esac
-    context="$(dockerfile_context "$dockerfile")"
     copy_pattern_gaps "$dockerfile" "$context"
   done
 }
@@ -953,6 +1045,18 @@ if [[ "$(grep -c . <<<"$plain_matches")" == 1 ]]; then
 else
   bad "the dotfile control did not reproduce the old behaviour: '$(tr '\n' ' ' <<<"$plain_matches")'"
 fi
+# Filename expansion replaced `compgen -G`, so the rewrite must not inherit the other
+# half of the old behaviour: an unmatched pattern must contribute nothing rather than
+# the literal pattern, which would become a false build input. `nullglob` is what
+# makes that true, and the control below runs the same expansion without it so the
+# assertion is known to be about the option and not about the fixture.
+no_match="$(expand_copy_glob "$dotfile_dir" 'absent/*.json')"
+plain_no_match="$( cd "$dotfile_dir" && shopt -s dotglob && IFS= && printf '%s\n' absent/*.json )"
+if [[ -z "$no_match" && "$plain_no_match" == 'absent/*.json' ]]; then
+  pass "a wildcard COPY source that matches nothing expands to nothing, not to the literal pattern"
+else
+  bad "an unmatched wildcard COPY source expanded to '${no_match:-<nothing>}' (control: '${plain_no_match}')"
+fi
 
 # A pattern resolves against the Dockerfile's own build context. The profile's
 # Postgres image is the one image in the tree that does not build from the root, so it
@@ -977,7 +1081,7 @@ fi
 # the sweep the real tree uses. A sweep that passed only the Dockerfile would resolve
 # both patterns against the root: `Dockerfil*` would be reported as an unmatched
 # pattern and `*.yml` would match unrelated root files, so this assertion fails.
-dockerfile_contexts["$context_dockerfile"]="$postgres_context"
+dockerfile_contexts["$(dockerfile_key "$context_dockerfile")"]="$postgres_context"
 context_gaps="$(sweep_pattern_gaps "$context_dockerfile")"
 if [[ "$context_gaps" == \
   "COPY source '*.yml' in ${context_dockerfile#"$ROOT"/} (build context ${postgres_context}) matches no file" ]]; then

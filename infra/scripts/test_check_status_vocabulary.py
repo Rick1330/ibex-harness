@@ -9,7 +9,7 @@ This module is the runner, which keeps
     python3 infra/scripts/test_check_status_vocabulary.py
 
 the command that executes all of them, and ``python3 -m unittest`` over this file
-collects the same sixty-three through the ``load_tests`` protocol.
+collects the whole suite through the ``load_tests`` protocol.
 
 The suite is discovered by the shared file prefix rather than imported by name.
 Discovery puts this directory on ``sys.path`` before it imports a module, which is
@@ -38,7 +38,7 @@ def load_tests(
     tests: unittest.TestSuite,
     pattern: str | None,
 ) -> unittest.TestSuite:
-    """The suite `python3 -m unittest <this file>` collects: the same sixty-three.
+    """The sibling modules' cases `python3 -m unittest <this file>` collects (77 cases today).
 
     This module defines no case of its own, so the default collection finds none;
     the protocol is how a runner module hands unittest the suite instead.
