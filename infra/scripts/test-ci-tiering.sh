@@ -345,13 +345,14 @@ copy_source_tokens() {
 normalise_copy_source() {
   local source="$1"
   case "$source" in
-    /*|*://*) return 0 ;;
+    /*|*://*) return 0 ;; # outside the build context: no repository file to name
+    *) ;;                 # a relative source: normalised below
   esac
   source="${source#./}"
   case "$source" in
-    ''|.) return 0 ;;
+    ''|.) return 0 ;;                # the build context root itself: nothing nameable
+    *) printf '%s\n' "$source" ;;    # the remaining token is the repository path
   esac
-  printf '%s\n' "$source"
 }
 
 # Every match of one COPY pattern inside one directory, one per line. Docker applies
@@ -444,13 +445,13 @@ copy_pattern_gaps() {
 # list can name literally: no directory component and a regular file at the
 # repository root. Directories are expanded by the profile assertion below.
 root_copy_sources() {
-  local source
+  local context="$1" source
   while read -r source; do
     [[ -n "$source" ]] || continue
     [[ "$source" == */* ]] && continue
     [[ -f "$ROOT/${source}" ]] || continue
     printf '%s\n' "$source"
-  done < <(copy_sources "$1")
+  done < <(copy_sources "$context")
 }
 
 # --- build contexts --------------------------------------------------------
@@ -491,10 +492,10 @@ normalise_relative() {
   IFS='/' read -r -a parts <<<"$path"
   for segment in "${parts[@]}"; do
     case "$segment" in
-      ''|.) continue ;;
+      ''|.) continue ;; # a leading, trailing or doubled slash
       ..) (( ${#out[@]} > 0 )) && unset 'out[${#out[@]}-1]'; continue ;;
+      *) out+=("$segment") ;; # an ordinary component: kept
     esac
-    out+=("$segment")
   done
   for segment in "${out[@]}"; do joined+="${segment}/"; done
   printf '%s\n' "${joined%/}"
@@ -504,6 +505,7 @@ normalise_relative() {
 # the block declares none. Both keys live in the same block, so a `dockerfile:` can
 # never be attributed to the service above it.
 compose_build_blocks() {
+  local compose="$1"
   awk '
     function value(line) {
       sub(/^[^:]*:[[:space:]]*/, "", line)
@@ -527,7 +529,7 @@ compose_build_blocks() {
     inbuild && /^[[:space:]]+dockerfile:/ { dockerfile = value($0); next }
     inbuild && /^[[:space:]]+[A-Za-z0-9_.-]+:/ { emit() }
     END { emit() }
-  ' "$1"
+  ' "$compose"
 }
 
 # The contexts docker-publish.yml builds from. `context:` and `file:` belong to the
@@ -1243,7 +1245,8 @@ glob_matches() {
 }
 
 filter_globs() {
-  filter_block "$1" "$2" | sed -nE "s/^  - '(.*)'\$/\\1/p"
+  local file="$1" key="$2"
+  filter_block "$file" "$key" | sed -nE "s/^  - '(.*)'\$/\\1/p"
 }
 
 mapfile -t v1_profile_inputs < <(profile_build_inputs | sort -u)
@@ -1453,6 +1456,11 @@ fi
 # admin, so the comparison is driven through IBEX_LIVE_REQUIRED_CONTEXTS here: an
 # assertion nobody has seen fail is not known to work.
 REQUIRED_GATES="$ROOT/.github/scripts/check-required-ci-gates.sh"
+# The exact prefix the live-gate guard prints, once per declared context the branch
+# rule does not enforce. Six assertions below read that line and one compares it
+# verbatim, so the wording is defined once: a guard that renames the prefix then
+# breaks one line instead of leaving stale copies grepping for text nobody prints.
+DECLARED_NOT_ENFORCED_PREFIX='Declared but NOT enforced by the live main branch rule:'
 mapfile -t declared_contexts < <(
   jq -r '.required_status_checks.checks[].context' "$ROOT/.github/branch-protection-main.json"
 )
@@ -1470,7 +1478,7 @@ gate_rc=0
 gate_out="$(IBEX_LIVE_REQUIRED_CONTEXTS="$enforced_subset" bash "$REQUIRED_GATES" 2>&1)" || gate_rc=$?
 # Read the failure line itself: the structural output prints every declared context,
 # so a bare grep for a name would match a passing run too.
-unenforced_line="$(grep -F 'Declared but NOT enforced by the live main branch rule:' <<<"$gate_out" || true)"
+unenforced_line="$(grep -F "$DECLARED_NOT_ENFORCED_PREFIX" <<<"$gate_out" || true)"
 if (( gate_rc == 0 )); then
   bad "the live-context comparison passed a declared context the live rule does not enforce"
 elif [[ -z "$unenforced_line" ]]; then
@@ -1493,7 +1501,7 @@ fi
 # unenforced; the two facts need different exits.
 empty_rc=0
 empty_out="$(IBEX_LIVE_REQUIRED_CONTEXTS="," bash "$REQUIRED_GATES" 2>&1)" || empty_rc=$?
-empty_line="$(grep -F 'Declared but NOT enforced by the live main branch rule:' <<<"$empty_out" || true)"
+empty_line="$(grep -F "$DECLARED_NOT_ENFORCED_PREFIX" <<<"$empty_out" || true)"
 empty_unnamed=0
 for context in "${declared_contexts[@]}"; do
   grep -Fq "$context" <<<"$empty_line" || empty_unnamed=1
@@ -1551,7 +1559,7 @@ run_live_gate() {
 # Every declared context must be named by the failure, not just some of them.
 names_every_declared_context() {
   local line context
-  line="$(grep -F 'Declared but NOT enforced by the live main branch rule:' <<<"$1" || true)"
+  line="$(grep -F "$DECLARED_NOT_ENFORCED_PREFIX" <<<"$1" || true)"
   [[ -n "$line" ]] || return 1
   for context in "${declared_contexts[@]}"; do
     grep -Fq "$context" <<<"$line" || return 1
@@ -1647,7 +1655,7 @@ if [[ -n "$split_control_context" && -n "$split_control_check" ]]; then
      | .required_status_checks.checks -= [{"context": $drop_checks}]' \
     "$protection_split" >"$protection_split_missing"
   run_live_gate "$protection_split_missing"
-  split_missing_line="$(grep -F 'Declared but NOT enforced by the live main branch rule:' <<<"$gate_out" || true)"
+  split_missing_line="$(grep -F "$DECLARED_NOT_ENFORCED_PREFIX" <<<"$gate_out" || true)"
   if (( gate_rc != 0 )) &&
     grep -Fq "$split_control_context" <<<"$split_missing_line" &&
     grep -Fq "$split_control_check" <<<"$split_missing_line"; then
@@ -1679,7 +1687,7 @@ protection_checks="$fixture_dir/protection-checks-only.json"
 printf '%s\n' '{"required_status_checks": {"strict": true, "checks": [{"context": "gitleaks"}]}}' \
   >"$protection_checks"
 run_live_gate "$protection_checks"
-checks_line="$(grep -F 'Declared but NOT enforced by the live main branch rule:' <<<"$gate_out" || true)"
+checks_line="$(grep -F "$DECLARED_NOT_ENFORCED_PREFIX" <<<"$gate_out" || true)"
 checks_unnamed=0
 for context in "${declared_contexts[@]}"; do
   [[ "$context" == gitleaks ]] && continue
@@ -1741,9 +1749,9 @@ for context in "${declared_contexts[@]}"; do
 done
 embedded_rc=0
 embedded_out="$(IBEX_LIVE_REQUIRED_CONTEXTS="$embedded_list" bash "$REQUIRED_GATES" 2>&1)" || embedded_rc=$?
-embedded_line="$(grep -F 'Declared but NOT enforced by the live main branch rule:' <<<"$embedded_out" || true)"
+embedded_line="$(grep -F "$DECLARED_NOT_ENFORCED_PREFIX" <<<"$embedded_out" || true)"
 if (( embedded_rc != 0 )) &&
-  [[ "$embedded_line" == 'Declared but NOT enforced by the live main branch rule: ci-gate-site' ]]; then
+  [[ "$embedded_line" == "$DECLARED_NOT_ENFORCED_PREFIX ci-gate-site" ]]; then
   pass "a live context that only embeds a declared name does not count as enforcing it"
 else
   bad "a live context that embeds a declared name counted as enforcing it (exit ${embedded_rc}): ${embedded_out:-<no output>}"
@@ -1758,14 +1766,15 @@ fi
 # and an absent, stalled or failed run must stay `unverified` without pretending
 # otherwise.
 step_run_body() {
-  awk -v want="      - name: $2" '
+  local workflow="$1" step="$2"
+  awk -v want="      - name: $step" '
     $0 == want { found = 1; next }
     found && /^      - name:/ { exit }
     found && /^        run: \|$/ { body = 1; next }
     body && /^          / { sub(/^          /, ""); print; next }
     body && /^[[:space:]]*$/ { print ""; next }
     body { exit }
-  ' "$1"
+  ' "$workflow"
 }
 
 smoke_fetch="$fixture_dir/fetch-bundle-smoke.sh"

@@ -479,7 +479,8 @@ v1_smoke_idem_key() {
 # documented envelope prints nothing and the caller keeps its status-only
 # message.
 v1_smoke_api_error() {
-  python3 - "$1" <<'PY'
+  local body_file="$1"
+  python3 - "$body_file" <<'PY'
 import json
 import re
 import sys
@@ -519,8 +520,14 @@ PY
 # a broken budget would otherwise read as a probe result. Five attempts two
 # seconds apart is a ten-second ceiling, proportionate to a profile whose first
 # boot can take ten minutes (TEI downloads ~2.3 GB before it is healthy).
+#
+# `smoke_warmup_attempts_override` is how the self-test lowers the ceiling to two
+# without exporting anything: it is read here, through the same numeric check, and
+# is set nowhere else. The environment name is not shadowed with a local, so an arm
+# that unsets or exports IBEX_V1_SMOKE_WARMUP_ATTEMPTS gets exactly what it asked
+# for and no caller inherits a variable named like configuration.
 v1_smoke_warmup_attempts() {
-  local attempts="${IBEX_V1_SMOKE_WARMUP_ATTEMPTS:-5}"
+  local attempts="${smoke_warmup_attempts_override:-${IBEX_V1_SMOKE_WARMUP_ATTEMPTS:-5}}"
   if [[ ! "$attempts" =~ ^[0-9]+$ ]] || (( 10#$attempts < 1 )); then
     echo "IBEX_V1_SMOKE_WARMUP_ATTEMPTS must be a positive whole number (got '$attempts'); it bounds how many chat requests the smoke may make while the cold context path warms, so a non-positive budget can never reach the assertion: this is a configuration error, not a skip" >&2
     return 1
@@ -578,21 +585,32 @@ v1_smoke_backoff_sleep() {
 # (infra/compose/v1-single-node/compose.yml:630-637), so "services are healthy"
 # is printed only when that check passes. But the check is grpc.health.v1
 # SERVING, which services/context/app/server.py:521-523 sets as soon as the
-# server accepts connections — not after the memory/TEI path behind a cold
-# Assemble is proven. memory's `/ready` checks auth, Postgres and Redis, not the
-# embedder (services/memory/app/probes.py:71-95), and the embedder/TEI
-# healthchecks prove initialization and model load, not a warm first query. The
-# cold branch embeds the query through CPU TEI
-# (services/context/app/retrieval.py:16-19), and the profile bounds assembly at
-# 1800 ms (IBEX_CONTEXT_TIMEOUT / IBEX_CONTEXT_DEADLINE_MS,
-# infra/compose/v1-single-node/compose.yml:624-625). On a freshly started
-# profile the first request pays TEI's model/connection warm-up and can exceed
-# that budget, at which point the proxy does the correct thing and fail-opens
-# (services/proxy/internal/http/chat_context_assemble.go:149-157). The first
-# chat request is therefore the only readiness probe the assembly path has:
-# "healthy" does not mean "ready to assemble". No healthcheck is added here on
-# purpose — that would change the profile's boot behaviour and is a separate
-# decision.
+# server accepts connections — not after the memory/TEI path behind an Assemble
+# is proven. memory's `/ready` checks auth, Postgres and Redis, not the embedder
+# (services/memory/app/probes.py:71-95), and the embedder/TEI healthchecks prove
+# initialization and model load, not a warm first query. So the first chat
+# request is the only readiness probe the assembly path has: "healthy" does not
+# mean "ready to assemble". No healthcheck is added here on purpose — that would
+# change the profile's boot behaviour and is a separate decision.
+#
+# What a degraded attempt actually was — this comment used to attribute every one
+# of them to the 1800 ms assembly budget, and two fixes were made from that
+# reading before the real cause was found. The proxy fail-opens
+# (services/proxy/internal/http/chat_context_assemble.go:149-157) and logs
+# `context assemble failed; fail-open` with grpc_code and elapsed_ms
+# (packages/contextclient/client.go:155-172). That pair is the diagnosis:
+#   Unavailable, elapsed_ms near 0 — the RPC never reached the peer: the channel
+#     was connecting or between connect attempts. No budget expired, and the
+#     context service may have been listening the whole time. (gRPC's default
+#     MaxDelay is 120 s; ADR-0097 §4 bounds it to 2 s in this profile.)
+#   DeadlineExceeded, elapsed_ms near 2000 — a genuine client timeout, at
+#     IBEX_CONTEXT_ASSEMBLE_TIMEOUT
+#     (infra/compose/v1-single-node/compose.yml:381).
+#   DeadlineExceeded, elapsed_ms near 1800 — the server's own assembly wall
+#     (IBEX_CONTEXT_TIMEOUT/IBEX_CONTEXT_DEADLINE_MS, compose.yml:624-625). A
+#     third thing: it fires before the client budget, not at it.
+# The warm-up retries a degraded assembly. It cannot repair a channel that has
+# not connected.
 #
 # The warm-up distinguishes cold start from steady state without weakening the
 # claim: the final attempt must still come back X-IBEX-Context-Fallback: false
@@ -603,7 +621,7 @@ v1_smoke_backoff_sleep() {
 # (services/proxy/internal/http/chat/idempotency.go:318-322), which would make
 # the retry prove nothing. Only a degraded assembly (fallback `true`) is
 # retried; a missing header, an unexpected value, a non-200 or a wrong body is
-# not a cold-start symptom and fails on the attempt that produced it.
+# not a transient assembly failure and fails on the attempt that produced it.
 #
 # On success the attempt count is recorded in V1_SMOKE_CHAT_ATTEMPTS so
 # v1_smoke's PASS line can report it, and a retry is announced: a slowly
@@ -649,7 +667,9 @@ v1_smoke_chat() {
         return 1 ;;
     esac
   done
-  echo "chat completion degraded context assembly (X-IBEX-Context-Fallback: true) after $attempts attempts (context assembly deadline 1800 ms: IBEX_CONTEXT_TIMEOUT/IBEX_CONTEXT_DEADLINE_MS in infra/compose/v1-single-node/compose.yml); the proxy fail-opened to directive-only messages" >&2
+  echo "chat completion degraded context assembly after $attempts attempts: X-IBEX-Context-Fallback: true, so the proxy fail-opened to directive-only messages" >&2
+  echo "the reason is the proxy's grpc_code and elapsed_ms for those attempts: the 'Profile service logs on failure (redacted)' step in .github/workflows/ci.yml dumps the proxy log; find 'context assemble failed; fail-open'" >&2
+  echo "Unavailable near 0 ms = the channel never reached the peer, no budget expired; DeadlineExceeded near 2000 ms = a real client timeout (IBEX_CONTEXT_ASSEMBLE_TIMEOUT); DeadlineExceeded near 1800 ms = the context server's own assembly wall (IBEX_CONTEXT_TIMEOUT/IBEX_CONTEXT_DEADLINE_MS, infra/compose/v1-single-node/compose.yml), a third thing" >&2
   return 1
 }
 
@@ -809,8 +829,9 @@ v1_smoke() {
 # first attempt and is clean on the second must pass (and must have minted a
 # fresh Idempotency-Key for each attempt, or the retry would replay a response
 # with no context headers); a stub that degrades on every attempt must fail with
-# the existing degraded-assembly message plus the attempt count and the 1800 ms
-# deadline; and a stub that never sends the header must still fail.
+# the degraded-assembly message that names the header, the attempt count, the
+# proxy's grpc_code/elapsed_ms and the log step that carries them; and a stub
+# that never sends the header must still fail.
 #
 # The retry delay those arms wait out is asserted too, without sleeping: the
 # intervals are recorded through v1_smoke_backoff_sleep and then checked for the
@@ -831,7 +852,7 @@ v1_smoke_selftest() {
   local tmp="$V1_SMOKE_SELFTEST_TMP"
   # Two attempts prove the loop; the default five would make every degrading arm
   # sleep through four intervals for no extra coverage.
-  local IBEX_V1_SMOKE_WARMUP_ATTEMPTS=2
+  local smoke_warmup_attempts_override=2
 
   # One stub answers both probes. `stub_chat` selects the arm, so each negative
   # case differs from the accepted one by a single value rather than by a copied
@@ -1002,11 +1023,18 @@ v1_smoke_selftest() {
   stub_chat="malformed"
   assert_rejected_mentions "a 200 chat body that is not valid JSON" || return 1
   # Degrading on every attempt is the defect the warm-up must not hide: the
-  # final attempt is still degraded, so the gate fails with the message that
-  # names the outcome, the attempt count and the deadline the assembly was given.
+  # final attempt is still degraded, so the gate fails with a message that names
+  # the assertion that failed (the header and the attempt count) and where the
+  # reason lives — the proxy's grpc_code/elapsed_ms in the failing job's redacted
+  # log step — plus the three readings of that pair. The message must NOT name
+  # the 1800 ms wall as "the deadline it was given": a degraded assembly reported
+  # as Unavailable near 0 ms never reached a budget at all, and that attribution
+  # sent two earlier rounds to the wrong place.
   stub_chat="fallback-true"
   assert_rejected_mentions "a 200 chat completion that reports X-IBEX-Context-Fallback: true on every attempt" \
-    "degraded context assembly" "after 2 attempts" "1800" || return 1
+    "degraded context assembly" "X-IBEX-Context-Fallback: true" "after 2 attempts" \
+    "grpc_code" "elapsed_ms" "Profile service logs on failure (redacted)" \
+    "Unavailable" "2000" "IBEX_CONTEXT_ASSEMBLE_TIMEOUT" "1800" || return 1
   stub_chat="fallback-absent"
   assert_rejected_mentions "a 200 chat completion that carries no X-IBEX-Context-Fallback header (assembly unproven)" \
     "no X-IBEX-Context-Fallback header" || return 1
@@ -1065,7 +1093,8 @@ v1_smoke_selftest() {
     local label="$1" name="$2" value="$3" got=0
     (
       v1_bootstrap_pat_read() { printf '%s\n' "$pat"; }
-      unset IBEX_V1_SMOKE_ATTEMPTS IBEX_V1_SMOKE_WARMUP_ATTEMPTS
+      unset IBEX_V1_SMOKE_ATTEMPTS IBEX_V1_SMOKE_WARMUP_ATTEMPTS \
+        smoke_warmup_attempts_override
       export "$name=$value"
       v1_smoke
     ) >/dev/null 2>&1 || got=$?
@@ -1094,7 +1123,7 @@ v1_smoke_selftest() {
   (
     curl() { stub_curl "$@"; }
     v1_smoke_backoff_sleep() { printf '%s\n' "$1" >>"$backoff_log"; }
-    IBEX_V1_SMOKE_WARMUP_ATTEMPTS=4
+    smoke_warmup_attempts_override=4
     v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json"
   ) >/dev/null 2>&1 || backoff_rc=$?
   if (( backoff_rc == 0 )); then

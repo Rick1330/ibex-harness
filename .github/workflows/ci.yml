@@ -897,18 +897,27 @@ jobs:
       # The smoke's chat assertion reports the symptom, not the cause: the proxy
       # answered 200 with X-IBEX-Context-Fallback: true, which means it
       # fail-opened to directive-only messages instead of injecting assembled
-      # context. Five degraded attempts over ten seconds with every container
-      # healthy rule out the cold-start race this was previously attributed to,
-      # so the proxy's own log line is the only evidence that names the reason.
+      # context. Five degraded attempts with every container healthy rule out a
+      # cold start, so the proxy's own log line is the only evidence that names
+      # the reason.
       #
       # The line to look for in the `proxy` block below (JSON, one object per
-      # line; packages/contextclient/client.go, Client.fallback):
+      # line; packages/contextclient/client.go:155-172, Client.fallback):
       #   {"level":"WARN","message":"context assemble failed; fail-open",
-      #    "service":"proxy","grpc_code":"DeadlineExceeded","elapsed_ms":1801,...}
+      #    "service":"proxy","grpc_code":"Unavailable","elapsed_ms":0,...}
       #   {"level":"ERROR","message":"context assemble unexpected failure; fail-open",...}
-      # `grpc_code` is the reason: DeadlineExceeded, Unavailable or Canceled mean
-      # the context service did not answer inside the 1800 ms budget; any other
-      # code is a non-transient failure. The same outcome is counted as
+      # `grpc_code` alone does not say what happened; read it with `elapsed_ms`:
+      #   Unavailable near 0 ms -- the channel never reached the peer. The verdict
+      #     is connection state (connecting, or asleep in gRPC's backoff, whose
+      #     MaxDelay ADR-0097 section 4 bounds to 2 s here), never a budget.
+      #   DeadlineExceeded near 2000 ms -- a real client timeout, at
+      #     IBEX_CONTEXT_ASSEMBLE_TIMEOUT (2s, compose.yml:381). Not 1801 ms: that
+      #     is the next case, and calling it a timeout hides a different failure.
+      #   DeadlineExceeded near 1800 ms -- the context server's own assembly wall
+      #     (IBEX_CONTEXT_TIMEOUT/IBEX_CONTEXT_DEADLINE_MS, compose.yml:624-625).
+      #   Canceled -- the caller went away first.
+      # Any other code is a non-transient failure and is logged at ERROR. The same
+      # outcome is counted as
       # ibex_proxy_context_assemble_fallback_total{reason="..."} on the proxy's
       # /metrics, which this job does not scrape.
       #

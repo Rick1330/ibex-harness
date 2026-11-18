@@ -48,6 +48,78 @@ async function withSite(files, run) {
   }
 }
 
+/**
+ * The fixture most cases need: one component, `app/components/Widget.vue`, holding
+ * `source` exactly as written. A case about the shape of the file writes the file.
+ */
+const component = source => ({ 'app/components/Widget.vue': source })
+
+/**
+ * The same component with its `<template>` block written for it, one entry of `body`
+ * per line. Every case but the ones about the block's own spelling varies only in what
+ * the template holds, so the block itself is the fixture's, not the case's.
+ */
+const template = (...body) => component(`<template>\n${body.join('\n')}\n</template>\n`)
+
+/**
+ * What `scan` reports for the throwaway tree holding `files`. Every case below is this
+ * call plus its own expectation, so a case reads as the tree it writes and the verdict
+ * it demands.
+ */
+const verdict = files => withSite(files, root => scan(root))
+
+/** A claim as `[line, label]`: the row a single-component case expects back. */
+const lineOf = claim => [claim.line, claim.label]
+
+/** A claim as `[file, line, label]`, for a case whose expectation names the file. */
+const fileOf = claim => [claim.file, claim.line, claim.label]
+
+/**
+ * The claims `scan` reports for `files`, each read as `row` reads it: the line and
+ * label a single-component case asserts on, or the file too when the tree holds more
+ * than one.
+ */
+async function claimRows(files, row = lineOf) {
+  const { claims } = await verdict(files)
+  return claims.map(row)
+}
+
+/**
+ * The one unreadable finding of the scan of `files`, plus the claims reported beside
+ * it. A case about a file the checker cannot read asserts on the finding's file,
+ * label, and reason; it cannot use `claimRows`, because both halves are one scan.
+ */
+async function onlyUnreadable(files) {
+  const { unreadable, claims } = await verdict(files)
+  assert.equal(unreadable.length, 1)
+  return { found: unreadable[0], claims: claims.map(lineOf) }
+}
+
+/**
+ * The verdict demanded of a tree that must be reported clean: no claim, and nothing
+ * the checker could not read.
+ */
+async function assertNothingReported(files) {
+  assert.deepEqual(await verdict(files), { unreadable: [], claims: [] })
+}
+
+/**
+ * Two elements and then two script strings, each holding one half of one phrase.
+ * Nothing a reader sees joins either pair, so no case may report a claim from it: the
+ * node reader is asked not to join the elements (`scannedTexts`), and the scan is
+ * asked not to join the script strings.
+ */
+const splitAcrossNodes = [
+  '<template>',
+  '  <p>guaranteed</p>',
+  '  <p>uptime</p>',
+  '</template>',
+  '<script setup lang="ts">',
+  "const a = 'guaranteed'",
+  "const b = 'uptime'",
+  '</script>',
+]
+
 describe('the JSON string reader', () => {
   it('decodes a \\u escape, so a spelled-around phrase reads as the phrase', () => {
     // A prohibited phrase hidden behind an escape renders as the phrase, so passing
@@ -120,10 +192,15 @@ describe('a benchmark artifact', () => {
   })
 })
 
+/**
+ * One component source, read at the path a component of the site is read at, so a
+ * case states the source and nothing else.
+ */
+const componentTexts = source => scannedTexts('/anywhere/app/components/Widget.vue', source, '/anywhere')
+
 describe('the reader each root gets', () => {
   it('reads a component whole, so a template line and a script string are both text', () => {
-    const source = '<template>\n  <p>production-ready</p>\n</template>\n'
-    const { texts } = scannedTexts('/anywhere/app/components/Widget.vue', source, '/anywhere')
+    const { texts } = componentTexts('<template>\n  <p>production-ready</p>\n</template>\n')
     assert.deepEqual(texts.filter(text => text.occurrences === undefined).map(text => text.line), [1, 2, 3, 4])
     const line = texts.find(text => text.line === 2 && text.occurrences === undefined)
     assert.deepEqual(phraseViolations(line.text), ['positive production-readiness claim'])
@@ -133,8 +210,7 @@ describe('the reader each root gets', () => {
     // A phrase the author broke over two lines renders as one phrase, so the node
     // is scanned as one text with its whitespace collapsed the way a browser
     // collapses it. One line at a time the phrase is never contiguous.
-    const source = '<template>\n  <p>guaranteed\n    uptime</p>\n</template>\n'
-    const { texts } = scannedTexts('/anywhere/app/components/Widget.vue', source, '/anywhere')
+    const { texts } = componentTexts('<template>\n  <p>guaranteed\n    uptime</p>\n</template>\n')
     assert.deepEqual(texts.find(text => text.occurrences !== undefined), {
       line: 2,
       text: 'guaranteed uptime',
@@ -145,17 +221,7 @@ describe('the reader each root gets', () => {
   it('joins no two elements and no script strings into one text', () => {
     // A tag separates two text nodes, so joining across one would invent a phrase
     // nobody wrote: a reader sees `guaranteed` and `uptime` as separate text.
-    const source = [
-      '<template>',
-      '  <p>guaranteed</p>',
-      '  <p>uptime</p>',
-      '</template>',
-      '<script setup lang="ts">',
-      "const a = 'guaranteed'",
-      "const b = 'uptime'",
-      '</script>',
-    ].join('\n')
-    const { texts } = scannedTexts('/anywhere/app/components/Widget.vue', source, '/anywhere')
+    const { texts } = componentTexts(splitAcrossNodes.join('\n'))
     assert.deepEqual(texts.filter(text => text.occurrences !== undefined).map(text => text.text), [
       'guaranteed',
       'uptime',
@@ -200,7 +266,7 @@ function compilerTexts(source) {
  * The same list as the scan reads it: the text of every template text node, flattened
  * the same way.
  */
-const scannedNodeTexts = source => scannedTexts('/anywhere/app/components/Widget.vue', source, '/anywhere')
+const scannedNodeTexts = source => componentTexts(source)
   .texts.filter(text => text.occurrences !== undefined)
   .map(text => text.text.replace(/\s+/g, ' ').trim())
 
@@ -217,60 +283,49 @@ describe('the template the compiler parses', () => {
     // `</template>` spelled in an attribute value, in an interpolation, and in a slot
     // name is text to a scanner and none of them to the compiler. Ending the block at
     // the first one it saw made the rest of the file prose.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
+    assert.deepEqual(
+      await claimRows(template(
         '  <div v-if="x > 1" data-note="\'</template>\'">',
         "    {{ '</template>' }}",
         '    <template #slot></template>',
         '    <p>guaranteed uptime</p>',
         '  </div>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[5, 'guarantee claim']])
+      )),
+      [[5, 'guarantee claim']],
+    )
   })
 
   it('reads a self-closing template and an empty one as elements', async () => {
     // Both are elements, not block openers: counting them as openers left the depth
     // wrong for the rest of the file, so a later `</template>` closed a block that was
     // never open.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
+    assert.deepEqual(
+      await claimRows(template(
         '  <template v-if="a" />',
         '  <template></template>',
         '  <p>production-ready</p>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[4, 'positive production-readiness claim']])
+      )),
+      [[4, 'positive production-readiness claim']],
+    )
   })
 
   it('reads a close tag with whitespace before its `>`', async () => {
     // The block still closes, so the file parses: an unclosed block would be reported
     // as unreadable and the claim in it would not be read at all.
-    const { unreadable, claims } = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p>production-ready</p>',
-        '</template >',
-      ].join('\n'),
-    }, root => scan(root))
-    assert.deepEqual(unreadable, [])
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2, 'positive production-readiness claim']])
+    const found = await verdict(component('<template>\n  <p>production-ready</p>\n</template >'))
+    assert.deepEqual(found.unreadable, [])
+    assert.deepEqual(found.claims.map(lineOf), [[2, 'positive production-readiness claim']])
   })
 
   it('reads a generated template of thousands of elements once', async () => {
     // A generated SVG has thousands of elements, each with attributes. The line reader
     // shares one range list with its file instead of copying a line's list per run, so
     // the work stays proportional to the file: 2000 elements, one claim, on its line.
-    const lines = ['<template>']
-    for (let index = 0; index < 2000; index += 1) lines.push('  <g :data-id="\'g\'"><text>measured</text></g>')
-    lines.push('  <p>production-ready</p>', '</template>')
-    const claims = await withSite({ 'app/components/Widget.vue': lines.join('\n') },
-      async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2002, 'positive production-readiness claim']])
+    const elements = Array.from({ length: 2000 }, () => '  <g :data-id="\'g\'"><text>measured</text></g>')
+    assert.deepEqual(
+      await claimRows(template(...elements, '  <p>production-ready</p>')),
+      [[2002, 'positive production-readiness claim']],
+    )
   })
 
   it('reports a component it cannot parse as unreadable', async () => {
@@ -279,43 +334,35 @@ describe('the template the compiler parses', () => {
     // reader still reads the file's lines — it does not depend on the parse, and a
     // phrase spelled on one line is one a reader would see — but the failure is the
     // finding that stops the check.
-    const { unreadable, claims } = await withSite({
-      'app/components/Widget.vue': '<template>\n  <p>guaranteed uptime</p>\n',
-    }, root => scan(root))
-    assert.equal(unreadable.length, 1)
-    assert.equal(unreadable[0].file, 'app/components/Widget.vue')
-    assert.equal(unreadable[0].label, unreadableLabel)
-    assert.match(unreadable[0].text, /does not parse/)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2, 'guarantee claim']])
+    const { found, claims } = await onlyUnreadable(component('<template>\n  <p>guaranteed uptime</p>\n'))
+    assert.equal(found.file, 'app/components/Widget.vue')
+    assert.equal(found.label, unreadableLabel)
+    assert.match(found.text, /does not parse/)
+    assert.deepEqual(claims, [[2, 'guarantee claim']])
   })
 
   it('reports a template in another language as unreadable instead of parsing it as HTML', async () => {
     // An HTML parse of a pug template is invented prose. The file renders text this
     // checker cannot read, which is a finding, not a skip.
-    const { unreadable, claims } = await withSite({
-      'app/components/Widget.vue': '<template lang="pug">\np Measured\n</template>\n',
-    }, root => scan(root))
+    const { found, claims } = await onlyUnreadable(component('<template lang="pug">\np Measured\n</template>\n'))
     assert.deepEqual(claims, [])
-    assert.equal(unreadable.length, 1)
-    assert.equal(unreadable[0].label, unreadableLabel)
-    assert.match(unreadable[0].text, /pug/)
+    assert.equal(found.label, unreadableLabel)
+    assert.match(found.text, /pug/)
   })
 
   it('keeps the whitespace of a pre, so a line break there is not a phrase', async () => {
     // Vue preserves whitespace inside `<pre>`, so a reader sees two lines and the page
     // never states the phrase. Condensing it there would invent a claim the same words
     // in a paragraph do state.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
+    assert.deepEqual(
+      await claimRows(template(
         '  <pre>production',
         '  ready</pre>',
         '  <p>production',
         '  ready</p>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[4, 'positive production-readiness claim']])
+      )),
+      [[4, 'positive production-readiness claim']],
+    )
   })
 
   it('reports a node it cannot map exactly at the line the node starts on', async () => {
@@ -323,52 +370,32 @@ describe('the template the compiler parses', () => {
     // the node's text back to the source is not recoverable. The claim is still
     // reported, at the line the node starts on — the most the compiler can vouch for —
     // rather than missed, or given a column that is not its own.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
+    assert.deepEqual(
+      await claimRows(template(
         '  <p>',
         '    measured &mdash; still',
         '    guaranteed uptime</p>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2, 'guarantee claim']])
+      )),
+      [[2, 'guarantee claim']],
+    )
   })
 
   it('reports a template that lives in another file as unreadable', async () => {
     // `<template src="…">` renders text held in a file this scan does not read, so the
     // component is unreadable rather than empty.
-    const { unreadable, claims } = await withSite({
-      'app/components/Widget.vue': '<template src="./Widget.html"></template>\n',
-    }, root => scan(root))
+    const { found, claims } = await onlyUnreadable(component('<template src="./Widget.html"></template>\n'))
     assert.deepEqual(claims, [])
-    assert.equal(unreadable.length, 1)
-    assert.match(unreadable[0].text, /no inline AST/)
+    assert.match(found.text, /no inline AST/)
   })
 
   it('reports nothing for a phrase an attribute value holds on one line', async () => {
     // A value is markup, not prose: the paragraph renders `Measured` and nothing else.
-    const result = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p data-note="production-ready">Measured</p>',
-        '</template>',
-      ].join('\n'),
-    }, root => scan(root))
-    assert.deepEqual(result, { unreadable: [], claims: [] })
+    await assertNothingReported(template('  <p data-note="production-ready">Measured</p>'))
   })
 
   it('reports nothing for a phrase a comment holds', async () => {
     // A comment renders nothing, so a claim in one is not a claim the page makes.
-    const result = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <!-- production-ready -->',
-        '  <p>Measured</p>',
-        '</template>',
-      ].join('\n'),
-    }, root => scan(root))
-    assert.deepEqual(result, { unreadable: [], claims: [] })
+    await assertNothingReported(template('  <!-- production-ready -->', '  <p>Measured</p>'))
   })
 })
 
@@ -383,74 +410,53 @@ describe('a prop and the reader', () => {
     // `BenchmarkSectionHeader` renders its `title`. Suppressing every prop made this
     // phrase invisible, so editing this value escaped the check: a prop is scanned
     // unless its name is one that cannot render.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <BenchmarkSectionHeader title="guaranteed uptime" />',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2, 'guarantee claim']])
+    assert.deepEqual(
+      await claimRows(template('  <BenchmarkSectionHeader title="guaranteed uptime" />')),
+      [[2, 'guarantee claim']],
+    )
   })
 
   it('reports a phrase v-text assigns, because the directive writes the text', async () => {
     // Vue assigns the directive value to `textContent`, so the element has no text
     // node for the node reader to see: the value is the only rendered text there is.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p v-text="\'guaranteed uptime\'"></p>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2, 'guarantee claim']])
+    assert.deepEqual(
+      await claimRows(template('  <p v-text="\'guaranteed uptime\'"></p>')),
+      [[2, 'guarantee claim']],
+    )
   })
 
   it('reports a phrase v-html assigns, scanned as the text of the markup it renders', async () => {
     // The value is markup: the tags in it are not text, but the words between them
     // are. Scanning the whole value over-reports a tag name and never misses prose,
     // which is the direction this checker fails in.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p v-html="\'<b>guaranteed uptime</b>\'"></p>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2, 'guarantee claim']])
+    assert.deepEqual(
+      await claimRows(template('  <p v-html="\'<b>guaranteed uptime</b>\'"></p>')),
+      [[2, 'guarantee claim']],
+    )
   })
 
   it('reports a phrase a title attribute carries, static and bound', async () => {
     // A browser shows a title as a tooltip, so its text reaches a reader. The bound
     // form sets the same attribute from an expression and is read the same way.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
+    assert.deepEqual(
+      await claimRows(template(
         '  <p title="production-ready">Measured</p>',
         '  <p :title="\'battle-tested\'">Measured</p>',
         '  <img alt="enterprise-grade" src="/x.png">',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [
-      [2, 'positive production-readiness claim'],
-      [3, 'unsupported battle-tested claim'],
-      [4, 'unsupported enterprise-grade claim'],
-    ])
+      )),
+      [
+        [2, 'positive production-readiness claim'],
+        [3, 'unsupported battle-tested claim'],
+        [4, 'unsupported enterprise-grade claim'],
+      ],
+    )
   })
 
   it('reports nothing for a data-* value, including the one this rule was written for', async () => {
     // The original finding: a `data-*` value is read by scripts and CSS selectors and
     // rendered by nothing, so a phrase inside one is not a claim the page makes — even
     // when it spells a tag-ending `>`.
-    const result = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p data-note="see > guaranteed uptime">Measured</p>',
-        '</template>',
-      ].join('\n'),
-    }, root => scan(root))
-    assert.deepEqual(result, { unreadable: [], claims: [] })
+    await assertNothingReported(template('  <p data-note="see > guaranteed uptime">Measured</p>'))
   })
 
   it('reports a phrase an aria-label speaks, and nothing for an attribute only a script reads', async () => {
@@ -458,73 +464,53 @@ describe('a prop and the reader', () => {
     // but `aria-label` is prose a screen reader speaks to the reader, so a prohibited
     // phrase in one is a claim the page makes to a user who never sees the paragraph.
     // Treating every `aria-*` as non-rendering missed it.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
+    assert.deepEqual(
+      await claimRows(template(
         '  <p aria-label="guaranteed uptime">Measured</p>',
         '  <p :aria-label="\'battle-tested\'">Measured</p>',
         '  <p aria-hidden="production-ready">Measured</p>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [
-      [2, 'guarantee claim'],
-      [3, 'unsupported battle-tested claim'],
-    ])
+      )),
+      [
+        [2, 'guarantee claim'],
+        [3, 'unsupported battle-tested claim'],
+      ],
+    )
   })
 
   it('reports nothing for a prop that cannot render text, bound or directive', async () => {
     // A class, a style, an id, an ARIA token, an event handler, a two-way binding and
     // the presence and visibility directives all put their value somewhere other than
     // the text a browser shows.
-    const result = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <div',
-        '    :class="\'production-ready\'"',
-        '    :style="\'battle-tested\'"',
-        '    :data-note="\'guaranteed uptime\'"',
-        '    role="five nines"',
-        '    @click="\'enterprise-grade\'"',
-        '    v-on:keyup.enter="\'production-ready\'"',
-        '    v-model="\'battle-tested\'"',
-        '    v-show="\'guaranteed uptime\'"',
-        '    v-if="\'five nines\'"',
-        '  >Measured</div>',
-        '</template>',
-      ].join('\n'),
-    }, root => scan(root))
-    assert.deepEqual(result, { unreadable: [], claims: [] })
+    await assertNothingReported(template(
+      '  <div',
+      '    :class="\'production-ready\'"',
+      '    :style="\'battle-tested\'"',
+      '    :data-note="\'guaranteed uptime\'"',
+      '    role="five nines"',
+      '    @click="\'enterprise-grade\'"',
+      '    v-on:keyup.enter="\'production-ready\'"',
+      '    v-model="\'battle-tested\'"',
+      '    v-show="\'guaranteed uptime\'"',
+      '    v-if="\'five nines\'"',
+      '  >Measured</div>',
+    ))
   })
 
   it('decides each prop on its own, so a quiet one does not excuse its neighbour', async () => {
     // The reader drops one range per non-rendering prop. A `data-*` beside a `title`
     // must silence only its own value, and the finding must still be reported once,
     // at the line the tag sits on.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <div class="note" data-note="guaranteed uptime" title="production-ready">Measured</div>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [
-      [2, 'positive production-readiness claim'],
-    ])
+    const tag = '  <div class="note" data-note="guaranteed uptime" title="production-ready">Measured</div>'
+    assert.deepEqual(await claimRows(template(tag)), [[2, 'positive production-readiness claim']])
   })
 
   it('reads a directive the parser left unparsed as a name no browser renders', async () => {
     // `<div v-pre @click="'production-ready'">` hands the parser a plain attribute
     // literally named `@click`, because `v-pre` stops compilation. That attribute sets
     // no text either way, so the phrase inside it is not prose.
-    const result = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <div v-pre @click="\'production-ready\'" :class="\'battle-tested\'">Measured</div>',
-        '</template>',
-      ].join('\n'),
-    }, root => scan(root))
-    assert.deepEqual(result, { unreadable: [], claims: [] })
+    await assertNothingReported(template(
+      '  <div v-pre @click="\'production-ready\'" :class="\'battle-tested\'">Measured</div>',
+    ))
   })
 })
 
@@ -543,104 +529,71 @@ describe('the clause a denial covers', () => {
 
 describe('a scanned site tree', () => {
   it('finds a claim in a component template and in its script string', async () => {
-    const claims = await withSite({
-      'app/components/Widget.vue': [
+    assert.deepEqual(
+      await claimRows(component([
         '<template>',
         '  <p>production-ready</p>',
         '</template>',
         '<script setup lang="ts">',
         "const note = 'enterprise-grade status'",
         '</script>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.file, claim.line, claim.label]), [
-      ['app/components/Widget.vue', 2, 'positive production-readiness claim'],
-      ['app/components/Widget.vue', 5, 'unsupported enterprise-grade claim'],
-    ])
+      ].join('\n')), fileOf),
+      [
+        ['app/components/Widget.vue', 2, 'positive production-readiness claim'],
+        ['app/components/Widget.vue', 5, 'unsupported enterprise-grade claim'],
+      ],
+    )
   })
 
   it('finds a claim a template text node breaks over two lines, on the line it starts', async () => {
     // The node renders "guaranteed uptime", so the split claim is one claim. The
     // line reader sees two fragments and reports neither, and the node reader points
     // at the line the phrase starts on rather than at the tag that opens the node.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p>',
-        '    guaranteed',
-        '    uptime</p>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.file, claim.line, claim.label]), [
-      ['app/components/Widget.vue', 3, 'guarantee claim'],
-    ])
+    assert.deepEqual(
+      await claimRows(template('  <p>', '    guaranteed', '    uptime</p>'), fileOf),
+      [['app/components/Widget.vue', 3, 'guarantee claim']],
+    )
   })
 
   it('reports a claim inside one line of a two-line node once, not twice', async () => {
     // The node is read whole and the line reader leaves the node's characters to it,
     // so an occurrence that sits inside one line of a two-line node is reported once.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p>production-ready',
-        '    and measured</p>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [
-      [2, 'positive production-readiness claim'],
-    ])
+    assert.deepEqual(
+      await claimRows(template('  <p>production-ready', '    and measured</p>')),
+      [[2, 'positive production-readiness claim']],
+    )
   })
 
   it('reports a cross-line claim on the line its phrase starts, not the node first line', async () => {
     // The node's text starts on line 3, the phrase on line 4. Reading the node whole
     // and reporting it at its first line would point at the wrong line.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p>',
-        '    measured',
-        '    guaranteed',
-        '    uptime</p>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[4, 'guarantee claim']])
+    assert.deepEqual(
+      await claimRows(template('  <p>', '    measured', '    guaranteed', '    uptime</p>')),
+      [[4, 'guarantee claim']],
+    )
   })
 
   it('reports nothing for a phrase a quoted attribute value holds', async () => {
     // The tag ends at the `>` outside the value, so the value is not text a reader
     // sees. Ending the tag at the `>` inside it would read `guaranteed uptime` as
     // rendered prose and report a claim the paragraph does not display.
-    const result = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p data-note="see > guaranteed',
-        '    uptime">Measured</p>',
-        '</template>',
-      ].join('\n'),
-    }, root => scan(root))
-    assert.deepEqual(result, { unreadable: [], claims: [] })
+    await assertNothingReported(template('  <p data-note="see > guaranteed', '    uptime">Measured</p>'))
   })
 
   it('ends the template block at its own close, not at one a script spells', async () => {
     // The file's last `</template>` sits inside a script string. Reading to it would
     // make the script a text node, and a script comment that splits a phrase over two
     // lines would then report a claim the page never renders.
-    const result = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p>Measured</p>',
-        '</template>',
-        '<script setup lang="ts">',
-        '/* guaranteed',
-        '   uptime */',
-        "const closing = '</template>'",
-        '</script>',
-      ].join('\n'),
-    }, root => scan(root))
-    assert.deepEqual(result, { unreadable: [], claims: [] })
+    await assertNothingReported(component([
+      '<template>',
+      '  <p>Measured</p>',
+      '</template>',
+      '<script setup lang="ts">',
+      '/* guaranteed',
+      '   uptime */',
+      "const closing = '</template>'",
+      '</script>',
+    ].join('\n')))
   })
 
   it('decodes a character reference, at the source line of the phrase it spells', async () => {
@@ -648,83 +601,61 @@ describe('a scanned site tree', () => {
     // though the source spells none of them. The reference on line 3 shifts every
     // decoded offset after it, and the source map still points at the line the phrase
     // starts on.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
+    assert.deepEqual(
+      await claimRows(template(
         '  <p>',
         '    measured as&#32;0 ms,',
         '    guaranteed&#32;uptime</p>',
         '  <p>guaranteed&nbsp;uptime</p>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [
-      [4, 'guarantee claim'],
-      [5, 'guarantee claim'],
-    ])
+      )),
+      [
+        [4, 'guarantee claim'],
+        [5, 'guarantee claim'],
+      ],
+    )
   })
 
   it('normalises whitespace inside one source line, so a collapsed run is a phrase', async () => {
     // Vue collapses the run, so the paragraph renders `production ready`; the raw line
     // keeps three spaces and the single-line node was not read at all before.
-    const claims = await withSite({
-      'app/components/Widget.vue': '<template>\n  <p>production   ready</p>\n</template>\n',
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [
-      [2, 'positive production-readiness claim'],
-    ])
+    assert.deepEqual(
+      await claimRows(template('  <p>production   ready</p>')),
+      [[2, 'positive production-readiness claim']],
+    )
   })
 
   it('decides a denial against the whole clause, not the line the claim sits on', async () => {
     // `We do not offer` is on the line before the claim. One line at a time the denial
     // is invisible and the raw-line pass reports a claim the node denies.
-    const result = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p>',
-        '    We do not offer',
-        '    production-ready service.</p>',
-        '</template>',
-      ].join('\n'),
-    }, root => scan(root))
-    assert.deepEqual(result, { unreadable: [], claims: [] })
+    await assertNothingReported(template('  <p>', '    We do not offer', '    production-ready service.</p>'))
   })
 
   it('still reports an occurrence in a clause the denial does not cover', async () => {
     // The semicolon ends the denied clause, so the claim after it is a claim the page
     // states, and the scan must not excuse it with the denial before the break.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p>',
-        '    We do not offer',
-        '    support; production-ready service.</p>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [
-      [4, 'positive production-readiness claim'],
-    ])
+    assert.deepEqual(
+      await claimRows(template('  <p>', '    We do not offer', '    support; production-ready service.</p>')),
+      [[4, 'positive production-readiness claim']],
+    )
   })
 
   it('puts every finding on its own line in a component with many nodes', async () => {
     // Each node resolves its line from the indexed line starts rather than by
     // rescanning the file from its start, and the line it reports is its own.
-    const lines = ['<template>']
-    for (let index = 0; index < 50; index += 1) lines.push('  <p>Measured</p>', '  <p>production-ready</p>')
-    lines.push('</template>')
-    const claims = await withSite({ 'app/components/Widget.vue': lines.join('\n') },
-      async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => claim.line), Array.from({ length: 50 }, (_, index) => 3 + index * 2))
+    const body = []
+    for (let index = 0; index < 50; index += 1) body.push('  <p>Measured</p>', '  <p>production-ready</p>')
+    assert.deepEqual(
+      await claimRows(template(...body), claim => claim.line),
+      Array.from({ length: 50 }, (_, index) => 3 + index * 2),
+    )
   })
 
   it('orders findings by the line they report, not by the rule that found them', async () => {
     // One node states both phrases, and the rule for `production-ready` runs before the
     // rule for `guaranteed uptime`, so the node's occurrence list is rule-ordered. The
     // claim on line 4 must still be reported before the one on line 7.
-    const claims = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
+    assert.deepEqual(
+      await claimRows(template(
         '  <p>',
         '    measured',
         '    guaranteed uptime',
@@ -732,75 +663,55 @@ describe('a scanned site tree', () => {
         '    also',
         '    production-ready',
         '  </p>',
-        '</template>',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [
-      [4, 'guarantee claim'],
-      [7, 'positive production-readiness claim'],
-    ])
+      )),
+      [
+        [4, 'guarantee claim'],
+        [7, 'positive production-readiness claim'],
+      ],
+    )
   })
 
   it('reports nothing for a phrase no single text node states', async () => {
     // `guaranteed` and `uptime` sit in two elements and then in two script strings.
     // Neither pair renders as one sentence, so neither is a claim.
-    const result = await withSite({
-      'app/components/Widget.vue': [
-        '<template>',
-        '  <p>guaranteed</p>',
-        '  <p>uptime</p>',
-        '</template>',
-        '<script setup lang="ts">',
-        "const a = 'guaranteed'",
-        "const b = 'uptime'",
-        '</script>',
-      ].join('\n'),
-    }, root => scan(root))
-    assert.deepEqual(result, { unreadable: [], claims: [] })
+    await assertNothingReported(component(splitAcrossNodes.join('\n')))
   })
 
   it('finds a claim in a published benchmark artifact, on the line it sits on', async () => {
-    const claims = await withSite({
-      'public/benchmarks/x.json': [
-        '{',
-        '  "suite": "gold-set",',
-        '  "note": "battle-tested",',
-        '}',
-      ].join('\n'),
-    }, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.file, claim.line, claim.label]), [
-      ['public/benchmarks/x.json', 3, 'unsupported battle-tested claim'],
-    ])
+    assert.deepEqual(
+      await claimRows({
+        'public/benchmarks/x.json': [
+          '{',
+          '  "suite": "gold-set",',
+          '  "note": "battle-tested",',
+          '}',
+        ].join('\n'),
+      }, fileOf),
+      [['public/benchmarks/x.json', 3, 'unsupported battle-tested claim']],
+    )
   })
 
   it('gates a number under app/data and leaves the same line in a component alone', async () => {
     // The numeric rule is scoped to the typed data root, where a result is authored.
-    const files = {
-      'app/data/rows.ts': "export const note = '42 ms'\n",
-      'app/components/Widget.vue': "<script>\nconst note = '42 ms'\n</script>\n",
-    }
-    const claims = await withSite(files, async root => (await scan(root)).claims)
-    assert.deepEqual(claims.map(claim => [claim.file, claim.label]), [
-      ['app/data/rows.ts', 'numeric claim without an artifact reference'],
-    ])
+    assert.deepEqual(
+      await claimRows({
+        'app/data/rows.ts': "export const note = '42 ms'\n",
+        'app/components/Widget.vue': "<script>\nconst note = '42 ms'\n</script>\n",
+      }, fileOf),
+      [['app/data/rows.ts', 1, 'numeric claim without an artifact reference']],
+    )
   })
 
   it('reports an artifact it cannot read as a failure instead of crashing or skipping', async () => {
-    const { unreadable, claims } = await withSite({
-      'public/benchmarks/bad.json': String.raw`{"note": "a\x41"}`,
-    }, root => scan(root))
+    const { found, claims } = await onlyUnreadable({ 'public/benchmarks/bad.json': String.raw`{"note": "a\x41"}` })
     assert.deepEqual(claims, [])
-    assert.equal(unreadable.length, 1)
-    assert.equal(unreadable[0].file, 'public/benchmarks/bad.json')
-    assert.equal(unreadable[0].label, unreadableLabel)
+    assert.equal(found.file, 'public/benchmarks/bad.json')
+    assert.equal(found.label, unreadableLabel)
   })
 
   it('reports nothing for a tree whose only claim is a denial', async () => {
     // Every docs page is written this way, so a scan that read a denied phrase as a
     // claim would fail the whole tree.
-    const result = await withSite({
-      'app/components/Widget.vue': '<template>\n  <p>Not production-ready; local evidence only.</p>\n</template>\n',
-    }, root => scan(root))
-    assert.deepEqual(result, { unreadable: [], claims: [] })
+    await assertNothingReported(template('  <p>Not production-ready; local evidence only.</p>'))
   })
 })

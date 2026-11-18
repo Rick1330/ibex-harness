@@ -47,4 +47,16 @@ regexes = [
   # longer secret that contains this text — `matcher_ok=0.abcdef…` among them — is a
   # different value and is still reported.
   '''^matcher_ok=0$''',
+  # infra/scripts/test_redact_container_logs.py pins the log-redaction filter with
+  # fictional credential-shaped fixtures. Its "credential inside a nested error
+  # string" case carries
+  #   {"level":"ERROR","error":"dial tcp: auth failed token=sk-live-abc123"}
+  # generic-api-key reads `token` as the keyword and `sk-live-abc123` as the
+  # value. The fixture is composed from fragments in the tree now, but the commit
+  # that introduced it (724bc045) is still in history and `gitleaks detect` scans
+  # history. Allowlist the exact value, anchored to the whole extracted secret: a
+  # longer secret that contains this text — `sk-live-abc123def` among them — is a
+  # different value and is still reported. This is a value, not a path: a real
+  # credential written into that file later is still reported.
+  '''^sk-live-abc123$''',
 ]

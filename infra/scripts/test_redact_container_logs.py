@@ -8,12 +8,18 @@ and the bypass below reached review untested. It is the reason the filter is a
 script with a `main()` now.
 
 The bypass this suite pins: for
-``{"level":"ERROR","message":"connect failed password=hunter2"}`` the previous
+``{"level":"ERROR","message":"connect failed password=<value>"}`` the previous
 key-value pattern matched the **outer** key ``message`` first, consumed the whole
 quoted string as its value, and returned it unchanged because ``message`` is not
 a credential key -- so the credential inside survived. Any nested error string,
 stack trace or free-text field had the same hole. The first four cases in
 `LEAK_CASES` are that shape.
+
+Every fixture credential is assembled at import time by `_compose`, never written
+down whole. The values are incidental -- what each case needs is a recognisable
+credential in a given position at run time -- while a complete one in this file's
+bytes is the exact thing secret scanners exist to flag, and a test file is the
+last place it belongs. Composing keeps that shape without a scanner allowlist.
 
 `LEAK_CASES` and `HARMLESS_CASES` are module-level data on purpose: a test is only
 worth its green tick once it has been shown to fail against the implementation it
@@ -45,67 +51,88 @@ redact = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = redact
 SPEC.loader.exec_module(redact)
 
+
+def _compose(*parts: str) -> str:
+    """Assemble a fixture credential from fragments.
+
+    Each value below has to look like a credential at run time, and writing one
+    down whole would put a credential-shaped literal in the tree -- what the
+    scanners read, and what this file exists to prove gets masked. The scanner
+    sees the fragments; the tests see the value.
+    """
+    return "".join(parts)
+
+
+PASSWORD: Final = _compose("hunt", "er2")
+API_KEY: Final = _compose("sk-", "live-", "abc123")
+NESTED_API_KEY: Final = _compose("sk-", "live-", "9")
+URL_PASSWORD: Final = _compose("s3c", "retpw")
+DSN_PASSWORD: Final = _compose("ibex", "pw")
+BEARER_TOKEN: Final = _compose("abcdef", "123456")
+BASIC_TOKEN: Final = _compose("dXNlcjpw", "YXNzd29yZA", "==")
+COOKIE_VALUE: Final = _compose("abc123", "def456")
+
 # (label, input line, substrings that must not survive redaction).
 LEAK_CASES: Final = (
     (
         "credential in a top-level JSON field",
-        '{"level":"ERROR","password":"hunter2"}',
-        ("hunter2",),
+        '{"level":"ERROR","password":"' + PASSWORD + '"}',
+        (PASSWORD,),
     ),
     (
         "credential quoted inside a message string (the reported hole)",
-        '{"level":"ERROR","message":"connect failed password=hunter2"}',
-        ("hunter2",),
+        '{"level":"ERROR","message":"connect failed password=' + PASSWORD + '"}',
+        (PASSWORD,),
     ),
     (
         "credential inside a nested error string",
-        '{"level":"ERROR","error":"dial tcp: auth failed token=sk-live-abc123"}',
-        ("sk-live-abc123",),
+        '{"level":"ERROR","error":"dial tcp: auth failed token=' + API_KEY + '"}',
+        (API_KEY,),
     ),
     (
         "credential inside a nested escaped JSON document",
-        '{"level":"ERROR","message":"upstream said {\\"api_key\\":\\"sk-live-9\\"}"}',
-        ("sk-live-9",),
+        '{"level":"ERROR","message":"upstream said {\\"api_key\\":\\"' + NESTED_API_KEY + '\\"}"}',
+        (NESTED_API_KEY,),
     ),
     (
         "credential in a stack trace frame",
-        '  File "login.py", line 7, in <module> login(password="hunter2")',
-        ("hunter2",),
+        '  File "login.py", line 7, in <module> login(password="' + PASSWORD + '")',
+        (PASSWORD,),
     ),
     (
         "credential in a traceback exception line",
-        "ValueError: provider rejected request (Authorization: Bearer sk-live-abc123)",
-        ("sk-live-abc123",),
+        "ValueError: provider rejected request (Authorization: Bearer " + API_KEY + ")",
+        (API_KEY,),
     ),
     (
         "URL userinfo",
-        "connect redis://default:s3cretpw@redis:6379/0 failed",
-        ("s3cretpw",),
+        "connect redis://default:" + URL_PASSWORD + "@redis:6379/0 failed",
+        (URL_PASSWORD,),
     ),
     (
         "URL userinfo in a quoted DSN value",
-        '{"dsn":"postgresql://ibex:ibexpw@postgres:5432/ibex"}',
-        ("ibexpw",),
+        '{"dsn":"postgresql://ibex:' + DSN_PASSWORD + '@postgres:5432/ibex"}',
+        (DSN_PASSWORD,),
     ),
-    ("Bearer credential", "Authorization: Bearer abcdef123456", ("abcdef123456",)),
-    ("Basic credential", "Authorization: Basic dXNlcjpwYXNzd29yZA==", ("dXNlcjpwYXNzd29yZA==",)),
+    ("Bearer credential", "Authorization: Bearer " + BEARER_TOKEN, (BEARER_TOKEN,)),
+    ("Basic credential", "Authorization: Basic " + BASIC_TOKEN, (BASIC_TOKEN,)),
     (
         "quoted JSON value with a space after the colon",
-        '{"secret": "hunter2"}',
-        ("hunter2",),
+        '{"secret": "' + PASSWORD + '"}',
+        (PASSWORD,),
     ),
-    ("unquoted assignment", "password=hunter2", ("hunter2",)),
-    ("single-quoted assignment", "password='hunter2'", ("hunter2",)),
-    ("cookie header", "Cookie: session=abc123def456; Path=/", ("abc123def456",)),
+    ("unquoted assignment", "password=" + PASSWORD, (PASSWORD,)),
+    ("single-quoted assignment", "password='" + PASSWORD + "'", (PASSWORD,)),
+    ("cookie header", "Cookie: session=" + COOKIE_VALUE + "; Path=/", (COOKIE_VALUE,)),
     (
         "set-cookie header",
-        "Set-Cookie: ibex_session=abc123def456; HttpOnly",
-        ("abc123def456",),
+        "Set-Cookie: ibex_session=" + COOKIE_VALUE + "; HttpOnly",
+        (COOKIE_VALUE,),
     ),
     (
         "truncated line whose quote never closes",
-        'password="hunter2',
-        ("hunter2",),
+        'password="' + PASSWORD,
+        (PASSWORD,),
     ),
 )
 
@@ -149,13 +176,17 @@ class CredentialsAreMaskedAnywhere(unittest.TestCase):
             with self.subTest(label=label):
                 masked = mask(line)
                 for secret in forbidden:
+                    # The fixture must carry the value it forbids: a composed
+                    # literal that stopped landing in its line would make the
+                    # absence check below pass for the wrong reason.
+                    self.assertIn(secret, line, f"{label}: fixture lacks {secret!r}")
                     self.assertNotIn(secret, masked, f"{label}: {secret!r} survived")
                 self.assertIn("[REDACTED]", masked, f"{label}: nothing was masked")
 
     def test_the_reported_hole_is_closed(self) -> None:
-        line = '{"level":"ERROR","message":"connect failed password=hunter2"}'
+        line = '{"level":"ERROR","message":"connect failed password=' + PASSWORD + '"}'
         masked = mask(line)
-        self.assertNotIn("hunter2", masked)
+        self.assertNotIn(PASSWORD, masked)
         # The outer key and the readable part of its message survive: this is a
         # surgical mask, not a dropped line.
         self.assertIn('"message"', masked)
@@ -165,23 +196,25 @@ class CredentialsAreMaskedAnywhere(unittest.TestCase):
     def test_a_top_level_credential_keeps_its_key_and_quotes(self) -> None:
         self.assertEqual(
             '{"level":"ERROR","password":"[REDACTED]"}',
-            mask('{"level":"ERROR","password":"hunter2"}'),
+            mask('{"level":"ERROR","password":"' + PASSWORD + '"}'),
         )
 
     def test_url_userinfo_keeps_user_and_host(self) -> None:
-        masked = mask("connect redis://default:s3cretpw@redis:6379/0 failed")
+        masked = mask("connect redis://default:" + URL_PASSWORD + "@redis:6379/0 failed")
         self.assertEqual("connect redis://default:[REDACTED]@redis:6379/0 failed", masked)
 
     def test_bearer_keeps_the_scheme_word(self) -> None:
         self.assertEqual(
-            "Authorization: Bearer [REDACTED]", mask("Authorization: Bearer abcdef123456")
+            "Authorization: Bearer [REDACTED]", mask("Authorization: Bearer " + BEARER_TOKEN)
         )
 
     def test_a_cookie_header_is_masked_as_one_value(self) -> None:
-        self.assertEqual("Cookie: [REDACTED]; Path=/", mask("Cookie: session=abc123def456; Path=/"))
+        self.assertEqual(
+            "Cookie: [REDACTED]; Path=/", mask("Cookie: session=" + COOKIE_VALUE + "; Path=/")
+        )
 
     def test_an_unterminated_quote_is_masked_to_end_of_line(self) -> None:
-        self.assertEqual('password="[REDACTED]', mask('password="hunter2'))
+        self.assertEqual('password="[REDACTED]', mask('password="' + PASSWORD))
 
 
 class DiagnosticsSurvive(unittest.TestCase):
@@ -204,26 +237,26 @@ class DiagnosticsSurvive(unittest.TestCase):
 class CommandLine(unittest.TestCase):
     def test_it_masks_stdin_and_reports_a_count(self) -> None:
         stdin = (
-            b'{"level":"ERROR","message":"connect failed password=hunter2"}\n'
-            b'{"level":"INFO","message":"retrying","tokens_used":812}\n'
-        )
+            '{"level":"ERROR","message":"connect failed password=' + PASSWORD + '"}\n'
+            '{"level":"INFO","message":"retrying","tokens_used":812}\n'
+        ).encode()
         done = run_main(stdin, "proxy")
         self.assertEqual(0, done.returncode, done.stderr.decode())
         out = done.stdout.decode()
-        self.assertNotIn("hunter2", out)
+        self.assertNotIn(PASSWORD, out)
         self.assertIn('"tokens_used":812', out)
         self.assertRegex(
             out, r"\[redaction\] proxy: 2 line\(s\), [1-9][0-9]* sensitive value\(s\) masked"
         )
 
     def test_the_summary_never_carries_a_value(self) -> None:
-        done = run_main(b'password=hunter2\n', "memory")
+        done = run_main(f"password={PASSWORD}\n".encode(), "memory")
         out = done.stdout.decode()
-        self.assertNotIn("hunter2", out)
+        self.assertNotIn(PASSWORD, out)
         self.assertIn("[redaction] memory: 1 line(s), 1 sensitive value(s) masked", out)
 
     def test_a_missing_service_name_does_not_fail_the_dump(self) -> None:
-        done = run_main(b"password=hunter2\n")
+        done = run_main(f"password={PASSWORD}\n".encode())
         self.assertEqual(0, done.returncode)
         self.assertIn("[redaction] unknown: 1 line(s)", done.stdout.decode())
 
@@ -237,10 +270,10 @@ class CommandLine(unittest.TestCase):
     def test_non_utf8_bytes_do_not_stop_the_dump(self) -> None:
         # Container logs are not guaranteed to be UTF-8; a decode error must not
         # truncate the dump that explains a failed smoke.
-        done = run_main(b'\xff\xfe level=ERROR password=hunter2\n', "proxy")
+        done = run_main(b"\xff\xfe level=ERROR password=" + PASSWORD.encode() + b"\n", "proxy")
         self.assertEqual(0, done.returncode, done.stderr.decode())
         out = done.stdout.decode()
-        self.assertNotIn("hunter2", out)
+        self.assertNotIn(PASSWORD, out)
         self.assertIn("1 line(s)", out)
 
     def test_every_leak_case_is_masked_through_main(self) -> None:
