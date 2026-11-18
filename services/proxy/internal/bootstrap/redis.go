@@ -31,6 +31,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -221,6 +222,50 @@ func setupContextClient(cfg config.Config, log *logger.Logger, m *ibexmetrics.Pr
 	return dialed, nil
 }
 
+// Context-hop reconnect bounds. They exist because grpc.NewClient is lazy and
+// resolves a missing peer the gRPC way: base 1 s, x1.6, cap 120 s. The context
+// process starts long after the proxy (the profile orders context behind memory,
+// which is behind embedder, which is behind a ~2.3 GB TEI model load), so the
+// first dial is refused, the channel sits in TRANSIENT_FAILURE, and by the time
+// context binds the default schedule is sleeping in a 96-144 s window. Every
+// Assemble is fail-fast, so each call then returns UNAVAILABLE in under a
+// millisecond against a peer that is listening.
+//
+// 250 ms base / x1.6 / 2 s cap holds the worst-case reconnect (plus the 20 %
+// jitter) to 2.4 s, which is inside the v1 smoke's 7.5 s warm-up budget and
+// short enough that a peer appearing mid-smoke is discovered before the retries
+// run out. The cap holds in the steady state too: a peer that stays down is
+// retried about once every two seconds rather than once every two minutes,
+// which is cheap for a hop this profile keeps on loopback (ADR-0097 §4).
+//
+// 3 s MinConnectTimeout bounds a single attempt instead of gRPC's 20 s default,
+// so a peer that accepts TCP and then stalls (half-open socket, TLS handshake
+// that never finishes) cannot hold the subconn in CONNECTING for 20 s. It sits
+// above the 2 s cap, so the attempt window is a steady 3 s and a slow but
+// healthy dial is never cut short, and it stays a dial-time bound: no request
+// path waits on it.
+const (
+	contextDialBaseDelay         = 250 * time.Millisecond
+	contextDialMaxDelay          = 2 * time.Second
+	contextDialMinConnectTimeout = 3 * time.Second
+)
+
+// contextConnectParams bounds how long the context channel sleeps between
+// connection attempts. It deliberately does not add WithBlock: the peer is
+// optional by design and startup must not stall on it, so the laziness that
+// caused this defect stays, bounded by the schedule above.
+func contextConnectParams() grpc.ConnectParams {
+	return grpc.ConnectParams{
+		Backoff: backoff.Config{
+			BaseDelay:  contextDialBaseDelay,
+			Multiplier: 1.6,
+			Jitter:     0.2,
+			MaxDelay:   contextDialMaxDelay,
+		},
+		MinConnectTimeout: contextDialMinConnectTimeout,
+	}
+}
+
 func dialContextGRPC(cfg config.Config, log *logger.Logger, m *ibexmetrics.ProxyRegistry) (contextClients, error) {
 	creds, err := contextTransportCredentials(cfg)
 	if err != nil {
@@ -230,6 +275,7 @@ func dialContextGRPC(cfg config.Config, log *logger.Logger, m *ibexmetrics.Proxy
 		grpc.WithTransportCredentials(creds), // nosemgrep: go.grpc.tls.grpc-client-new-insecure-connection.grpc-client-new-insecure-connection
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithChainUnaryInterceptor(proxygrpc.RequestIDUnaryInterceptor()),
+		grpc.WithConnectParams(contextConnectParams()),
 	)
 	if err != nil {
 		return contextClients{}, fmt.Errorf("context grpc dial target=%s: %w", cfg.ContextGRPCTarget, err)
