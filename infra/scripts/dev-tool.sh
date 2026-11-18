@@ -513,12 +513,111 @@ sys.stdout.write(summary + ")")
 PY
 }
 
+# v1_smoke_warmup_attempts prints the chat arm's warm-up attempt ceiling. It is
+# validated the same way as IBEX_V1_SMOKE_ATTEMPTS: a zero or non-numeric value
+# is a configuration error (the caller returns 5), not a silent default, because
+# a broken budget would otherwise read as a probe result. Five attempts two
+# seconds apart is a ten-second ceiling, proportionate to a profile whose first
+# boot can take ten minutes (TEI downloads ~2.3 GB before it is healthy).
+v1_smoke_warmup_attempts() {
+  local attempts="${IBEX_V1_SMOKE_WARMUP_ATTEMPTS:-5}"
+  if [[ ! "$attempts" =~ ^[0-9]+$ ]] || (( 10#$attempts < 1 )); then
+    echo "IBEX_V1_SMOKE_WARMUP_ATTEMPTS must be a positive whole number (got '$attempts'); it bounds how many chat requests the smoke may make while the cold context path warms, so a non-positive budget can never reach the assertion: this is a configuration error, not a skip" >&2
+    return 1
+  fi
+  printf '%s\n' "$((10#$attempts))"
+}
+
+# v1_smoke_chat is the chat half of the smoke: the authenticated POST
+# /v1/chat/completions whose response must prove context assembly ran and did
+# not degrade. It is separate from v1_smoke_assert so that function stays within
+# the repository's size limit.
+#
+# Why a bounded warm-up exists: v1_wait_healthy's required list includes
+# `context`, and the container has a healthcheck
+# (infra/compose/v1-single-node/compose.yml:630-637), so "services are healthy"
+# is printed only when that check passes. But the check is grpc.health.v1
+# SERVING, which services/context/app/server.py:521-523 sets as soon as the
+# server accepts connections — not after the memory/TEI path behind a cold
+# Assemble is proven. memory's `/ready` checks auth, Postgres and Redis, not the
+# embedder (services/memory/app/probes.py:71-95), and the embedder/TEI
+# healthchecks prove initialization and model load, not a warm first query. The
+# cold branch embeds the query through CPU TEI
+# (services/context/app/retrieval.py:16-19), and the profile bounds assembly at
+# 1800 ms (IBEX_CONTEXT_TIMEOUT / IBEX_CONTEXT_DEADLINE_MS,
+# infra/compose/v1-single-node/compose.yml:624-625). On a freshly started
+# profile the first request pays TEI's model/connection warm-up and can exceed
+# that budget, at which point the proxy does the correct thing and fail-opens
+# (services/proxy/internal/http/chat_context_assemble.go:149-157). The first
+# chat request is therefore the only readiness probe the assembly path has:
+# "healthy" does not mean "ready to assemble". No healthcheck is added here on
+# purpose — that would change the profile's boot behaviour and is a separate
+# decision.
+#
+# The warm-up distinguishes cold start from steady state without weakening the
+# claim: the final attempt must still come back X-IBEX-Context-Fallback: false
+# and pass the body assertion, and a profile whose assembly never succeeds
+# still fails. Each attempt mints a fresh Idempotency-Key because the proxy's
+# durable ledger replays a repeated key's stored response and a replay writes
+# no X-IBEX-Context-* headers
+# (services/proxy/internal/http/chat/idempotency.go:318-322), which would make
+# the retry prove nothing. Only a degraded assembly (fallback `true`) is
+# retried; a missing header, an unexpected value, a non-200 or a wrong body is
+# not a cold-start symptom and fails on the attempt that produced it.
+#
+# On success the attempt count is recorded in V1_SMOKE_CHAT_ATTEMPTS so
+# v1_smoke's PASS line can report it, and a retry is announced: a slowly
+# degrading environment is then visible instead of hidden.
+v1_smoke_chat() {
+  local base="$1" agent="$2" pat="$3" body="$4"
+  local attempts n status hrc=0 payload headers idem
+  attempts="$(v1_smoke_warmup_attempts)" || return 5
+  payload="$body.chat-request.json"
+  headers="$body.chat-headers.txt"
+  printf '%s' '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' >"$payload"
+  V1_SMOKE_CHAT_ATTEMPTS=0
+  for ((n = 1; n <= attempts; n++)); do
+    idem="$(v1_smoke_idem_key)"
+    status="$(v1_smoke_http "$base/v1/chat/completions" "$pat" "$agent" "$body" "$payload" "$headers" "$idem" || true)"
+    [[ "$status" == "200" ]] || {
+      echo "chat completion with the bootstrap PAT returned $status, want 200$(v1_smoke_api_error "$body")" >&2
+      return 1
+    }
+    v1_smoke_body_chat "$body" || { echo "chat completion body is not one assistant message (choices[0].message.role)" >&2; return 1; }
+    hrc=0
+    v1_smoke_context_fallback "$headers" || hrc=$?
+    case "$hrc" in
+      0)
+        V1_SMOKE_CHAT_ATTEMPTS=$n
+        if (( n > 1 )); then
+          echo "chat completion needed $n warm-up attempt(s) before context assembly was clean" >&2
+        fi
+        return 0 ;;
+      1)
+        if (( n < attempts )); then
+          echo "chat completion attempt $n of $attempts degraded context assembly (X-IBEX-Context-Fallback: true); retrying while the cold context path warms" >&2
+          sleep 2
+          continue
+        fi ;;
+      2)
+        echo "chat response carried no X-IBEX-Context-Fallback header: context assembly was not attempted, so a 200 does not prove the assembly path ran" >&2
+        return 1 ;;
+      *)
+        echo "chat response carries an unexpected X-IBEX-Context-Fallback value; want true or false" >&2
+        return 1 ;;
+    esac
+  done
+  echo "chat completion degraded context assembly (X-IBEX-Context-Fallback: true) after $attempts attempts (context assembly deadline 1800 ms: IBEX_CONTEXT_TIMEOUT/IBEX_CONTEXT_DEADLINE_MS in infra/compose/v1-single-node/compose.yml); the proxy fail-opened to directive-only messages" >&2
+  return 1
+}
+
 # v1_smoke_assert proves the profile serves an authenticated request on the chat
 # path — not only the auth-probe — and that the two negative paths stay closed.
 # The chat arm accepts a 200 only when the response reports a non-degraded
 # context assembly, because the proxy is fail-open and a 200 alone would pass
 # while assembly was skipped or degraded.
-# It returns 1 instead of exiting so the self-test can assert a failure.
+# It returns 1 instead of exiting so the self-test can assert a failure, and it
+# propagates v1_smoke_chat's 5 for a malformed warm-up budget.
 v1_smoke_assert() {
   local base="$1" org="$2" agent="$3" pat="$4" body="$5" status wrong_org
   status="$(v1_smoke_http "$base/v1/orgs/$org/auth-probe" "$pat" "$agent" "$body" || true)"
@@ -532,65 +631,20 @@ v1_smoke_assert() {
   status="$(v1_smoke_http "$base/v1/orgs/$wrong_org/auth-probe" "$pat" "$agent" "$body" || true)"
   [[ "$status" == "403" ]] || { echo "auth-probe for a different org returned $status, want 403" >&2; return 1; }
 
-  # The chat path itself. The org is implicit in the token, so there is no org
-  # path segment; the agent header selects the agent the request is attributed
-  # to, and the request stays non-streaming so the body is JSON.
-  #
-  # A 200 does not prove context assembly ran. The proxy is fail-open on that
-  # path, so a degraded or timed-out assembly still answers the completion
-  # (services/proxy/internal/http/chat_context_assemble.go:149-157), which is
-  # why the three X-IBEX-Context-* headers exist. They are written only when the
-  # Assemble RPC was actually attempted (:359-371), so their absence means the
-  # assembly path was skipped rather than that it succeeded quietly.
-  #
-  # The profile enables assembly (IBEX_CONTEXT_ENABLED: "true",
-  # infra/compose/v1-single-node/compose.yml:359), routes chat through the agent
-  # verifier that binds the verified principal
-  # (services/proxy/internal/http/router_protected.go:168), and wraps every
-  # request in a real OTel span
-  # (services/proxy/internal/http/router.go:242), so the attempted path is the
-  # only one a well-formed chat request can take here. A missing header is
-  # therefore a failure: an unproven assembly is not a passing one. `true` is
-  # also a failure — the chat path completed by degrading, and the gate says
-  # the profile serves the request without that.
-  #
-  # The request must carry an Idempotency-Key. A non-streaming chat completion
-  # is required to have one while the durable ledger is wired
-  # (services/proxy/internal/http/chat/idempotency.go:134-143); without it the
-  # handler answers 400 VALIDATION_ERROR and the provider is never called. The
-  # ledger is non-nil whenever a Postgres handle exists
-  # (services/proxy/internal/bootstrap/wire.go:381), and the profile always
-  # configures POSTGRES_DSN, so the header is mandatory here rather than
-  # optional.
-  #
-  # The key is fresh per call. A repeated key replays the stored response, and a
-  # replay writes only status, Content-Type and body (:318-322) — never the
-  # X-IBEX-Context-* headers asserted below — so a fixed key would turn every
-  # re-run into exit 2 with the proxy unchanged and the assembly path unproven.
-  local payload="$body.chat-request.json" headers="$body.chat-headers.txt" hrc=0 idem
-  printf '%s' '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' >"$payload"
-  idem="$(v1_smoke_idem_key)"
-  status="$(v1_smoke_http "$base/v1/chat/completions" "$pat" "$agent" "$body" "$payload" "$headers" "$idem" || true)"
-  [[ "$status" == "200" ]] || {
-    echo "chat completion with the bootstrap PAT returned $status, want 200$(v1_smoke_api_error "$body")" >&2
-    return 1
-  }
-  v1_smoke_body_chat "$body" || { echo "chat completion body is not one assistant message (choices[0].message.role)" >&2; return 1; }
-  v1_smoke_context_fallback "$headers" || hrc=$?
-  case "$hrc" in
-    0) ;;
-    1) echo "chat completion degraded context assembly (X-IBEX-Context-Fallback: true); the proxy fail-opened to directive-only messages" >&2; return 1 ;;
-    2) echo "chat response carried no X-IBEX-Context-Fallback header: context assembly was not attempted, so a 200 does not prove the assembly path ran" >&2; return 1 ;;
-    *) echo "chat response carries an unexpected X-IBEX-Context-Fallback value; want true or false" >&2; return 1 ;;
-  esac
-  return 0
+  # The chat path, its cold-start warm-up, and the Idempotency-Key and
+  # X-IBEX-Context-* rationale live in v1_smoke_chat. It returns 5 for a
+  # malformed warm-up budget, which this function propagates unchanged.
+  v1_smoke_chat "$base" "$agent" "$pat" "$body"
 }
 
 # v1_smoke is the O06 proof: an authenticated edge request through Caddy, not a
 # static /_edge/health string. It reads the one-time bootstrap PAT (mode 600),
 # resolves the org and agent ids from the profile database, then asserts the
-# authenticated auth-probe, the 401/403 negatives, and one authenticated chat
-# completion that did not degrade context assembly.
+# authenticated auth-probe, the 401/403 negatives, and an authenticated chat
+# completion that did not degrade context assembly. The chat arm may retry
+# within a bounded cold-start warm-up (IBEX_V1_SMOKE_WARMUP_ATTEMPTS, default 5);
+# only its final attempt is the one asserted, and a profile whose assembly never
+# succeeds still fails.
 #
 # A skip is exit 4, never 0: no readable bootstrap PAT means the authenticated
 # half of the gate was not exercised, and a caller must not be able to read that
@@ -600,11 +654,11 @@ v1_smoke_assert() {
 # starts the profile, and propagates every other failure unchanged.
 #
 # A malformed retry budget is exit 5, never 4: a zero or non-numeric
-# IBEX_V1_SMOKE_ATTEMPTS means the gate was misconfigured, which is not the same
-# thing as "no PAT was found". 5 is unused elsewhere in this script (1 is a
-# probe failure, 2 usage, 3 is v1_bootstrap_pat_read's internal "absent", 4 the
-# skip), and `make v1-up` does not map it, so a broken budget fails the start
-# instead of warning past it.
+# IBEX_V1_SMOKE_ATTEMPTS or IBEX_V1_SMOKE_WARMUP_ATTEMPTS means the gate was
+# misconfigured, which is not the same thing as "no PAT was found". 5 is unused
+# elsewhere in this script (1 is a probe failure, 2 usage, 3 is
+# v1_bootstrap_pat_read's internal "absent", 4 the skip), and `make v1-up` does
+# not map it, so a broken budget fails the start instead of warning past it.
 v1_smoke() {
   local from_up=0
   if [[ "${1:-}" == "--from-up" ]]; then
@@ -622,6 +676,9 @@ v1_smoke() {
     echo "IBEX_V1_SMOKE_ATTEMPTS must be a positive whole number (got '$attempts'); it is the retry budget for the bootstrap PAT and for the org/agent lookup, so a non-positive budget can never reach the checks: this is a configuration error, not a skip" >&2
     return 5
   fi
+  # Same contract for the chat arm's warm-up budget, validated before the PAT
+  # read so a broken value fails immediately instead of after the profile work.
+  v1_smoke_warmup_attempts >/dev/null || return 5
   for ((i = 1; i <= attempts; i++)); do
     # The assignment inherits the function's status; `|| rc=$?` keeps `set -e`
     # from exiting on the expected "file absent" (3) result.
@@ -667,17 +724,15 @@ v1_smoke() {
   fi
   port="$(v1_edge_port)"
   base="https://localhost:${port}"
-  local tmp
+  local tmp arc=0
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/ibex-v1-smoke.XXXXXX")"
-  if ! v1_smoke_assert "$base" "$org" "$agent" "$pat" "$tmp/body.json"; then
-    rm -rf "$tmp"
-    return 1
-  fi
+  v1_smoke_assert "$base" "$org" "$agent" "$pat" "$tmp/body.json" || arc=$?
   rm -rf "$tmp"
+  (( arc == 0 )) || return "$arc"
   echo "PASS: v1 auth-probe 200 through the edge with the bootstrap PAT (org_id matches $org)"
   echo "PASS: v1 auth-probe 401 without a token"
   echo "PASS: v1 auth-probe 403 for a different org path"
-  echo "PASS: v1 chat completion 200 through the edge (choices[0].message.role is assistant, X-IBEX-Context-Fallback is false)"
+  echo "PASS: v1 chat completion 200 through the edge (choices[0].message.role is assistant, X-IBEX-Context-Fallback is false) after ${V1_SMOKE_CHAT_ATTEMPTS:-0} warm-up attempt(s)"
   return 0
 }
 
@@ -705,7 +760,15 @@ v1_smoke() {
 # Two further arms cover the retry budget that gates those checks: a zero and a
 # non-numeric IBEX_V1_SMOKE_ATTEMPTS must both return the configuration-error
 # code 5 rather than the skip code 4, with a readable PAT stubbed in place so
-# the arm cannot pass by finding no PAT.
+# the arm cannot pass by finding no PAT. The same two arms cover
+# IBEX_V1_SMOKE_WARMUP_ATTEMPTS.
+#
+# Three arms cover the cold-start warm-up itself: a stub that degrades on the
+# first attempt and is clean on the second must pass (and must have minted a
+# fresh Idempotency-Key for each attempt, or the retry would replay a response
+# with no context headers); a stub that degrades on every attempt must fail with
+# the existing degraded-assembly message plus the attempt count and the 1800 ms
+# deadline; and a stub that never sends the header must still fail.
 v1_smoke_selftest() {
   local org="11111111-1111-4111-8111-111111111111"
   local agent="22222222-2222-4222-8222-222222222222"
@@ -717,6 +780,9 @@ v1_smoke_selftest() {
   # directory is held in a global and the expansion is guarded.
   trap 'rm -rf "${V1_SMOKE_SELFTEST_TMP:-}"' EXIT
   local tmp="$V1_SMOKE_SELFTEST_TMP"
+  # Two attempts prove the loop; the default five would make every degrading arm
+  # sleep through four intervals for no extra coverage.
+  local IBEX_V1_SMOKE_WARMUP_ATTEMPTS=2
 
   # One stub answers both probes. `stub_chat` selects the arm, so each negative
   # case differs from the accepted one by a single value rather than by a copied
@@ -736,13 +802,23 @@ v1_smoke_selftest() {
       fallback-absent) printf 'X-IBEX-Memories-Injected: 0\r\nX-IBEX-Context-Tokens: 12\r\n' ;;
       fallback-true) printf 'X-IBEX-Memories-Injected: 0\r\nX-IBEX-Context-Tokens: 0\r\nX-IBEX-Context-Fallback: true\r\n' ;;
       fallback-unexpected) printf 'X-IBEX-Context-Fallback: degraded\r\n' ;;
+      fallback-then-clean)
+        local n
+        n="$(cat "$tmp/chat-attempt" 2>/dev/null || printf 0)"
+        n=$((n + 1))
+        printf '%s' "$n" >"$tmp/chat-attempt"
+        if (( n == 1 )); then
+          printf 'X-IBEX-Memories-Injected: 0\r\nX-IBEX-Context-Tokens: 0\r\nX-IBEX-Context-Fallback: true\r\n'
+        else
+          printf 'X-IBEX-Memories-Injected: 0\r\nX-IBEX-Context-Tokens: 12\r\nX-IBEX-Context-Fallback: false\r\n'
+        fi ;;
       *) printf 'X-IBEX-Memories-Injected: 0\r\nX-IBEX-Context-Tokens: 12\r\nX-IBEX-Context-Fallback: false\r\n' ;;
     esac
     printf '\r\n'
   }
 
   stub_curl() {
-    local out="" url="" token="" cfg="" hdr="" status=200 body=""
+    local out="" url="" token="" cfg="" hdr="" status=200 body="" h=""
     local -a sent=()
     while (( $# )); do
       case "$1" in
@@ -763,6 +839,13 @@ v1_smoke_selftest() {
       if [[ ${#sent[@]} -gt 0 ]]; then
         printf '%s\n' "${sent[@]}" >"$tmp/chat-request-headers.txt"
       fi
+      # Record the Idempotency-Key of every chat call, so the warm-up arm can
+      # prove each attempt carried a fresh one rather than replaying the ledger.
+      for h in "${sent[@]}"; do
+        if [[ "$h" == Idempotency-Key:* ]]; then
+          printf '%s\n' "${h#Idempotency-Key: }" >>"$tmp/chat-idem-keys.txt"
+        fi
+      done
       if [[ -z "$token" ]]; then
         status=401; body='{"error":{"code":"MISSING_TOKEN"}}'
       else
@@ -831,60 +914,92 @@ v1_smoke_selftest() {
 
   # A negative arm passes only when the assertion fails. An accepted stub here
   # is the defect: the parser would let the gate pass on something it must
-  # reject.
-  assert_rejected() {
-    local label="$1"
-    if (
+  # reject. Optional arguments are substrings the failure message must name, so
+  # the diagnostics that make a CI failure actionable are tested too.
+  assert_rejected_mentions() {
+    local label="$1"; shift
+    local msg got=0 want
+    msg="$(
       curl() { stub_curl "$@"; }
-      v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json"
-    ) 2>/dev/null; then
+      v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json" 2>&1
+    )" || got=$?
+    if (( got == 0 )); then
       echo "FAIL: v1-smoke self-test accepted $label" >&2
       return 1
     fi
-    echo "PASS: v1-smoke self-test rejects $label"
+    for want in "$@"; do
+      if [[ "$msg" != *"$want"* ]]; then
+        echo "FAIL: v1-smoke self-test failure message for $label does not mention '$want' (got: $msg)" >&2
+        return 1
+      fi
+    done
+    if (( $# > 0 )); then
+      echo "PASS: v1-smoke self-test rejects $label and names $*"
+    else
+      echo "PASS: v1-smoke self-test rejects $label"
+    fi
   }
 
   stub_chat="wrong-org"
-  assert_rejected "a mismatched org_id body" || return 1
+  assert_rejected_mentions "a mismatched org_id body" || return 1
   stub_chat="non-200"
-  assert_rejected "a chat completion whose status is not 200" || return 1
+  assert_rejected_mentions "a chat completion whose status is not 200" || return 1
   stub_chat="wrong-role"
-  assert_rejected "a 200 chat body whose choices[0].message.role is not assistant" || return 1
+  assert_rejected_mentions "a 200 chat body whose choices[0].message.role is not assistant" || return 1
   stub_chat="no-choices"
-  assert_rejected "a 200 chat body with an empty choices list" || return 1
+  assert_rejected_mentions "a 200 chat body with an empty choices list" || return 1
   stub_chat="not-an-object"
-  assert_rejected "a 200 chat body that is a JSON array, not an object" || return 1
+  assert_rejected_mentions "a 200 chat body that is a JSON array, not an object" || return 1
   stub_chat="malformed"
-  assert_rejected "a 200 chat body that is not valid JSON" || return 1
+  assert_rejected_mentions "a 200 chat body that is not valid JSON" || return 1
+  # Degrading on every attempt is the defect the warm-up must not hide: the
+  # final attempt is still degraded, so the gate fails with the message that
+  # names the outcome, the attempt count and the deadline the assembly was given.
   stub_chat="fallback-true"
-  assert_rejected "a 200 chat completion that reports X-IBEX-Context-Fallback: true (assembly degraded)" || return 1
+  assert_rejected_mentions "a 200 chat completion that reports X-IBEX-Context-Fallback: true on every attempt" \
+    "degraded context assembly" "after 2 attempts" "1800" || return 1
   stub_chat="fallback-absent"
-  assert_rejected "a 200 chat completion that carries no X-IBEX-Context-Fallback header (assembly unproven)" || return 1
+  assert_rejected_mentions "a 200 chat completion that carries no X-IBEX-Context-Fallback header (assembly unproven)" \
+    "no X-IBEX-Context-Fallback header" || return 1
   stub_chat="fallback-unexpected"
-  assert_rejected "a 200 chat completion whose X-IBEX-Context-Fallback is neither true nor false" || return 1
+  assert_rejected_mentions "a 200 chat completion whose X-IBEX-Context-Fallback is neither true nor false" \
+    "unexpected X-IBEX-Context-Fallback value" || return 1
+
+  # A cold profile degrades the first assembly and serves the second cleanly.
+  # The arm must pass, report that two attempts were needed, and show that each
+  # attempt carried a distinct Idempotency-Key: a repeated key would replay the
+  # stored response, which carries no X-IBEX-Context-* headers, so the retry
+  # would prove nothing.
+  stub_chat="fallback-then-clean"
+  rm -f "$tmp/chat-attempt" "$tmp/chat-idem-keys.txt"
+  local warmup_out warmup_rc=0
+  warmup_out="$(
+    curl() { stub_curl "$@"; }
+    v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json" 2>&1
+  )" || warmup_rc=$?
+  if (( warmup_rc != 0 )); then
+    echo "FAIL: v1-smoke self-test rejected a degraded first attempt followed by a clean second" >&2
+    return 1
+  fi
+  if [[ "$warmup_out" != *"needed 2 warm-up attempt"* ]]; then
+    echo "FAIL: v1-smoke self-test did not report the two attempts a warm-up needed (got: $warmup_out)" >&2
+    return 1
+  fi
+  echo "PASS: v1-smoke self-test accepts a degraded first attempt followed by a clean second, and reports 2 attempts"
+  if [[ "$(wc -l <"$tmp/chat-idem-keys.txt" 2>/dev/null | tr -d ' ')" != "2" ]] ||
+    [[ "$(sort -u "$tmp/chat-idem-keys.txt" 2>/dev/null | wc -l | tr -d ' ')" != "2" ]]; then
+    echo "FAIL: v1-smoke self-test did not mint a fresh Idempotency-Key on each warm-up attempt" >&2
+    return 1
+  fi
+  echo "PASS: v1-smoke self-test minted a distinct Idempotency-Key for each warm-up attempt"
 
   # A non-200 must say why, not only what. The v1 smoke failed in CI with a bare
   # "returned 400" and the diagnosis had to be redone by hand from a response
   # body no one kept; the message now names the proxy's own error code and the
   # field the proxy rejected.
-  assert_rejected_names_error() {
-    local label="$1" code="$2" field="$3" msg got=0
-    msg="$(
-      curl() { stub_curl "$@"; }
-      v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json" 2>&1
-    )" || got=$?
-    if (( got != 1 )); then
-      echo "FAIL: v1-smoke self-test returned $got for $label, want 1" >&2
-      return 1
-    fi
-    if [[ "$msg" != *"code=$code"* || "$msg" != *"field=$field"* ]]; then
-      echo "FAIL: v1-smoke self-test failure message for $label does not name code=$code and field=$field (got: $msg)" >&2
-      return 1
-    fi
-    echo "PASS: v1-smoke self-test failure message for $label names code=$code and field=$field"
-  }
   stub_chat="validation"
-  assert_rejected_names_error "a 400 whose field_errors names header.Idempotency-Key" VALIDATION_ERROR header.Idempotency-Key || return 1
+  assert_rejected_mentions "a 400 whose field_errors names header.Idempotency-Key" \
+    "code=VALIDATION_ERROR" "field=header.Idempotency-Key" || return 1
 
   # The retry budget is validated before the first loop, so a zero or
   # non-numeric IBEX_V1_SMOKE_ATTEMPTS is a configuration error (exit 5), not
@@ -893,14 +1008,17 @@ v1_smoke_selftest() {
   # configuration; a non-numeric value exited 1 out of bash arithmetic, the code
   # a real probe failure uses.
   #
-  # The PAT read is stubbed to succeed on purpose: the arm proves the
-  # configuration error wins over a readable PAT, which is the reported case
-  # (a zero budget skipped even when the PAT was present).
+  # The same contract covers IBEX_V1_SMOKE_WARMUP_ATTEMPTS, which v1_smoke
+  # validates before the PAT read. The PAT read is stubbed to succeed on purpose:
+  # the arm proves the configuration error wins over a readable PAT, which is the
+  # reported case (a zero budget skipped even when the PAT was present).
   assert_smoke_config_error() {
-    local label="$1" value="$2" got=0
+    local label="$1" name="$2" value="$3" got=0
     (
       v1_bootstrap_pat_read() { printf '%s\n' "$pat"; }
-      IBEX_V1_SMOKE_ATTEMPTS="$value" v1_smoke
+      unset IBEX_V1_SMOKE_ATTEMPTS IBEX_V1_SMOKE_WARMUP_ATTEMPTS
+      export "$name=$value"
+      v1_smoke
     ) >/dev/null 2>&1 || got=$?
     if (( got != 5 )); then
       echo "FAIL: v1-smoke self-test returned $got for $label, want 5 (configuration error)" >&2
@@ -908,8 +1026,10 @@ v1_smoke_selftest() {
     fi
     echo "PASS: v1-smoke self-test returns 5 (configuration error) for $label"
   }
-  assert_smoke_config_error "IBEX_V1_SMOKE_ATTEMPTS=0 with a readable PAT" 0 || return 1
-  assert_smoke_config_error "a non-numeric IBEX_V1_SMOKE_ATTEMPTS (nope)" nope || return 1
+  assert_smoke_config_error "IBEX_V1_SMOKE_ATTEMPTS=0 with a readable PAT" IBEX_V1_SMOKE_ATTEMPTS 0 || return 1
+  assert_smoke_config_error "a non-numeric IBEX_V1_SMOKE_ATTEMPTS (nope)" IBEX_V1_SMOKE_ATTEMPTS nope || return 1
+  assert_smoke_config_error "IBEX_V1_SMOKE_WARMUP_ATTEMPTS=0 with a readable PAT" IBEX_V1_SMOKE_WARMUP_ATTEMPTS 0 || return 1
+  assert_smoke_config_error "a non-numeric IBEX_V1_SMOKE_WARMUP_ATTEMPTS (nope)" IBEX_V1_SMOKE_WARMUP_ATTEMPTS nope || return 1
   return 0
 }
 
