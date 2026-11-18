@@ -199,6 +199,53 @@ class SiteLedgerTests(unittest.TestCase):
                 "]\n"
             )
 
+    def test_a_spread_element_is_rejected_rather_than_skipped(self) -> None:
+        # A spread renders on the site and never reached compare_rows, so the guard
+        # reported agreement over a row it had not read. The array it spreads is not
+        # in this text, so the element cannot be interpreted: it fails naming the line.
+        with self.assertRaises(check_status_vocabulary.InputError) as caught:
+            check_status_vocabulary.parse_site_rows(
+                "const capabilityRows = [\n"
+                "  ['Memory substrate', 'IMPLEMENTED', 'Detail.', '/x'],\n"
+                "  ...hostedRows,\n"
+                "]\n"
+            )
+        message = str(caught.exception)
+        self.assertIn("line 3", message)
+        self.assertIn("...hostedRows", message)
+
+    def test_two_entries_sharing_a_line_are_rejected_rather_than_half_read(self) -> None:
+        # The line matcher read the first tuple and left the second uncounted, so a
+        # capability could sit in the array and never be compared. The whole line is
+        # matched, so the unreadable second entry fails the check.
+        with self.assertRaises(check_status_vocabulary.InputError) as caught:
+            check_status_vocabulary.parse_site_rows(
+                "const capabilityRows = [\n"
+                "  ['Memory substrate', 'IMPLEMENTED', 'Detail.', '/x'],\n"
+                "  ['Hosted HA Console', 'PROVISIONAL', 'Detail.', '/y'], "
+                "['Graph, A2A', 'DEFERRED', 'Detail.', '/z'],\n"
+                "]\n"
+            )
+        message = str(caught.exception)
+        self.assertIn("line 3", message)
+        self.assertIn("Hosted HA Console", message)
+        self.assertIn("Graph, A2A", message)
+
+    def test_a_comment_and_a_blank_line_inside_the_array_are_passed_over(self) -> None:
+        # The line set is exhaustive, so the two shapes that hold no entry must stay
+        # readable: a rejection of trivia would fail the guard on the layout it
+        # accepts, and a silent skip is what the other two tests forbid.
+        self.assertEqual(
+            check_status_vocabulary.parse_site_rows(
+                "const capabilityRows = [\n"
+                "  // Auth is owned by the proxy package.\n"
+                "\n"
+                "  ['Memory substrate', 'IMPLEMENTED', 'Detail.', '/x'],\n"
+                "]\n"
+            ),
+            {"Memory substrate": "IMPLEMENTED"},
+        )
+
 
 class DocsVocabularyTests(unittest.TestCase):
     def test_a_conflicting_duplicate_label_is_an_input_error_naming_the_lines(self) -> None:
@@ -485,6 +532,26 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("cannot be read", stderr)
         self.assertIn("Hosted HA Console", stderr)
+
+    def test_a_spread_capability_entry_fails_instead_of_reporting_agreement(self) -> None:
+        # The spread renders on the site and was invisible to the guard, which then
+        # reported agreement: the rows it held were never in `compare_rows`. This is
+        # the defect the check exists to prevent, so the file must fail with the
+        # spread's line rather than pass.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.copy(Path(temporary))
+            ledger = root / check_status_vocabulary.SITE_LEDGER
+            ledger.write_text(
+                ledger.read_text(encoding="utf-8").replace(
+                    "const capabilityRows: readonly CapabilityRow[] = [\n",
+                    "const capabilityRows: readonly CapabilityRow[] = [\n  ...hostedRows,\n",
+                ),
+                encoding="utf-8",
+            )
+            code, stderr = self.run_against(root)
+        self.assertEqual(code, 2)
+        self.assertIn("line 52", stderr)
+        self.assertIn("hostedRows", stderr)
 
 
 if __name__ == "__main__":

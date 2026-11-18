@@ -816,8 +816,14 @@ v1_smoke_selftest() {
 
   # A key that repeats would replay the stored response instead of running the
   # provider, and a replay carries no X-IBEX-Context-* headers, so the chat arm
-  # would fail on every run after the first. Two calls must therefore differ.
-  if [[ "$(v1_smoke_idem_key)" == "$(v1_smoke_idem_key)" ]]; then
+  # would fail on every run after the first. Two calls must therefore differ, so
+  # each key is minted into its own local and the two locals are compared: the
+  # assertion is about two separate calls, which two inline substitutions cannot
+  # say without reading as one expression compared with itself.
+  local idem_first="" idem_second=""
+  idem_first="$(v1_smoke_idem_key)"
+  idem_second="$(v1_smoke_idem_key)"
+  if [[ "$idem_first" == "$idem_second" ]]; then
     echo "FAIL: v1-smoke self-test generated the same Idempotency-Key twice; a repeated key replays the ledger and drops the context headers" >&2
     return 1
   fi

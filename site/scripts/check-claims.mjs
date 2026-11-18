@@ -168,16 +168,34 @@ function clauseAround(text, index, length) {
 }
 
 /**
- * Every occurrence of every prohibited pattern is evaluated on its own. A denial
- * excuses only the occurrence in its clause: "Not production-ready;
- * production-ready" has one denied and one undenied occurrence, so it fails.
- * Repeated labels collapse to one finding per scanned text.
+ * Every occurrence of every prohibited pattern is evaluated on its own, as its
+ * label and the half-open span it occupies. A denial excuses only the occurrence in
+ * its clause: "Not production-ready; production-ready" has one denied and one
+ * undenied occurrence.
+ */
+function phraseMatches(text) {
+  return prohibited.flatMap(rule => [...text.matchAll(rule.pattern)]
+    .filter(match => !denials.test(clauseBefore(text, match.index)))
+    .map(match => ({ label: rule.label, start: match.index, end: match.index + match[0].length })))
+}
+
+/**
+ * Every prohibited phrase one text states, with repeated labels collapsed to one
+ * finding per scanned text.
  */
 export function phraseViolations(text) {
-  const labels = prohibited.flatMap(rule => [...text.matchAll(rule.pattern)]
-    .filter(match => !denials.test(clauseBefore(text, match.index)))
-    .map(() => rule.label))
-  return [...new Set(labels)]
+  return [...new Set(phraseMatches(text).map(match => match.label))]
+}
+
+/**
+ * The labels of the occurrences in a collapsed text node that reach across a line
+ * break, which `lineBreaks` holds the indices of. Every other occurrence sits
+ * inside one source line, so the line reader already reports it and reading it here
+ * again would report one claim twice.
+ */
+function crossLineViolations(text, lineBreaks) {
+  const crosses = match => lineBreaks.some(index => match.start <= index && index < match.end)
+  return [...new Set(phraseMatches(text).filter(crosses).map(match => match.label))]
 }
 
 const tokenClaims = (pattern, text, label, accept) => [...text.matchAll(pattern)]
@@ -726,10 +744,158 @@ export function benchmarkClaimTexts(source) {
 }
 
 /**
+ * The markup that ends a text node: a comment, a tag, or an interpolation. A
+ * template renders a text node as the characters between two of these, so only
+ * characters on the same side of one are joined. Two neighbouring elements are
+ * never joined, and neither are the strings of a `<script>` block, because a tag
+ * separates them: joining those would invent a phrase nobody wrote.
+ *
+ * Each is read leftmost first, a comment winning over the tag that shares its `<`
+ * and a tag still matching when the comment does not close — `<!-->` is a tag —
+ * which is what the three alternatives meant. It is walked rather than matched
+ * because both patterns that express it are quadratic on a body with many openers
+ * and no closing delimiter, the shape a half-written comment or a `{{` in prose
+ * has. A lazy `[\s\S]*?` retries the rest of the body from every opener, and the
+ * tempered `(?:[^-]|-(?!->))*` still does, because a backtracking engine re-enters
+ * a repetition it already failed.
+ *
+ * The walk reads every character at most once: a position that starts no markup
+ * costs one comparison and the cursor moves on, a position that starts markup jumps
+ * the cursor past its close, and a closing delimiter that is absent from the rest of
+ * the body is known to be absent before the walk starts, so no search is ever made
+ * that could run to the end without finding one.
+ */
+export function markupSpans(body) {
+  const spans = []
+  const bounds = {
+    comment: body.lastIndexOf('-->'),
+    tag: body.lastIndexOf('>'),
+    interpolation: body.lastIndexOf('}}'),
+  }
+  let cursor = 0
+  while (cursor < body.length) {
+    const char = body[cursor]
+    const end = char === '<' || char === '{' ? markupEndAt(body, cursor, bounds) : -1
+    if (end < 0) {
+      cursor += 1
+      continue
+    }
+    spans.push({ index: cursor, length: end - cursor })
+    cursor = end
+  }
+  return spans
+}
+
+/**
+ * Where the markup that opens at `at` ends, exclusive, or -1 when no delimiter
+ * closes it. `bounds` holds the offset of the last occurrence of each closing
+ * delimiter in the body, so a closer that does not exist after `at` is never looked
+ * for: every search that is made finds its delimiter, and the characters it reads
+ * are the ones the span then consumes.
+ */
+function markupEndAt(body, at, bounds) {
+  if (body[at] === '<') {
+    if (at + 4 <= bounds.comment && body.startsWith('<!--', at)) return body.indexOf('-->', at + 4) + 3
+    if (at + 1 <= bounds.tag) return body.indexOf('>', at + 1) + 1
+    return -1
+  }
+  const closes = at + 2 <= bounds.interpolation && body.startsWith('{{', at)
+  return closes ? body.indexOf('}}', at + 2) + 2 : -1
+}
+
+
+const templateOpen = /<template\b[^>]*>/
+const templateClose = '</template>'
+const whitespaceRun = /\s+/g
+
+/**
+ * A component's template body and its offset in the file, or `null` when the file
+ * has no complete template block. The body runs to the file's last `</template>`,
+ * so a nested `<template v-if>` inside the tree cannot end the region early.
+ */
+function templateRegion(source) {
+  const open = templateOpen.exec(source)
+  const close = source.lastIndexOf(templateClose)
+  if (open === null || close < open.index) return null
+  const start = open.index + open[0].length
+  return { start, body: source.slice(start, close) }
+}
+
+/**
+ * The half-open file offsets of every text run in a template body: the characters
+ * between two pieces of markup, plus the run that follows the last one.
+ */
+function textRunOffsets(region) {
+  const runs = []
+  let last = region.start
+  for (const markup of markupSpans(region.body)) {
+    const at = region.start + markup.index
+    runs.push({ from: last, to: at })
+    last = at + markup.length
+  }
+  return [...runs, { from: last, to: region.start + region.body.length }]
+}
+
+/**
+ * A text node's rendered text: its whitespace runs collapsed to one space, the way
+ * a browser collapses them, together with the index in that text of every space
+ * that was a line break. That index is what makes a phrase split over two lines
+ * readable while keeping a phrase inside one line out of this reader's findings.
+ */
+function collapseNodeText(raw) {
+  const lineBreaks = []
+  let text = ''
+  let last = 0
+  for (const run of raw.matchAll(whitespaceRun)) {
+    text += raw.slice(last, run.index)
+    if (run[0].includes('\n')) lineBreaks.push(text.length)
+    text += ' '
+    last = run.index + run[0].length
+  }
+  return { text: text + raw.slice(last), lineBreaks }
+}
+
+/**
+ * The scanned text one run yields: its rendered text and the line its first text
+ * sits on, so a finding points at the phrase rather than at the tag that opens the
+ * node. A run inside one source line yields nothing — the line reader scans it — and
+ * a whitespace-only run has no text to read.
+ */
+function textNodeAt(source, run) {
+  const raw = source.slice(run.from, run.to)
+  const trimmed = raw.trim()
+  if (!trimmed.includes('\n')) return []
+  const line = lineOf(source, run.from + raw.length - raw.trimStart().length)
+  return [{ line, ...collapseNodeText(trimmed) }]
+}
+
+/**
+ * The text nodes of a single-file component whose rendered text fills more than one
+ * source line. A phrase an author broke over two lines renders as one phrase, so the
+ * node is read whole: one line at a time, the phrase is never contiguous and the
+ * claim passes unscanned. A node inside one line is left to `lineTexts`.
+ */
+function templateTextNodes(source) {
+  const region = templateRegion(source)
+  if (region === null) return []
+  return textRunOffsets(region).flatMap(run => textNodeAt(source, run))
+}
+
+/**
  * One scanned text per line, with its 1-based line number.
  */
 export function lineTexts(source) {
   return { texts: source.split(/\r?\n/).map((text, index) => ({ line: index + 1, text })), unreadable: [] }
+}
+
+/**
+ * The text of a prose file: one entry per line, plus — in a single-file component —
+ * the rendered text of every template text node that spans source lines.
+ */
+function proseTexts(file, source) {
+  const lines = lineTexts(source)
+  if (!file.endsWith('.vue')) return lines
+  return { ...lines, texts: [...lines.texts, ...templateTextNodes(source)] }
 }
 
 /**
@@ -741,7 +907,17 @@ export function lineTexts(source) {
 export function scannedTexts(file, source, siteRoot = site) {
   if (file === join(siteRoot, layout.ledger)) return ledgerClaimTexts(source)
   if (file.startsWith(join(siteRoot, layout.benchmarks))) return benchmarkClaimTexts(source)
-  return lineTexts(source)
+  return proseTexts(file, source)
+}
+
+/**
+ * The prohibited phrases one scanned text states: the phrase rule for a line or a
+ * claim value, and the cross-line rule for a text node, which is the only entry that
+ * carries `lineBreaks`.
+ */
+function phraseLabels(claimText) {
+  if (claimText.lineBreaks === undefined) return phraseViolations(claimText.text)
+  return crossLineViolations(claimText.text, claimText.lineBreaks)
 }
 
 /**
@@ -752,7 +928,7 @@ export function scannedTexts(file, source, siteRoot = site) {
 function claimsForText(file, claimText, numericScope) {
   const { line } = claimText
   const text = claimText.text.trim()
-  const phrases = phraseViolations(claimText.text).map(label => ({ label, token: null }))
+  const phrases = phraseLabels(claimText).map(label => ({ label, token: null }))
   const numbers = numericScope ? numericViolations(claimText.text) : []
   return [...phrases, ...numbers].map(claim => ({ file, line, ...claim, text }))
 }

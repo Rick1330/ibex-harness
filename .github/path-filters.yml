@@ -121,6 +121,13 @@ docker:
   - 'package.json'
   - 'pnpm-lock.yaml'
   - 'pnpm-workspace.yaml'
+  # Every image in this repository builds from the repository root (`context: .` in
+  # docker-publish.yml, `../../..` in both Compose profiles), so the root
+  # .dockerignore decides which of the copied paths Docker is allowed to send. It
+  # matched no filter, so a PR editing only this file built a different image while
+  # run_docker stayed false. The `v1` and `compose` filters carry the same entry for
+  # the same reason.
+  - '.dockerignore'
 workflows:
   - '.github/workflows/**'
   - '.github/actions/**'
@@ -151,6 +158,9 @@ docs:
 compose:
   - 'infra/compose/**'
   - 'infra/monitoring/**'
+  # bundle-smoke runs `compose up -d --build` on five images whose build context is
+  # `../../..`, so the root .dockerignore is part of the bundle definition it proves.
+  - '.dockerignore'
   - 'infra/helm/observability/**'
   - 'infra/scripts/verify_phase25.sh'
   - 'infra/scripts/e2e_phase25.sh'
@@ -188,6 +198,10 @@ v1:
   - 'go.sum'
   # The migrate one-shot embeds the migration set; a broken migration stops the start.
   - 'infra/migrations/**'
+  # The thirteen profile images all build from `../../..`, so this file decides what
+  # each build context contains. Without it a .dockerignore-only PR left run_v1 false
+  # and the smoke that builds those images skipped.
+  - '.dockerignore'
   # The target, the generators and the dotenv reader the smoke resolves org/agent/port with.
   - 'Makefile'
   - 'infra/scripts/dev-tool.sh'
