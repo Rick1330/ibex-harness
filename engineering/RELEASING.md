@@ -205,7 +205,15 @@ Revisit this only when something verifies the tag itself: a `git verify-tag` gat
 
 **Security update end-of-life:** When `v0.(n+1).0` is published, `v0.n.*` receives **no further security patches** unless explicitly announced in a GitHub Security Advisory.
 
-After **v1.0.0**, this section will be updated to a documented LTS window (minimum 12 months security support for the latest major).
+**No support window is signed for 1.0.** The table above describes how a fix reaches a release today; it is not a support commitment, and nothing replaces it at `v1.0.0`. The decision recorded for 1.0 is the absence, stated plainly:
+
+- **No support window and no support matrix.** No document states how long a released version receives fixes, and none states which version-to-version upgrade skips are supported.
+- **No backport promise.** A fix lands on `main` and ships in the next release. A backport to an earlier line happens only when a maintainer announces one in a GitHub Security Advisory for a specific advisory; the absence of an announcement is the answer, not a pending review.
+- **One profile, no hosted offering.** `v1-single-node` is the only supported deployment profile ([ADR-0097](adr/0097-v1-supported-profile.md)). There is no hosted service, no hosted support claim, and no SLA.
+- **What an operator should assume.** Treat a release as supported only at the version you are running. Pin the tag you deployed, upgrade deliberately, rehearse the upgrade and the rollback before running either against data you care about, and do not promise a customer a maintenance or upgrade window on this repository's behalf. The deployment guide states the same absence for operators: [`site/content/docs/12.deployment/06.upgrade.md`](../site/content/docs/12.deployment/06.upgrade.md) §Support window.
+- **What would have to change to make a promise.** A support window is an owner decision recorded as an ADR, not a sentence added here. It needs a named owner, the support duration per release line, which backports are committed, the release cadence that window assumes, and the process that would actually deliver a backport on time — a window promised without that last part is the same promise this section exists to avoid. Until that record exists, this section states the absence. The item is tracked as `P1-46` in [`35-v1-remaining-gaps-staged-2026-11-13.md`](architecture-v2/35-v1-remaining-gaps-staged-2026-11-13.md) §3.
+
+Where the release is proposed, the same absence travels with it: `version-release.config.json` sets a `pull-request-footer` carrying the sentence, so it appears on every Version Release PR before the tag exists. Release-please exposes no footer for the GitHub Release body itself — only the PR body — so the published release notes carry the changelog entry alone and this section is the record they point back to. Putting the sentence in the release body itself would need a step in `.github/workflows/release.yml`; that is recorded as an open gap rather than added here.
 
 ## License on releases
 

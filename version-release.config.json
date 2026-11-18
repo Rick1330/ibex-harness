@@ -7,7 +7,7 @@
   "bump-patch-for-minor-pre-major": true,
   "pull-request-title-pattern": "chore(release): prepare v${version}",
   "pull-request-header": "## IBEX version release\n\nThis pull request was opened by the **Version Release** workflow on `main`. Review `CHANGELOG.md` and the proposed semver before merge.",
-  "pull-request-footer": "---\n\nMerging creates tag `v${version}` and triggers the Tagged Release workflow (GitHub Release, SBOM, cosign signature).",
+  "pull-request-footer": "---\n\nMerging creates tag `v${version}` and triggers the Tagged Release workflow (GitHub Release, SBOM, cosign signature).\n\n**No support window is signed.** This release is supported only at the version it tags: there is no backport promise and no support matrix. See `engineering/RELEASING.md` §Support scope and security updates.",
   "signoff": "Elshaday Mengesha <133630952+Rick1330@users.noreply.github.com>",
   "label": "version-release: pending",
   "release-label": "version-release: tagged",
