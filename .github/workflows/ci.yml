@@ -155,6 +155,19 @@ jobs:
       - name: OSV waiver record guard regression tests
         run: python3 infra/scripts/test_check_osv_waivers.py
 
+      # GAP-001: four surfaces state the status vocabulary and the status of each
+      # capability -- the engineering ledger, site/app/data/ledger.ts, the public
+      # status page, and its docs mirrors -- and nothing compared them, so a
+      # status corrected in one place read as two different claims. The drift was
+      # fixed by hand once; this guard is what prevents its recurrence. It is
+      # stdlib-only, offline, and takes ~0.1 s. The self-test runs beside it
+      # because a guard that cannot fail is not a guard.
+      - name: Status vocabulary guard
+        run: python3 infra/scripts/check-status-vocabulary.py
+
+      - name: Status vocabulary guard regression tests
+        run: python3 infra/scripts/test_check_status_vocabulary.py
+
       # P2-13: db-seed.sh refuses IBEX_ENV=production and a non-local host before
       # it reaches psql, and neither refusal had a test. This runs the guards
       # without a database; the control case stops at a closed port.
@@ -239,6 +252,7 @@ jobs:
       benchmarks: ${{ steps.detect.outputs.benchmarks }}
       docs: ${{ steps.detect.outputs.docs }}
       compose: ${{ steps.detect.outputs.compose }}
+      v1: ${{ steps.detect.outputs.v1 }}
       memory: ${{ steps.detect.outputs.memory }}
       full: ${{ steps.detect.outputs.full }}
       run_go: ${{ steps.detect.outputs.run_go }}
@@ -248,6 +262,7 @@ jobs:
       run_security: ${{ steps.detect.outputs.run_security }}
       run_docker: ${{ steps.detect.outputs.run_docker }}
       run_compose: ${{ steps.detect.outputs.run_compose }}
+      run_v1: ${{ steps.detect.outputs.run_v1 }}
       run_memory: ${{ steps.detect.outputs.run_memory }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -758,6 +773,100 @@ jobs:
           path: bundle-smoke-result.json
           if-no-files-found: warn
           retention-days: 14
+
+  # W7.5: `make v1-smoke` proves the supported profile with an authenticated edge
+  # request (O06) — 200 with a matching org_id, 401 without a token, 403 for another
+  # org path, and one chat completion whose X-IBEX-Context-Fallback is false. The
+  # target existed and was strict (exit 4 on a skip, 5 on a bad attempt budget) but
+  # nothing in CI ran it, so a profile that could not serve was invisible here.
+  #
+  # Trigger: the `v1` path filter — the profile's compose file, every service tree it
+  # builds, the packages and migrations those images embed, the Make target, the
+  # secret/TLS generators, the dotenv reader and the pgBackRest template. It is
+  # deliberately not `run_compose`: dev-tool.sh and the service trees match no compose
+  # path, and both can break this job.
+  #
+  # Cost, stated plainly: thirteen images, twenty-plus containers, and TEI — a ~2.3 GB
+  # image whose first start downloads ~2.3 GB of bge-m3 weights. That is why it is
+  # filtered instead of running on every PR, and why the `v1` filter is narrower than
+  # `services/**` alone would suggest (it still includes it: an image that does not
+  # build is the failure this job exists to catch).
+  #
+  # Sizing, from this repository's own records rather than a guess
+  # (engineering/architecture-v2/29-v1-single-node-start-record-2026-11-07.md and
+  # site/content/docs/12.deployment/05.v1-single-node.md): TEI peaks near 8 GB RSS with
+  # the 2048-token batch, the application plane near 3 GB, and the one-time warmup
+  # needed roughly 10 GB of free disk. A standard runner is 4 vCPU / 16 GB RAM / ~14 GB
+  # SSD, so the job removes the preinstalled toolchains it never uses before building.
+  # Memory fits with ~5 GB to spare; disk is the tightest constraint here.
+  #
+  # Timeout: IBEX_V1_HEALTH_ATTEMPTS=900 bounds the profile's own wait at 30 minutes
+  # (v1_wait_healthy sleeps 2 s per attempt, so the default 3600 would hold a runner for
+  # two hours on a stalled model download). 90 minutes leaves 60 for the cold build of
+  # thirteen images — bundle-smoke spends up to 40 on three — plus migrate, provision,
+  # bootstrap and the smoke itself, and still fails before GitHub's 6-hour ceiling.
+  v1-smoke:
+    name: v1-smoke
+    needs: [changes]
+    if: needs.changes.outputs.run_v1 == 'true'
+    timeout-minutes: 90
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # 8443 is the port in the recorded start and needs no privileged bind; the
+      # compose interpolation, `make v1-url` and the smoke all read it from here.
+      IBEX_EDGE_PORT: "8443"
+      IBEX_V1_HEALTH_ATTEMPTS: "900"
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The auth image compiles packages/healthcheck, which imports the generated
+      # protobuf stubs under packages/proto/gen. That tree is gitignored and absent
+      # from a fresh checkout, so the stubs are generated first (same reason as
+      # bundle-smoke).
+      - uses: ./.github/actions/setup-buf
+      - name: Generate protobuf stubs (ephemeral; not committed)
+        working-directory: packages/proto
+        run: buf generate
+
+      # The one-time TEI warmup needs roughly 10 GB free. The runner image carries
+      # SDKs this job never uses; removing them is what keeps the thirteen images
+      # plus the model download inside the disk budget.
+      - name: Reclaim runner disk for the thirteen-image build
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Generate the profile .env and file secrets
+        run: make v1-secrets
+
+      # v1-up rebuilds every image, waits for all health-checked services, arms WAL
+      # archiving (soft), and runs the smoke itself while the bootstrap PAT is still
+      # readable. The explicit `make v1-smoke` below is the strict check: it fails on
+      # the skip code 4 that v1-up downgrades to a warning.
+      - name: Start the v1-single-node profile
+        run: make v1-up
+
+      - name: Prove the profile with an authenticated edge request
+        run: make v1-smoke
+
+      # Diagnostics only: service status and health, never container logs, which can
+      # carry credentials (the profile deliberately keeps the Redis password out of
+      # argv, but other services are not audited for that).
+      - name: Profile status on failure
+        if: failure()
+        run: |
+          make v1-ps || true
+          docker compose -p ibex-v1-single-node ps --format json 2>/dev/null || true
 
   auth-validate-smoke:
     name: auth-validate-smoke
@@ -3313,6 +3422,8 @@ jobs:
       - slo-rules-check
       # P1-11: always evaluated here, so a skipped smoke can never be orphaned.
       - bundle-smoke
+      # W7.5: same shape — filtered, always evaluated, so a skipped run is neutral.
+      - v1-smoke
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -3334,7 +3445,8 @@ jobs:
             "${{ needs.capability-catalog-freshness.result }}" \
             "${{ needs.license-check.result }}" \
             "${{ needs.slo-rules-check.result }}" \
-            "${{ needs.bundle-smoke.result }}"
+            "${{ needs.bundle-smoke.result }}" \
+            "${{ needs.v1-smoke.result }}"
 
   ci-gate-go:
     name: ci-gate-go

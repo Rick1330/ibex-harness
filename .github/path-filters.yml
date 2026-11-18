@@ -170,6 +170,32 @@ compose:
   # a skipped job. Its only sibling is test-bundle-smoke-url.sh, which repo-guards runs
   # unconditionally and needs no filter entry.
   - 'infra/scripts/bundle-smoke.sh'
+# W7.5: the v1-single-node supported profile smoke (`make v1-secrets`, `make v1-up`,
+# `make v1-smoke`). It builds thirteen images and starts twenty-plus containers, so
+# it must not run on a docs change — and it must run on anything that can change the
+# profile's definition. The list is deliberately the build inputs, not `run_compose`:
+# the profile compiles Go services, copies Python packages, embeds the migrations and
+# is driven by dev-tool.sh, none of which the `compose` filter covers.
+v1:
+  - 'infra/compose/v1-single-node/**'
+  # Every image the profile builds, from its service tree. This also carries the
+  # Dockerfiles, so a Dockerfile-only edit triggers the build that consumes it.
+  - 'services/**'
+  # Images copy packages/** (Go healthcheck, authclient, ibex_async_db,
+  # ibex_idempotency, apierror_py, proto) and compile from go.mod/go.sum.
+  - 'packages/**'
+  - 'go.mod'
+  - 'go.sum'
+  # The migrate one-shot embeds the migration set; a broken migration stops the start.
+  - 'infra/migrations/**'
+  # The target, the generators and the dotenv reader the smoke resolves org/agent/port with.
+  - 'Makefile'
+  - 'infra/scripts/dev-tool.sh'
+  - 'infra/scripts/gen-v1-secrets.sh'
+  - 'infra/scripts/gen-v1-tls.sh'
+  - 'infra/scripts/lib/dotenv.py'
+  # The profile mounts the generated pgBackRest stanza; the template is its contract.
+  - 'infra/backup/pgbackrest/**'
 # Heavy Postgres PgVectorStore integration (memory-integration job).
 memory:
   - 'services/memory/**'

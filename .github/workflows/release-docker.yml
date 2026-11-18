@@ -91,6 +91,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+      # Resolve the CI push run for this commit and download its smoke artifact.
+      actions: read
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -110,21 +112,74 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # P1-11: the bundle smoke runs in ci.yml on the pushed commit and uploads
+      # bundle-smoke-result.json. Artifacts belong to a run, so a tag push cannot reach
+      # them through `needs:`; the run for this exact commit is resolved through the
+      # API instead. release-manifest.py is unchanged and still refuses to promote a
+      # bundle whose smoke `commit` differs from this release's commit or whose
+      # `finished_at` is not a timezone-aware timestamp, so an artifact from another
+      # commit can never promote a bundle here.
+      #
+      # Absence is not an error: a tag cut after the artifact's 14-day retention, or a
+      # commit CI never built, leaves the bundle `unverified`, which is the truthful
+      # status. It is also not a silent pass — the warning names the reason.
+      - name: Fetch the bundle smoke result for this commit
+        id: bundle-smoke
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh run list --repo "$REPOSITORY" --workflow ci.yml \
+            --commit "$COMMIT" --event push --branch main --limit 5 \
+            --json databaseId,headSha,status,conclusion)"
+          run_id="$(jq -r --arg sha "$COMMIT" \
+            'map(select(.headSha == $sha and .status == "completed")) | .[0].databaseId // empty' \
+            <<<"$run_json")"
+          if [[ -z "$run_id" ]]; then
+            echo "::warning::no completed CI push run on main for ${COMMIT}; bundle status stays unverified"
+            exit 0
+          fi
+          conclusion="$(jq -r --arg sha "$COMMIT" \
+            'map(select(.headSha == $sha and .status == "completed")) | .[0].conclusion' \
+            <<<"$run_json")"
+          echo "CI run ${run_id} for ${COMMIT} concluded: ${conclusion}"
+          if ! gh run download "$run_id" --repo "$REPOSITORY" \
+            --name bundle-smoke-result --dir smoke-results; then
+            echo "::warning::CI run ${run_id} carries no bundle-smoke-result artifact for ${COMMIT} (smoke skipped, failed before it wrote a result, or the artifact expired); bundle status stays unverified"
+            exit 0
+          fi
+          jq -c . smoke-results/bundle-smoke-result.json
+          echo "smoke_results=smoke-results/bundle-smoke-result.json" >> "$GITHUB_OUTPUT"
+
       - name: Generate release manifest
         env:
           TAG: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
+          SMOKE_RESULTS: ${{ steps.bundle-smoke.outputs.smoke_results }}
         run: |
+          set -euo pipefail
           # Published set only: mcp-operator has a Dockerfile and no publish job,
           # and migrate (infra/migrations/Dockerfile) is not addressable as
           # services/<name>/Dockerfile, which is what this generator validates.
+          #
+          # --smoke-results is passed only when the artifact was downloaded. The
+          # generator, not this step, decides promotion: it promotes a bundle only
+          # for a `passed` result whose `commit` equals --commit and whose
+          # `finished_at` parses as a tz-aware timestamp.
+          smoke_args=()
+          if [[ -n "${SMOKE_RESULTS}" ]]; then
+            smoke_args=(--smoke-results "${SMOKE_RESULTS}")
+          fi
           python3 infra/scripts/release-manifest.py \
             --tag "$TAG" \
             --commit "$COMMIT" \
             --repository "$REPOSITORY" \
             --services auth,proxy,api,memory,embedder,worker,mcp-memory,context,console,relay \
-            --output release-manifest.json
+            --output release-manifest.json \
+            "${smoke_args[@]}"
       - name: Validate the release manifest against the schema
         run: |
           # Fail before a release is created or an asset is uploaded, so a

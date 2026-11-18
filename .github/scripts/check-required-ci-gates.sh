@@ -79,3 +79,67 @@ grep -Fq 'DETECTOR_RESULT: ${{ needs.detect-memory-bench-changes.result }}' "$ME
 }
 
 printf 'All %s protected contexts match exactly one workflow job name.\n' "${#contexts[@]}"
+
+# --- declared vs live required contexts ------------------------------------
+# Everything above proves the record and the guard agree with each other. The live
+# rule is a separate object that no commit can change: a context declared here but
+# absent there is a gate that cannot block a merge, which is how this repository
+# carried nine declared and five enforced contexts without anyone noticing. Compare
+# them when the credential can read the rule, and say so when it cannot.
+#
+# Reading branch protection requires repository administration. GITHUB_TOKEN does not
+# have it, so the unreadable case is a printed SKIP, not a failure — otherwise this
+# job could never pass. The comparison itself is exercised by
+# infra/scripts/test-ci-tiering.sh through IBEX_LIVE_REQUIRED_CONTEXTS, so it is known
+# to bite rather than assumed to.
+repository_slug() {
+  if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
+    printf '%s\n' "$GITHUB_REPOSITORY"
+    return 0
+  fi
+  command -v gh >/dev/null 2>&1 || return 1
+  gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null
+}
+
+live_required_contexts() {
+  if [[ -n "${IBEX_LIVE_REQUIRED_CONTEXTS:-}" ]]; then
+    tr ',' '\n' <<<"$IBEX_LIVE_REQUIRED_CONTEXTS" |
+      sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' |
+      sed '/^$/d'
+    return 0
+  fi
+  command -v gh >/dev/null 2>&1 || return 1
+  local repo
+  repo="$(repository_slug)" || return 1
+  [[ -n "$repo" ]] || return 1
+  gh api "repos/${repo}/branches/main/protection" \
+    --jq '.required_status_checks.contexts[]' 2>/dev/null
+}
+
+if live="$(live_required_contexts)" && [[ -n "$live" ]]; then
+  mapfile -t enforced_contexts <<<"$live"
+  unenforced=()
+  for context in "${contexts[@]}"; do
+    if [[ " ${enforced_contexts[*]} " != *" $context "* ]]; then
+      unenforced+=("$context")
+    fi
+  done
+  if (( ${#unenforced[@]} > 0 )); then
+    printf 'Declared but NOT enforced by the live main branch rule: %s\n' "${unenforced[*]}" >&2
+    printf 'Each of those cannot block a merge. Adding them is an owner action; this script must not take it:\n' >&2
+    printf '  gh api --method PUT repos/%s/branches/main/protection --input .github/branch-protection-main.json\n' \
+      "$(repository_slug 2>/dev/null || printf '<owner>/<repo>')" >&2
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+      printf '### Required checks: %s declared, %s enforced\n\nNot enforced: %s\n' \
+        "${#contexts[@]}" "${#enforced_contexts[@]}" "${unenforced[*]}" >>"$GITHUB_STEP_SUMMARY"
+    fi
+    exit 1
+  fi
+  printf 'All %s declared contexts are enforced by the live main rule.\n' "${#contexts[@]}"
+else
+  printf 'WARNING: the live main branch protection is not readable with this credential, so declared-but-unenforced contexts were NOT compared.\n' >&2
+  printf '         Branch protection needs repository admin. Run this script with an admin token, or set IBEX_LIVE_REQUIRED_CONTEXTS to the enforced list, to check it.\n' >&2
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    printf '### Required checks: live rule not readable\n\nDeclared-but-unenforced contexts were not compared (needs an admin token).\n' >>"$GITHUB_STEP_SUMMARY"
+  fi
+fi

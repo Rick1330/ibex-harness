@@ -519,6 +519,46 @@ else
   bad "published image inputs with no trigger: ${missing_publish_inputs[*]}"
 fi
 
+# --- declared vs live required contexts ------------------------------------
+# P1-25: check-required-ci-gates.sh compares .github/branch-protection-main.json to
+# the rule GitHub actually enforces. That rule is not readable without repository
+# admin, so the comparison is driven through IBEX_LIVE_REQUIRED_CONTEXTS here: an
+# assertion nobody has seen fail is not known to work.
+REQUIRED_GATES="$ROOT/.github/scripts/check-required-ci-gates.sh"
+mapfile -t declared_contexts < <(
+  jq -r '.required_status_checks.checks[].context' "$ROOT/.github/branch-protection-main.json"
+)
+declared_list="$(IFS=,; printf '%s' "${declared_contexts[*]}")"
+if IBEX_LIVE_REQUIRED_CONTEXTS="$declared_list" bash "$REQUIRED_GATES" >/dev/null 2>&1; then
+  pass "the live-context comparison passes when every declared context is enforced"
+else
+  bad "the live-context comparison fails when every declared context is enforced"
+fi
+
+# The five contexts the live rule enforced when this row was written. The four
+# missing ones must be named, or the failure does not say what to apply.
+enforced_subset="gitleaks,semantic-pr-title,ci-gate-repo,ci-gate-go,ci-gate-security"
+gate_rc=0
+gate_out="$(IBEX_LIVE_REQUIRED_CONTEXTS="$enforced_subset" bash "$REQUIRED_GATES" 2>&1)" || gate_rc=$?
+# Read the failure line itself: the structural output prints every declared context,
+# so a bare grep for a name would match a passing run too.
+unenforced_line="$(grep -F 'Declared but NOT enforced by the live main branch rule:' <<<"$gate_out" || true)"
+if (( gate_rc == 0 )); then
+  bad "the live-context comparison passed a declared context the live rule does not enforce"
+elif [[ -z "$unenforced_line" ]]; then
+  bad "the live-context comparison failed without naming the unenforced contexts: $gate_out"
+else
+  missing_names=0
+  for context in ci-gate-site ci-gate-python ci-gate-memory-benchmark ci-gate-semgrep; do
+    grep -Fq "$context" <<<"$unenforced_line" || missing_names=1
+  done
+  if (( missing_names == 0 )); then
+    pass "the live-context comparison fails and names every declared-but-unenforced context"
+  else
+    bad "the live-context comparison did not name every missing context: $unenforced_line"
+  fi
+fi
+
 if (( fail != 0 )); then
   echo "CI tiering policy tests failed" >&2
   exit 1

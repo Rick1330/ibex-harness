@@ -9,20 +9,34 @@ const allowlistPath = join(here, 'claim-numbers.allowlist.json')
 const allowlistName = 'scripts/claim-numbers.allowlist.json'
 
 /**
- * Rendered prose: every page, docs page, and blog post.
+ * Rendered prose: every page, docs page, and blog post, and every component whose
+ * template and `<script>` strings render inside them. A claim hard-coded in a
+ * component reaches the reader exactly as one written in markdown does, so it is
+ * scanned by the same rule set.
  */
-const proseRoots = ['app/pages', 'content/docs', 'content/blog'].map(root => join(site, root))
+const proseRoots = ['app/pages', 'content/docs', 'content/blog', 'app/components']
+  .map(root => join(site, root))
 
 /**
  * Typed data: the claim-bearing strings a page renders and the numbers it plots.
  * A number a reader could take as a result is authored here or imported from a
  * committed artifact, so this is the surface the numeric-claim rule gates. Page
- * templates hold artifact values and static axis/label strings, not new results;
- * widening the numeric rule past this root would require an allowlist entry for
- * every documented target and every `pNN` field name in the docs tree.
+ * templates and components hold artifact values and static axis/label strings, not
+ * new results; widening the numeric rule past this root would require an allowlist
+ * entry for every documented target and every `pNN` field name in the docs tree.
  */
 const numericRoot = join(site, 'app/data')
 const ledgerFile = join(numericRoot, 'ledger.ts')
+
+/**
+ * Published benchmark artifacts. `validate_published_data.py` owns their schema, so
+ * this checker reads only the string values a reader sees — a `note`, a `recall`
+ * definition, a gate check name — and applies the prose rules to them. The numbers
+ * in these files are the schema's business, not a sentence's, so the numeric rule
+ * stays out of this root.
+ */
+const benchmarkRoot = join(site, 'public/benchmarks')
+const benchmarkFile = name => name.endsWith('.json')
 
 /**
  * ADRs and archived roadmaps are records of a past decision, not live claims.
@@ -598,14 +612,130 @@ function ledgerClaimTexts(source) {
 }
 
 /**
- * The text a rule runs against: every line of a prose file, and the claim values
- * of `ledger.ts`.
+ * The escapes a JSON string may carry and the character each contributes. JSON
+ * allows `/` where a JavaScript literal does not need it, and rejects the `\0`,
+ * `\v`, `\'` and `` \` `` forms JavaScript accepts, so this map is JSON's own.
+ */
+const jsonEscapes = new Map([
+  ['"', '"'],
+  ['\\', '\\'],
+  ['/', '/'],
+  ['b', '\b'],
+  ['f', '\f'],
+  ['n', '\n'],
+  ['r', '\r'],
+  ['t', '\t'],
+])
+
+/**
+ * The value a JSON escape sequence contributes and the index the scan resumes at,
+ * after the whole sequence. `\uNNNN` is the only unicode form JSON allows; `\u{...}`
+ * is JavaScript's. `null` means the sequence is not valid JSON, so the value that
+ * holds it is uninspectable rather than read wrong.
+ */
+function readJsonEscape(source, index) {
+  const char = source[index + 1]
+  if (jsonEscapes.has(char)) return { value: jsonEscapes.get(char), next: index + 2 }
+  if (char === 'u') return readFixedHexEscape(source, index + 2, 4)
+  return null
+}
+
+/**
+ * The JSON string token that opens at `start`, or `null` when it is unterminated or
+ * carries an escape this reader cannot decode. A raw newline inside the token is
+ * kept in the value: it makes the file invalid JSON, which is the validator's
+ * finding, and the caller's line count still has to account for it.
+ */
+function readJsonString(source, start) {
+  let value = ''
+  let index = start + 1
+  while (index < source.length) {
+    const char = source[index]
+    if (char === '"') return { value, end: index + 1 }
+    if (char === '\\') {
+      const escape = readJsonEscape(source, index)
+      if (escape === null) return null
+      value += escape.value
+      index = escape.next
+      continue
+    }
+    value += char
+    index += 1
+  }
+  return null
+}
+
+/**
+ * The index of the first character from `index` that is not whitespace. JSON's
+ * whitespace is the four ASCII characters `isWhitespace` names, so one test serves
+ * both readers.
+ */
+function skipWhitespace(source, index) {
+  let cursor = index
+  while (cursor < source.length && isWhitespace(source[cursor])) cursor += 1
+  return cursor
+}
+
+/**
+ * Whether the string token that ends at `end` is an object key: the next
+ * non-whitespace character is the `:` that separates the key from its value. A key
+ * names a field; only a value is text a reader sees.
+ */
+const isJsonKey = (source, end) => source[skipWhitespace(source, end)] === ':'
+
+/**
+ * How many newlines `source` holds between `start` and `end`. A valid JSON string
+ * holds none, so this is normally zero; counting them keeps the line numbers right
+ * for a file that breaks that rule rather than shifting every later finding.
+ */
+function newlinesBetween(source, start, end) {
+  let count = 0
+  for (let cursor = start; cursor < end; cursor += 1) if (source[cursor] === '\n') count += 1
+  return count
+}
+
+/**
+ * The string values of a benchmark artifact, one entry per value at the line it
+ * opens on. Keys are skipped and numbers are never read: the artifact's numbers are
+ * schema-checked, and a sentence is what the prose rule covers. A token that cannot
+ * be read stops the scan and is reported, so a malformed artifact fails the check
+ * instead of passing unscanned.
+ */
+function benchmarkClaimTexts(source) {
+  const texts = []
+  let cursor = 0
+  let line = 1
+  while (cursor < source.length) {
+    const char = source[cursor]
+    if (char !== '"') {
+      line += char === '\n' ? 1 : 0
+      cursor += 1
+      continue
+    }
+    const token = readJsonString(source, cursor)
+    if (token === null) return { texts, unreadable: [{ line, text: expressionOnLine(source, cursor) }] }
+    if (!isJsonKey(source, token.end)) texts.push({ line, text: token.value })
+    line += newlinesBetween(source, cursor, token.end)
+    cursor = token.end
+  }
+  return { texts, unreadable: [] }
+}
+
+/**
+ * One scanned text per line, with its 1-based line number.
+ */
+function lineTexts(source) {
+  return { texts: source.split(/\r?\n/).map((text, index) => ({ line: index + 1, text })), unreadable: [] }
+}
+
+/**
+ * The text a rule runs against: every line of a prose file, the claim values of
+ * `ledger.ts`, and the string values of a published benchmark artifact.
  */
 function scannedTexts(file, source) {
-  if (file !== ledgerFile) {
-    return { texts: source.split(/\r?\n/).map((text, index) => ({ line: index + 1, text })), unreadable: [] }
-  }
-  return ledgerClaimTexts(source)
+  if (file === ledgerFile) return ledgerClaimTexts(source)
+  if (file.startsWith(benchmarkRoot)) return benchmarkClaimTexts(source)
+  return lineTexts(source)
 }
 
 /**
@@ -702,9 +832,17 @@ function allowlistFailures() {
   return [...malformed, ...stale]
 }
 
-const roots = [...proseRoots, numericRoot]
-const files = (await Promise.all(roots.map(root =>
-  walk(root, root === numericRoot ? dataFile : proseFile)))).flat()
+/**
+ * Every root the scan reads, paired with the filter that accepts its files. A prose
+ * root holds one file per rendered page, `app/data` holds the typed claim data, and
+ * `public/benchmarks` holds the published artifacts.
+ */
+const scanRoots = [
+  ...proseRoots.map(root => ({ root, accept: proseFile })),
+  { root: numericRoot, accept: dataFile },
+  { root: benchmarkRoot, accept: benchmarkFile },
+]
+const files = (await Promise.all(scanRoots.map(({ root, accept }) => walk(root, accept)))).flat()
 const sources = await Promise.all(files.map(file => readFile(file, 'utf8')))
 
 /**
