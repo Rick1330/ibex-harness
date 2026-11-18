@@ -38,11 +38,20 @@ Three properties are checked, offline and stdlib-only:
    a spread, a second tuple on the line, a tuple broken across lines -- is
    rejected naming its line rather than dropped from the comparison. The array
    itself is found at its module-level declaration rather than at the first mention
-   of its name, it must be a direct array initializer, and only whitespace or a
-   ``//`` comment may follow its closing bracket: each of those is a way the guard
-   could compare one array while the site rendered another. So is a token after
-   that ``]`` which continues the initializer (``[``, ``(``, ``.``, a template
-   literal): a filter applied there drops a row the guard would still count.
+   of its name, it must be a ``const`` binding, it must be a direct array
+   initializer, and only whitespace or a ``//`` comment may follow its closing
+   bracket: each of those is a way the guard could compare one array while the site
+   rendered another. A reassignable ``let`` or ``var`` is rejected for that reason
+   -- the export reads whatever the name holds when it runs, so the binding can be
+   pointed at a different array after the literal -- and so is a token after that
+   ``]`` which continues the initializer (``[``, ``(``, ``.``, ``?``, a template
+   literal), because a filter applied there drops a row the guard would still
+   count. A ``/`` that opens neither a ``//`` nor a ``/*`` comment is rejected
+   wherever the scan reads the text to place the declaration, for a reason of the
+   scan's own: a regular expression and a division are told apart by the token
+   before them, and this scan carries no token history, so rather than read
+   ``/[}]/`` as a scope and take a helper's local array for the module one, it
+   fails closed.
 
 What is *not* compared, and why:
 

@@ -62,6 +62,41 @@ class TableTests(unittest.TestCase):
             )
         self.assertIn("Memory substrate", str(caught.exception))
 
+    def test_a_row_without_the_outer_pipes_is_read(self) -> None:
+        # GFM makes the leading and trailing pipes optional, so this line is a row of
+        # the table above it and a reader sees it. Requiring both outer pipes ended the
+        # block before it, so the row was dropped from the comparison while staying
+        # visible in the file: the agreement the guard reported did not cover it.
+        found = baseline(
+            """
+            | Area | Status | Must not be inferred |
+            | --- | --- | --- |
+            | Memory substrate | IMPLEMENTED | a |
+            New capability | PROVISIONAL | b |
+            """
+        )
+        self.assertEqual(
+            found,
+            {
+                "Memory substrate": "IMPLEMENTED",
+                "New capability": "PROVISIONAL",
+            },
+        )
+
+    def test_a_row_without_outer_pipes_is_still_checked_against_the_header(self) -> None:
+        # Accepting the optional pipes must not accept a line that is not a row of this
+        # table: a line carrying fewer cells is rejected, never dropped or split.
+        with self.assertRaises(InputError) as caught:
+            baseline(
+                """
+                | Area | Status | Must not be inferred |
+                | --- | --- | --- |
+                | Memory substrate | IMPLEMENTED | a |
+                New capability | PROVISIONAL |
+                """
+            )
+        self.assertIn("2 cells", str(caught.exception))
+
     def test_prose_between_tables_does_not_join_them(self) -> None:
         found = baseline(
             """

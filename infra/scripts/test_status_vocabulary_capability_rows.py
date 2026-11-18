@@ -96,6 +96,21 @@ class CapabilityRowTests(unittest.TestCase):
         self.assertIn("Hosted HA Console", message)
         self.assertIn("Graph, A2A", message)
 
+    def test_a_further_element_after_the_tuple_is_rejected(self) -> None:
+        # The trailing comment's `]` closed the match, so `extraRow` between the tuple
+        # and the comment was invisible and only the first element was compared while
+        # the page rendered both. Nothing may follow the tuple's own bracket but a
+        # trailing comma, so the line is rejected naming it.
+        with self.assertRaises(InputError) as caught:
+            parse_site_rows(
+                "const capabilityRows = [\n"
+                "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'], extraRow, // ]\n"
+                "]\n"
+            )
+        message = str(caught.exception)
+        self.assertIn("line 2", message)
+        self.assertIn("extraRow", message)
+
     def test_a_comment_and_a_blank_line_inside_the_array_are_passed_over(self) -> None:
         # The line set is exhaustive, so the two shapes that hold no entry must stay
         # readable: a rejection of trivia would fail the guard on the layout it

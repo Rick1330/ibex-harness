@@ -106,11 +106,19 @@ class ArrayBoundaryTests(unittest.TestCase):
         self.assertIn("must end at its opening '['", str(caught.exception))
 
     def test_an_initializer_continuation_after_the_bracket_is_rejected(self) -> None:
-        # `]` followed on the next line by `[`, `(`, `.`, or a template literal is one
-        # expression to TypeScript: an index and a call, a call, a method, a tagged
-        # template. `['filter'](...)` drops a row the guard still counted, so the
-        # comparison covered rows the site does not render. Only `.` was rejected.
-        for continuation in ("['filter'](row => row[0])", "(rows => rows)", ".flat()", "`x`"):
+        # `]` followed on the next line by `[`, `(`, `.`, `?`, or a template literal is
+        # one expression to TypeScript: an index and a call, a call, a method, optional
+        # chaining, a tagged template. `['filter'](...)` drops a row the guard still
+        # counted, and `?.map(...)` hands the page the mapped rows, so the comparison
+        # covered rows the site does not render. `?` joined the set after `?.map` was
+        # accepted: every other continuation was rejected, this one was not.
+        for continuation in (
+            "['filter'](row => row[0])",
+            "(rows => rows)",
+            ".flat()",
+            "?.map(row => row)",
+            "`x`",
+        ):
             with self.subTest(continuation=continuation):
                 with self.assertRaises(InputError) as caught:
                     parse_site_rows(

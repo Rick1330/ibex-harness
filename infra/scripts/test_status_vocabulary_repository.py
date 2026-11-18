@@ -69,6 +69,44 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("capability memory", stderr)
         self.assertIn("ledger says PROVISIONAL", stderr)
 
+    def test_a_reassignable_declaration_fails_naming_the_line(self) -> None:
+        # `let` can be reassigned after the array the guard reads, so the rows compared
+        # need not be the rows rendered. Only `const` is read, and the whole file fails
+        # with the declaration's line rather than reporting agreement over an array the
+        # export may have replaced.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.copy(Path(temporary))
+            ledger = root / SITE_LEDGER
+            mutated = ledger.read_text(encoding="utf-8").replace(
+                "const capabilityRows:", "let capabilityRows:"
+            )
+            expected = mutated[: mutated.index("let capabilityRows")].count("\n") + 1
+            ledger.write_text(mutated, encoding="utf-8")
+            code, stderr = self.run_against(root)
+        self.assertEqual(code, 2)
+        self.assertIn(f"line {expected}", stderr)
+        self.assertIn("must be `const`", stderr)
+
+    def test_a_row_without_the_outer_pipes_is_compared(self) -> None:
+        # GFM renders a row that omits the outer pipes, and the block ended before it,
+        # so the row was never compared: this file passed while it listed a capability
+        # no surface declares. It is now read, and `compare_rows` accounts for it.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.copy(Path(temporary))
+            engineering = root / ENGINEERING_LEDGER
+            last_row = "| Graph/A2A/marketplace/sandbox | `deferred` | These are not current dependencies. |"
+            engineering.write_text(
+                engineering.read_text(encoding="utf-8").replace(
+                    last_row,
+                    last_row + "\nNew capability | provisional | No hosted HA |",
+                ),
+                encoding="utf-8",
+            )
+            code, stderr = self.run_against(root)
+        self.assertEqual(code, 1)
+        self.assertIn("New capability", stderr)
+        self.assertIn("no declared capability accounts for", stderr)
+
     def test_a_label_added_to_one_surface_fails_naming_it(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self.copy(Path(temporary))

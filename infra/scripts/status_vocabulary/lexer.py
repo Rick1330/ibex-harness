@@ -27,6 +27,60 @@ TS_LINE_BREAK = re.compile(r"\r\n|[\r\n\u2028\u2029]")
 # string, or a template literal. Only code holds a declaration.
 CODE, LINE_COMMENT, BLOCK_COMMENT, STRING, TEMPLATE = "code", "line", "block", "string", "template"
 
+# The characters a quoted string literal opens with. Which one it is is remembered
+# per literal, so a `'` cannot be closed by a `"`.
+QUOTE_CHARS = "'\""
+
+
+@dataclass(frozen=True)
+class CodeToken:
+    """One token a code position can start: the state it leaves, and how wide it is.
+
+    ``mode`` is the mode the scan is left in, so naming the token is the whole
+    classification. ``quote`` is the spelling a string literal opens with and is
+    empty for every other token; ``depth_delta`` is the scope a brace opens or
+    closes; ``rejected`` marks the opener the scan refuses to classify rather than
+    guess at.
+    """
+
+    mode: str
+    quote: str = ""
+    depth_delta: int = 0
+    width: int = 1
+    rejected: bool = False
+
+
+# The two-character openers, read before the one-character table so `//` and `/*`
+# are a comment and never a slash. The quotes are classified by `classify_code`
+# alone, because the spelling a string opens with has to be remembered, not fixed.
+TWO_CHAR_TOKENS = {
+    "//": CodeToken(LINE_COMMENT, width=2),
+    "/*": CodeToken(BLOCK_COMMENT, width=2),
+}
+ONE_CHAR_TOKENS = {
+    "`": CodeToken(TEMPLATE),
+    "/": CodeToken(CODE, rejected=True),
+    "{": CodeToken(CODE, depth_delta=1),
+    "}": CodeToken(CODE, depth_delta=-1),
+}
+ORDINARY_TOKEN = CodeToken(CODE)
+
+
+def classify_code(source: str, index: int) -> CodeToken:
+    """Name the token that starts at `index` in code position, and how wide it is.
+
+    Classification is data, not a chain of tests: what the character starts is what
+    the scan becomes, so `_code_step` advances without asking again. The quote is
+    the one token whose state is the character itself, so it is named here.
+    """
+    pair = TWO_CHAR_TOKENS.get(source[index : index + 2])
+    if pair is not None:
+        return pair
+    character = source[index]
+    if character in QUOTE_CHARS:
+        return CodeToken(STRING, quote=character)
+    return ONE_CHAR_TOKENS.get(character, ORDINARY_TOKEN)
+
 
 @dataclass
 class Lexer:
@@ -47,6 +101,12 @@ class Lexer:
     A template literal is skipped as text, but one that substitutes an expression is
     rejected: `${...}` is code that can open a scope, and reading it honestly would
     make this guard the TypeScript interpreter it is deliberately not.
+
+    A `/` that opens neither a `//` nor a `/*` comment is rejected as well. It starts
+    either a regular-expression literal or a division, and the two are told apart by
+    the previous significant token -- a rule this scan does not carry. Guessing wrong
+    counts a brace inside `/[}]/` as a scope, so a helper's local declaration reads as
+    module level and its rows are compared. See `_code_step`.
     """
 
     mode: str = CODE
@@ -122,25 +182,45 @@ class Lexer:
         return index + 1
 
     def _code_step(self, source: str, index: int) -> int:
-        """Read one token of code: the start of a comment, string, or template, or a brace."""
-        if source.startswith("//", index):
-            self.mode = LINE_COMMENT
-            return index + 2
-        if source.startswith("/*", index):
-            self.mode = BLOCK_COMMENT
-            return index + 2
-        character = source[index]
-        if character in "'\"":
-            self.mode, self.quote = STRING, character
-            return index + 1
-        if character == "`":
-            self.mode = TEMPLATE
-            return index + 1
-        if character == "{":
-            self.depth += 1
-        elif character == "}":
-            self.depth = max(self.depth - 1, 0)
-        return index + 1
+        """Read one token of code: name what starts here, then advance past it."""
+        token = classify_code(source, index)
+        if token.rejected:
+            raise InputError(
+                f"{SITE_LEDGER}: the `/` on line {line_number(source, index)} opens a "
+                "regular expression or a division, and the scan classifies neither, so a "
+                "brace inside it would be counted as a scope"
+            )
+        self._enter_code(token)
+        return index + token.width
+
+    def _enter_code(self, token: CodeToken) -> None:
+        """Apply the state a code token carries: its mode, its quote, its scope.
+
+        Every code token names the mode it leaves the scan in -- code for a brace or
+        ordinary text, a comment or a literal otherwise -- so the mode is assigned
+        rather than tested, and only a string literal brings a quote to remember.
+        """
+        self.mode = token.mode
+        if token.quote:
+            self.quote = token.quote
+        self.depth = max(self.depth + token.depth_delta, 0)
+
+
+def module_match(source: str, pattern: re.Pattern[str]) -> re.Match[str] | None:
+    """The first match of `pattern` that starts in code at module level, or None.
+
+    Matching the pattern alone reads a mention inside a comment, a string, a template,
+    or a function body. The text before each candidate is read once, in order, by one
+    `Lexer`, so a candidate is taken only when it is code and no scope is open.
+    """
+    lexer = Lexer()
+    scanned = 0
+    for match in pattern.finditer(source):
+        lexer.advance(source, scanned, match.start())
+        scanned = match.start()
+        if lexer.module_level:
+            return match
+    return None
 
 
 def line_number(source: str, index: int) -> int:

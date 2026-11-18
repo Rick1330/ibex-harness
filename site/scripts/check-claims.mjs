@@ -821,6 +821,8 @@ export function benchmarkClaimTexts(source) {
  */
 const textNodeType = 2
 const commentNodeType = 3
+const attributeNodeType = 6
+const directiveNodeType = 7
 
 /**
  * The `lang` values a template may carry and still be read as HTML: none at all, an
@@ -919,17 +921,123 @@ function sourceRanges(locs) {
 }
 
 /**
+ * The attributes whose value no reader sees. Each is a hook a browser acts on rather
+ * than a string it draws:
+ *
+ * - `class`, `style`: selected on by the stylesheet; a browser draws no text from
+ *   either one.
+ * - `id`: a fragment target, and the target of a label or a reference; never text.
+ * - `key`, `ref`: Vue's diff identity and a component handle; neither reaches the
+ *   document at all.
+ * - `role`: an ARIA role token, read by assistive technology rather than drawn.
+ */
+const inertAttributes = new Set(['class', 'id', 'key', 'ref', 'role', 'style'])
+
+/**
+ * The attribute name prefixes whose value is metadata rather than text: `data-*` is
+ * read by scripts and CSS attribute selectors, `aria-*` by assistive technology. A
+ * rendered page draws neither, which is why the original finding — a `data-note`
+ * whose value spells a phrase — reports nothing.
+ *
+ * `aria-*` is only metadata as a prefix. The five names in `spokenAriaAttributes`
+ * are prose a screen reader speaks; they are excepted in `inertName` rather than
+ * listed here, so the prefix still covers every other ARIA attribute.
+ */
+const inertAttributePrefixes = ['aria-', 'data-']
+
+/**
+ * The `aria-*` attributes whose value is spoken to the reader: a name, a
+ * description, a placeholder, a value's text, or a role's description. A screen
+ * reader says each one, so a prohibited phrase in one is a claim the page makes to
+ * a user — including one who never sees the paragraph beside it — and it is
+ * scanned. Every other `aria-*` names state (`aria-hidden`, `aria-expanded`) or a
+ * reference to another element (`aria-labelledby`, `aria-describedby`) and is read
+ * by a machine rather than heard.
+ */
+const spokenAriaAttributes = new Set([
+  'aria-description',
+  'aria-label',
+  'aria-placeholder',
+  'aria-roledescription',
+  'aria-valuetext',
+])
+
+/**
+ * The directives whose value is never text: presence (`v-if`, `v-else-if`, `v-else`),
+ * iteration (`v-for`), visibility (`v-show`), a two-way binding (`v-model`), an event
+ * handler (`v-on`), a slot assignment (`v-slot`), and the compilation flags (`v-pre`,
+ * `v-once`, `v-memo`, `v-cloak`). Each puts its value in a binding, a handler, or an
+ * instruction to the compiler, and none writes the characters a browser draws.
+ *
+ * `v-bind` is not here, because what it sets depends on its argument; it is decided by
+ * name below. Neither are `v-text` and `v-html`, whose values are the rendered text
+ * and the rendered markup, nor a directive this file does not name: a custom directive
+ * may write `textContent`, so it is scanned.
+ */
+const inertDirectives = new Set([
+  'cloak', 'else', 'else-if', 'for', 'if', 'memo', 'model', 'on', 'once', 'pre', 'show', 'slot',
+])
+
+/**
+ * Whether an attribute of this name renders no text. The name is compared without its
+ * case, because an HTML attribute name is case-insensitive and no spelling of these
+ * makes one visible. A name the reader hears is never inert, whatever prefix covers
+ * it.
+ */
+function inertName(name) {
+  const lower = name.toLowerCase()
+  if (spokenAriaAttributes.has(lower)) return false
+  return inertAttributes.has(lower) || inertAttributePrefixes.some(prefix => lower.startsWith(prefix))
+}
+
+/**
+ * Whether an attribute name is a directive the parser left unparsed because `v-pre`
+ * stopped compilation. It is spelled `@…`, `:…`, `#…`, or `v-…`, and a browser ignores
+ * an attribute name it does not know, so it sets no text. `v-pre` itself is consumed by
+ * the parser and never appears as a prop.
+ */
+const unparsedDirective = name => ['#', ':', '@', 'v-'].some(sigil => name.startsWith(sigil))
+
+/**
+ * The attribute a `v-bind`/`:` prop sets when its argument names one, or `null` when it
+ * does not: a dynamic argument (`:[prop]`) and an object spread (`v-bind="props"`) both
+ * set names this checker cannot enumerate, so such a prop is scanned.
+ */
+const boundName = arg => (arg?.isStatic === true ? arg.content : null)
+
+/**
+ * Whether the value of `prop` can reach a reader as text. The default is yes: a value
+ * this checker cannot prove is non-rendering is scanned, because a prop reported
+ * wrongly is visible in review while a claim missed in one is not. Whether a component
+ * draws a given prop is not knowable from this file — it needs the child's source — so
+ * a component prop is scanned too.
+ */
+function propReachesReader(prop) {
+  if (prop.type === attributeNodeType) return !inertName(prop.name) && !unparsedDirective(prop.name)
+  if (prop.type !== directiveNodeType) return true
+  if (prop.name === 'bind') {
+    const name = boundName(prop.arg)
+    return name === null || !inertName(name)
+  }
+  return !inertDirectives.has(prop.name)
+}
+
+/**
  * The ranges of one template node that the raw-line reader must not report: its text,
  * which the node reader reports instead, and the places that render no text at all —
- * a comment, and every attribute or directive, whose value is markup rather than
- * prose. Text nodes never contain each other, a comment holds nothing, and an
- * attribute sits inside a tag, so the ranges are disjoint and one binary search
- * decides any occurrence.
+ * a comment, and a prop whose value no browser draws. Text nodes never contain each
+ * other, a comment holds nothing, and a prop sits inside a tag, so the ranges are
+ * disjoint and one binary search decides any occurrence.
+ *
+ * A prop is quiet by name rather than by kind, because one tag carries both: `data-note`
+ * is quiet and `title` is not. Suppressing every prop — which this did first — hid a
+ * phrase in a component's `title` and a phrase `v-text` writes, the two ways a prop
+ * value reaches a reader.
  */
 function quietRanges({ node }) {
   const own = node.type === textNodeType || node.type === commentNodeType ? [node.loc] : []
-  const attributes = (node.props ?? []).map(prop => prop.loc).filter(loc => loc !== undefined)
-  return [...own, ...attributes]
+  const inert = (node.props ?? []).filter(prop => !propReachesReader(prop)).map(prop => prop.loc)
+  return [...own, ...inert].filter(loc => loc !== undefined)
 }
 
 /**
@@ -1118,9 +1226,11 @@ export function lineTexts(source) {
  *
  * The node entries are the only place a template phrase is reported: the line entries
  * carry the ranges the compiler owns, so an occurrence inside a text node is left to
- * the node that has the whole of it, and an occurrence inside an attribute value or a
- * comment — which render no text — is dropped. A script body is not owned, because a
- * string there is a claim the page displays; the node reader never reads one.
+ * the node that has the whole of it, and an occurrence inside a comment, or inside a
+ * prop whose value no browser draws, is dropped. A prop that can reach a reader is
+ * read on the line it sits on — a `title`, a component prop, a `v-text` — while a
+ * script body is not owned, because a string there is a claim the page displays; the
+ * node reader never reads one.
  */
 function proseTexts(file, source) {
   const lines = lineTexts(source)

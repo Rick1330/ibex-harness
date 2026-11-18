@@ -372,6 +372,162 @@ describe('the template the compiler parses', () => {
   })
 })
 
+/**
+ * Which props the raw-line reader leaves alone. The default is to scan: a prop value
+ * that reaches a reader is prose, and a false positive on one is visible in review
+ * while a missed claim is not. Only the values a browser cannot render as text are
+ * quiet.
+ */
+describe('a prop and the reader', () => {
+  it('reports a phrase a component prop carries, because the child may render it', async () => {
+    // `BenchmarkSectionHeader` renders its `title`. Suppressing every prop made this
+    // phrase invisible, so editing this value escaped the check: a prop is scanned
+    // unless its name is one that cannot render.
+    const claims = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <BenchmarkSectionHeader title="guaranteed uptime" />',
+        '</template>',
+      ].join('\n'),
+    }, async root => (await scan(root)).claims)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2, 'guarantee claim']])
+  })
+
+  it('reports a phrase v-text assigns, because the directive writes the text', async () => {
+    // Vue assigns the directive value to `textContent`, so the element has no text
+    // node for the node reader to see: the value is the only rendered text there is.
+    const claims = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <p v-text="\'guaranteed uptime\'"></p>',
+        '</template>',
+      ].join('\n'),
+    }, async root => (await scan(root)).claims)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2, 'guarantee claim']])
+  })
+
+  it('reports a phrase v-html assigns, scanned as the text of the markup it renders', async () => {
+    // The value is markup: the tags in it are not text, but the words between them
+    // are. Scanning the whole value over-reports a tag name and never misses prose,
+    // which is the direction this checker fails in.
+    const claims = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <p v-html="\'<b>guaranteed uptime</b>\'"></p>',
+        '</template>',
+      ].join('\n'),
+    }, async root => (await scan(root)).claims)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [[2, 'guarantee claim']])
+  })
+
+  it('reports a phrase a title attribute carries, static and bound', async () => {
+    // A browser shows a title as a tooltip, so its text reaches a reader. The bound
+    // form sets the same attribute from an expression and is read the same way.
+    const claims = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <p title="production-ready">Measured</p>',
+        '  <p :title="\'battle-tested\'">Measured</p>',
+        '  <img alt="enterprise-grade" src="/x.png">',
+        '</template>',
+      ].join('\n'),
+    }, async root => (await scan(root)).claims)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [
+      [2, 'positive production-readiness claim'],
+      [3, 'unsupported battle-tested claim'],
+      [4, 'unsupported enterprise-grade claim'],
+    ])
+  })
+
+  it('reports nothing for a data-* value, including the one this rule was written for', async () => {
+    // The original finding: a `data-*` value is read by scripts and CSS selectors and
+    // rendered by nothing, so a phrase inside one is not a claim the page makes — even
+    // when it spells a tag-ending `>`.
+    const result = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <p data-note="see > guaranteed uptime">Measured</p>',
+        '</template>',
+      ].join('\n'),
+    }, root => scan(root))
+    assert.deepEqual(result, { unreadable: [], claims: [] })
+  })
+
+  it('reports a phrase an aria-label speaks, and nothing for an attribute only a script reads', async () => {
+    // Most `aria-*` attributes are machine metadata — `aria-hidden` names a condition —
+    // but `aria-label` is prose a screen reader speaks to the reader, so a prohibited
+    // phrase in one is a claim the page makes to a user who never sees the paragraph.
+    // Treating every `aria-*` as non-rendering missed it.
+    const claims = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <p aria-label="guaranteed uptime">Measured</p>',
+        '  <p :aria-label="\'battle-tested\'">Measured</p>',
+        '  <p aria-hidden="production-ready">Measured</p>',
+        '</template>',
+      ].join('\n'),
+    }, async root => (await scan(root)).claims)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [
+      [2, 'guarantee claim'],
+      [3, 'unsupported battle-tested claim'],
+    ])
+  })
+
+  it('reports nothing for a prop that cannot render text, bound or directive', async () => {
+    // A class, a style, an id, an ARIA token, an event handler, a two-way binding and
+    // the presence and visibility directives all put their value somewhere other than
+    // the text a browser shows.
+    const result = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <div',
+        '    :class="\'production-ready\'"',
+        '    :style="\'battle-tested\'"',
+        '    :data-note="\'guaranteed uptime\'"',
+        '    role="five nines"',
+        '    @click="\'enterprise-grade\'"',
+        '    v-on:keyup.enter="\'production-ready\'"',
+        '    v-model="\'battle-tested\'"',
+        '    v-show="\'guaranteed uptime\'"',
+        '    v-if="\'five nines\'"',
+        '  >Measured</div>',
+        '</template>',
+      ].join('\n'),
+    }, root => scan(root))
+    assert.deepEqual(result, { unreadable: [], claims: [] })
+  })
+
+  it('decides each prop on its own, so a quiet one does not excuse its neighbour', async () => {
+    // The reader drops one range per non-rendering prop. A `data-*` beside a `title`
+    // must silence only its own value, and the finding must still be reported once,
+    // at the line the tag sits on.
+    const claims = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <div class="note" data-note="guaranteed uptime" title="production-ready">Measured</div>',
+        '</template>',
+      ].join('\n'),
+    }, async root => (await scan(root)).claims)
+    assert.deepEqual(claims.map(claim => [claim.line, claim.label]), [
+      [2, 'positive production-readiness claim'],
+    ])
+  })
+
+  it('reads a directive the parser left unparsed as a name no browser renders', async () => {
+    // `<div v-pre @click="'production-ready'">` hands the parser a plain attribute
+    // literally named `@click`, because `v-pre` stops compilation. That attribute sets
+    // no text either way, so the phrase inside it is not prose.
+    const result = await withSite({
+      'app/components/Widget.vue': [
+        '<template>',
+        '  <div v-pre @click="\'production-ready\'" :class="\'battle-tested\'">Measured</div>',
+        '</template>',
+      ].join('\n'),
+    }, root => scan(root))
+    assert.deepEqual(result, { unreadable: [], claims: [] })
+  })
+})
+
 describe('the clause a denial covers', () => {
   it('scopes a denial to its own clause in a text with many breaks', () => {
     // The clause boundaries are found once per text and read by binary search; this

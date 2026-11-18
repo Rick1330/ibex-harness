@@ -125,6 +125,69 @@ class DeclarationTests(unittest.TestCase):
             {"Memory substrate": "PROVISIONAL"},
         )
 
+    def test_a_reassignable_binding_is_rejected(self) -> None:
+        # A `let` binding can be handed a different array after the one the guard
+        # reads: here the export renders nothing, while the initial rows were
+        # compared and the guard reported agreement over them. Only `const` is
+        # accepted, because a `let` holding a literal that never changes is not a
+        # shape worth reading; the rejection names the line and the kind it found.
+        with self.assertRaises(InputError) as caught:
+            parse_site_rows(
+                "let capabilityRows = [\n"
+                "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                "]\n"
+                "capabilityRows = []\n"
+            )
+        message = str(caught.exception)
+        self.assertIn("line 1", message)
+        self.assertIn("`let`", message)
+        self.assertIn("must be `const`", message)
+
+    def test_a_var_binding_is_rejected_the_same_way(self) -> None:
+        # `var` is reassignable for the same reason, so the same rule rejects it.
+        with self.assertRaises(InputError) as caught:
+            parse_site_rows(
+                "var capabilityRows = [\n"
+                "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                "]\n"
+            )
+        self.assertIn("`var`", str(caught.exception))
+
+    def test_a_regular_expression_literal_is_rejected_rather_than_counted(self) -> None:
+        # `/[}]/` inside a helper: the regex's `}` was counted as the helper's end, so
+        # the helper's local declaration read as module level and its DEFERRED rows
+        # were compared while the export read the PROVISIONAL array below it. Telling a
+        # regex from a division needs the previous significant token, which this scan
+        # does not carry, so a `/` in code is rejected rather than guessed at.
+        with self.assertRaises(InputError) as caught:
+            parse_site_rows(
+                "function helper() {\n"
+                "  const pattern = /[}]/\n"
+                "  const capabilityRows = [\n"
+                "    ['Memory substrate', 'DEFERRED', 'Detail.', '/x'],\n"
+                "  ]\n"
+                "}\n"
+                "const capabilityRows = [\n"
+                "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/x'],\n"
+                "]\n"
+            )
+        message = str(caught.exception)
+        self.assertIn("line 2", message)
+        self.assertIn("regular expression", message)
+
+    def test_a_slash_in_a_string_or_a_comment_is_still_text(self) -> None:
+        # The rejection is for a `/` in code. A rendered path and a `//` comment are
+        # text, so the real ledger -- every detail is a `/docs/...` href -- is read.
+        self.assertEqual(
+            parse_site_rows(
+                "// /docs/architecture/status-and-evidence states the claim rules\n"
+                "const capabilityRows = [\n"
+                "  ['Memory substrate', 'PROVISIONAL', 'Detail.', '/docs/memory/overview'],\n"
+                "]\n"
+            ),
+            {"Memory substrate": "PROVISIONAL"},
+        )
+
     def test_a_function_local_declaration_is_not_the_exported_one(self) -> None:
         # The export reads the module-level binding, so a declaration inside a function,
         # an arrow body, a class body, or a bare block is a different array: selecting

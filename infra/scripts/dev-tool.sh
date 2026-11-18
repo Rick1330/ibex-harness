@@ -528,6 +528,46 @@ v1_smoke_warmup_attempts() {
   printf '%s\n' "$((10#$attempts))"
 }
 
+# v1_smoke_backoff_millis prints the delay, in milliseconds, before the retry
+# that follows warm-up attempt `n`: 400 ms doubling per attempt, capped at
+# 4000 ms, plus up to 25% jitter drawn per call.
+#
+# Why not the fixed 2 s wait it replaces: AGENTS.md §8.3 requires exponential
+# backoff with jitter for a retry, and a constant interval pays the same wait for
+# the first, cheapest retry as for the last one, which is the retry most likely
+# to outlast a cold TEI query. The jitter keeps a fleet of runners from retrying
+# in lockstep after a shared stall.
+#
+# The attempt ceiling is unchanged (IBEX_V1_SMOKE_WARMUP_ATTEMPTS, default 5), so
+# the worst case is 500 + 1000 + 2000 + 4000 = 7500 ms of sleeping -- below the
+# 8000 ms the four fixed 2 s sleeps cost, and bounded because the schedule is
+# capped rather than unbounded.
+v1_smoke_backoff_millis() {
+  local attempt="${1:-1}" delay ceiling
+  if [[ ! "$attempt" =~ ^[0-9]+$ ]] || (( 10#$attempt < 1 )); then
+    attempt=1
+  fi
+  attempt=$((10#$attempt))
+  # 400 ms doubling already exceeds the cap by attempt 5; clamping the exponent
+  # keeps the shift in range for any attempt number a caller passes.
+  if (( attempt > 6 )); then
+    attempt=6
+  fi
+  delay=$((400 << (attempt - 1)))
+  if (( delay > 4000 )); then
+    delay=4000
+  fi
+  ceiling=$((delay / 4))
+  printf '%s\n' "$((delay + RANDOM % (ceiling + 1)))"
+}
+
+# v1_smoke_backoff_sleep waits out a delay from v1_smoke_backoff_millis. It is a
+# function so the self-test can record the intervals instead of sleeping them.
+v1_smoke_backoff_sleep() {
+  local millis="${1:-0}"
+  sleep "$(printf '%d.%03d' $((millis / 1000)) $((millis % 1000)))"
+}
+
 # v1_smoke_chat is the chat half of the smoke: the authenticated POST
 # /v1/chat/completions whose response must prove context assembly ran and did
 # not degrade. It is separate from v1_smoke_assert so that function stays within
@@ -596,7 +636,9 @@ v1_smoke_chat() {
       1)
         if (( n < attempts )); then
           echo "chat completion attempt $n of $attempts degraded context assembly (X-IBEX-Context-Fallback: true); retrying while the cold context path warms" >&2
-          sleep 2
+          # Exponential backoff with jitter: the first retry is the cheapest and
+          # the last is the one most likely to outlast a cold query.
+          v1_smoke_backoff_sleep "$(v1_smoke_backoff_millis "$n")"
           continue
         fi ;;
       2)
@@ -769,6 +811,13 @@ v1_smoke() {
 # with no context headers); a stub that degrades on every attempt must fail with
 # the existing degraded-assembly message plus the attempt count and the 1800 ms
 # deadline; and a stub that never sends the header must still fail.
+#
+# The retry delay those arms wait out is asserted too, without sleeping: the
+# intervals are recorded through v1_smoke_backoff_sleep and then checked for the
+# 400 ms doubling plus 25% jitter bounds, for a non-decreasing schedule, for the
+# cap, and for jitter itself (64 draws of one attempt must not all be identical).
+# A fixed 2 s sleep fails the growth assertion, which is the finding that
+# produced these arms.
 v1_smoke_selftest() {
   local org="11111111-1111-4111-8111-111111111111"
   local agent="22222222-2222-4222-8222-222222222222"
@@ -1030,6 +1079,78 @@ v1_smoke_selftest() {
   assert_smoke_config_error "a non-numeric IBEX_V1_SMOKE_ATTEMPTS (nope)" IBEX_V1_SMOKE_ATTEMPTS nope || return 1
   assert_smoke_config_error "IBEX_V1_SMOKE_WARMUP_ATTEMPTS=0 with a readable PAT" IBEX_V1_SMOKE_WARMUP_ATTEMPTS 0 || return 1
   assert_smoke_config_error "a non-numeric IBEX_V1_SMOKE_WARMUP_ATTEMPTS (nope)" IBEX_V1_SMOKE_WARMUP_ATTEMPTS nope || return 1
+
+  # The warm-up retry must back off, and the backoff is observable without
+  # sleeping: v1_smoke_backoff_sleep is overridden to record its argument, and
+  # the same always-degraded stub drives four attempts, so three intervals are
+  # recorded. A fixed delay records three identical values and fails the bounds
+  # and growth assertions below; dropping the call entirely is caught by the
+  # interval count. That is the regression these arms pin.
+  local backoff_log backoff_rc=0 index want_min want_max previous=0
+  local -a intervals=()
+  backoff_log="$tmp/backoff-ms.txt"
+  : >"$backoff_log"
+  stub_chat="fallback-true"
+  (
+    curl() { stub_curl "$@"; }
+    v1_smoke_backoff_sleep() { printf '%s\n' "$1" >>"$backoff_log"; }
+    IBEX_V1_SMOKE_WARMUP_ATTEMPTS=4
+    v1_smoke_assert "https://stub" "$org" "$agent" "$pat" "$tmp/body.json"
+  ) >/dev/null 2>&1 || backoff_rc=$?
+  if (( backoff_rc == 0 )); then
+    echo "FAIL: v1-smoke self-test accepted a chat that degraded on all 4 attempts" >&2
+    return 1
+  fi
+  while IFS= read -r index; do
+    intervals+=("$index")
+  done <"$backoff_log"
+  if (( ${#intervals[@]} != 3 )); then
+    echo "FAIL: v1-smoke self-test recorded ${#intervals[@]} backoff interval(s) across 4 attempts, want 3" >&2
+    return 1
+  fi
+  for index in 0 1 2; do
+    want_min=$((400 << index))
+    want_max=$((want_min + want_min / 4))
+    if (( intervals[index] < want_min || intervals[index] > want_max )); then
+      echo "FAIL: v1-smoke self-test backoff interval $((index + 1)) was ${intervals[index]} ms, want ${want_min}..${want_max} ms (400 ms doubling plus up to 25% jitter)" >&2
+      return 1
+    fi
+    if (( intervals[index] < previous )); then
+      echo "FAIL: v1-smoke self-test backoff shrank: interval $((index + 1)) is ${intervals[index]} ms after ${previous} ms" >&2
+      return 1
+    fi
+    previous="${intervals[index]}"
+  done
+  echo "PASS: v1-smoke self-test backs off ${intervals[*]} ms across 3 retries, non-decreasing and inside the 400 ms doubling plus 25% jitter bounds"
+
+  # Jitter, sampled rather than inferred: 64 draws of the second retry's delay
+  # must produce more than one value. A constant delay produces exactly one. The
+  # window holds 201 values, so 64 identical draws cannot be chance: this arm does
+  # not flake, and it fails a fixed delay deterministically.
+  local first_sample="" differing=0 sample
+  for ((index = 0; index < 64; index++)); do
+    sample="$(v1_smoke_backoff_millis 2)"
+    if [[ -z "$first_sample" ]]; then
+      first_sample="$sample"
+    elif [[ "$sample" != "$first_sample" ]]; then
+      differing=$((differing + 1))
+    fi
+  done
+  if (( differing == 0 )); then
+    echo "FAIL: v1-smoke self-test saw the same backoff value 64 times (${first_sample} ms); the delay carries no jitter" >&2
+    return 1
+  fi
+  echo "PASS: v1-smoke self-test jitters the backoff ($differing of 64 draws of the second retry differed from ${first_sample} ms)"
+
+  # The cap is what bounds the total. The default budget is five attempts, so
+  # the worst case is 500 + 1000 + 2000 + 4000 = 7500 ms of sleeping.
+  local capped
+  capped="$(v1_smoke_backoff_millis 12)"
+  if (( capped < 4000 || capped > 5000 )); then
+    echo "FAIL: v1-smoke self-test backoff for attempt 12 was ${capped} ms, want 4000..5000 ms (4000 ms cap plus up to 25% jitter)" >&2
+    return 1
+  fi
+  echo "PASS: v1-smoke self-test caps the backoff at 4000 ms plus jitter (${capped} ms for attempt 12)"
   return 0
 }
 
@@ -1519,7 +1640,7 @@ case "${1:-help}" in
   # osv-scanner's IgnoredVulns is advisory-scoped, so the Nuxt waivers would also
   # suppress the 3.x range. The floor guard and its self-test run with the other
   # static guards: the guard is only worth having if it is proven to bite.
-  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py; python3 infra/scripts/check-schema-doc.py; python3 services/api/scripts/check_contract_registry.py; python3 services/api/scripts/check_deprecations.py; bash infra/scripts/slo-rules-check.sh; bash infra/scripts/test-v1-backup-credentials.sh; bash infra/scripts/test-db-seed-refusals.sh; python3 infra/scripts/check-tenant-pin.py; python3 infra/scripts/check-status-vocabulary.py; python3 infra/scripts/test_check_status_vocabulary.py; python3 infra/scripts/check-osv-waiver-floor.py; python3 infra/scripts/test_check_osv_waiver_floor.py; python3 infra/scripts/check-osv-waivers.py; python3 infra/scripts/test_check_osv_waivers.py; reproducibility_check ;;
+  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check-alert-routing.py; python3 infra/scripts/check-schema-doc.py; python3 services/api/scripts/check_contract_registry.py; python3 services/api/scripts/check_deprecations.py; bash infra/scripts/slo-rules-check.sh; bash infra/scripts/test-v1-backup-credentials.sh; bash infra/scripts/test-db-seed-refusals.sh; python3 infra/scripts/check-tenant-pin.py; python3 infra/scripts/check-status-vocabulary.py; python3 infra/scripts/test_check_status_vocabulary.py; python3 infra/scripts/check-osv-waiver-floor.py; python3 infra/scripts/test_check_osv_waiver_floor.py; python3 infra/scripts/check-osv-waivers.py; python3 infra/scripts/test_check_osv_waivers.py; python3 infra/scripts/test_redact_container_logs.py; reproducibility_check ;;
   reproducibility-check) reproducibility_check ;;
   slo-rules-check) cd "$ROOT_DIR"; bash infra/scripts/slo-rules-check.sh ;;
   proto-lint) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf lint ;;
