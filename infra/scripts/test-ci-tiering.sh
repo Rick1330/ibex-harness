@@ -242,25 +242,26 @@ digest_step_id() {
     sed -E 's/.*steps\.([A-Za-z0-9_-]+)\.outputs.*/\1/' | head -1
 }
 
-# Root-level files copied into an image (go.mod, .npmrc, …). The token must be a
-# regular file at the repository root: `COPY packages ./packages` and a trailing
-# backslash name directories, which the directory globs already cover, while
-# `COPY package.json …` names one file that a filter list can forget.
+# Every repository-relative source a Dockerfile copies, at any depth. The
+# destination is the last token of the instruction (the last element of the
+# JSON form), so it is dropped: keeping it was why the first version of this
+# matcher only looked at sourceless tokens and could never see a nested source.
 #
-# Three parsing hazards, all handled here rather than by the caller:
+# Four parsing hazards, all handled here rather than by the caller:
 #   * A COPY continued with a trailing backslash is one instruction. Reading only
 #     the first line (`COPY package.json \`) missed the second line of sources,
 #     so a file copied next to it — the real .npmrc case — could lose its trigger
 #     without this test noticing. Continuations are joined before extraction, the
 #     way the Dockerfile parser does it.
 #   * `COPY --from=<stage>` reads from an earlier stage (or another image), not
-#     from the repository, so its sources are not build inputs here. `--chown=`
-#     and `--chmod=` are flag tokens, skipped by the same `--` rule without
-#     hiding the sources that follow them.
+#     from the repository, so its sources are not build inputs here and the whole
+#     instruction is skipped.
+#   * `--chown=` and `--chmod=` are flag tokens, skipped by the same `--` rule
+#     without hiding the sources that follow them.
 #   * `COPY ["package.json", "./"]` is the JSON form of the same instruction. Its
 #     tokens carry brackets, quotes and commas, so no token ever matched a
 #     repository file and the whole instruction was skipped.
-root_copy_sources() {
+copy_sources() {
   awk '
     { if (pending != "") { $0 = pending " " $0; pending = "" } }
     /\\[[:space:]]*$/ { sub(/\\[[:space:]]*$/, ""); pending = $0; next }
@@ -269,16 +270,38 @@ root_copy_sources() {
   ' "$1" | awk '
     /^COPY / {
       gsub(/[][",]/, " ")
-      for (i = 2; i <= NF; i++) if ($i ~ /^--from=/) next
-      for (i = 2; i <= NF; i++) {
+      last = NF
+      if (last < 3) next
+      for (i = 2; i < last; i++) if ($i ~ /^--from=/) next
+      for (i = 2; i < last; i++) {
         if ($i ~ /^--/) continue
-        if ($i ~ /\//) continue
         print $i
       }
     }
-  ' | while read -r candidate; do
-    [[ -f "$ROOT/${candidate}" ]] && printf '%s\n' "$candidate"
+  ' | while read -r source; do
+    # An absolute path or a URL names something outside the build context.
+    case "$source" in
+      /*|*://*) continue ;;
+    esac
+    source="${source#./}"
+    case "$source" in
+      ''|.) continue ;;
+    esac
+    [[ -e "$ROOT/${source}" ]] && printf '%s\n' "$source"
   done
+}
+
+# Root-level files copied into an image (go.mod, .npmrc, …), the subset a filter
+# list can name literally: no directory component and a regular file at the
+# repository root. Directories are expanded by the profile assertion below.
+root_copy_sources() {
+  local source
+  while read -r source; do
+    [[ -n "$source" ]] || continue
+    [[ "$source" == */* ]] && continue
+    [[ -f "$ROOT/${source}" ]] || continue
+    printf '%s\n' "$source"
+  done < <(copy_sources "$1")
 }
 
 # --- published images are gated and evidenced ------------------------------
@@ -519,6 +542,151 @@ else
   bad "published image inputs with no trigger: ${missing_publish_inputs[*]}"
 fi
 
+# --- every v1 profile image input is a trigger -----------------------------
+# Devin, Greptile and CodeRabbit, from three directions: the `v1` filter covered
+# the service and package trees but no other file an image copies, so a PR
+# changing only infra/provider-capabilities/**, .npmrc or a contract record built
+# a different image while run_v1 stayed false. The smoke that proves the profile
+# never ran and ci-gate-compose accepted the skip.
+#
+# The list below is derived from the profile's Dockerfiles instead of being
+# written by hand: a hand-written list loses an entry exactly once and then stays
+# wrong, which is how the three findings above happened. Every tracked file under
+# every copied source is checked, so `COPY packages` covers the whole tree and a
+# new nested COPY is caught without touching this file.
+V1_COMPOSE="$ROOT/infra/compose/v1-single-node/compose.yml"
+
+# Every Dockerfile the profile builds: the ones its compose file names, plus any
+# `Dockerfile` beside a build context inside the profile directory (Compose
+# defaults to `<context>/Dockerfile`, which is how the postgres image is built).
+profile_dockerfiles() {
+  {
+    grep -oE '^[[:space:]]+dockerfile:[[:space:]]*[^[:space:]]+' "$V1_COMPOSE" |
+      sed -E 's/^[[:space:]]+dockerfile:[[:space:]]*//'
+    find "$ROOT/infra/compose/v1-single-node" -mindepth 2 -maxdepth 3 \
+      -name Dockerfile -type f 2>/dev/null | sed "s|^$ROOT/||"
+  } | sed '/^$/d' | sort -u
+}
+
+# The repository files a COPY source stands for: the file itself, or every tracked
+# file beneath the directory. Tracked only — an untracked scratch file is not a CI
+# input — with a filesystem fallback for a checkout without git metadata.
+repo_input_files() {
+  local source="$1"
+  if [[ -f "$ROOT/${source}" ]]; then
+    printf '%s\n' "$source"
+    return 0
+  fi
+  [[ -d "$ROOT/${source}" ]] || return 0
+  if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    git -C "$ROOT" ls-files -z -- "$source" | tr '\0' '\n'
+  else
+    ( cd "$ROOT/${source}" && find . -type f | sed 's|^\./||' | sed "s|^|${source}/|" )
+  fi
+}
+
+# Every build input of every profile image, deduplicated. A Dockerfile the compose
+# file names but the tree does not have is reported on stderr rather than skipped:
+# an unresolvable input is a hole in this assertion, not a pass.
+profile_build_inputs() {
+  local dockerfile source
+  while read -r dockerfile; do
+    [[ -n "$dockerfile" ]] || continue
+    if [[ ! -f "$ROOT/${dockerfile}" ]]; then
+      printf 'profile Dockerfile %s does not exist\n' "$dockerfile" >&2
+      continue
+    fi
+    while read -r source; do
+      [[ -n "$source" ]] || continue
+      repo_input_files "$source"
+    done < <(copy_sources "$ROOT/${dockerfile}")
+  done < <(profile_dockerfiles)
+}
+
+# dorny/paths-filter patterns are minimatch globs. In a bash `case` pattern `*`
+# already matches `/`, so `**` collapses to `*` and the forms this file uses
+# (literals, `*`, `**`) behave identically. Path character classes are not used in
+# .github/path-filters.yml; if one is added it has to be handled here too.
+glob_matches() {
+  local pattern="${1//\*\*/\*}" path="$2"
+  case "$path" in
+    $pattern) return 0 ;;
+  esac
+  return 1
+}
+
+filter_globs() {
+  filter_block "$1" "$2" | sed -nE "s/^  - '(.*)'\$/\\1/p"
+}
+
+mapfile -t v1_profile_inputs < <(profile_build_inputs | sort -u)
+if (( ${#v1_profile_inputs[@]} == 0 )); then
+  bad "no build inputs were derived from the v1 profile images: the derivation is broken"
+fi
+# Fixture-friendly: the input list is the real one, so a doctored copy of the
+# filters file below proves the assertion reports exactly the entry it lost.
+v1_input_gaps() {
+  local filters="$1" input pattern blocked
+  local -a patterns
+  mapfile -t patterns < <(filter_globs "$filters" v1)
+  if (( ${#patterns[@]} == 0 )); then
+    printf 'the v1 filter declares no patterns\n'
+    return 0
+  fi
+  for input in "${v1_profile_inputs[@]}"; do
+    [[ -n "$input" ]] || continue
+    blocked=1
+    for pattern in "${patterns[@]}"; do
+      if glob_matches "$pattern" "$input"; then
+        blocked=0
+        break
+      fi
+    done
+    (( blocked )) && printf '%s is not a v1 trigger\n' "$input"
+  done
+  return 0
+}
+
+# The matcher itself, before it is used to judge the filter: a pattern that cannot
+# reach a nested path, or one that matches anything, would make the assertion pass
+# for the wrong reason.
+matcher_ok=1
+glob_matches 'infra/compose/v1-single-node/**' 'infra/compose/v1-single-node/postgres/Dockerfile' || matcher_ok=0
+glob_matches 'services/**' 'services/console/Dockerfile' || matcher_ok=0
+glob_matches 'infra/scripts/api-*.sh' 'infra/scripts/api-breaking.sh' || matcher_ok=0
+glob_matches 'services/**' 'infra/provider-capabilities/manifest.v1.json' && matcher_ok=0
+glob_matches 'infra/scripts/api-*.sh' 'infra/scripts/db-migrate.sh' && matcher_ok=0
+if (( matcher_ok )); then
+  pass "the filter matcher reaches nested paths, honours literals, and does not match across trees"
+else
+  bad "the filter matcher misjudged a known pattern/path pair"
+fi
+
+mapfile -t v1_gaps < <(v1_input_gaps "$FILTERS")
+if (( ${#v1_gaps[@]} == 0 )); then
+  pass "all ${#v1_profile_inputs[@]} build inputs of the v1 profile images are v1 triggers"
+else
+  bad "v1 profile image inputs with no trigger: ${v1_gaps[*]}"
+fi
+
+# Removing one derived input must fail the assertion and name only that input. The
+# exact-equality comparison is the control: a doctored filter that was still
+# reported clean would mean the assertion never ran.
+v1_fixture_filters="$fixture_dir/v1-filters.yml"
+grep -Fv "  - 'infra/provider-capabilities/**'" "$FILTERS" >"$v1_fixture_filters"
+if [[ "$(v1_input_gaps "$v1_fixture_filters")" == \
+  'infra/provider-capabilities/manifest.v1.json is not a v1 trigger' ]]; then
+  pass "dropping a copied directory from the v1 filter fails the assertion, naming only its input"
+else
+  bad "dropping infra/provider-capabilities/** from the v1 filter did not fail the assertion cleanly: $(v1_input_gaps "$v1_fixture_filters")"
+fi
+grep -Fv "  - 'site/package.json'" "$FILTERS" >"$v1_fixture_filters"
+if [[ "$(v1_input_gaps "$v1_fixture_filters")" == 'site/package.json is not a v1 trigger' ]]; then
+  pass "dropping a single copied file from the v1 filter fails the assertion, naming only that file"
+else
+  bad "dropping site/package.json from the v1 filter did not fail the assertion cleanly: $(v1_input_gaps "$v1_fixture_filters")"
+fi
+
 # --- declared vs live required contexts ------------------------------------
 # P1-25: check-required-ci-gates.sh compares .github/branch-protection-main.json to
 # the rule GitHub actually enforces. That rule is not readable without repository
@@ -557,6 +725,203 @@ else
   else
     bad "the live-context comparison did not name every missing context: $unenforced_line"
   fi
+fi
+
+# A readable live rule that reports zero checks is a successful read of an empty
+# list, not an unreadable rule. The old `&& [[ -n "$live" ]]` normalised it away,
+# printed "could not read" and exited 0 while every declared context was
+# unenforced; the two facts need different exits.
+empty_rc=0
+empty_out="$(IBEX_LIVE_REQUIRED_CONTEXTS="," bash "$REQUIRED_GATES" 2>&1)" || empty_rc=$?
+empty_line="$(grep -F 'Declared but NOT enforced by the live main branch rule:' <<<"$empty_out" || true)"
+empty_unnamed=0
+for context in "${declared_contexts[@]}"; do
+  grep -Fq "$context" <<<"$empty_line" || empty_unnamed=1
+done
+if (( empty_rc != 0 )) && (( empty_unnamed == 0 )); then
+  pass "a readable live rule with zero checks fails and names all ${#declared_contexts[@]} declared contexts"
+else
+  bad "a readable live rule with zero checks reported success (exit ${empty_rc}) or did not name every declared context: ${empty_out:-<no output>}"
+fi
+
+# A different context that embeds a declared name is not that context. The old
+# comparison asked whether the joined list contained " $context ", so
+# "legacy ci-gate-site" read as enforcing "ci-gate-site". The exact failure line is
+# asserted, because naming the wrong context is the same defect reversed.
+embedded_list=""
+for context in "${declared_contexts[@]}"; do
+  if [[ "$context" == "ci-gate-site" ]]; then
+    embedded_list+="legacy ci-gate-site,"
+  else
+    embedded_list+="${context},"
+  fi
+done
+embedded_rc=0
+embedded_out="$(IBEX_LIVE_REQUIRED_CONTEXTS="$embedded_list" bash "$REQUIRED_GATES" 2>&1)" || embedded_rc=$?
+embedded_line="$(grep -F 'Declared but NOT enforced by the live main branch rule:' <<<"$embedded_out" || true)"
+if (( embedded_rc != 0 )) &&
+  [[ "$embedded_line" == 'Declared but NOT enforced by the live main branch rule: ci-gate-site' ]]; then
+  pass "a live context that only embeds a declared name does not count as enforcing it"
+else
+  bad "a live context that embeds a declared name counted as enforcing it (exit ${embedded_rc}): ${embedded_out:-<no output>}"
+fi
+
+# --- the release manifest waits for the smoke evidence it needs ------------
+# `gh run list` does not report a run that is still in progress, and release-docker.yml
+# and ci.yml both start from the release merge with no dependency edge. A single
+# lookup therefore recorded `unverified` for a bundle whose artifact was uploaded
+# moments later. The step body is executed here against a `gh` stub: a completed run
+# must promote, a run that is still in progress must be waited for and then promote,
+# and an absent, stalled or failed run must stay `unverified` without pretending
+# otherwise.
+step_run_body() {
+  awk -v want="      - name: $2" '
+    $0 == want { found = 1; next }
+    found && /^      - name:/ { exit }
+    found && /^        run: \|$/ { body = 1; next }
+    body && /^          / { sub(/^          /, ""); print; next }
+    body && /^[[:space:]]*$/ { print ""; next }
+    body { exit }
+  ' "$1"
+}
+
+smoke_fetch="$fixture_dir/fetch-bundle-smoke.sh"
+step_run_body "$release_docker" "Fetch the bundle smoke result for this commit" >"$smoke_fetch"
+if [[ -s "$smoke_fetch" ]] && bash -n "$smoke_fetch"; then
+  pass "the release smoke-fetch step body is extractable and parses"
+else
+  bad "the release smoke-fetch step body could not be extracted from release-docker.yml"
+fi
+
+stub_dir="$fixture_dir/bin"
+mkdir -p "$stub_dir"
+# Minimal gh stand-in. `run list` replays run-list.N.json when the case provides a
+# sequence (the race case) and run-list.json otherwise; `run download` writes the
+# artifact the real step would download.
+cat >"$stub_dir/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+state="${GH_STUB_DIR:?GH_STUB_DIR is required}"
+printf '%s\n' "$*" >>"$state/calls.log"
+case "$1 $2" in
+  "run list")
+    n="$(grep -c '^run list' "$state/calls.log" || true)"
+    if [[ -f "$state/run-list.${n}.json" ]]; then
+      cat "$state/run-list.${n}.json"
+    else
+      cat "$state/run-list.json"
+    fi
+    ;;
+  "run download")
+    if [[ -f "$state/no-artifact" ]]; then
+      exit 1
+    fi
+    shift 2
+    dir=""
+    while (( $# )); do
+      case "$1" in
+        --dir) dir="$2"; shift 2 ;;
+        --name|--repo) shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    mkdir -p "$dir"
+    printf '{"status":"passed","commit":"%s","finished_at":"2026-11-18T00:00:00Z"}\n' \
+      "${GH_STUB_COMMIT:-}" >"$dir/bundle-smoke-result.json"
+    ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "$stub_dir/gh"
+
+smoke_sha="0123456789abcdef0123456789abcdef01234567"
+run_smoke_case() {
+  local name="$1" attempts="${2:-3}"
+  local case_dir="$fixture_dir/smoke-${name}"
+  mkdir -p "$case_dir"
+  : >"$case_dir/calls.log"
+  : >"$case_dir/github-output"
+  local rc=0
+  (
+    cd "$case_dir" || exit 1
+    PATH="$stub_dir:$PATH" GH_STUB_DIR="$case_dir" GH_STUB_COMMIT="$smoke_sha" \
+      COMMIT="$smoke_sha" REPOSITORY=owner/repo GH_TOKEN=stub \
+      GITHUB_OUTPUT="$case_dir/github-output" \
+      IBEX_SMOKE_RUN_ATTEMPTS="$attempts" IBEX_SMOKE_RUN_INTERVAL=0 \
+      bash "$smoke_fetch"
+  ) >"$case_dir/stdout" 2>"$case_dir/stderr" || rc=$?
+  printf '%s' "$rc"
+}
+
+completed_run="[{\"databaseId\":4242,\"headSha\":\"${smoke_sha}\",\"status\":\"completed\",\"conclusion\":\"success\"}]"
+in_progress_run="[{\"databaseId\":4243,\"headSha\":\"${smoke_sha}\",\"status\":\"in_progress\",\"conclusion\":null}]"
+
+mkdir -p "$fixture_dir/smoke-completed"
+printf '%s\n' "$completed_run" >"$fixture_dir/smoke-completed/run-list.json"
+smoke_rc="$(run_smoke_case completed)"
+if [[ "$smoke_rc" == 0 ]] &&
+  grep -Fq 'smoke_results=smoke-results/bundle-smoke-result.json' \
+    "$fixture_dir/smoke-completed/github-output" &&
+  [[ -f "$fixture_dir/smoke-completed/smoke-results/bundle-smoke-result.json" ]]; then
+  pass "a completed CI run for the commit promotes its bundle smoke evidence"
+else
+  bad "a completed CI run did not promote its bundle smoke evidence (exit ${smoke_rc})"
+fi
+
+# The race this change fixes: the first lookup sees the run in progress, a later one
+# sees it completed. The old single-shot lookup recorded unverified here.
+mkdir -p "$fixture_dir/smoke-race"
+printf '%s\n' "$in_progress_run" >"$fixture_dir/smoke-race/run-list.1.json"
+printf '%s\n' "$completed_run" >"$fixture_dir/smoke-race/run-list.json"
+smoke_rc="$(run_smoke_case race)"
+if [[ "$smoke_rc" == 0 ]] &&
+  grep -Fq 'smoke_results=smoke-results/bundle-smoke-result.json' \
+    "$fixture_dir/smoke-race/github-output"; then
+  pass "a run that is still in progress is waited for and promotes once it completes"
+else
+  bad "a run that was in progress when the release looked did not promote after completing (exit ${smoke_rc})"
+fi
+
+# In progress for the whole bound: the wait ends, nothing is promoted, and no
+# artifact is invented.
+mkdir -p "$fixture_dir/smoke-stalled"
+printf '%s\n' "$in_progress_run" >"$fixture_dir/smoke-stalled/run-list.json"
+smoke_rc="$(run_smoke_case stalled 3)"
+if [[ "$smoke_rc" == 0 ]] &&
+  [[ ! -s "$fixture_dir/smoke-stalled/github-output" ]] &&
+  grep -Fq 'did not complete within' "$fixture_dir/smoke-stalled/stdout" &&
+  ! grep -Fq 'run download' "$fixture_dir/smoke-stalled/calls.log"; then
+  pass "a run that never completes stops at the bound and stays unverified"
+else
+  bad "a run that never completes did not stop at the bound: $(cat "$fixture_dir/smoke-stalled/stdout")"
+fi
+
+# Absent: no run exists for the commit at all. It must give up early (three checks),
+# keep unverified, and say which fact it found.
+mkdir -p "$fixture_dir/smoke-absent"
+printf '%s\n' '[]' >"$fixture_dir/smoke-absent/run-list.json"
+smoke_rc="$(run_smoke_case absent 24)"
+if [[ "$smoke_rc" == 0 ]] &&
+  [[ ! -s "$fixture_dir/smoke-absent/github-output" ]] &&
+  grep -Fq 'no CI push run on main for' "$fixture_dir/smoke-absent/stdout" &&
+  [[ "$(grep -c 'run list' "$fixture_dir/smoke-absent/calls.log")" == 3 ]]; then
+  pass "an absent CI run stops after three checks instead of burning the whole bound"
+else
+  bad "an absent CI run did not stop early: $(cat "$fixture_dir/smoke-absent/stdout")"
+fi
+
+# A completed but red run: the artifact may exist, but a failed run is not evidence.
+mkdir -p "$fixture_dir/smoke-failed"
+printf '%s\n' "[{\"databaseId\":4244,\"headSha\":\"${smoke_sha}\",\"status\":\"completed\",\"conclusion\":\"failure\"}]" \
+  >"$fixture_dir/smoke-failed/run-list.json"
+smoke_rc="$(run_smoke_case failed)"
+if [[ "$smoke_rc" == 0 ]] &&
+  [[ ! -s "$fixture_dir/smoke-failed/github-output" ]] &&
+  grep -Fq 'is not evidence' "$fixture_dir/smoke-failed/stdout" &&
+  ! grep -Fq 'run download' "$fixture_dir/smoke-failed/calls.log"; then
+  pass "a failed CI run leaves the bundle unverified instead of promoting its artifact"
+else
+  bad "a failed CI run was treated as smoke evidence: $(cat "$fixture_dir/smoke-failed/stdout")"
 fi
 
 if (( fail != 0 )); then

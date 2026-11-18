@@ -215,14 +215,24 @@ curl -s -H "Authorization: Bearer <pat>" -H "X-IBEX-Agent-ID: <agent-uuid>" http
 Chat (bash):
 
 ```bash
+# A non-streaming chat completion must carry an Idempotency-Key once the durable
+# ledger is wired, and POSTGRES_DSN above wires it. Without the header the proxy
+# answers 400 VALIDATION_ERROR and never calls the provider, with
+# field_errors[0].field = "header.Idempotency-Key". Use a fresh key per logical
+# request: the same key replays the stored response instead of calling the
+# provider again.
 curl -s -X POST http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer <pat>" \
   -H "Content-Type: application/json" \
   -H "X-IBEX-Agent-ID: 550e8400-e29b-41d4-a716-446655440000" \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}'
 # expect HTTP 200 under default IBEX_LLM_MODE=mock (registered model)
+# 400 VALIDATION_ERROR when Idempotency-Key is missing (ledger wired by POSTGRES_DSN)
 # 501 PROVIDER_NOT_CONFIGURED only if the model is not in the registry
 ```
+
+Without a PostgreSQL DSN no ledger is wired and the header is optional; Redis then dedupes when a key is supplied and the request proceeds without dedupe when it is not.
 
 Chat (PowerShell — do not use bash `\` line continuation):
 
@@ -231,6 +241,8 @@ $headers = @{
   Authorization = "Bearer <pat>"
   "Content-Type" = "application/json"
   "X-IBEX-Agent-ID" = "550e8400-e29b-41d4-a716-446655440000"
+  # Required while POSTGRES_DSN is set; a fresh key per logical request.
+  "Idempotency-Key" = [guid]::NewGuid().ToString()
 }
 $body = '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}'
 Invoke-RestMethod -Uri http://localhost:8080/v1/chat/completions -Method POST -Headers $headers -Body $body

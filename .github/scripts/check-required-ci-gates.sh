@@ -116,15 +116,31 @@ live_required_contexts() {
     --jq '.required_status_checks.contexts[]' 2>/dev/null
 }
 
-if live="$(live_required_contexts)" && [[ -n "$live" ]]; then
-  mapfile -t enforced_contexts <<<"$live"
+# Retrieval failure and a successfully-read-but-empty rule are different facts, and the
+# old `&& [[ -n "$live" ]]` collapsed them: an empty list normalised to nothing, skipped
+# the comparison, printed the "could not read" warning and exited 0 — while every
+# declared context was unenforced. A read that succeeds always compares.
+if live="$(live_required_contexts)"; then
+  mapfile -t enforced_contexts < <(sed '/^$/d' <<<"$live")
   unenforced=()
   for context in "${contexts[@]}"; do
-    if [[ " ${enforced_contexts[*]} " != *" $context "* ]]; then
-      unenforced+=("$context")
-    fi
+    enforced=0
+    for candidate in "${enforced_contexts[@]}"; do
+      # Exact equality, one array element at a time. The old test asked whether the
+      # joined list contained " $context ", so a *different* context that embeds a
+      # declared name ("legacy ci-gate-site") counted as enforcing "ci-gate-site" —
+      # the same defect as a skipped comparison, in the forgiving direction.
+      if [[ "$candidate" == "$context" ]]; then
+        enforced=1
+        break
+      fi
+    done
+    (( enforced )) || unenforced+=("$context")
   done
   if (( ${#unenforced[@]} > 0 )); then
+    if (( ${#enforced_contexts[@]} == 0 )); then
+      printf 'The live main branch rule reports zero required status checks.\n' >&2
+    fi
     printf 'Declared but NOT enforced by the live main branch rule: %s\n' "${unenforced[*]}" >&2
     printf 'Each of those cannot block a merge. Adding them is an owner action; this script must not take it:\n' >&2
     printf '  gh api --method PUT repos/%s/branches/main/protection --input .github/branch-protection-main.json\n' \

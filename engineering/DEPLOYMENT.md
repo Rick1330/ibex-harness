@@ -150,6 +150,11 @@ TEI `ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4@sha256:2538ea1c…`
 `5617a9f61b028005a4858fdac845db406aefb181` (1024 dimensions), and the edge terminator
 `caddy:2.11.9-alpine@sha256:0bbb055b…`. The first start is gated on TEI: it downloads roughly 2.3 GB into the
 `tei-cache` volume and the health window is two hours, because a slow host must not be marked unhealthy mid-download.
+That window is also the bound on `docker compose up`: `embedder` carries
+`depends_on: tei: condition: service_healthy`, so the profile does not reach its own post-start waiter until TEI is
+healthy or the check fails. Both halves are interpolated — `IBEX_V1_TEI_START_PERIOD` (default `7200s`) and
+`IBEX_V1_TEI_HEALTH_RETRIES` (default `360`) — so a caller that cannot wait two hours can tighten them without editing
+the profile; `ci.yml` sets `600s`/`30` to bound its job at fifteen minutes. The defaults stay the operator posture.
 The volume persists a partial fetch, so re-running `make v1-up` resumes it; a warm volume is the recommended pre-seed
 for an offline or bandwidth-limited install. The reference sizing is a 16 GB host: TEI uses about 8 GB RSS with the
 2048-token batch and the application plane about 3 GB. The edge shares one network namespace with the proxy, API,

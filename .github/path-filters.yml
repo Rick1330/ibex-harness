@@ -196,6 +196,24 @@ v1:
   - 'infra/scripts/lib/dotenv.py'
   # The profile mounts the generated pgBackRest stanza; the template is its contract.
   - 'infra/backup/pgbackrest/**'
+  # The console image's frozen-install COPY set: `COPY package.json pnpm-lock.yaml
+  # pnpm-workspace.yaml .npmrc ./` plus `COPY site/package.json`. These are the files
+  # the install resolves, so an .npmrc-only change builds a different console image;
+  # `packages/proto/package.json` is inside packages/** above.
+  - '.npmrc'
+  - 'package.json'
+  - 'pnpm-lock.yaml'
+  - 'pnpm-workspace.yaml'
+  - 'site/package.json'
+  # The proxy image embeds the provider-capability manifest, and both the proxy and
+  # the api image copy the deprecation record; the api image also copies the REST
+  # route registry. Each is resolved at runtime, so editing one ships a different
+  # image. Deliberately the two contract files and not contracts/**: the rest of
+  # that directory (evidence, vectors, test matrix) is never copied, and
+  # infra/scripts/test-ci-tiering.sh fails if a Dockerfile starts copying a third.
+  - 'infra/provider-capabilities/**'
+  - 'engineering/architecture-v2/contracts/deprecations.json'
+  - 'engineering/architecture-v2/contracts/rest-route-registry.json'
 # Heavy Postgres PgVectorStore integration (memory-integration job).
 memory:
   - 'services/memory/**'

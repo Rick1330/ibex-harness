@@ -98,6 +98,59 @@ func testRedisIdempotencyStore(t *testing.T) (idempotency.Store, *miniredis.Mini
 	return store, mr
 }
 
+// recordingTerminationLedger is the durable ledger the v1 profile wires, in the
+// smallest form that lets the router exercise it: it owns every key it is asked
+// for and records what it was given. The chat package keeps its own fake, but it
+// is unexported there, and a router-level test has to build the router to reach
+// the path at all.
+type recordingTerminationLedger struct {
+	principals []idempotency.Principal
+	keys       []string
+	finalized  int
+}
+
+func (l *recordingTerminationLedger) Claim(_ context.Context, p idempotency.Principal, key, hash string) (idempotency.ClaimOutcome, error) {
+	l.principals = append(l.principals, p)
+	l.keys = append(l.keys, key)
+	return idempotency.ClaimOutcome{Kind: idempotency.ClaimOwned, Claim: idempotency.ClaimToken{
+		ID: uuid.New(), Principal: p, Key: key, RequestHash: hash, Version: 1,
+	}}, nil
+}
+
+func (l *recordingTerminationLedger) Finalize(context.Context, idempotency.ClaimToken, int, []byte) error {
+	l.finalized++
+	return nil
+}
+
+func (l *recordingTerminationLedger) Release(context.Context, idempotency.ClaimToken) error {
+	return nil
+}
+
+// durableLedgerRouter builds the router the way the v1 profile does: a
+// registered provider, a provider-scoped token that names its agent, and a
+// non-nil TerminationLedger. That last field is the one every other harness
+// leaves nil, which is why the required-header path had no router-level test.
+func durableLedgerRouter(t *testing.T, ledger idempotency.Ledger, prov provider.Provider) http.Handler {
+	t.Helper()
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), prov)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	cfg := chatTestConfig()
+	cfg.IdempotencyRedisTimeout = time.Second
+	validator := &chatMockValidator{res: &auth.ValidateResult{
+		OrgID:       uuid.MustParse(testChatOrgID),
+		AgentID:     uuid.MustParse(testChatAgentID),
+		Permissions: permissions.ProxyChatCompletion,
+	}}
+	return mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
+		d.Config = cfg
+		d.Validator = validator
+		d.ProviderRegistry = reg
+		d.TerminationLedger = ledger
+	}))
+}
+
 const chatBodyA = `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 const chatBodyB = `{"model":"gpt-4o","messages":[{"role":"user","content":"bye"}]}`
 
@@ -113,6 +166,77 @@ func TestUnit_Idempotency_MissingHeaderCallsProvider(t *testing.T) {
 	assertStatus(t, rec, http.StatusOK)
 	if prov.calls.Load() != 1 {
 		t.Fatalf("Complete calls=%d want 1", prov.calls.Load())
+	}
+}
+
+// TestUnit_Idempotency_DurableLedgerRequiresHeader pins the contract the v1
+// profile runs under: with the durable ledger wired, a non-streaming chat
+// completion without an Idempotency-Key is refused before the provider call, and
+// one with the key goes through and finalizes its claim.
+//
+// Every other harness in this package leaves TerminationLedger nil, so the chat
+// route answered 200 without the header and nothing caught that the wired
+// profile answers 400. The v1 smoke found it in CI instead.
+func TestUnit_Idempotency_DurableLedgerRequiresHeader(t *testing.T) {
+	t.Parallel()
+	ledger := &recordingTerminationLedger{}
+	prov := &countingLLMProvider{name: "openai", models: []string{"gpt-4o"}}
+	handler := durableLedgerRouter(t, ledger, prov)
+
+	assertDurableHeaderRefused(t, handler, prov, ledger)
+	assertDurableKeyClaimsOnce(t, handler, prov, ledger)
+}
+
+// assertDurableHeaderRefused pins that a completion without an Idempotency-Key is
+// refused before the provider or the ledger is touched.
+func assertDurableHeaderRefused(
+	t *testing.T,
+	handler http.Handler,
+	prov *countingLLMProvider,
+	ledger *recordingTerminationLedger,
+) {
+	t.Helper()
+	rec := postChat(t, handler, chatRequestOpts{
+		body: chatBodyA, auth: true, agentID: testChatAgentID,
+	})
+	assertStatus(t, rec, http.StatusBadRequest)
+	assertBodyCode(t, rec, apierror.CodeValidationError)
+	if body := rec.Body.String(); !strings.Contains(body, `"field":"header.Idempotency-Key"`) {
+		t.Fatalf("body does not name the required header: %s", body)
+	}
+	if calls := prov.calls.Load(); calls != 0 {
+		t.Fatalf("Complete calls=%d want 0 without an Idempotency-Key", calls)
+	}
+	if len(ledger.keys) != 0 {
+		t.Fatalf("ledger claimed %v without an Idempotency-Key", ledger.keys)
+	}
+}
+
+// assertDurableKeyClaimsOnce pins that the same completion carrying the header
+// past the refusals above reaches the provider and leaves exactly one finalized
+// claim naming the key and the verified agent.
+func assertDurableKeyClaimsOnce(
+	t *testing.T,
+	handler http.Handler,
+	prov *countingLLMProvider,
+	ledger *recordingTerminationLedger,
+) {
+	t.Helper()
+	rec := postChat(t, handler, chatRequestOpts{
+		body: chatBodyA, auth: true, agentID: testChatAgentID, idempotencyKey: "durable-key-1",
+	})
+	assertStatus(t, rec, http.StatusOK)
+	if calls := prov.calls.Load(); calls != 1 {
+		t.Fatalf("Complete calls=%d want 1 past the header check", calls)
+	}
+	if len(ledger.keys) != 1 || ledger.keys[0] != "durable-key-1" {
+		t.Fatalf("ledger claimed %v, want one claim for durable-key-1", ledger.keys)
+	}
+	if len(ledger.principals) != 1 || ledger.principals[0].AgentID != uuid.MustParse(testChatAgentID) {
+		t.Fatalf("ledger principals=%+v, want the verified agent", ledger.principals)
+	}
+	if ledger.finalized != 1 {
+		t.Fatalf("ledger finalized=%d want 1", ledger.finalized)
 	}
 }
 

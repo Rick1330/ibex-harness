@@ -800,11 +800,25 @@ jobs:
   # SSD, so the job removes the preinstalled toolchains it never uses before building.
   # Memory fits with ~5 GB to spare; disk is the tightest constraint here.
   #
-  # Timeout: IBEX_V1_HEALTH_ATTEMPTS=900 bounds the profile's own wait at 30 minutes
-  # (v1_wait_healthy sleeps 2 s per attempt, so the default 3600 would hold a runner for
-  # two hours on a stalled model download). 90 minutes leaves 60 for the cold build of
-  # thirteen images — bundle-smoke spends up to 40 on three — plus migrate, provision,
-  # bootstrap and the smoke itself, and still fails before GitHub's 6-hour ceiling.
+  # Timeout: two waits, both bounded, because they cover different phases and only the
+  # second one was bounded before.
+  #   * `docker compose up -d` blocks on the profile's own dependency edges, and
+  #     `embedder` carries `depends_on: tei: condition: service_healthy`, which every
+  #     other service inherits transitively (memory -> embedder, worker/context ->
+  #     memory). TEI's compose healthcheck allows a two-hour `start_period` for a
+  #     ~2.3 GB model download, so a stalled download was bounded only by this job's
+  #     timeout: the failure would have been a killed runner with no diagnosis. The job
+  #     therefore sets IBEX_V1_TEI_START_PERIOD=600s and IBEX_V1_TEI_HEALTH_RETRIES=30 (both
+  #     interpolated by infra/compose/v1-single-node/compose.yml, whose defaults stay
+  #     the operator posture), which bounds that wait at 15 minutes and fails as an
+  #     unhealthy TEI plus the `make v1-ps` diagnostics step.
+  #   * IBEX_V1_HEALTH_ATTEMPTS=900 bounds the waiter that runs after `up` returns at 30
+  #     minutes (it sleeps 2 s per attempt, so the default 3600 would hold a runner for
+  #     two hours).
+  # 90 minutes leaves 60 for the cold build of thirteen images — bundle-smoke spends up
+  # to 40 on three — plus migrate, provision, bootstrap and the smoke itself, and still
+  # fails before GitHub's 6-hour ceiling. Worst case on the stall path is 60 + 15 = 75
+  # minutes, inside the timeout, so the job reports a diagnosis instead of being killed.
   v1-smoke:
     name: v1-smoke
     needs: [changes]
@@ -817,6 +831,11 @@ jobs:
       # 8443 is the port in the recorded start and needs no privileged bind; the
       # compose interpolation, `make v1-url` and the smoke all read it from here.
       IBEX_EDGE_PORT: "8443"
+      # Bounds the Compose dependency wait (600 s start period + 30 retries x 10 s
+      # interval = 15 minutes). The profile's defaults are 7200s/360 for operator hosts.
+      IBEX_V1_TEI_START_PERIOD: "600s"
+      IBEX_V1_TEI_HEALTH_RETRIES: "30"
+      # Bounds the waiter `make v1-up` runs after `up` returns, at 30 minutes.
       IBEX_V1_HEALTH_ATTEMPTS: "900"
     steps:
       - name: Harden the runner (Audit all outbound calls)

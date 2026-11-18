@@ -172,6 +172,72 @@ class SiteLedgerTests(unittest.TestCase):
         )
         self.assertEqual(found, {"Memory substrate": "PROVISIONAL"})
 
+    def test_an_entry_the_reader_cannot_parse_is_an_input_error_naming_the_row(self) -> None:
+        # A skipped entry never reaches compare_rows, so a capability written in a
+        # form the matcher does not handle would satisfy the "no unaccounted row"
+        # contract without ever being compared against the other surfaces.
+        with self.assertRaises(check_status_vocabulary.InputError) as caught:
+            check_status_vocabulary.parse_site_rows(
+                "const capabilityRows = [\n"
+                "  ['Memory substrate', 'IMPLEMENTED', 'Detail.', '/x'],\n"
+                '  ["New capability", "PROVISIONAL", "Detail.", "/y"],\n'
+                "]\n"
+            )
+        message = str(caught.exception)
+        self.assertIn("line 3", message)
+        self.assertIn('["New capability", "PROVISIONAL", "Detail.", "/y"]', message)
+
+    def test_a_readable_entry_after_an_unreadable_one_does_not_hide_it(self) -> None:
+        # The scan must not read the rows it can and quietly return them: the
+        # readable neighbour would then account for its own capability while the
+        # unreadable entry went unreported.
+        with self.assertRaises(check_status_vocabulary.InputError):
+            check_status_vocabulary.parse_site_rows(
+                "const capabilityRows = [\n"
+                "  ['New capability', 'PROVISIONAL', 'Detail.', '/y'],\n"
+                "  ['Memory substrate', \"IMPLEMENTED\", 'Detail.', '/x'],\n"
+                "]\n"
+            )
+
+
+class DocsVocabularyTests(unittest.TestCase):
+    def test_a_conflicting_duplicate_label_is_an_input_error_naming_the_lines(self) -> None:
+        # The table is read into a map, so a duplicate would keep the last class
+        # and drop the earlier row from the comparison while both rows stayed
+        # visible to a reader: a stale row above the correct one would pass.
+        with self.assertRaises(check_status_vocabulary.InputError) as caught:
+            check_status_vocabulary.parse_docs_vocabulary(
+                textwrap.dedent(
+                    """
+                    | Label | Ledger class | Meaning |
+                    | --- | --- | --- |
+                    | IMPLEMENTED | `provisional` | Stale row. |
+                    | IMPLEMENTED | `shipped-local` | Correct row. |
+                    | PROVISIONAL | `provisional` | A seam exists. |
+                    """
+                )
+            )
+        message = str(caught.exception)
+        self.assertIn("IMPLEMENTED", message)
+        self.assertIn("lines 4 and 5", message)
+
+    def test_a_duplicate_hidden_by_decoration_is_still_an_input_error(self) -> None:
+        # The label is compared after the backticks and whitespace a table cell may
+        # carry are stripped, so `IMPLEMENTED` and IMPLEMENTED are one label and a
+        # decorated duplicate cannot pass as a second entry.
+        with self.assertRaises(check_status_vocabulary.InputError) as caught:
+            check_status_vocabulary.parse_docs_vocabulary(
+                textwrap.dedent(
+                    """
+                    | Label | Ledger class | Meaning |
+                    | --- | --- | --- |
+                    | `PROVISIONAL` | `provisional` | A seam exists. |
+                    | PROVISIONAL | `shipped-local` | Conflicting. |
+                    """
+                )
+            )
+        self.assertIn("PROVISIONAL", str(caught.exception))
+
 
 class VocabularyTests(unittest.TestCase):
     def test_a_label_missing_from_a_surface_names_the_label_and_the_surface(self) -> None:
@@ -380,6 +446,45 @@ class RepositoryTests(unittest.TestCase):
             code, stderr = self.run_against(root)
         self.assertEqual(code, 2)
         self.assertIn(check_status_vocabulary.DOCS_LEDGER, stderr)
+
+    def test_a_conflicting_stale_vocabulary_row_above_the_correct_one_fails(self) -> None:
+        # The row a reader would see first must not be dropped from the comparison
+        # merely because a later row states the same label: before the duplicate was
+        # rejected, this file passed with the stale class silently discarded.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.copy(Path(temporary))
+            docs = root / check_status_vocabulary.DOCS_LEDGER
+            docs.write_text(
+                docs.read_text(encoding="utf-8").replace(
+                    "| IMPLEMENTED | `shipped-local` |",
+                    "| IMPLEMENTED | `provisional` | Stale row. |\n| IMPLEMENTED | `shipped-local` |",
+                ),
+                encoding="utf-8",
+            )
+            code, stderr = self.run_against(root)
+        self.assertEqual(code, 2)
+        self.assertIn("IMPLEMENTED", stderr)
+        self.assertIn("listed twice", stderr)
+
+    def test_an_unreadable_capability_entry_fails_instead_of_passing_unscanned(self) -> None:
+        # The entry is a capability no surface declares, written in a form the reader
+        # does not handle. Skipping it left `compare_rows` with nothing to report, so
+        # the row passed without ever being checked.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.copy(Path(temporary))
+            ledger = root / check_status_vocabulary.SITE_LEDGER
+            ledger.write_text(
+                ledger.read_text(encoding="utf-8").replace(
+                    "  ['Memory substrate', 'IMPLEMENTED'",
+                    "  [\"Hosted HA Console\", \"IMPLEMENTED\", 'Detail.', '/x'],\n"
+                    "  ['Memory substrate', 'IMPLEMENTED'",
+                ),
+                encoding="utf-8",
+            )
+            code, stderr = self.run_against(root)
+        self.assertEqual(code, 2)
+        self.assertIn("cannot be read", stderr)
+        self.assertIn("Hosted HA Console", stderr)
 
 
 if __name__ == "__main__":
