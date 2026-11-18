@@ -36,7 +36,11 @@ Three properties are checked, offline and stdlib-only:
    while it stayed visible to a reader. The same holds for every element of
    ``capabilityRows``: one that is not one single-quoted tuple on its own line --
    a spread, a second tuple on the line, a tuple broken across lines -- is
-   rejected naming its line rather than dropped from the comparison.
+   rejected naming its line rather than dropped from the comparison. The array
+   itself is found at its declaration rather than at the first mention of its
+   name, it must be a direct array initializer, and only whitespace or a ``//``
+   comment may follow its closing bracket: each of those is a way the guard could
+   compare one array while the site rendered another.
 
 What is *not* compared, and why:
 
@@ -246,6 +250,16 @@ TABLE_LINE = re.compile(r"^\s*\|.*\|\s*$")
 SEPARATOR_CELL = re.compile(r"^:?-{3,}:?$")
 CELL_SPLIT = re.compile(r"(?<!\\)\|")
 STATUS_UNION = re.compile(r"export type Status = ([^\n]+)")
+# TypeScript ends a line on CR, LF, or CRLF only. `str.splitlines` also splits on a
+# form feed, a vertical tab, U+2028 and others, which would cut the tail off a `//`
+# comment and read it as an array entry: see `_lines_between`.
+TS_LINE_BREAK = re.compile(r"\r\n|\r|\n")
+# The declaration, at statement position: the name must follow `const`/`let`/`var`
+# that opens its line, so a mention inside a comment is not taken for the
+# declaration. See `_capability_declaration`.
+CAPABILITY_DECLARATION = re.compile(
+    r"^[ \t]*(?:export[ \t]+)?(?:const|let|var)[ \t]+capabilityRows\b", re.MULTILINE
+)
 META_ENTRY = re.compile(r"^ {2}([A-Z][A-Z_]*): \{$", re.MULTILINE)
 LEDGER_CLASS = re.compile(r"ledgerClass: '([^']+)'")
 CAPABILITY_ROW = re.compile(r"^\s*\[\s*'([^']+)'\s*,\s*'([A-Z][A-Z_]*)'\s*,[^[]*\]\s*(?:,\s*)?$")
@@ -404,69 +418,280 @@ def parse_site_rows(source: str) -> dict[str, str]:
     `compare_rows`, which is the check that every row belongs to a declared
     capability, so the guard reported agreement over rows it had not read.
 
+    The array is resolved before its entries are read, because comparing one array
+    while the site renders another is the same hole in a different place: the
+    declaration is found at statement position rather than by the first mention of
+    the name, only a direct array initializer is accepted, and only whitespace or a
+    `//` comment may follow the closing `]`.
+
     The entry format is rejected rather than widened, because widening only moves
     the same hole to the next form (a spread, a template literal, a single-quoted
     string carrying an escaped quote) while a rejected entry is a fact the guard
     can always state. `ledger.ts` is formatted with single quotes, one entry per
     line, so an entry in another form is also a deviation worth failing on.
     """
-    block, first_line = _capability_block(source)
-    rows = _capability_entries(block, first_line)
+    opening, closing = _capability_array(source)
+    rows = _capability_entries(source, opening, closing)
     if not rows:
         raise InputError(f"{SITE_LEDGER}: `capabilityRows` lists no capability")
     return _unique_entries(rows)
 
 
-def _capability_block(source: str) -> tuple[str, int]:
-    """The `capabilityRows` array text, and the line number its opening line sits on.
+def _capability_array(source: str) -> tuple[int, int]:
+    """The indexes of the `[` and `]` of `capabilityRows`, or an InputError.
 
-    The array runs from the line that opens it to the first line that closes it,
-    so text after the array is not scanned for entries. The line number is carried
-    so a rejected entry can name the line a reader has to look at.
+    The declaration is located at statement position, so text above it mentioning
+    the name is not taken for it. Only a direct array initializer is accepted:
+    `rows ?? [ ... ]` renders `rows` when it is defined, so comparing the fallback
+    would report agreement about an array the page does not use. The same holds for
+    an initializer that is a name, a call, or a concatenation.
     """
-    start = source.find("const capabilityRows")
-    if start == -1:
-        raise InputError(f"{SITE_LEDGER}: no `capabilityRows` array")
-    end = source.find("\n]", start)
-    block = source[start:] if end == -1 else source[start:end]
-    return block, source.count("\n", 0, start) + 1
+    match = _capability_declaration(source)
+    number = _line_number(source, match.start())
+    line_end = _line_end(source, match.end())
+    equals = source.find("=", match.end(), line_end)
+    if equals == -1:
+        raise InputError(
+            f"{SITE_LEDGER}: the capabilityRows declaration on line {number} states no "
+            "initializer on that line"
+        )
+    opening = _skip_trivia(source, equals + 1)
+    if source[opening : opening + 1] != "[":
+        raise InputError(
+            f"{SITE_LEDGER}: the capabilityRows declaration on line {number} must be a direct "
+            f"array initializer, not '{_excerpt(source[equals + 1 :])}'"
+        )
+    _check_opening_tail(source, opening, number)
+    closing = _array_end(source, opening)
+    _check_array_tail(source, closing)
+    return opening, closing
 
 
-def _capability_entries(block: str, first_line: int) -> list[tuple[str, str]]:
-    """Every entry of `block`, parsed, with the line number it sits on.
+def _capability_declaration(source: str) -> re.Match[str]:
+    """The declaration of `capabilityRows` at statement position, not a mention of it.
 
-    Every line is accounted for, because the three groups are exhaustive: the
-    declaration line must end at its opening bracket, a blank line or a `//`
-    comment holds no entry, and every other line must be exactly one entry. A
-    line that matches none of them -- a spread, a second entry sharing a line, an
-    entry broken across lines, a block comment -- is an InputError naming the
-    line, never a line to pass over.
+    Searching for the name alone returned its first occurrence, which can sit inside
+    a comment: a commented-out copy of the array above the real one would then be the
+    array the guard compared, and its rows would never be the rows the site renders.
+
+    The comment markers before each candidate are counted one disjoint segment at a
+    time, so the scan stays linear in the length of the file. A `/*` inside a string
+    makes this read "inside a comment", which rejects a declaration rather than
+    accept one the guard may have misread; `ledger.ts` carries no such string, so the
+    count is exact here.
     """
-    rows: list[tuple[str, str]] = []
-    for offset, line in enumerate(block.splitlines()):
-        number = first_line + offset
-        if offset == 0:
-            _check_declaration_line(line, number)
-        elif _is_trivia(line):
-            continue
+    opens = closes = scanned = 0
+    for match in CAPABILITY_DECLARATION.finditer(source):
+        opens += source.count("/*", scanned, match.start())
+        closes += source.count("*/", scanned, match.start())
+        scanned = match.start()
+        if opens <= closes:
+            return match
+    raise InputError(f"{SITE_LEDGER}: no `capabilityRows` array")
+
+
+def _check_opening_tail(source: str, opening: int, number: int) -> None:
+    """Require the array's opening line to end at its opening `[`.
+
+    A `[` inside a trailing comment -- `= oldRows // [` -- would satisfy a check that
+    only looked at the line's last character, while the array itself opened earlier.
+    The bracket is the one the scanner found, and only whitespace or a `//` comment
+    may follow it: an entry sharing that line is an entry no line reader ever sees.
+    """
+    tail = source[opening + 1 : _line_end(source, opening)].strip()
+    if tail and not tail.startswith("//"):
+        raise InputError(
+            f"{SITE_LEDGER}: the capabilityRows declaration on line {number} must end at its "
+            f"opening '[': {_excerpt(tail)}"
+        )
+
+
+def _check_array_tail(source: str, closing: int) -> None:
+    """Reject anything after the array's closing `]` but whitespace or a `//` comment.
+
+    A trailing operation -- `.map(...)`, `.concat(...)`, `.filter(...)`, `.flat()`,
+    `as const` -- hands the site rows this text does not contain, so the comparison
+    would cover a different array than the page renders. It is rejected rather than
+    evaluated, because evaluating it means interpreting TypeScript. A `;` is rejected
+    by the same rule: `ledger.ts` is written without statement terminators, so one
+    appearing here is a form the guard does not read.
+    """
+    number = _line_number(source, closing)
+    tail = source[closing + 1 : _line_end(source, closing + 1)].strip()
+    following = _skip_trivia(source, closing + 1)
+    if _tail_is_code(tail) or _next_is_operation(source, following):
+        raise InputError(
+            f"{SITE_LEDGER}: the capabilityRows array ending on line {number} must end at "
+            f"its ']', but '{_excerpt(source[following:])}' follows it"
+        )
+
+
+def _tail_is_code(tail: str) -> bool:
+    """Whether the rest of the `]` line is anything but a `//` comment."""
+    return bool(tail) and not tail.startswith("//")
+
+
+def _next_is_operation(source: str, index: int) -> bool:
+    """Whether a `.` operation, which the guard cannot evaluate, is the next token."""
+    return source[index : index + 1] == "."
+
+
+def _capability_entries(source: str, opening: int, closing: int) -> list[tuple[str, str]]:
+    """Every entry between the brackets, parsed, with the line number it sits on.
+
+    Every line is accounted for, because the two groups are exhaustive: a blank line
+    or a `//` comment holds no entry, and every other line must be exactly one entry.
+    A line that matches neither -- a spread, a second entry sharing a line, an entry
+    broken across lines, a block comment -- is an InputError naming the line, never a
+    line to pass over.
+    """
+    return [
+        _capability_row(line, number)
+        for number, line in _lines_between(source, opening + 1, closing)
+        if not _is_trivia(line)
+    ]
+
+
+def _line_number(source: str, index: int) -> int:
+    """The 1-based line `index` sits on, counting only TypeScript's terminators."""
+    return len(TS_LINE_BREAK.findall(source, 0, index)) + 1
+
+
+def _line_end(source: str, index: int) -> int:
+    """The index of the first TypeScript line terminator at or after `index`."""
+    found = TS_LINE_BREAK.search(source, index)
+    return len(source) if found is None else found.start()
+
+
+def _lines_between(source: str, start: int, end: int) -> list[tuple[int, str]]:
+    """The lines of `source` from `start` to `end`, each with its 1-based number.
+
+    Only TypeScript's terminators split the text. `str.splitlines` also splits on a
+    form feed, a vertical tab, U+2028, U+0085 and others, so `// retired\\f['X', ...]`
+    would become a comment line and an entry line -- while TypeScript keeps both in
+    one comment -- and the guard would report agreement about a row nothing renders.
+    """
+    first = _line_number(source, start)
+    return [
+        (first + offset, line)
+        for offset, line in enumerate(TS_LINE_BREAK.split(source[start:end]))
+    ]
+
+
+def _skip_trivia(source: str, index: int) -> int:
+    """The first index at or after `index` that is neither whitespace nor a comment."""
+    while index < len(source) and _starts_trivia(source, index):
+        index = _end_of_trivia(source, index)
+    return index
+
+
+def _starts_trivia(source: str, index: int) -> bool:
+    """Whether trivia -- whitespace or a comment -- begins at `index`."""
+    return source[index].isspace() or source.startswith(("//", "/*"), index)
+
+
+def _end_of_trivia(source: str, index: int) -> int:
+    """The first index past the one run of trivia that begins at `index`.
+
+    Called where `_starts_trivia` holds, so the three kinds it names are exhaustive:
+    a run of whitespace, a `//` comment to the end of its line, and a `/* ... */`
+    comment to the end of its terminator.
+    """
+    if source[index].isspace():
+        return _end_of_whitespace(source, index)
+    if source.startswith("//", index):
+        return _line_end(source, index)
+    return _end_of_block_comment(source, index)
+
+
+def _end_of_whitespace(source: str, index: int) -> int:
+    """The first index at or after `index` that is not whitespace."""
+    while index < len(source) and source[index].isspace():
+        index += 1
+    return index
+
+
+def _end_of_block_comment(source: str, index: int) -> int:
+    """The index just past the `*/` that closes the `/*` comment opening at `index`."""
+    close = source.find("*/", index + 2)
+    if close == -1:
+        raise InputError(f"{SITE_LEDGER}: an unterminated `/* ... */` comment")
+    return close + 2
+
+
+def _skip_string(source: str, index: int) -> int:
+    """The index just past the string literal that opens at `index`."""
+    quote = source[index]
+    index += 1
+    while index < len(source):
+        if source[index] == "\\":
+            index += 2
+        elif source[index] == quote:
+            return index + 1
         else:
-            rows.append(_capability_row(line, number))
-    return rows
+            index += 1
+    raise InputError(f"{SITE_LEDGER}: an unterminated string literal in `capabilityRows`")
 
 
-def _check_declaration_line(line: str, number: int) -> None:
-    """Require the `capabilityRows` declaration to end at its opening bracket.
+def _array_end(source: str, opening: int) -> int:
+    """The index of the `]` that closes the array opened at `opening`.
 
-    An entry sharing the declaration's line would be an entry no line reader ever
-    sees, so it is rejected rather than read: one entry per line is the only
-    layout the guard can account for.
+    Strings and comments are skipped, so a `]` inside a rendered detail or inside a
+    commented-out row neither ends the array early nor leaves entries unread. Each
+    turn of the loop hands one token to `_array_step`, which classifies it and says
+    where the scan resumes and what it did to the depth.
     """
-    if line.rstrip().endswith("["):
-        return
-    raise InputError(
-        f"{SITE_LEDGER}: the capabilityRows declaration on line {number} must end at its "
-        f"opening '[': {line.strip()}"
-    )
+    depth = 0
+    index = opening
+    closed = False
+    while index < len(source) and not closed:
+        index, depth, closed = _array_step(source, index, depth)
+    if not closed:
+        raise InputError(f"{SITE_LEDGER}: the `capabilityRows` array is not closed")
+    return index
+
+
+def _array_step(source: str, index: int, depth: int) -> tuple[int, int, bool]:
+    """Consume what begins at `index`: the index to resume at, the depth, and closure.
+
+    A string and a comment are consumed whole, so a `]` inside a rendered detail or
+    inside a commented-out row is not taken for the array's own bracket.
+    """
+    if source[index] in "'\"`":
+        return _skip_string(source, index), depth, False
+    if _starts_trivia(source, index):
+        return _skip_trivia(source, index), depth, False
+    return _bracket_step(source[index], index, depth)
+
+
+def _bracket_step(character: str, index: int, depth: int) -> tuple[int, int, bool]:
+    """Consume one ordinary character, or the bracket that opens or closes a level."""
+    if character == "[":
+        return index + 1, depth + 1, False
+    if character == "]":
+        return _close_level(index, depth)
+    return index + 1, depth, False
+
+
+def _close_level(index: int, depth: int) -> tuple[int, int, bool]:
+    """The step for a `]`: the level it leaves, and whether that level was the array's.
+
+    The index stays on the `]` when the array closes, because that bracket is the
+    index `_array_end` returns; a `]` that only ends a nested array resumes after
+    itself. A `]` before the array's own opening leaves a negative depth, which no
+    later `]` returns to zero, so the array reads as unclosed -- the outcome the
+    depth had when it was allowed to go negative.
+    """
+    remaining = depth - 1
+    if remaining == 0:
+        return index, remaining, True
+    return index + 1, remaining, False
+
+
+def _excerpt(text: str) -> str:
+    """The first line of `text`, stripped and shortened, for a rejection message."""
+    line = TS_LINE_BREAK.split(text.strip(), maxsplit=1)[0]
+    return line if len(line) <= 60 else f"{line[:57]}..."
 
 
 def _is_trivia(line: str) -> bool:

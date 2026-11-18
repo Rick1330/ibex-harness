@@ -261,7 +261,7 @@ digest_step_id() {
 #   * `COPY ["package.json", "./"]` is the JSON form of the same instruction. Its
 #     tokens carry brackets, quotes and commas, so no token ever matched a
 #     repository file and the whole instruction was skipped.
-copy_sources() {
+copy_source_tokens() {
   awk '
     { if (pending != "") { $0 = pending " " $0; pending = "" } }
     /\\[[:space:]]*$/ { sub(/\\[[:space:]]*$/, ""); pending = $0; next }
@@ -278,17 +278,81 @@ copy_sources() {
         print $i
       }
     }
-  ' | while read -r source; do
-    # An absolute path or a URL names something outside the build context.
+  '
+}
+
+# One COPY token, normalised: relative to the build context, or nothing when it names
+# something outside it (an absolute path or a URL).
+normalise_copy_source() {
+  local source="$1"
+  case "$source" in
+    /*|*://*) return 0 ;;
+  esac
+  source="${source#./}"
+  case "$source" in
+    ''|.) return 0 ;;
+  esac
+  printf '%s\n' "$source"
+}
+
+# The repository files one COPY source stands for, resolved against the build context
+# (`context` is repository-relative; `.` is the root every image here builds from).
+# A literal source is emitted when it exists. A wildcard source — `COPY *.json /app/`,
+# `COPY config/*.yml /etc/` — is a glob in Docker, so the literal path never exists
+# and a plain `-e` test emitted nothing: the guard either reported a false gap or
+# checked nothing at all, and "no gap" was indistinguishable from "cannot see a gap".
+# Every match is emitted instead, and each one is asserted against the v1 filter like
+# any other build input.
+copy_source_paths() {
+  local context="$1" source="$2" prefix='' match
+  if [[ "$context" != '.' ]]; then
+    prefix="${context%/}/"
+  fi
+  case "$source" in
+    *'*'*|*'?'*|*'['*)
+      # `compgen -G` stops `*` at a `/`, as Docker's filepath.Match does, and reads
+      # `**` as two stars rather than a globstar — the same reading Docker gives it.
+      while IFS= read -r match; do
+        [[ -n "$match" ]] || continue
+        printf '%s\n' "${prefix}${match#./}"
+      done < <(cd "$ROOT/${context}" && compgen -G "$source" || true)
+      ;;
+    *)
+      if [[ -e "$ROOT/${context%/}/${source}" ]]; then
+        printf '%s\n' "${prefix}${source}"
+      fi
+      ;;
+  esac
+  return 0
+}
+
+# Every repository input a Dockerfile's COPY instructions read, one per line.
+copy_sources() {
+  local dockerfile="$1" context="${2:-.}" token source
+  while read -r token; do
+    source="$(normalise_copy_source "$token")"
+    [[ -n "$source" ]] || continue
+    copy_source_paths "$context" "$source"
+  done < <(copy_source_tokens "$dockerfile")
+}
+
+# Wildcard COPY sources that match nothing. A pattern the tree cannot satisfy is an
+# input this guard cannot enumerate, so it is reported by name with the Dockerfile
+# that carries it: an unresolved pattern is a hole in the assertion, not a pass.
+copy_pattern_gaps() {
+  local dockerfile="$1" context="${2:-.}" token source matches
+  while read -r token; do
+    source="$(normalise_copy_source "$token")"
+    [[ -n "$source" ]] || continue
     case "$source" in
-      /*|*://*) continue ;;
+      *'*'*|*'?'*|*'['*) ;;
+      *) continue ;;
     esac
-    source="${source#./}"
-    case "$source" in
-      ''|.) continue ;;
-    esac
-    [[ -e "$ROOT/${source}" ]] && printf '%s\n' "$source"
-  done
+    matches="$(copy_source_paths "$context" "$source")"
+    [[ -n "$matches" ]] || printf "COPY source '%s' in %s matches no file\n" \
+      "$source" "${dockerfile#"$ROOT"/}"
+  done < <(copy_source_tokens "$dockerfile")
+  return 0
 }
 
 # Root-level files copied into an image (go.mod, .npmrc, …), the subset a filter
@@ -531,6 +595,68 @@ else
   bad "the trigger check passed a continued COPY source with no trigger: ${fixture_gaps:-<no gap reported>}"
 fi
 
+# --- wildcard COPY sources resolve against the build context ----------------
+# `COPY *.json /app/` names a set of files, not a path. The guard below resolves every
+# COPY source, so a pattern is expanded here and each match becomes a build input the
+# v1 assertion judges — but a pattern the tree cannot satisfy must be reported, because
+# an input this guard cannot enumerate is a hole rather than a pass. The sweep is over
+# every Dockerfile in services/ and infra/, not just the profile's, so a wildcard is
+# visible wherever it appears.
+mapfile -t all_dockerfiles < <(
+  find "$ROOT/services" "$ROOT/infra" -name Dockerfile -type f 2>/dev/null |
+    sed "s|^$ROOT/||" | sort
+)
+if (( ${#all_dockerfiles[@]} == 0 )); then
+  bad "no Dockerfiles were found under services/ and infra/: the wildcard COPY sweep is broken"
+fi
+mapfile -t pattern_gap_list < <(
+  for dockerfile in "${all_dockerfiles[@]}"; do
+    copy_pattern_gaps "$ROOT/$dockerfile"
+  done
+)
+if (( ${#pattern_gap_list[@]} == 0 )); then
+  pass "every wildcard COPY source across ${#all_dockerfiles[@]} Dockerfiles resolves to at least one file"
+else
+  bad "unresolvable COPY sources: ${pattern_gap_list[*]}"
+fi
+
+# The fixture proves both halves the real sweep cannot: a matching pattern contributes
+# every match instead of the literal path, and a pattern that matches nothing is named
+# with its Dockerfile instead of silently contributing no input.
+glob_dockerfile="$fixture_dir/glob.Dockerfile"
+cat >"$glob_dockerfile" <<'EOF'
+FROM alpine
+COPY services/*/Dockerfile /out/
+COPY site/package.json ./
+EOF
+glob_sources="$(copy_sources "$glob_dockerfile")"
+if grep -Fxq 'services/console/Dockerfile' <<<"$glob_sources" &&
+  grep -Fxq 'services/proxy/Dockerfile' <<<"$glob_sources" &&
+  grep -Fxq 'site/package.json' <<<"$glob_sources" &&
+  ! grep -Fq '*' <<<"$glob_sources"; then
+  pass "a wildcard COPY source expands to every match and a literal source is unchanged"
+else
+  bad "the COPY resolver read '$(tr '\n' ' ' <<<"$glob_sources")': a wildcard source did not expand to its matches"
+fi
+if [[ -z "$(copy_pattern_gaps "$glob_dockerfile")" ]]; then
+  pass "a wildcard COPY source with matches is not reported as unresolved"
+else
+  bad "a wildcard COPY source with matches was reported as unresolved: $(copy_pattern_gaps "$glob_dockerfile")"
+fi
+
+unmatched_dockerfile="$fixture_dir/unmatched.Dockerfile"
+cat >"$unmatched_dockerfile" <<'EOF'
+FROM alpine
+COPY nowhere/*.json /out/
+EOF
+unmatched_gaps="$(copy_pattern_gaps "$unmatched_dockerfile")"
+if [[ "$unmatched_gaps" == \
+  "COPY source 'nowhere/*.json' in ${unmatched_dockerfile#"$ROOT"/} matches no file" ]]; then
+  pass "a wildcard COPY source that matches nothing is named with its pattern and Dockerfile"
+else
+  bad "an unmatched wildcard COPY source was not reported cleanly: ${unmatched_gaps:-<nothing reported>}"
+fi
+
 missing_publish_inputs=()
 for service in $publish_services; do
   while read -r input; do
@@ -680,17 +806,24 @@ mapfile -t v1_profile_inputs < <(profile_build_inputs | sort -u)
 if (( ${#v1_profile_inputs[@]} == 0 )); then
   bad "no build inputs were derived from the v1 profile images: the derivation is broken"
 fi
-# Fixture-friendly: the input list is the real one, so a doctored copy of the
+# The derived build inputs, materialised once: the coverage assertion below reads this
+# file, and a mutation control names a fixed inventory through the same function so
+# its verdict cannot follow the tree.
+v1_inputs_file="$fixture_dir/v1-inputs.txt"
+printf '%s\n' "${v1_profile_inputs[@]}" >"$v1_inputs_file"
+
+# Fixture-friendly: the input list defaults to the real one, so a doctored copy of the
 # filters file below proves the assertion reports exactly the entry it lost.
 v1_input_gaps() {
-  local filters="$1" input pattern blocked
-  local -a patterns
+  local filters="$1" inventory="${2:-$v1_inputs_file}" input pattern blocked
+  local -a patterns inputs
   mapfile -t patterns < <(filter_globs "$filters" v1)
   if (( ${#patterns[@]} == 0 )); then
     printf 'the v1 filter declares no patterns\n'
     return 0
   fi
-  for input in "${v1_profile_inputs[@]}"; do
+  mapfile -t inputs < <(sed '/^$/d' "$inventory")
+  for input in "${inputs[@]}"; do
     [[ -n "$input" ]] || continue
     blocked=1
     for pattern in "${patterns[@]}"; do
@@ -751,22 +884,49 @@ else
   bad "v1 profile image inputs with no trigger: ${v1_gaps[*]}"
 fi
 
-# Removing one derived input must fail the assertion and name only that input. The
-# exact-equality comparison is the control: a doctored filter that was still
-# reported clean would mean the assertion never ran.
+# Removing one copied directory from the filter must fail the assertion and name its
+# inputs. The exact-equality comparison is the control: a doctored filter that was
+# still reported clean would mean the assertion never ran.
+#
+# This control's inventory is fixed, not derived: the verdict of a mutation must not
+# follow whichever files happen to be tracked under that directory, or a file added
+# there would rewrite what "naming only its input" means and the control would measure
+# the tree instead of the filter. The coverage assertion above still runs the real
+# derived inventory, so a new tracked file under a copied directory is still caught.
+capability_inventory="$fixture_dir/fixed-provider-capabilities.txt"
+printf '%s\n' \
+  'infra/provider-capabilities/manifest.v1.json' \
+  'infra/provider-capabilities/extra/provider.v2.json' >"$capability_inventory"
 v1_fixture_filters="$fixture_dir/v1-filters.yml"
 grep -Fv "  - 'infra/provider-capabilities/**'" "$FILTERS" >"$v1_fixture_filters"
-if [[ "$(v1_input_gaps "$v1_fixture_filters")" == \
-  'infra/provider-capabilities/manifest.v1.json is not a v1 trigger' ]]; then
-  pass "dropping a copied directory from the v1 filter fails the assertion, naming only its input"
+expected_capability_gaps="$(printf '%s\n' \
+  'infra/provider-capabilities/manifest.v1.json is not a v1 trigger' \
+  'infra/provider-capabilities/extra/provider.v2.json is not a v1 trigger')"
+if [[ "$(v1_input_gaps "$v1_fixture_filters" "$capability_inventory")" == \
+  "$expected_capability_gaps" ]]; then
+  pass "dropping a copied directory from the v1 filter fails the assertion, naming only its inputs"
 else
-  bad "dropping infra/provider-capabilities/** from the v1 filter did not fail the assertion cleanly: $(v1_input_gaps "$v1_fixture_filters")"
+  bad "dropping infra/provider-capabilities/** from the v1 filter did not fail the assertion cleanly: $(v1_input_gaps "$v1_fixture_filters" "$capability_inventory")"
 fi
 grep -Fv "  - 'site/package.json'" "$FILTERS" >"$v1_fixture_filters"
 if [[ "$(v1_input_gaps "$v1_fixture_filters")" == 'site/package.json is not a v1 trigger' ]]; then
   pass "dropping a single copied file from the v1 filter fails the assertion, naming only that file"
 else
   bad "dropping site/package.json from the v1 filter did not fail the assertion cleanly: $(v1_input_gaps "$v1_fixture_filters")"
+fi
+
+# A file reached through a wildcard COPY source is judged by the filter like any other
+# input: the input that glob produced must be reported when the pattern covering it is
+# dropped, so a pattern that expands to an uncovered file cannot pass as "no gap".
+glob_inventory="$fixture_dir/glob-inputs.txt"
+glob_fixture_filters="$fixture_dir/glob-filters.yml"
+copy_sources "$glob_dockerfile" | grep -Fx 'services/console/Dockerfile' >"$glob_inventory" || true
+grep -Fv "  - 'services/**'" "$FILTERS" >"$glob_fixture_filters"
+if [[ "$(v1_input_gaps "$glob_fixture_filters" "$glob_inventory")" == \
+  'services/console/Dockerfile is not a v1 trigger' ]]; then
+  pass "an input reached through a wildcard COPY source is asserted against the v1 filter"
+else
+  bad "a wildcard-derived input was not checked against the v1 filter: $(v1_input_gaps "$glob_fixture_filters" "$glob_inventory")"
 fi
 
 # --- .dockerignore is a build input of every image -------------------------
@@ -803,10 +963,35 @@ else
   bad "a .dockerignore-only change does not run an image build: ${dockerignore_missing[*]}"
 fi
 
-# The control: the same check against a copy with the entry removed must name every
-# filter it lost. Without it this assertion could be passing because the matcher
-# matches everything, which is the defect the matcher fixtures above guard against.
-grep -Fv "  - '.dockerignore'" "$FILTERS" >"$v1_fixture_filters"
+# The control: the same check against a filter with the entry removed must name every
+# filter it lost. Without it the assertion above could be passing because the matcher
+# matches everything, which is the defect the matcher fixtures guard against.
+#
+# The control filter is synthetic and carries known patterns, so its verdict cannot
+# depend on which patterns the repository's own docker, v1 and compose lists happen to
+# hold: a change to the real lists could otherwise make this deletion pass or fail for
+# a reason that has nothing to do with the deletion. The check above still runs against
+# the real filter; this one proves only that the deletion is visible.
+synthetic_image_filters="$fixture_dir/synthetic-image-filters.yml"
+cat >"$synthetic_image_filters" <<'EOF'
+docker:
+  - 'services/**'
+  - '.npmrc'
+  - '.dockerignore'
+v1:
+  - 'packages/**'
+  - 'go.mod'
+  - '.dockerignore'
+compose:
+  - 'infra/compose/**'
+  - '.dockerignore'
+EOF
+if [[ -z "$(dockerignore_gaps "$synthetic_image_filters")" ]]; then
+  pass "the synthetic image filters cover .dockerignore for every image build"
+else
+  bad "the synthetic image filter control does not cover .dockerignore: $(dockerignore_gaps "$synthetic_image_filters")"
+fi
+grep -Fv "  - '.dockerignore'" "$synthetic_image_filters" >"$v1_fixture_filters"
 dockerignore_dropped="$(dockerignore_gaps "$v1_fixture_filters")"
 drop_reported=1
 for key in "${image_filters[@]}"; do
@@ -876,12 +1061,11 @@ else
 fi
 
 # The comparison is only as good as the read behind it, and IBEX_LIVE_REQUIRED_CONTEXTS
-# bypasses the read. These cases drive `gh` itself, because "the response has no
-# contexts key" and "the rule enforces nothing" are the same enforcement and must
-# reach the same exit: gh exits non-zero when jq cannot evaluate the expression, so
-# the old `.required_status_checks.contexts[]` printed the "not readable" warning and
-# exited 0 — all declared contexts unenforced, nothing reported. A failed request is
-# the one case that stays a warning: it is genuinely "could not read".
+# bypasses the read. These cases drive `gh` itself. A response that carries no enforced
+# context at all is a successful read of zero checks and must fail; a response that
+# names a context the read can see must not turn it into a false "unenforced"; and a
+# failed request is the one case that stays a warning, because it is genuinely "could
+# not read".
 gate_bin="$fixture_dir/gate-bin"
 mkdir -p "$gate_bin"
 cat >"$gate_bin/gh" <<'GATE_STUB'
@@ -930,8 +1114,27 @@ names_every_declared_context() {
   done
 }
 
+# The live main rule publishes the same contexts twice, under `contexts` and under
+# `checks` (verified against the API). The read must therefore de-duplicate: applied to
+# a response that carries both keys, the guard's own expression must name every context
+# exactly once. The expression is taken from the script rather than copied here, so this
+# assertion follows the read that actually ships.
+live_jq_expression="$(sed -n "s/^[[:space:]]*--jq '\(.*\)'.*$/\1/p" "$REQUIRED_GATES" | head -1)"
+protection_both_keys="$fixture_dir/protection-both-keys.json"
+declared_json="$(printf '%s\n' "${declared_contexts[@]}" | jq -R . | jq -s .)"
+jq -n --argjson c "$declared_json" \
+  '{required_status_checks: {strict: true, contexts: $c, checks: ($c | map({context: .}))}}' \
+  >"$protection_both_keys"
+read_contexts="$(jq -r "$live_jq_expression" "$protection_both_keys" 2>&1)"
+if [[ -n "$live_jq_expression" ]] &&
+  [[ "$(sort <<<"$read_contexts")" == "$(printf '%s\n' "${declared_contexts[@]}" | sort)" ]]; then
+  pass "the live read takes the union of both context shapes, de-duplicated"
+else
+  bad "the live read is not the de-duplicated union of contexts and checks: [${read_contexts}]"
+fi
+
 # 0. The same read on a rule that enforces everything must pass: the control for the
-#    three cases below, and the only one of the four that runs the happy path.
+#    cases below, and the only one of them that runs the happy path.
 protection_full="$fixture_dir/protection-full.json"
 printf '%s\n' "${declared_contexts[@]}" |
   jq -R . | jq -s '{required_status_checks: {strict: true, contexts: .}}' >"$protection_full"
@@ -942,18 +1145,41 @@ else
   bad "a readable live rule that enforces every declared context did not pass (exit ${gate_rc}): ${gate_out:-<no output>}"
 fi
 
-# 1. No `contexts` key at all: a readable response, with nothing enforced in it.
-protection_missing="$fixture_dir/protection-no-contexts.json"
+# 1. `checks` and no `contexts`: the newer shape, which the checked-in rule file itself
+#    uses. Reading `contexts` alone read zero from this response and reported every
+#    declared context as unenforced — a false alarm. The context the response names is
+#    enforced, and every other one is still named.
+protection_checks="$fixture_dir/protection-checks-only.json"
 printf '%s\n' '{"required_status_checks": {"strict": true, "checks": [{"context": "gitleaks"}]}}' \
-  >"$protection_missing"
-run_live_gate "$protection_missing"
-if (( gate_rc != 0 )) && names_every_declared_context "$gate_out"; then
-  pass "a live rule with no contexts key fails and names all ${#declared_contexts[@]} declared contexts"
+  >"$protection_checks"
+run_live_gate "$protection_checks"
+checks_line="$(grep -F 'Declared but NOT enforced by the live main branch rule:' <<<"$gate_out" || true)"
+checks_unnamed=0
+for context in "${declared_contexts[@]}"; do
+  [[ "$context" == gitleaks ]] && continue
+  grep -Fq "$context" <<<"$checks_line" || checks_unnamed=1
+done
+if (( gate_rc != 0 )) && [[ -n "$checks_line" ]] &&
+  ! grep -Fq 'gitleaks' <<<"$checks_line" && (( checks_unnamed == 0 )); then
+  pass "a live rule that carries only checks reads the context it names as enforced"
 else
-  bad "a live rule with no contexts key reported success (exit ${gate_rc}) or did not name every declared context: ${gate_out:-<no output>}"
+  bad "a checks-only live rule reported success (exit ${gate_rc}), treated its context as unenforced, or lost one: ${gate_out:-<no output>}"
 fi
 
-# 2. The whole block is null: a rule configured with no required checks at all.
+# 2. Both keys present and empty: a readable rule that enforces nothing. A successful
+#    read of zero checks must fail and name every declared context, not print the
+#    "could not read" warning and exit 0.
+protection_zero="$fixture_dir/protection-zero-checks.json"
+printf '%s\n' '{"required_status_checks": {"strict": true, "contexts": [], "checks": []}}' \
+  >"$protection_zero"
+run_live_gate "$protection_zero"
+if (( gate_rc != 0 )) && names_every_declared_context "$gate_out"; then
+  pass "a live response with both context shapes empty fails and names all ${#declared_contexts[@]} declared contexts"
+else
+  bad "a live response with both context shapes empty reported success (exit ${gate_rc}) or did not name every declared context: ${gate_out:-<no output>}"
+fi
+
+# 3. The whole block is null: a rule configured with no required checks at all.
 protection_null="$fixture_dir/protection-null.json"
 printf '%s\n' '{"required_status_checks": null}' >"$protection_null"
 run_live_gate "$protection_null"
@@ -963,7 +1189,7 @@ else
   bad "a live rule with a null required_status_checks reported success (exit ${gate_rc}) or did not name every declared context: ${gate_out:-<no output>}"
 fi
 
-# 3. The request itself fails, which is "could not read" and stays a warning: the
+# 4. The request itself fails, which is "could not read" and stays a warning: the
 #    script has no evidence either way, and failing would make the job unpassable
 #    without a repository-admin token.
 run_live_gate "$protection_full" 22
