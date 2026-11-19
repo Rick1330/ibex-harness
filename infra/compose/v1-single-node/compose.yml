@@ -71,13 +71,18 @@ services:
       # file bind mount pins the old inode, so a running container would keep
       # archiving to the previous repository. The in-container path is unchanged.
       #
-      # :Z relabels the directory (and its contents) for container access on an
+      # :z relabels the directory (and its contents) for container access on an
       # SELinux host, where an unlabelled bind mount is unreadable; it is ignored
-      # where SELinux is disabled. Safe to relabel: the only consumer is this
-      # container, the directory holds generated non-secret configuration, and
-      # relabelling changes no content or mode. The private (per-container) label
-      # is correct because no second container mounts it.
-      - ../../backup/pgbackrest:/etc/pgbackrest:ro,Z
+      # where SELinux is disabled. Safe to relabel: the directory holds generated
+      # non-secret configuration, and relabelling changes no content or mode.
+      # The shared label (:z), not the private one (:Z), is the correct one here:
+      # `pgbackrest-restore.sh` bind-mounts `pgbackrest.conf` — a file inside this
+      # directory, and so inside this label — into its own one-shot verify and
+      # restore containers with a plain `:ro`. A private label is scoped to this
+      # container alone, so those reads were denied on an enforcing host. That
+      # failure lands after the restore script has stopped Postgres, which leaves
+      # the profile stopped at the worst possible moment.
+      - ../../backup/pgbackrest:/etc/pgbackrest:ro,z
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
