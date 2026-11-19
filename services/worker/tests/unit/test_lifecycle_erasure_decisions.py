@@ -11,12 +11,17 @@ by ``test_lifecycle_erasure_store_targets.py``, ``..._staging.py``,
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from app.tasks import lifecycle_erasure as le
-from app.tasks.lifecycle_erasure import SATISFIED_RECEIPT_STATUSES, _StoreOutcome
+from app.tasks.lifecycle_erasure import (
+    SATISFIED_RECEIPT_STATUSES,
+    _StoreOutcome,
+    _StoreTarget,
+)
 from tests.unit.lifecycle_erasure_fakes import claimed_row, erasure
 
 
@@ -61,6 +66,51 @@ def test_deadline_passed_only_after_the_recorded_deadline() -> None:
     assert le._deadline_passed(claimed_row(deadline=future)) is False
     assert le._deadline_passed(claimed_row(deadline=past)) is True
     assert le._deadline_passed(claimed_row(deadline=None)) is False
+
+
+# ---------------------------------------------------------------------------
+# An underivable hot key
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("verdict", "status"),
+    [
+        ("verified", "verified"),
+        ("not_applicable", "not_applicable"),
+        (None, "failed"),
+        ("pending", "failed"),
+        ("failed", "failed"),
+    ],
+)
+def test_purged_row_hot_key_reads_the_org_purge_verdict(
+    verdict: str | None, status: str
+) -> None:
+    """The org-wide Redis purge is the only proof a purged row has for the hot set.
+
+    A receipt that has not been written yet, or that records a retry, is not
+    evidence of absence: the row must retry, not claim ``verified`` or
+    ``not_applicable`` on a purge nobody confirmed.
+    """
+    purged = replace(erasure(), row=claimed_row(event_type="purged"), org_redis_purge=verdict)
+    outcome = le._underivable_outcome(
+        purged, _StoreTarget("cache_hot", (), underivable=True)
+    )
+    assert (outcome.status, outcome.permanent) == (status, False)
+
+
+def test_forget_row_keeps_the_permanent_failure_even_with_a_verified_org_purge() -> None:
+    """A forget's memory row is tombstoned, so its agent is a fact a retry can read.
+
+    Only the ``purged`` event has lost the agent, and only it may use the org
+    purge as evidence; a forget that somehow lacks the agent must not borrow it.
+    """
+    forget = replace(erasure(), org_redis_purge="verified")
+    outcome = le._underivable_outcome(
+        forget, _StoreTarget("cache_hot", (), underivable=True)
+    )
+    assert (outcome.status, outcome.permanent) == ("failed", True)
+    assert "not derivable" in (outcome.error or "")
 
 
 # ---------------------------------------------------------------------------

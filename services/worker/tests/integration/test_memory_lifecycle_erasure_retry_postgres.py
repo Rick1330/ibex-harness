@@ -98,6 +98,42 @@ async def test_unreachable_store_leaves_partial_then_a_retry_completes(
     assert harness.clickhouse_count(forgotten) == 0
 
 
+@pytest.mark.asyncio
+async def test_a_reappeared_object_is_deleted_again_on_the_retry(
+    harness: Harness, object_store: FakeObjectStore
+) -> None:
+    """A stored ``verified`` receipt does not cover an object that came back.
+
+    First run: ClickHouse is unreachable, so the row stays ``partial`` while the
+    object store is already proven. The archive is then re-created at the same
+    locator — the key is derived from the row and nothing fences a re-archive —
+    and the retry has to delete it again. Trusting the earlier receipt would leave
+    the object in place and retry forever against a proof that no longer holds.
+    """
+    forgotten, row_id = await harness.seed_queued(object_store)
+
+    first = await harness.run(ch_dsn=None)
+    assert first["partial"] == 1, first
+    assert object_store.deleted == [forgotten.object_uri]
+
+    object_store.present.add(forgotten.object_uri)
+    await harness.make_due(row_id)
+
+    second = await harness.run(ch_dsn=harness.env.ch_dsn)
+
+    assert second["complete"] == 1, second
+    assert object_store.deleted == [forgotten.object_uri, forgotten.object_uri], (
+        "the reappeared object must be deleted again, not certified by the old receipt"
+    )
+    assert object_store.present == set()
+    receipts = await harness.receipts(
+        org_id=forgotten.org_id, memory_id=forgotten.memory_id
+    )
+    assert receipts["objectstore"][0] == "verified", receipts
+    state, delivered_at, _available, attempts = await harness.outbox(row_id=row_id)
+    assert (state, delivered_at is not None, attempts) == ("complete", True, 2)
+
+
 async def _erase_stale_claim(harness: Harness, forgotten: Forgotten) -> str:
     """Claim revision 2, deliver revision 3, then erase the stale claim.
 

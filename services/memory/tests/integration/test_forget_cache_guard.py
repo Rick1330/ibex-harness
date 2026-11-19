@@ -1,20 +1,19 @@
-"""A delayed create must not restore the object a forget just removed (A1).
+"""A delayed create must not restore a copy a forget just removed (A1).
 
 Why this file exists: ``MemoryCacheWriter.write_created`` runs after the create
 transaction commits. A forget can commit, tombstone the memory and delete the
-cached object between that commit and the after-commit write, and the write then
-recreates the object with the original content. ``_stage_cache``'s absence check
-does not close it either: a create whose write is delayed past the worker's check
-wins the same way.
+cached copies between that commit and the after-commit write, and the write then
+recreates them. ``_stage_cache``'s absence check does not close it either: a
+create whose write is delayed past the worker's check wins the same way.
 
-The fix is a forgotten marker plus a check-and-set performed as one Redis script.
-Redis runs a script atomically, so there is no interleaving between the marker
-check and the ``SET``:
+Both copies are guarded by the same forgotten marker, each with its own atomic
+Redis script:
 
-* if the forget's marker is written first, the write script sees it and writes
-  nothing;
-* if the write script runs first, the forget's ``DEL`` (which always follows its
-  own marker ``SET``) removes the object.
+* the object write is a check-and-``SET``: if the forget's marker is written
+  first the script writes nothing; if the script runs first the forget's ``DEL``
+  (which always follows its own marker ``SET``) removes the object;
+* the hot write is a check-and-``ZADD``: same ordering, and the forget's ``ZREM``
+  removes the member the write may have added.
 
 This suite drives real Redis, because the atomicity is Redis's, not the mock's.
 """
@@ -31,7 +30,7 @@ from redis.asyncio import Redis
 from app.cache.memory_keys import MEMORY_FORGOTTEN_TTL_SECONDS
 from app.config import Settings
 from app.write.cache import MemoryCacheWriter
-from app.write.models import WriteOutcome, WriteOutcomeKind
+from app.write.models import MemoryRow, WriteOutcome, WriteOutcomeKind
 from tests.integration.hot_cache_support import require_redis_url
 from tests.unit.memory_test_support import sample_memory_row
 
@@ -52,6 +51,12 @@ async def _clear(redis: Redis, writer: MemoryCacheWriter, copy: _Copy) -> None:
         writer.object_key(copy.org_id, copy.memory_id),
         writer.forgotten_key(copy.org_id, copy.memory_id),
         writer.hot_key(copy.org_id, copy.agent_id),
+    )
+
+
+async def _forget(writer: MemoryCacheWriter, copy: _Copy) -> None:
+    await writer.forget_memory(
+        org_id=copy.org_id, agent_id=copy.agent_id, memory_id=copy.memory_id
     )
 
 
@@ -86,9 +91,7 @@ async def test_a_delayed_create_cannot_restore_a_forgotten_object() -> None:
         await writer.write_created(outcome)
         assert await redis.exists(key) == 1, "fixture: the create wrote the object"
 
-        await writer.forget_memory(
-            org_id=copy.org_id, agent_id=copy.agent_id, memory_id=copy.memory_id
-        )
+        await _forget(writer, copy)
         assert await redis.exists(key) == 0
         assert (
             await redis.zscore(
@@ -121,67 +124,188 @@ async def test_a_delayed_create_cannot_restore_a_forgotten_object() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_write_that_wins_the_race_is_removed_by_the_forget() -> None:
-    """The other ordering leaves nothing behind either."""
+async def test_a_delayed_hot_write_cannot_re_add_a_forgotten_member() -> None:
+    """The hot half of A1: the ZADD is guarded by the same marker as the SET.
+
+    The object guard can pass and the forget can still run before the hot write.
+    The worker's absence check (the ZREM plus the zscore poll) has already
+    observed the member gone; an unguarded ``ZADD`` would put it back. The script
+    checks the marker and writes nothing, so the member stays absent.
+    """
     redis, writer = await _writer_with_redis()
     copy = _Copy(org_id=uuid4(), agent_id=uuid4(), memory_id=uuid4())
     row = sample_memory_row(
         id=copy.memory_id,
         org_id=copy.org_id,
         agent_id=copy.agent_id,
-        content="raced secret",
+        content="forgotten hot secret",
     )
-    key = writer.object_key(copy.org_id, copy.memory_id)
+    hot_key = writer.hot_key(copy.org_id, copy.agent_id)
+    member = str(copy.memory_id)
     try:
         await _clear(redis, writer, copy)
         await writer.write_created(
             WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=row)
         )
-        assert await redis.exists(key) == 1
-        await writer.forget_memory(
-            org_id=copy.org_id, agent_id=copy.agent_id, memory_id=copy.memory_id
+        assert await redis.zscore(hot_key, member) is not None
+
+        await _forget(writer, copy)
+        assert await redis.zscore(hot_key, member) is None, (
+            "fixture: the forget removed the member before the delayed write"
         )
-        assert await redis.exists(key) == 0
+
+        # The delayed after-commit hot write of the same create now runs.
+        await writer.refresh_hot(row)
+
+        assert await redis.zscore(hot_key, member) is None, (
+            "a delayed hot write re-added a member the erasure verified absent"
+        )
     finally:
         await _clear(redis, writer, copy)
         await redis.aclose()
 
 
-@pytest.mark.asyncio
-async def test_concurrent_write_and_forget_always_end_absent() -> None:
-    """Every interleaving ends with the object absent, which is the guarantee.
+#: Iterations of the write/forget race. One run would only prove that ``gather``
+#: started both coroutines; 25 gives the event loop room to interleave them
+#: differently, which is what tells one atomic script from a read-then-write.
+_RACE_ITERATIONS = 25
 
-    Sequential tests cannot show that the check and the write are one step. Here
-    the two commands race repeatedly; if a read-then-``SET`` had been used, some
-    iteration would leave the object present after the forget.
+_OBJECT = "object"
+_HOT = "hot"
+
+
+@dataclass(frozen=True, slots=True)
+class _RaceCase:
+    """One row of the write/forget table.
+
+    ``subject`` is the cached copy the create writes — its object key or its hot
+    member — and ``races`` is the ordering of that write against the forget. The
+    two are independent: each copy is written by its own Redis script and each
+    script has both orderings, so the table is their product.
+    """
+
+    subject: str
+    races: bool
+
+    @property
+    def name(self) -> str:
+        return f"{self.subject}-{'concurrent' if self.races else 'write-wins'}"
+
+    @property
+    def iterations(self) -> int:
+        return _RACE_ITERATIONS if self.races else 1
+
+
+_RACE_CASES = (
+    _RaceCase(_OBJECT, races=False),
+    _RaceCase(_HOT, races=False),
+    _RaceCase(_OBJECT, races=True),
+    _RaceCase(_HOT, races=True),
+)
+
+
+async def _copy_present(
+    redis: Redis, writer: MemoryCacheWriter, copy: _Copy, subject: str
+) -> bool:
+    """Whether the copy a create writes is currently in Redis."""
+    if subject == _OBJECT:
+        return bool(await redis.exists(writer.object_key(copy.org_id, copy.memory_id)))
+    return (
+        await redis.zscore(
+            writer.hot_key(copy.org_id, copy.agent_id), str(copy.memory_id)
+        )
+        is not None
+    )
+
+
+async def _write_copy(writer: MemoryCacheWriter, row: MemoryRow, subject: str) -> None:
+    """Run the create's after-commit write for the copy under test."""
+    if subject == _OBJECT:
+        await writer.write_created(
+            WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=row)
+        )
+    else:
+        await writer.refresh_hot(row)
+
+
+async def _seed_live_neighbour(writer: MemoryCacheWriter, copy: _Copy) -> str:
+    """Add an unrelated memory to the same hot key and return its member.
+
+    The forget must remove only the forgotten member. Reading this neighbour
+    after the forget is what separates ``ZREM`` of one member from ``DEL`` of the
+    whole sorted set.
+    """
+    neighbour = _Copy(org_id=copy.org_id, agent_id=copy.agent_id, memory_id=uuid4())
+    await writer.refresh_hot(
+        sample_memory_row(
+            id=neighbour.memory_id,
+            org_id=neighbour.org_id,
+            agent_id=neighbour.agent_id,
+            content="live neighbour",
+        )
+    )
+    return str(neighbour.memory_id)
+
+
+async def _assert_race_ends_absent(
+    redis: Redis, writer: MemoryCacheWriter, case: _RaceCase
+) -> None:
+    """Run one write/forget race and assert the copy under test is gone."""
+    copy = _Copy(org_id=uuid4(), agent_id=uuid4(), memory_id=uuid4())
+    row = sample_memory_row(
+        id=copy.memory_id,
+        org_id=copy.org_id,
+        agent_id=copy.agent_id,
+        content=f"{case.name} secret",
+    )
+    await _clear(redis, writer, copy)
+    neighbour = (
+        await _seed_live_neighbour(writer, copy) if case.subject == _HOT else None
+    )
+
+    if case.races:
+        await asyncio.gather(
+            _write_copy(writer, row, case.subject), _forget(writer, copy)
+        )
+    else:
+        await _write_copy(writer, row, case.subject)
+        assert await _copy_present(redis, writer, copy, case.subject), (
+            "fixture: the write landed before the forget"
+        )
+        await _forget(writer, copy)
+
+    survived = (
+        f"a concurrent {case.subject} write survived the forget; "
+        "the guard is not atomic"
+        if case.races
+        else f"the forget left the {case.subject} copy the write had put back"
+    )
+    assert not await _copy_present(redis, writer, copy, case.subject), survived
+    if neighbour is not None:
+        assert (
+            await redis.zscore(writer.hot_key(copy.org_id, copy.agent_id), neighbour)
+            is not None
+        ), "the forget removed a live member along with the forgotten one"
+    await _clear(redis, writer, copy)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", _RACE_CASES, ids=[case.name for case in _RACE_CASES])
+async def test_a_raced_write_never_survives_a_forget(case: _RaceCase) -> None:
+    """The write/forget table: every row ends with the copy under test absent.
+
+    Each row asserts something the others cannot. An object row reads the object
+    key, so it shows the ``SET`` landed and the forget removed it (``write-wins``)
+    or that 25 interleavings never left it behind (``concurrent``). A hot row
+    reads the member *and* an unrelated live member in the same sorted set: the
+    member must be gone while the neighbour survives, which is what distinguishes
+    ``ZREM`` of one member from ``DEL`` of the key. The concurrent rows keep their
+    25 iterations because one ``gather`` fixes a single scheduling of the two
+    coroutines; repetition is what varies it.
     """
     redis, writer = await _writer_with_redis()
     try:
-        for _ in range(25):
-            copy = _Copy(org_id=uuid4(), agent_id=uuid4(), memory_id=uuid4())
-            row = sample_memory_row(
-                id=copy.memory_id,
-                org_id=copy.org_id,
-                agent_id=copy.agent_id,
-                content="race secret",
-            )
-            key = writer.object_key(copy.org_id, copy.memory_id)
-            await _clear(redis, writer, copy)
-
-            await asyncio.gather(
-                writer.write_created(
-                    WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=row)
-                ),
-                writer.forget_memory(
-                    org_id=copy.org_id,
-                    agent_id=copy.agent_id,
-                    memory_id=copy.memory_id,
-                ),
-            )
-
-            assert await redis.exists(key) == 0, (
-                "a concurrent write survived the forget; the guard is not atomic"
-            )
-            await _clear(redis, writer, copy)
+        for _ in range(case.iterations):
+            await _assert_race_ends_absent(redis, writer, case)
     finally:
         await redis.aclose()

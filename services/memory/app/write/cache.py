@@ -243,6 +243,7 @@ class MemoryCacheWriter:
             self._hot_zadd_trim,
             HotZaddRequest(
                 key=key,
+                forgotten_key=self.forgotten_key(memory.org_id, memory.id),
                 memory_id=memory.id,
                 score=score,
                 ttl_seconds=ttl,
