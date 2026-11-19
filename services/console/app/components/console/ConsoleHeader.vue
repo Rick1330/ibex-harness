@@ -6,6 +6,7 @@ import {
   Command,
   ExternalLink,
   Lock,
+  LogOut,
   Search,
 } from "@lucide/vue"
 import {
@@ -54,6 +55,14 @@ const agentCrumb = computed(() => {
 
 function openCommand(): void {
   commandMenu.value?.open()
+}
+
+/**
+ * Sign-out is a route, not an in-menu mutation: `/logout` revokes the session
+ * family and clears this browser's cookies before returning to the login page.
+ */
+function signOut(): void {
+  void navigateTo("/logout")
 }
 </script>
 
@@ -185,6 +194,13 @@ function openCommand(): void {
               <ExternalLink :size="16" :stroke-width="1.75" aria-hidden="true" />
               Status and evidence
             </a>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem as-child>
+            <button type="button" class="flex w-full items-center gap-2" @click="signOut">
+              <LogOut :size="16" :stroke-width="1.75" aria-hidden="true" />
+              Sign out
+            </button>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

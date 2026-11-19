@@ -209,6 +209,7 @@ function refresh(): void {
       eyebrow="Live operator read"
       title="An operator session is required to read memories"
       body="Sign in with a session that can read this organization. No fixture rows are substituted."
+      sign-in
     >
       <template #actions>
         <button type="button" class="ix-button-secondary" @click="refresh">Try again</button>

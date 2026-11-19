@@ -23,11 +23,18 @@ const props = withDefaults(
     body?: string
     eyebrow?: string
     meta?: string
+    /**
+     * Render the remedy a session refusal names: a real link to the sign-in
+     * page that returns here afterwards. Only a refusal that a session can
+     * resolve should set this.
+     */
+    signIn?: boolean
   }>(),
   {
     body: undefined,
     eyebrow: undefined,
     meta: undefined,
+    signIn: false,
   },
 )
 
@@ -58,10 +65,11 @@ const icon = computed(() => {
           <p v-if="body" class="mt-1 max-w-3xl text-sm leading-5 text-fg-2">{{ body }}</p>
         </div>
       </div>
-      <div v-if="meta || $slots.meta || $slots.actions" class="flex shrink-0 flex-col gap-2 sm:items-end">
+      <div v-if="meta || $slots.meta || $slots.actions || signIn" class="flex shrink-0 flex-col gap-2 sm:items-end">
         <span v-if="meta" class="font-mono text-[0.8125rem] text-fg-3">{{ meta }}</span>
         <slot name="meta" />
-        <div v-if="$slots.actions" class="flex flex-wrap items-center gap-2 sm:justify-end">
+        <div v-if="$slots.actions || signIn" class="flex flex-wrap items-center gap-2 sm:justify-end">
+          <SessionSignInLink v-if="signIn" />
           <slot name="actions" />
         </div>
       </div>

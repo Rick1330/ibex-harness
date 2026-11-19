@@ -210,3 +210,15 @@ export function safeLoginNext(value: unknown): string {
   )
   return excluded ? "/" : candidate
 }
+
+/**
+ * The sign-in page, returning to `next` after authentication.
+ *
+ * `next` is sanitised by `safeLoginNext`, so a refusal state cannot turn this
+ * link into an open redirect or a loop back into the auth pages. The overview
+ * needs no `next`: it is the login page's own default destination.
+ */
+export function loginHref(next: unknown = "/"): string {
+  const target = safeLoginNext(next)
+  return target === "/" ? "/login" : `/login?next=${encodeURIComponent(target)}`
+}

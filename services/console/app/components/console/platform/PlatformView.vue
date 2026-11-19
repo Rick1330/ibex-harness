@@ -219,6 +219,7 @@ const shortcutGroups = [
       :title="verdict.text"
       :body="verdict.caveat ?? undefined"
       :meta="health?.observed_at ? formatGovernStamp(health.observed_at) : undefined"
+      :sign-in="authIssue"
     />
 
     <div class="console-panel p-3">

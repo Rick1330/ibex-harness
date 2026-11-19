@@ -89,6 +89,7 @@ const RECEIPT_TONE: Record<ReceiptStatus, string> = {
       eyebrow="Operator session"
       title="The operator session cannot read this organization"
       body="Sign in again with an account that holds metadata-read permission."
+      sign-in
     />
     <IxVerdict
       v-else-if="error"
