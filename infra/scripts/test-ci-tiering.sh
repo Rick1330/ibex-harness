@@ -2303,6 +2303,58 @@ else
   pass "a legal jittered sequence the retired decreasing-tail rule rejected (${legal_jitter[*]}) is accepted"
 fi
 
+# Case 12c: isolated failures do not compound. Exponential backoff answers a *sustained*
+# failure, so the exponent must track consecutive failures, not the cumulative count the
+# final diagnostic reports. Four failures each separated by a successful empty poll are
+# four first failures, and every retry delay must stay at the base even though the last
+# is the run's fourth failure. Driving the exponent from the cumulative count spent the
+# cap on a run whose API answered normally between every blip.
+#
+# The two schedules cannot be confused at these numbers: a failure delay is drawn from
+# [base/2, base] = [5, 10], the healthy poll sleeps the 40 s interval, and the budget of
+# 9 x 40 = 360 s clips neither. Sleeps alternate with the lookups that caused them, so
+# the odd-indexed entries are the four failure delays and the even-indexed ones the four
+# healthy polls; both are asserted where they stand rather than inferred from ranges.
+isolated_base=10
+isolated_interval=40
+isolated_attempts=9
+isolated_budget=$(( isolated_attempts * isolated_interval ))
+mkdir -p "$fixture_dir/smoke-isolated"
+printf '%s\n' '[]' >"$fixture_dir/smoke-isolated/run-list.json"
+for (( i = 1; i <= isolated_attempts; i++ )); do
+  if (( i % 2 )); then
+    printf '%s\n' '[]' >"$fixture_dir/smoke-isolated/run-list.${i}.json"
+  else
+    : >"$fixture_dir/smoke-isolated/fail-run-list.${i}"
+  fi
+done
+smoke_rc="$(run_smoke_case isolated "$isolated_attempts" \
+  IBEX_SMOKE_RUN_INTERVAL="$isolated_interval" \
+  IBEX_SMOKE_BACKOFF_BASE="$isolated_base" IBEX_SMOKE_BACKOFF_MAX=80)"
+isolated_out="$(cat "$fixture_dir/smoke-isolated/stdout")"
+mapfile -t isolated_delays <"$fixture_dir/smoke-isolated/sleeps.log"
+isolated_n=${#isolated_delays[@]}
+isolated_failure_ok=1
+isolated_empty_ok=1
+isolated_total=0
+for (( i = 0; i < isolated_n; i++ )); do
+  isolated_total=$(( isolated_total + isolated_delays[i] ))
+  if (( i % 2 )); then
+    (( isolated_delays[i] <= isolated_base )) || isolated_failure_ok=0
+  else
+    (( isolated_delays[i] == isolated_interval )) || isolated_empty_ok=0
+  fi
+done
+if [[ "$smoke_rc" == 0 ]] && (( isolated_n == 8 )) &&
+  (( isolated_failure_ok && isolated_empty_ok )) &&
+  (( isolated_total <= isolated_budget )) &&
+  grep -Fq 'could not be established' <<<"$isolated_out" &&
+  ! grep -Fq 'no CI push run' <<<"$isolated_out"; then
+  pass "isolated failures each back off from the ${isolated_base}s base (${isolated_delays[*]}), not from the cumulative failure count"
+else
+  bad "isolated failures compounded into a growing delay (delays ${isolated_delays[*]:-none}, failure delays at or below ${isolated_base}s ${isolated_failure_ok}, healthy polls at ${isolated_interval}s ${isolated_empty_ok}, total ${isolated_total}/${isolated_budget}): ${isolated_out}"
+fi
+
 # Case 13: a successful but empty lookup is not a failure, so it keeps the fixed
 # interval, and five of them are not the eight a claim of absence needs.
 mkdir -p "$fixture_dir/smoke-poll-interval"

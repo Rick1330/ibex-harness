@@ -191,10 +191,13 @@ jobs:
           # an unobserved interval in the middle of a short streak must not be summed
           # with the observations on either side of it.
           absent_checks="${IBEX_SMOKE_ABSENT_CHECKS:-8}"   # 8 x 15 s = 120 s
-          # Retry delay for a *failed* lookup only. The delay doubles per consecutive
+          # Retry delay for a *failed* lookup only. The delay doubles per *consecutive*
           # failure up to backoff_max, then carries equal jitter (uniform in
           # [delay/2, delay]) so concurrent releases do not collide on the same instant.
-          # A successful-but-empty lookup is not a failure and keeps the fixed interval.
+          # A successful-but-empty lookup is not a failure and keeps the fixed interval,
+          # and it resets the exponent: backoff answers a *sustained* failure, so blips
+          # scattered across a healthy run must not reach the cap that the same number of
+          # failures in a row reach.
           backoff_base="${IBEX_SMOKE_BACKOFF_BASE:-$interval}"
           backoff_max="${IBEX_SMOKE_BACKOFF_MAX:-$(( interval * 4 ))}"   # 60 s
           (( attempts >= 1 )) || attempts=1
@@ -214,7 +217,13 @@ jobs:
           conclusion=""
           saw_run=0
           absent=0
+          # Cumulative count of failed lookups, never reset: it is the number the final
+          # 'N of M lookups failed' diagnostic quotes, and it must count every failure.
           errors=0
+          # The backoff exponent's own counter: consecutive failures only, reset by any
+          # successful lookup, because growth is a response to a sustained failure rather
+          # than to a lifetime total.
+          consecutive_errors=0
           last_error=""
           checks=0
           errlog="$(mktemp)"
@@ -269,6 +278,7 @@ jobs:
               --commit "$COMMIT" --event push --branch main --limit 5 \
               --json databaseId,headSha,status,conclusion 2>"$errlog")"; then
               errors=$(( errors + 1 ))
+              consecutive_errors=$(( consecutive_errors + 1 ))
               absent=0
               last_error="$(tail -n 1 "$errlog" | tr -d '\r')"
               state="could not be queried (${last_error:-no error output})"
@@ -282,13 +292,16 @@ jobs:
                 exit 0
               fi
               delay="$backoff_base"
-              for (( backoff = 1; backoff < errors && delay < backoff_max; backoff++ )); do
+              for (( backoff = 1; backoff < consecutive_errors && delay < backoff_max; backoff++ )); do
                 delay=$(( delay * 2 ))
               done
               if (( delay > backoff_max )); then delay="$backoff_max"; fi
               half=$(( delay / 2 ))
               delay=$(( half + RANDOM % (delay - half + 1) ))
             else
+              # The lookup succeeded, so whatever sustained failure the previous lookups
+              # reported is over: the next failure starts again at the base delay.
+              consecutive_errors=0
               delay="$interval"
               [[ -n "$run_json" ]] || run_json='[]'
               exists="$(jq -r --arg sha "$COMMIT" \
