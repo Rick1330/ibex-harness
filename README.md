@@ -130,10 +130,12 @@ make dev-smoke
 
 ```bash
 pnpm install --frozen-lockfile --ignore-scripts
-pnpm --filter @ibex/console dev
+IBEX_OPERATOR_API_ORIGIN=https://operator.example.invalid pnpm --filter @ibex/console dev
 ```
 
-Open `http://127.0.0.1:3000`. Without an operator API origin the Console fails closed rather than rendering fixtures.
+Open `http://127.0.0.1:3000`: a development build shows sample data. Add `?demo=0` to exercise the live path, which needs
+`IBEX_OPERATOR_API_ORIGIN` set to a reachable operator API and fails closed without one; a production build never renders
+sample data.
 
 ## Services
 
