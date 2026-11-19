@@ -827,8 +827,12 @@ function settleRotation(
  * value; the caller retries the original read with the returned value because
  * the incoming request still carries the expired cookie. Callers that present
  * the same refresh cookie share one rotation — concurrently through the
- * promise, and afterwards through the retained value — so the API's single-use
- * refresh token is never replayed by a second caller.
+ * promise, and afterwards through the retained value — so a second caller
+ * inside that window is served the retained result rather than replaying the
+ * API's single-use refresh token. The window is bounded (`ROTATION_TTL_MS`, and
+ * eviction past `MAX_CACHED_ROTATIONS`): a caller that arrives after it is gone
+ * presents an already-consumed token, which the API refuses. It does not mint a
+ * second session.
  *
  * The refresh is a direct `fetch` to the upstream API through
  * `performSessionAction` with `relayCookies: false`; the retained result is the
