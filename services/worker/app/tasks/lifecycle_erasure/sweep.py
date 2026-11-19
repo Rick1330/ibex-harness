@@ -17,14 +17,17 @@ Ordering is load-bearing and easy to get wrong:
 
 The cache stores are staged even without a ref when their keys are derivable
 from the row, because an absent ref means "not recorded", never "proved absent".
-A ``purged`` row is the one exception: the organization saga deleted the memory
-before this consumer ran, so the agent the hot key needs is gone. Its verdict is
-the saga's own org-wide Redis purge receipt, read for that row only; a receipt
-that has not been written yet is a retry, never a claim of absence.
+A ``purged`` row could not derive its hot key at all until the organization saga
+started recording that address before it deletes the memory row; a row from a
+saga that predates that insert has no address and cannot be certified by the
+org-wide receipt, which proves a delete ran rather than that no write followed.
 
 A stored ``verified`` receipt is not proof forever for the object store. The
 archive key is derived from the row and nothing fences a late re-archive, so a
 HEAD that finds the object back restages it instead of trusting the receipt.
+That HEAD runs before the run's store budgets, so it is capped: a slow object
+store that never answers may cost one bounded check, not the row's remaining
+time.
 """
 
 from __future__ import annotations
@@ -88,6 +91,14 @@ from .sql import (
 from .staging import _stage
 
 logger = logging.getLogger(__name__)
+
+#: How long one proof HEAD may run. A HEAD is a liveness question about a single
+#: key, not a transfer: a healthy S3/MinIO answers in milliseconds, so five
+#: seconds tolerates a degraded endpoint while staying far below the 120 s store
+#: budget. The proof runs before the cache stores in the same row; without this
+#: cap a slow object store could consume the job budget and turn an untried
+#: cache store into ``job_deadline_exceeded``.
+_PROOF_HEAD_CAP_SECONDS = 5.0
 
 
 async def _run_sweep(
@@ -158,6 +169,7 @@ async def _erase_row(
         factory=factory,
         agent_id=state.agent_id,
         org_redis_purge=state.org_redis_purge,
+        job_deadline=job_deadline,
     )
     targets = _store_targets(state.refs, state.agent_id, row)
     outcomes = [
@@ -313,6 +325,10 @@ async def _durable_proof(
     re-archive, so an object that is back means the retry has to delete it again.
     The cache stores are fenced by the forgotten marker, and a new ref is caught
     by the settle re-check.
+
+    The HEAD this issues is bounded by the job deadline, so it cannot spend the
+    budget the cache stores later in the row still need; an expired check counts
+    as "the object may be back" and restages the store.
     """
     if proven is None or not _receipt_already_proves(proven, target.locators):
         return None
@@ -504,13 +520,46 @@ async def _recheck_outcome(
 
 
 async def _object_reappeared(erasure: _Erasure, locators: tuple[str, ...]) -> bool:
-    """Whether HEAD now reports any object this run had just proved absent."""
+    """Whether HEAD now reports any object this run had just proved absent.
+
+    Each check is bounded, and the loop stops once the budget is gone instead of
+    starting a HEAD that cannot finish. A check that expires raises, exactly as
+    an unanswered one does, so the proof path restages and the settle re-check
+    refuses to certify — neither reads a timeout as absence.
+    """
     for uri in locators:
-        if await asyncio.to_thread(
-            object_exists, uri, org_id=erasure.row.org_id, settings=erasure.settings
-        ):
+        if await _head_object(uri, erasure):
             return True
     return False
+
+
+def _proof_head_budget(erasure: _Erasure) -> float:
+    """How long one proof HEAD may run: the per-call cap, cut by the job deadline."""
+    remaining = _PROOF_HEAD_CAP_SECONDS
+    if erasure.job_deadline is not None:
+        remaining = min(remaining, erasure.job_deadline - time.monotonic())
+    return remaining
+
+
+async def _head_object(uri: str, erasure: _Erasure) -> bool:
+    """HEAD one locator inside the proof budget; raise ``TimeoutError`` if it expires.
+
+    The timeout is the same answer as an unreachable store: absence was not
+    proved. Deleting again is idempotent, so the caller restages instead of
+    treating the silence as a cleared object.
+    """
+    budget = _proof_head_budget(erasure)
+    if budget <= 0:
+        raise TimeoutError("object-store proof budget exhausted")
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            object_exists,
+            uri,
+            org_id=erasure.row.org_id,
+            settings=erasure.settings,
+        ),
+        timeout=budget,
+    )
 
 
 async def _apply_outbox_state(

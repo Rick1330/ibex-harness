@@ -41,14 +41,14 @@ SELECT store, status
    AND revision = :revision
 """
 
-#: The organization deletion's Redis verdict, the only proof a ``purged`` row has
-#: for the hot set: the saga deletes the memory row before the sweep runs, so the
-#: memory's agent — and therefore the derived hot key — is gone. The saga's
-#: org-wide Redis stage removes every ``{org}:hot_memories:*`` key and records a
-#: receipt, so that receipt is evidence of a real deletion rather than an
-#: unchecked absence. A verified receipt is preferred over a later retry's
-#: failure: the org-wide delete happened and a cancelled org cannot recreate the
-#: key, so the proof still stands.
+#: The organization deletion's Redis verdict, read only for a ``purged`` row
+#: whose hot address cannot be derived. The saga records the address before it
+#: deletes the memory (000079), so a row it produced carries the ref this query
+#: is not needed for. It remains for a row queued by a saga that predates that
+#: insert: there, ``not_applicable`` is a topology fact (Redis is not deployed)
+#: and ``verified`` only says the org-wide delete ran. A verified receipt is
+#: ordered first because it is the more informative of two non-proofs; it is
+#: never read as proof of one member's absence.
 _ORG_PURGE_SQL = """
 SELECT receipt.status
   FROM ibex_core.deletion_store_receipts AS receipt

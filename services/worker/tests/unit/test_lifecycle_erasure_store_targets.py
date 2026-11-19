@@ -232,6 +232,126 @@ async def test_verified_object_receipt_is_restaged_when_its_proof_no_longer_stan
     assert staged == [("s3://bucket/one.json",)]
 
 
+def _slow_head(delay: float, *, found: bool = False) -> Any:
+    """An object-store HEAD that takes ``delay`` seconds to answer."""
+
+    def head(_uri: str, *, org_id: str, settings: Any = None) -> bool:
+        del org_id, settings
+        time.sleep(delay)
+        return found
+
+    return head
+
+
+@pytest.mark.asyncio
+async def test_expired_proof_head_restages_the_object_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A HEAD cut at its budget is unanswered, so the store is deleted again.
+
+    The proof runs before the row's later stores. Left unbounded, one slow HEAD
+    could consume the job budget those stores need; capped, it costs one bounded
+    check and the store is staged, which is idempotent.
+    """
+    staged: list[tuple[str, ...]] = []
+
+    async def record(target: _StoreTarget, *_args: Any, **_kwargs: Any) -> None:
+        staged.append(target.locators)
+
+    monkeypatch.setattr(le.sweep, "_stage", record)
+    monkeypatch.setattr(le.sweep, "object_exists", _slow_head(0.2))
+    monkeypatch.setattr(le.sweep, "_PROOF_HEAD_CAP_SECONDS", 0.02)
+    started = time.monotonic()
+
+    outcome = await le._erase_store(
+        erasure(job_deadline=started + 5.0),
+        _StoreTarget("objectstore", ("s3://bucket/one.json",)),
+        {"objectstore": "verified"},
+        started + 5.0,
+    )
+
+    assert (outcome.status, outcome.fresh) == ("verified", True)
+    assert staged == [("s3://bucket/one.json",)], "an expired check must restage"
+    assert time.monotonic() - started < 1.0, "the HEAD was not cut at its budget"
+
+
+@pytest.mark.asyncio
+async def test_proof_head_is_cut_by_the_job_deadline_as_well_as_the_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The budget is ``min(remaining, cap)``: a nearly spent job cuts the HEAD.
+
+    With the cap left at its real value, only the deadline can stop this call in
+    time, so an implementation that capped per call but ignored the deadline
+    would hang for the full slow answer.
+    """
+    monkeypatch.setattr(le.sweep, "object_exists", _slow_head(0.5))
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError):
+        await le._object_reappeared(
+            erasure(job_deadline=started + 0.02), ("s3://bucket/one.json",)
+        )
+
+    assert time.monotonic() - started < 0.4, "the HEAD outlived the job deadline"
+
+
+@pytest.mark.asyncio
+async def test_proof_head_with_a_spent_budget_starts_no_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A check that cannot finish is not started at all.
+
+    With the deadline already passed, the first locator must raise before any
+    HEAD is issued rather than spending a call the row cannot wait for.
+    """
+    started: list[str] = []
+
+    def head(uri: str, *, org_id: str, settings: Any = None) -> bool:
+        del org_id, settings
+        started.append(uri)
+        return False
+
+    monkeypatch.setattr(le.sweep, "object_exists", head)
+
+    with pytest.raises(TimeoutError):
+        await le._object_reappeared(
+            erasure(job_deadline=time.monotonic() - 1.0),
+            ("s3://bucket/one.json", "s3://bucket/two.json"),
+        )
+
+    assert started == [], "no HEAD may be started on a spent budget"
+
+
+@pytest.mark.asyncio
+async def test_proof_head_loop_stops_once_the_budget_is_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No later locator is started once the check cannot finish.
+
+    Starting a HEAD it cannot wait for only leaks another call and delays the
+    restage that is the honest answer.
+    """
+    calls: list[str] = []
+
+    def head(uri: str, *, org_id: str, settings: Any = None) -> bool:
+        del org_id, settings
+        calls.append(uri)
+        time.sleep(0.2)
+        return False
+
+    monkeypatch.setattr(le.sweep, "object_exists", head)
+    monkeypatch.setattr(le.sweep, "_PROOF_HEAD_CAP_SECONDS", 0.02)
+
+    with pytest.raises(TimeoutError):
+        await le._object_reappeared(
+            erasure(job_deadline=time.monotonic() + 5.0),
+            ("s3://bucket/one.json", "s3://bucket/two.json", "s3://bucket/three.json"),
+        )
+
+    assert calls == ["s3://bucket/one.json"], "the loop must stop, not start another HEAD"
+
+
 @pytest.mark.asyncio
 async def test_not_applicable_does_not_hide_a_ref_that_appeared_later(
     monkeypatch: pytest.MonkeyPatch,

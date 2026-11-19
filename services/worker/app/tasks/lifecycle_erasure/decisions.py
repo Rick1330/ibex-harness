@@ -70,10 +70,16 @@ def _receipt_already_proves(proven: str | None, locators: tuple[str, ...]) -> bo
 def _underivable_outcome(erasure: _Erasure, target: _StoreTarget) -> _StoreOutcome:
     """The verdict for a cache address this row cannot derive.
 
-    A ``purged`` row's memory was deleted by the org-deletion saga before this
-    consumer saw it, so the hot key's agent is gone. That is not a permanent dead
-    end: the saga's org-wide Redis purge is the evidence for the hot set. Any
-    other row with an underivable address has a property a retry cannot change.
+    A ``purged`` row's memory was deleted by the organization saga before this
+    consumer saw it, so the hot key's agent is gone. The saga records the hot
+    address in the same transaction as that delete, so a row it produced still
+    has one and never reaches this rule. Only a row queued by a saga that
+    predates that insert lacks it, and the org-wide Redis receipt cannot stand
+    in: it says a delete ran, not that no write followed it.
+
+    Any other row with an underivable address has a property a retry cannot
+    change, so both are terminally ``failed`` rather than retried to the
+    deadline.
     """
     if target.store == "cache_hot" and erasure.row.event_type == "purged":
         return _org_purge_outcome(target.store, erasure.org_redis_purge)
@@ -81,19 +87,26 @@ def _underivable_outcome(erasure: _Erasure, target: _StoreTarget) -> _StoreOutco
 
 
 def _org_purge_outcome(store: str, status: str | None) -> _StoreOutcome:
-    """What the organization purge's Redis verdict proves for one cache store.
+    """What the organization purge's Redis receipt proves for a cache store.
 
-    ``verified`` is the saga's proof that the org-wide Redis delete ran, which
-    removed every hot key; ``not_applicable`` is the saga's proof that Redis is
-    not deployed, so there is no store to clear. Anything else — no receipt yet,
-    a pending retry, a failed stage — is unproven: the row retries, and is never
-    reported ``verified`` or ``not_applicable`` on evidence nobody produced.
+    Exactly one verdict is a fact about the store: ``not_applicable`` means Redis
+    is not deployed, so no hot set exists and there is nothing to prove. A
+    ``verified`` receipt means the org-wide delete *ran*. It is not a fence: a
+    create that committed before its ``refresh_hot`` can land after that delete,
+    and the receipt records nothing about the member afterwards. Without the
+    member's address (a row queued before the saga recorded hot refs) absence
+    cannot be proved, so the store fails instead of borrowing evidence for a
+    different claim.
     """
-    if status == "verified":
-        return _StoreOutcome(store=store, status="verified")
     if status == "not_applicable":
         return _StoreOutcome(store=store, status="not_applicable")
-    return _failed_outcome(store, "organization purge has not verified the hot store")
+    return replace(
+        _failed_outcome(
+            store,
+            "hot cache address unknown: the organization purge receipt is not a fence",
+        ),
+        permanent=True,
+    )
 
 
 def _erasure_state(outcomes: list[_StoreOutcome]) -> str:

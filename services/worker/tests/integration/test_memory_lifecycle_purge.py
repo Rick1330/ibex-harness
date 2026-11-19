@@ -74,7 +74,9 @@ async def test_org_postgres_purge_emits_redacted_lifecycle_event(
     engine = create_engine(Settings(database_url=migrated_postgres))
     factory = create_session_factory(engine)
     try:
-        org_id, _agent_id, memory_id, _job_id = await _seed_org_memory(factory, with_hold=False)
+        org_id, agent_id, memory_id, _job_id = await _seed_org_memory(
+            factory, with_hold=False
+        )
         async with factory() as session, session.begin():
             await _service_scope(session, org_id)
             await org_deletion._stage_postgres(session, org_id=org_id)
@@ -92,8 +94,19 @@ async def test_org_postgres_purge_emits_redacted_lifecycle_event(
                 text("SELECT COUNT(*) FROM ibex_core.memories WHERE id=:memory"),
                 {"memory": memory_id},
             )
+            hot_ref = await session.scalar(
+                text(
+                    """SELECT locator FROM ibex_core.memory_artifact_refs
+                       WHERE org_id=:org AND memory_id=:memory AND store='cache_hot'"""
+                ),
+                {"org": org_id, "memory": memory_id},
+            )
         assert (int(event.revision), event.event_type) == (2, "purged")
         assert remaining == 0
+        assert hot_ref == f"{org_id}:hot_memories:{agent_id}", (
+            "the purge records the hot address in the same transaction as the delete,"
+            " and the ref outlives the memory row"
+        )
     finally:
         await engine.dispose()
 

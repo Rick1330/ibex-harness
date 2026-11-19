@@ -15,8 +15,11 @@ harness, the object-store stub and the ClickHouse helper are shared from
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
+from app.tasks import lifecycle_erasure
 from tests.integration.lifecycle_erasure_harness import (
     FakeObjectStore,
     Harness,
@@ -74,6 +77,43 @@ async def test_consumer_verifies_every_store_and_deletes_the_copies(
     )
     # The refs stay: the receipt is the proof, the ref is the address it refers to.
     assert await harness.artifact_ref_count(forgotten) == 5
+
+
+@pytest.mark.asyncio
+async def test_a_slow_object_store_head_cannot_starve_the_cache_stores(
+    harness: Harness,
+    object_store: FakeObjectStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The archive re-check is bounded, so a slow store cannot eat the row's budget.
+
+    The object store holds the memory's archive and answers the proof HEAD
+    slowly. An expired check is "the object may be back", never "absent": the
+    store is staged again, and the cache stores after it in the same row are
+    still attempted and proved. Without the cap this run would sleep through the
+    one-second HEAD before reaching any of them.
+    """
+    forgotten, _row_id = await harness.seed_queued(object_store)
+    await harness.seed_receipt(forgotten, store="objectstore")
+    object_store.delay = 1.0
+    object_store.slow_calls = 1
+    monkeypatch.setattr(lifecycle_erasure.sweep, "_PROOF_HEAD_CAP_SECONDS", 0.05)
+    started = time.monotonic()
+
+    out = await harness.run(ch_dsn=harness.env.ch_dsn)
+
+    assert out["complete"] == 1, out
+    assert object_store.deleted == [forgotten.object_uri], (
+        "an expired proof must restage the store, not certify it"
+    )
+    receipts = await harness.receipts(
+        org_id=forgotten.org_id, memory_id=forgotten.memory_id
+    )
+    assert receipts["cache"][0] == "verified", receipts
+    assert receipts["cache_hot"][0] == "verified", receipts
+    # The ClickHouse stage polls on a 0.5 s interval; the proof HEAD must not add
+    # its full slow answer on top of that.
+    assert time.monotonic() - started < 1.0, "the proof HEAD was not cut at its cap"
 
 
 @pytest.mark.asyncio

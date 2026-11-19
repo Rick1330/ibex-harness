@@ -41,11 +41,13 @@ Contract, in the order the details are easy to get wrong:
 * A cache row with no recorded ref is not ``not_applicable``: the keys are
   derivable from ``(org, agent, memory)``, so this consumer derives them and
   erases what the ref could not point at. An unconfigured Redis is ``failed``.
-* A ``purged`` row whose hot key cannot be derived reads the organization
-  deletion's org-wide Redis receipt instead: that purge removed every
-  ``{org}:hot_memories:*`` key, so its ``verified`` receipt is evidence the hot
-  member is gone. A receipt that is absent, pending or failed is a retry, never
-  ``verified`` and never ``not_applicable``.
+* A ``purged`` row's hot address is recorded by the organization saga before it
+  deletes the memory row, so the consumer stages it like any other cache target:
+  forgotten marker, ``ZREM``, then verify absent. The org-wide Redis receipt is
+  read only for a row from a saga that predates that insert, and it is not
+  treated as proof of one member's absence: ``not_applicable`` (Redis is not
+  deployed) is a topology fact, and a ``verified`` receipt only says the delete
+  ran, so such a row fails rather than borrowing it.
 * A stored ``verified`` object-store receipt is re-checked with HEAD before it is
   trusted: the archive key is derived from the row, so a late re-archive recreates
   the object the receipt covered, and the retry must delete it again.
@@ -142,6 +144,7 @@ from .staging import (  # noqa: F401
     _STAGE_BY_STORE,
     _cache_key,
     _forgotten_key,
+    _hot_forgotten_key,
     _member_still_scored,
     _redis_client,
     _stage,

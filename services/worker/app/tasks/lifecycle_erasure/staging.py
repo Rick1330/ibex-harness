@@ -144,14 +144,19 @@ async def _stage_cache(
 async def _stage_cache_hot(
     locators: tuple[str, ...], erasure: _Erasure, deadline: float
 ) -> None:
-    """Remove this memory's member from each hot sorted set, then confirm it.
+    """Fence the memory, remove its member from each hot set, then confirm it.
 
     ZREM of one member, never DEL of the key: the key belongs to the agent and
     holds every hot memory's score. Deleting it would erase live state for
-    memories this forget has nothing to do with. The set carries no content and
-    the read path hydrates from PostgreSQL with ``tombstoned = FALSE``, so a
-    stale member is not a disclosure; the working set is overwritten and trimmed
-    on the next write.
+    memories this forget has nothing to do with.
+
+    The forgotten marker is written before the ZREM and is what makes the
+    absence durable. The hot write is a guarded ZADD that refuses while the
+    marker exists (``services/memory/app/cache/hot_write.py``), so a create that
+    committed before its ``refresh_hot`` and whose write lands after this stage
+    cannot re-add the member. Without it, a ZREM that was correct when it ran
+    could be undone a millisecond later — the org-wide purge has the same
+    shape, and its receipt is not a substitute for this fence.
     """
     client = _redis_client(erasure.settings)
     member = erasure.row.memory_id
@@ -160,6 +165,11 @@ async def _stage_cache_hot(
             _cache_key("cache_hot", locator, org_id=erasure.row.org_id)
             for locator in locators
         ]
+        await client.set(
+            _hot_forgotten_key(erasure.row.org_id, member),
+            "1",
+            ex=_CACHE_FORGOTTEN_TTL_SECONDS,
+        )
         for key in keys:
             await client.zrem(key, member)
         await _wait_cache_member_absent(client, keys, member, deadline)
@@ -192,6 +202,16 @@ def _forgotten_key(object_key: str) -> str:
     return object_key.replace(
         f":{_CACHE_NAMESPACES['cache']}:", f":{_CACHE_FORGOTTEN_NAMESPACE}:", 1
     )
+
+
+def _hot_forgotten_key(org_id: str, memory_id: str) -> str:
+    """The same marker, built from the row because a hot locator names the agent.
+
+    The two cache stores are fenced by one per-memory marker: the hot write's
+    ZADD script checks it before adding a member, so the marker a hot stage
+    writes also stops a delayed object write, which is the same memory.
+    """
+    return f"{org_id}:{_CACHE_FORGOTTEN_NAMESPACE}:{memory_id}"
 
 
 def _redis_client(settings: Any) -> Any:

@@ -65,15 +65,20 @@ class _Erasure:
     factory: Any
     #: ``memories.agent_id`` for the claim's memory. Only the cache stages need
     #: it, to derive the per-agent hot key for a pre-000078 row that recorded no
-    #: cache ref. ``None`` means the memory row is gone; a ``purged`` row then
-    #: falls back to the organization purge's verdict instead of claiming an
-    #: absence nobody checked.
+    #: cache ref. ``None`` means the memory row is gone; a ``purged`` row whose
+    #: organization saga predates the hot-ref insert then has no address at all.
     agent_id: str | None = None
-    #: The organization purge's Redis receipt status. An org-wide purge deletes
-    #: every ``{org}:hot_memories:*`` key, so a ``verified`` receipt is real
-    #: evidence that a purged memory's hot member is gone even though its agent
-    #: (and therefore its derived key) no longer exists.
+    #: The organization purge's Redis receipt status, read for a ``purged`` row
+    #: only. It is a topology fact (``not_applicable`` means Redis is not
+    #: deployed, so no hot set exists) and never proof of one member's absence:
+    #: the org-wide delete ran at some instant, and a delayed hot write can land
+    #: after it. The per-member proof is the address the saga records before it
+    #: deletes the memory row.
     org_redis_purge: str | None = None
+    #: Monotonic instant this row's job must finish by. Every object-store HEAD
+    #: the proof path issues is capped by what is left of it, so a slow store
+    #: cannot spend the budget the cache stores at the end of the row still need.
+    job_deadline: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
