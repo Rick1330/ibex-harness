@@ -41,8 +41,10 @@ read: ``tokens_used``, ``elapsed_ms``, ``grpc_code``, ``trace_id``, ``sha`` and
 ``_ - .``, so ``access_token`` and ``IBEX_RUNTIME_DB_PASSWORD`` are credentials
 while ``tokens_used`` and ``sha`` are not.
 
-The input is untrusted. Every pattern here is bounded and unambiguous, and the
-scanner only moves forward, so redaction is linear in the size of the line: a
+The input is untrusted. Every pattern here is bounded and unambiguous, the
+scanner only moves forward, and the key and its separator are matched on their
+own -- a value is read only at a key that names a credential. Redaction is
+therefore linear in the size of the line, whatever the line contains: a
 pathological line cannot hang the runner.
 """
 
@@ -67,30 +69,44 @@ _KEY_START: Final = r"(?<![A-Za-z0-9_.-])"
 # carrying a nested JSON document appears inside a JSON log line.
 _WRAP: Final = r'(?P<wrap>\\?["\']?)'
 _SEP: Final = r"(?P<sep>\s*[=:]\s*)"
-# Ordered alternatives: a properly quoted value, then a quote that never closes
-# on this line (a truncated `docker logs --tail` line must still be masked), then
-# a bare token. The quoted form opens on `"`, `'`, `\"` or `\'` and closes on the
-# same spelling (backreference), so `\"x\"` closes on `\"`; `(?:\\.|[^"'\\])*` is
-# deterministic at every character -- a backslash matches the first branch and
-# nothing else does -- so it cannot backtrack catastrophically.
+# The key, its wrapper and its separator -- and nothing more. The value is
+# deliberately not part of this pattern. `is_secret_key` is decided from the key
+# alone, so a key that names no credential must not pay for reading a value at
+# all; and because the scan resumes at `end("sep")`, it resumes *inside* the
+# value, which is how a credential quoted inside somebody else's field is still
+# reached (`{"message":"... password=<value>"}`).
+KEY_SEP: Final = re.compile(_KEY_START + "(?P<key>" + _KEY + ")" + _WRAP + _SEP)
+
+# The value readers, tried in this order at a key that names a credential: a
+# properly quoted value, then a quote that never closes on this line (a truncated
+# `docker logs --tail` line must still be masked), then a bare run.
 #
-# The bare form is limited to eight characters, and the limit is load-bearing:
-# the scan discards a value it does not mask, so a greedy bare run would be
-# re-read at every key on the line (`a=a=a=...`) and the cost would be quadratic
-# in the length of the line. When a key does name a credential the span is
-# extended over the rest of the run with BARE_TAIL, which is linear.
-_VALUE: Final = (
-    r'(?P<value>(?P<quote>\\?["\'])'
-    r'(?:\\.|[^"\'\\])*'
-    r'(?P=quote)'
-    r'|(?P<rest>(?P<open>\\?["\'])[^\n]*)'
-    r'|(?P<bare>[^\s,;&"\'\\]{1,8}))'
-)
-ASSIGN: Final = re.compile(
-    _KEY_START + "(?P<key>" + _KEY + ")" + _WRAP + _SEP + _VALUE
-)
-# The maximal run the bounded `bare` alternative stopped in the middle of.
-BARE_TAIL: Final = re.compile(r"""[^\s,;&"'\\]*""")
+# The quoted form opens on `"`, `'`, `\"` or `\'` and closes on the same spelling
+# (backreference), so `\"x\"` closes on `\"`; `(?:\\.|[^"'\\])*` is deterministic
+# at every character -- a backslash matches the first branch and nothing else
+# does -- so it cannot backtrack catastrophically. Reading it before the bare run
+# is what keeps an escaped quote reading as a quote now that a bare run may
+# contain a backslash.
+QUOTED_VALUE: Final = re.compile(r'(?P<quote>\\?["\'])(?:\\.|[^"\'\\])*(?P=quote)')
+TRUNCATED_VALUE: Final = re.compile(r'(?P<open>\\?["\'])[^\n]*')
+# The bare form is limited to eight characters, and the limit is load-bearing: a
+# greedy first attempt would re-read the run at every key on the line
+# (`a=a=a=...`) and the cost would be quadratic in the length of the line. The
+# span is extended over the rest of the run with BARE_TAIL, which is linear.
+#
+# A backslash is an ordinary character in an unquoted shell or JSON-adjacent
+# value, so it is allowed inside the run -- as a unit with the character it
+# escapes, because `\"` is how an unquoted value carries a quote. Excluding it
+# masked a value only up to its first backslash, and a run that *began* with one
+# matched nothing at all, so the whole assignment failed and the line passed
+# through unmasked: a disclosure, not a cosmetic miss.
+#
+# The two branches are disjoint -- a backslash matches only the first, and the
+# class excludes it -- so the run is deterministic at every character and cannot
+# backtrack, and a lone backslash at end of line simply ends the run.
+BARE_VALUE: Final = re.compile(r"""(?:\\.|[^\s,;&"'\\]){1,8}""")
+# The maximal run the bounded bare form stopped in the middle of.
+BARE_TAIL: Final = re.compile(r"""(?:\\.|[^\s,;&"'\\])*""")
 # `(?i)` makes the scheme token case-insensitive and folds the class with it, so
 # the letter range is written once: `a-z` already covers `A-Z` here.
 SCHEME: Final = re.compile(r"(?i)\b(bearer|basic|digest)\s+[a-z0-9._~+/=-]{4,}")
@@ -185,6 +201,27 @@ def mask_value(value: str) -> str:
     return f"{quote}{REDACTED}"
 
 
+def end_of_value(text: str, start: int) -> int:
+    """End offset of the value beginning at `start`, or `start` when none does.
+
+    Ordered rather than alternated so the preference is visible: a quoted value,
+    then an opener with no closer on this line, then a bare run. A bare run is
+    extended to the end of the run here, at the one key that is being masked, so
+    the bound never costs a second pass.
+    """
+    quoted = QUOTED_VALUE.match(text, start)
+    if quoted is not None:
+        return quoted.end()
+    truncated = TRUNCATED_VALUE.match(text, start)
+    if truncated is not None:
+        return truncated.end()
+    bare = BARE_VALUE.match(text, start)
+    if bare is None:
+        return start
+    tail = BARE_TAIL.match(text, bare.end())
+    return tail.end() if tail is not None else bare.end()
+
+
 def mask_assignments(text: str, stats: Stats) -> str:
     """Mask credential assignments anywhere in `text`, including nested values.
 
@@ -195,36 +232,40 @@ def mask_assignments(text: str, stats: Stats) -> str:
     *after* it -- so the credential inside survives. Here a non-credential key
     consumes only its own key and separator, and the scan continues inside the
     value.
+
+    That split is also what keeps the scan linear: a value is read only at a key
+    that names a credential, so no stretch of text is walked twice. Consuming the
+    value from the key pattern instead made an escaped line quadratic, because
+    the value was matched and discarded at every key and then re-scanned.
     """
     out: list[str] = []
     pos = 0
     length = len(text)
     while pos < length:
-        match = ASSIGN.search(text, pos)
-        if match is None:
+        found = KEY_SEP.search(text, pos)
+        if found is None:
             out.append(text[pos:])
             break
-        if not is_secret_key(match.group("key")):
-            stop = match.end("sep")
-            out.append(text[pos:stop])
-            # The separator is at least one character, so this always advances;
-            # max() is the invariant that keeps it true if that ever changes.
-            pos = max(stop, pos + 1)
+        key_end = found.end("sep")
+        secret = is_secret_key(found.group("key"))
+        value_end = end_of_value(text, key_end) if secret else key_end
+        if value_end == key_end:
+            # Nothing to mask: consume the key and separator only, so the next
+            # search starts inside the value. The separator is at least one
+            # character, so this always advances; max() is the invariant that
+            # keeps it true if that ever changes.
+            out.append(text[pos:key_end])
+            pos = max(key_end, pos + 1)
             continue
-        start = match.start("value")
-        end = match.end("value")
-        if match.group("bare") is not None:
-            # The bare alternative is bounded; the value is the whole run.
-            end = BARE_TAIL.match(text, end).end()
-        if is_scheme_word(text[start:end]):
+        if is_scheme_word(text[key_end:value_end]):
             # `authorization: Bearer <token>`: SCHEME masks the token.
-            out.append(text[pos:end])
-            pos = end
+            out.append(text[pos:value_end])
+            pos = value_end
             continue
-        out.append(text[pos:start])
-        out.append(mask_value(text[start:end]))
+        out.append(text[pos:key_end])
+        out.append(mask_value(text[key_end:value_end]))
         stats.masked += 1
-        pos = end
+        pos = value_end
     return "".join(out)
 
 

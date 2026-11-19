@@ -501,9 +501,11 @@ normalise_relative() {
   printf '%s\n' "${joined%/}"
 }
 
-# One `context<TAB>dockerfile` line per `build:` block, with an empty dockerfile when
-# the block declares none. Both keys live in the same block, so a `dockerfile:` can
-# never be attributed to the service above it.
+# One `image<TAB>context<TAB>dockerfile` line per `build:` block, with an empty
+# dockerfile when the block declares none. All three keys live in the same block, so a
+# `dockerfile:` can never be attributed to the service above it, and the service name
+# travels with its block because a diagnostic that names only a path cannot say which
+# image left the inventory.
 compose_build_blocks() {
   local compose="$1"
   awk '
@@ -515,15 +517,23 @@ compose_build_blocks() {
       return line
     }
     function emit() {
-      if (context != "") print context "\t" dockerfile
+      if (context != "") print service "\t" context "\t" dockerfile
       context = ""
       dockerfile = ""
       inbuild = 0
     }
+    # A `  name:` line opens a service, so the name is read before anything else in its
+    # block and the block that follows keeps it until the next one.
+    function named(line) {
+      emit()
+      sub(/:.*$/, "", line)
+      sub(/^[[:space:]]+/, "", line)
+      service = line
+    }
     /^[[:space:]]*#/ { next }
-    /^[^[:space:]]/ { emit(); next }
-    /^  [A-Za-z0-9_.-]+:[[:space:]]*$/ { emit(); next }
-    /^[[:space:]]+build:[[:space:]]*[^[:space:]]/ { emit(); context = value($0); emit(); next }
+    /^[^[:space:]]/ { emit(); service = ""; next }
+    /^  [A-Za-z0-9_.-]+:[[:space:]]*$/ { named($0); next }
+    /^[[:space:]]+build:[[:space:]]*[^[:space:]]/ { context = value($0); emit(); next }
     /^[[:space:]]+build:[[:space:]]*$/ { emit(); inbuild = 1; next }
     inbuild && /^[[:space:]]+context:/ { context = value($0); next }
     inbuild && /^[[:space:]]+dockerfile:/ { dockerfile = value($0); next }
@@ -563,7 +573,7 @@ load_publish_contexts() {
 load_profile_contexts() {
   local compose_dir context dockerfile context_rel dockerfile_rel
   compose_dir="$(dirname "$V1_COMPOSE")"
-  while IFS=$'\t' read -r context dockerfile; do
+  while IFS=$'\t' read -r _ context dockerfile; do
     [[ -n "$context" ]] || continue
     if ! context_rel="$(repo_relative "$compose_dir" "$context")"; then
       printf 'cannot resolve the build context %s declared in %s\n' \
@@ -1130,16 +1140,45 @@ fi
 # resolved against its own build context, which the section above derived from this
 # same compose file.
 
-# Every Dockerfile the profile builds: the ones its compose file names, plus any
-# `Dockerfile` beside a build context inside the profile directory (Compose
-# defaults to `<context>/Dockerfile`, which is how the postgres image is built).
+# Every Dockerfile the profile builds, one `image<TAB>dockerfile<TAB>context` line each,
+# with both paths repository-relative and resolved the way Compose resolves them:
+# `context:` is relative to the compose file, `dockerfile:` is relative to that context,
+# and a block that declares no `dockerfile:` builds `<context>/Dockerfile` — which is how
+# the postgres image is built.
+#
+# The `dockerfile:` value used to be emitted as written. Compose resolves it against the
+# context, so a block written `context: ./postgres` and `dockerfile: fixture.Dockerfile`
+# produced the bare name `fixture.Dockerfile`; the caller then opened that path at the
+# repository root, found nothing and skipped the image, so the inventory built to prevent
+# a silently missing build input was itself short by an image that no assertion examined.
+#
+# The `find` is the same default rule reached from the tree instead of from the file: a
+# `Dockerfile` beside a context inside the profile directory that no `build:` block names.
+# It can only ever list files that exist, so its label — the context directory's name —
+# never appears in a missing-Dockerfile diagnostic.
 profile_dockerfiles() {
-  {
-    grep -oE '^[[:space:]]+dockerfile:[[:space:]]*[^[:space:]]+' "$V1_COMPOSE" |
-      sed -E 's/^[[:space:]]+dockerfile:[[:space:]]*//'
-    find "$ROOT/infra/compose/v1-single-node" -mindepth 2 -maxdepth 3 \
-      -name Dockerfile -type f 2>/dev/null | sed "s|^$ROOT/||"
-  } | sed '/^$/d' | sort -u
+  local compose="${1:-$V1_COMPOSE}" compose_dir context_rel dockerfile image status=0
+  local -a lines=()
+  compose_dir="$(dirname "$compose")"
+  while IFS=$'\t' read -r image context dockerfile; do
+    [[ -n "$context" ]] || continue
+    if ! context_rel="$(repo_relative "$compose_dir" "$context")"; then
+      printf 'profile image %s declares the build context %s in %s, which is not a directory inside the repository\n' \
+        "$image" "$context" "${compose#"$ROOT"/}" >&2
+      status=1
+      continue
+    fi
+    lines+=("$(printf '%s\t%s\t%s' "$image" \
+      "$(normalise_relative "${context_rel}/${dockerfile:-Dockerfile}")" "${context_rel:-.}")")
+  done < <(compose_build_blocks "$compose")
+  while read -r dockerfile; do
+    [[ -n "$dockerfile" ]] || continue
+    lines+=("$(printf '%s\t%s\t%s' "$(basename "$(dirname "$ROOT/$dockerfile")")" \
+      "$dockerfile" "$(dockerfile_context "$dockerfile")")")
+  done < <(find "$compose_dir" -mindepth 2 -maxdepth 3 -name Dockerfile -type f 2>/dev/null |
+    sed "s|^$ROOT/||")
+  (( ${#lines[@]} == 0 )) || printf '%s\n' "${lines[@]}" | sort -u
+  return "$status"
 }
 
 # The repository files a COPY source stands for: the file itself, or every tracked
@@ -1159,23 +1198,30 @@ repo_input_files() {
   fi
 }
 
-# Every build input of every profile image, deduplicated. A Dockerfile the compose
-# file names but the tree does not have is reported on stderr rather than skipped:
-# an unresolvable input is a hole in this assertion, not a pass.
+# Every build input of every profile image, deduplicated, one repository-relative path
+# per line. A declared Dockerfile the tree does not have is reported on stderr naming the
+# image and the path, and the function fails: an unresolvable input is a hole in this
+# assertion, so it cannot be a warning that the caller's process substitution discards
+# before skipping the image.
 profile_build_inputs() {
-  local dockerfile context source
-  while read -r dockerfile; do
+  local compose="${1:-$V1_COMPOSE}" image dockerfile context source status=0 pairs=''
+  if ! pairs="$(profile_dockerfiles "$compose")"; then
+    status=1
+  fi
+  while IFS=$'\t' read -r image dockerfile context; do
     [[ -n "$dockerfile" ]] || continue
     if [[ ! -f "$ROOT/${dockerfile}" ]]; then
-      printf 'profile Dockerfile %s does not exist\n' "$dockerfile" >&2
+      printf 'profile image %s declares Dockerfile %s, which does not exist\n' \
+        "$image" "$dockerfile" >&2
+      status=1
       continue
     fi
-    context="$(dockerfile_context "$dockerfile")"
     while read -r source; do
       [[ -n "$source" ]] || continue
       repo_input_files "$source"
     done < <(copy_sources "$ROOT/${dockerfile}" "$context")
-  done < <(profile_dockerfiles)
+  done <<<"$pairs"
+  return "$status"
 }
 
 # dorny/paths-filter matches with picomatch, where `*` and `?` stop at a `/` and
@@ -1249,7 +1295,13 @@ filter_globs() {
   filter_block "$file" "$key" | sed -nE "s/^  - '(.*)'\$/\\1/p"
 }
 
-mapfile -t v1_profile_inputs < <(profile_build_inputs | sort -u)
+# The inventory's exit status is checked here and nowhere else: `mapfile ... < <(...)`
+# discards it, which is how a skipped image used to pass as a complete inventory.
+v1_inventory=''
+if ! v1_inventory="$(profile_build_inputs)"; then
+  bad "the v1 profile image inventory is incomplete: a declared Dockerfile could not be read (diagnostic above)"
+fi
+mapfile -t v1_profile_inputs < <(printf '%s\n' "$v1_inventory" | sed '/^$/d' | sort -u)
 if (( ${#v1_profile_inputs[@]} == 0 )); then
   bad "no build inputs were derived from the v1 profile images: the derivation is broken"
 fi
@@ -1329,6 +1381,62 @@ if (( ${#v1_gaps[@]} == 0 )); then
   pass "all ${#v1_profile_inputs[@]} build inputs of the v1 profile images are v1 triggers"
 else
   bad "v1 profile image inputs with no trigger: ${v1_gaps[*]}"
+fi
+
+# --- the inventory cannot drop an image whose `dockerfile:` sits under its context ---
+# Compose resolves `dockerfile:` relative to `context:`, so `context: ./image` plus
+# `dockerfile: fixture.Dockerfile` names a file inside the context and never one at the
+# repository root. The inventory used to emit the value as written, the caller opened
+# `$ROOT/fixture.Dockerfile`, found nothing and moved on with its status discarded: the
+# assertion built to catch a silently missing build input reported its 2024 inputs and
+# said nothing about the image it never looked at. The fixture lives in the git-ignored
+# `.cache` outside the profile directory, so it can never join the real sweep.
+mkdir -p "$ROOT/infra/compose/.cache"
+profile_fixture_dir="$(mktemp -d "$ROOT/infra/compose/.cache/profile-inventory.XXXXXX")"
+trap 'rm -rf "$fixture_dir" "$profile_fixture_dir"; rmdir "$ROOT/infra/compose/.cache" 2>/dev/null || true' EXIT
+mkdir -p "$profile_fixture_dir/image"
+cat >"$profile_fixture_dir/compose.yml" <<'EOF'
+services:
+  fixture:
+    build:
+      context: ./image
+      dockerfile: fixture.Dockerfile
+EOF
+cat >"$profile_fixture_dir/image/fixture.Dockerfile" <<'EOF'
+FROM alpine:3.20
+COPY fixture.txt /fixture.txt
+EOF
+: >"$profile_fixture_dir/image/fixture.txt"
+fixture_compose="$profile_fixture_dir/compose.yml"
+fixture_rel="${profile_fixture_dir#"$ROOT"/}"
+
+# The pair, resolved: the declared Dockerfile is the one under the context, not a
+# root-level file of the same name.
+fixture_want="$(printf 'fixture\t%s/image/fixture.Dockerfile\t%s/image' "$fixture_rel" "$fixture_rel")"
+if [[ "$(profile_dockerfiles "$fixture_compose")" == "$fixture_want" ]]; then
+  pass "a context plus dockerfile pair resolves to the Dockerfile inside its own context"
+else
+  bad "the inventory read $fixture_rel/compose.yml as '$(profile_dockerfiles "$fixture_compose" | tr '\t\n' '|;')', want the Dockerfile under its context"
+fi
+
+# The input the skipped image carried: the old resolution enumerated none of it.
+if [[ "$(profile_build_inputs "$fixture_compose")" == "$fixture_rel/image/fixture.txt" ]]; then
+  pass "the image's own build input is enumerated from the resolved Dockerfile"
+else
+  bad "the fixture image's input was not enumerated: '$(profile_build_inputs "$fixture_compose")'"
+fi
+
+# A declared Dockerfile that cannot be read fails the inventory, naming the image and the
+# path. The old code printed one line on stderr and exited 0, and nothing consumed that
+# status, so the omission read as a pass.
+rm -f "$profile_fixture_dir/image/fixture.Dockerfile"
+if fixture_failure="$(profile_build_inputs "$fixture_compose" 2>&1 >/dev/null)"; then
+  bad "a declared Dockerfile that does not exist did not fail the inventory"
+elif [[ "$fixture_failure" == \
+  "profile image fixture declares Dockerfile ${fixture_rel}/image/fixture.Dockerfile, which does not exist" ]]; then
+  pass "a declared Dockerfile that does not exist fails the inventory, naming the image and the path"
+else
+  bad "the missing-Dockerfile failure named the wrong thing: '$fixture_failure'"
 fi
 
 # Removing one copied directory from the filter must fail the assertion and name its
