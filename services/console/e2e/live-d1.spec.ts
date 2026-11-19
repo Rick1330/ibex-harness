@@ -56,6 +56,37 @@ async function waitForHydration(page: Page): Promise<void> {
   await page.locator('[data-console-hydrated="true"]').waitFor({ state: "attached" })
 }
 
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+/**
+ * The Health value shows the snapshot's age, and the header's Observed row
+ * cannot carry the read time itself: that row is the newest of four reads. So
+ * the absolute stamp has to reach a hover and a screen reader from the value,
+ * without restoring the narration sentence the page deliberately dropped.
+ */
+async function expectHealthValueCarriesItsReadStamp(page: Page): Promise<void> {
+  const health = page.locator("p > span[title]").filter({ hasText: /Health / })
+  await expect(health).toHaveCount(1)
+
+  // Hover: the tooltip is the platform snapshot's own read time, to the minute.
+  const stamp = await health.getAttribute("title")
+  if (!stamp) throw new Error("the Health value carries no absolute read time")
+  expect(stamp).toMatch(/^\d{2} \S+ \d{4}, \d{2}:\d{2} UTC$/)
+
+  // Screen reader: the stamp is in the accessibility tree for this value...
+  await expect(health).toHaveAccessibleName(new RegExp(escapeForRegExp(stamp)))
+  // ...and the text a reader traverses keeps the age beside it, not instead of it.
+  const age = await health.locator("span").first().innerText()
+  await expect(health).toContainText(
+    new RegExp(`${escapeForRegExp(age)} \\(read ${escapeForRegExp(stamp)}\\)`),
+  )
+
+  // The stamp is carried by the value, not by a restored narration paragraph.
+  await expect(page.getByText(/Findings below restate only what that read reported/)).toHaveCount(0)
+}
+
 async function expectLiveOverview(page: Page): Promise<void> {
   await page.goto("/")
   await waitForHydration(page)
@@ -63,6 +94,7 @@ async function expectLiveOverview(page: Page): Promise<void> {
   await expect(page.getByText(/Live Workspace · live-workspace/)).toBeVisible()
   await expect(page.getByText("7", { exact: true })).toBeVisible()
   await expect(page.getByText("Redis reported degraded")).toBeVisible()
+  await expectHealthValueCarriesItsReadStamp(page)
   await page.getByRole("tab", { name: /Sources and session/ }).click()
   await expect(page.locator('[data-stream-state="connected"]')).toBeVisible({ timeout: 10_000 })
   await expect(page.getByText("Acme Corp")).toHaveCount(0)

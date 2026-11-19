@@ -93,6 +93,16 @@ const failureDetail = computed(() =>
 
 const staleness = computed(() => overviewStaleness(health.value?.observed_at ?? null, nowMs.value))
 
+/**
+ * The platform snapshot's own read time, which the relative age beside it cannot
+ * carry. The header's `Observed` value is the newest of four reads, so it is not
+ * a substitute: health read at 10:00 with traces read at 10:05 reports 10:05.
+ *
+ * Null when no snapshot was read, so the Health value renders without a stamp
+ * rather than with the formatter's "Not recorded" placeholder.
+ */
+const healthStamp = computed(() => (health.value ? formatGovernStamp(health.value.observed_at) : null))
+
 const issues = computed(() =>
   buildOverviewAttention({
     health: health.value,
@@ -306,7 +316,10 @@ const shortcutGroups = [
         <span class="text-fg-2">{{ overview?.org_name ?? context?.org_name ?? "Organization not verified" }}</span>
         <span v-if="overview?.org_slug" class="font-mono"> · {{ overview.org_slug }}</span>
         <span aria-hidden="true">·</span>
-        <span>Health <span :class="staleness.stale ? 'text-warn' : 'text-fg-2'">{{ staleness.label }}</span></span>
+        <span :title="healthStamp ?? undefined">Health
+          <span :class="staleness.stale ? 'text-warn' : 'text-fg-2'">{{ staleness.label }}</span>
+          <span v-if="healthStamp" class="sr-only"> (read {{ healthStamp }})</span>
+        </span>
       </p>
     </ConsolePageHeader>
 
