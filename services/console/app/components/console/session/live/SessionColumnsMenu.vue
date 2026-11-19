@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue"
+import { nextTick, ref } from "vue"
 import { onClickOutside } from "@vueuse/core"
 import { Check, Columns3 } from "@lucide/vue"
 import {
@@ -14,10 +14,24 @@ const emit = defineEmits<{ "update:modelValue": [value: SessionColumnId[]] }>()
 
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
+const trigger = ref<HTMLButtonElement | null>(null)
 
 onClickOutside(root, () => {
   open.value = false
 })
+
+/**
+ * Closing with `v-if` removes the focused switch (or the panel itself) from the
+ * DOM, so focus would fall back to `document.body` and a keyboard user would
+ * lose their place. Escape is a dismissal and returns focus to the trigger;
+ * a click outside is not, and leaves focus wherever the reader put it.
+ */
+async function dismissMenu(): Promise<void> {
+  if (!open.value) return
+  open.value = false
+  await nextTick()
+  trigger.value?.focus()
+}
 
 function toggle(id: SessionColumnId): void {
   emit("update:modelValue", toggleSessionColumn(props.modelValue, id))
@@ -25,8 +39,9 @@ function toggle(id: SessionColumnId): void {
 </script>
 
 <template>
-  <div ref="root" class="relative" @keydown.esc="open = false">
+  <div ref="root" class="relative" @keydown.esc.stop.prevent="dismissMenu">
     <button
+      ref="trigger"
       type="button"
       class="ix-button-secondary"
       :aria-expanded="open"

@@ -7,7 +7,7 @@ import AgentStatusPill from "../AgentStatusPill.vue"
 import { formatGovernNumber, formatGovernStamp } from "@/lib/govern-format"
 import type { PublicOperatorAgent } from "~~/shared/operator/public"
 
-const props = defineProps<{ agent: PublicOperatorAgent; returnTo: string }>()
+const props = defineProps<{ agent: PublicOperatorAgent; returnTo: string; returnLabel: string }>()
 
 const copyState = ref<"idle" | "copied" | "failed">("idle")
 
@@ -46,7 +46,7 @@ function providerLabel(): string {
     >
       <template #back>
         <NuxtLink :to="returnTo" class="mb-2 inline-flex text-xs text-fg-3 hover:text-fg-1">
-          ← Back to agents
+          ← {{ returnLabel }}
         </NuxtLink>
       </template>
       <template #actions>

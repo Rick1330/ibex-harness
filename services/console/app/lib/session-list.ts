@@ -53,12 +53,12 @@ export type SessionListRow = {
   tokensLabel: string
   latencyMs: number
   latencyLabel: string
-  coverageLabel: string
-  coveragePercent: number | null
-  coverageNote: string
+  extractionIndex: number | null
+  extractionLabel: string
+  extractionNote: string
   activityAt: string
-  /** `completed_at` is when the session reached a terminal state, so it reads "Ended". */
-  activityKind: "Ended" | "Updated"
+  /** Which field `activityAt` came from: the later of `completed_at` and `updated_at`. */
+  activityKind: "Completed" | "Updated"
   createdAt: string
 }
 
@@ -77,16 +77,16 @@ export type SessionPageFilters = {
   duration: SessionDurationBucket | null
 }
 
-export type SessionColumnId = "coverage" | "tokens"
+export type SessionColumnId = "extraction" | "tokens"
 
 export type SessionFilterOption = { value: string; label: string }
 
 export const SESSION_OPTIONAL_COLUMNS: { id: SessionColumnId; label: string }[] = [
-  { id: "coverage", label: "Coverage" },
+  { id: "extraction", label: "Extraction" },
   { id: "tokens", label: "Tokens" },
 ]
 
-export const DEFAULT_SESSION_COLUMNS: SessionColumnId[] = ["coverage"]
+export const DEFAULT_SESSION_COLUMNS: SessionColumnId[] = ["extraction"]
 
 export const DEFAULT_SESSION_PAGE_FILTERS: SessionPageFilters = {
   search: "",
@@ -127,18 +127,42 @@ export function formatSessionLatency(ms: number): string {
 }
 
 /**
- * Extraction progress as the contract states it: `last_extracted_turn` over
- * `turn_count`. The numerator is never inflated (no `+1` for a 0-based index),
- * because the field is the only evidence of how far extraction has progressed.
+ * Extraction, as `operator.sessions.v1` actually states it.
+ *
+ * `last_extracted_turn` is the **zero-based index** of the last turn the worker
+ * recorded as extracted, not a count of extracted turns:
+ *
+ * - `checkpoints.turn_index` starts at 0 (`CHECK (turn_index >= 0)`, and the
+ *   migration documents it as the "0-based turn number within the session");
+ * - the worker advances the pointer to the index of the turn it just wrote, and
+ *   selects pending work with `turn_index > last_extracted_turn`;
+ * - the column defaults to `0`, which is also the index of the first turn.
+ *
+ * So a fully extracted 4-turn session stores `3` and a fully extracted 1-turn
+ * session stores `0`, exactly like a session whose extraction never ran. The
+ * contract therefore supports no count, no completion ratio and no percentage:
+ * `0` cannot be read as "nothing extracted", and `n - 1` cannot be read as
+ * "everything extracted". The console shows the pointer as an index and says
+ * what it is. If the API ever exposes a nullable pointer or an explicit
+ * extraction flag, this is the function to revisit.
  */
-export function sessionCoverage(extracted: number, turns: number): { label: string; percent: number | null } {
-  const label = `${formatGovernNumber(extracted)} / ${formatGovernNumber(turns)}`
-  if (turns <= 0) return { label, percent: null }
-  return { label, percent: Math.min(100, Math.round((extracted / turns) * 100)) }
+export type SessionExtraction = {
+  /** The raw pointer, or null when the session recorded no turns to point at. */
+  index: number | null
+  label: string
+  note: string
 }
 
-function coverageNote(percent: number | null): string {
-  return percent === null ? "No turns recorded" : `${percent}% extracted`
+/** Stated wherever the pointer appears without room for the full explanation. */
+export const SESSION_EXTRACTION_NOTE =
+  "Zero-based turn index. 0 is also the column default, so this cannot show whether extraction started."
+
+export function sessionExtraction(pointer: number, turns: number): SessionExtraction {
+  if (!Number.isFinite(turns) || turns <= 0) {
+    return { index: null, label: "Not recorded", note: "No turns recorded" }
+  }
+  const index = Number.isFinite(pointer) && pointer >= 0 ? Math.trunc(pointer) : 0
+  return { index, label: `turn ${formatGovernNumber(index)}`, note: "0-based index" }
 }
 
 function agentLabels(agents: OperatorAgent[]): Map<string, SessionAgentLabel> {
@@ -151,12 +175,35 @@ function sessionMeta(externalId: string | null, model: string): string {
   return externalId === null ? model : `${externalId} · ${model}`
 }
 
+/**
+ * The Activity cell: whichever of `completed_at` and `updated_at` is later.
+ *
+ * Extraction advances `updated_at` after a session has completed, so preferring
+ * `completed_at` unconditionally would hide the most recent activity. The kind
+ * travels with the timestamp so the cell says which field it is showing.
+ */
+function sessionActivity(session: OperatorSessionRecord): {
+  at: string
+  kind: "Completed" | "Updated"
+} {
+  if (session.completed_at === null) return { at: session.updated_at, kind: "Updated" }
+  const completed = Date.parse(session.completed_at)
+  if (!Number.isFinite(completed)) return { at: session.updated_at, kind: "Updated" }
+  const updated = Date.parse(session.updated_at)
+  // Equal timestamps report the terminal event; an unparseable `updated_at`
+  // cannot be later than a parsed completion.
+  if (!Number.isFinite(updated) || completed >= updated) {
+    return { at: session.completed_at, kind: "Completed" }
+  }
+  return { at: session.updated_at, kind: "Updated" }
+}
+
 export function toSessionListRow(
   session: OperatorSessionRecord,
   agent: SessionAgentLabel | undefined,
 ): SessionListRow {
-  const coverage = sessionCoverage(session.last_extracted_turn, session.turn_count)
-  const completed = session.completed_at !== null
+  const extraction = sessionExtraction(session.last_extracted_turn, session.turn_count)
+  const activity = sessionActivity(session)
   return {
     id: session.id,
     shortId: shortId(session.id),
@@ -172,11 +219,11 @@ export function toSessionListRow(
     tokensLabel: `${formatGovernNumber(session.total_input_tokens)} / ${formatGovernNumber(session.total_output_tokens)}`,
     latencyMs: session.total_latency_ms,
     latencyLabel: formatSessionLatency(session.total_latency_ms),
-    coverageLabel: coverage.label,
-    coveragePercent: coverage.percent,
-    coverageNote: coverageNote(coverage.percent),
-    activityAt: completed ? (session.completed_at as string) : session.updated_at,
-    activityKind: completed ? "Ended" : "Updated",
+    extractionIndex: extraction.index,
+    extractionLabel: extraction.label,
+    extractionNote: extraction.note,
+    activityAt: activity.at,
+    activityKind: activity.kind,
     createdAt: session.created_at,
   }
 }
@@ -276,6 +323,24 @@ export function agentFilterOptions(agents: OperatorAgent[], selected: string | n
   if (!selected) return options
   if (options.some((option) => option.value === selected)) return options
   return [{ value: selected, label: `${shortId(selected)} · not in this agent page` }, ...options]
+}
+
+const AGENT_ID_FILTER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Shown when the agent-id entry path is given anything but a full UUID. */
+export const AGENT_ID_FILTER_INVALID = "Enter the full agent UUID, for example 33333333-3333-4333-8333-333333333333."
+
+/**
+ * The typed entry path for the server-side `agent_id` filter: the select lists
+ * one agents page, so an agent outside it — including one whose id appears in a
+ * loaded session row — has to be nameable. Only a complete UUID is accepted:
+ * the API field is a UUID, a truncated id would be a request the API answers
+ * with a validation error, and anything longer is not an agent id at all.
+ * Returns the lowercase id the query codec expects, or null.
+ */
+export function parseAgentIdFilter(value: string): string | null {
+  const trimmed = value.trim().toLowerCase()
+  return AGENT_ID_FILTER.test(trimmed) ? trimmed : null
 }
 
 export function sessionColumnVisible(columns: SessionColumnId[], id: SessionColumnId): boolean {

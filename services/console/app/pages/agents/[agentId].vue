@@ -4,7 +4,7 @@ import AgentDetailView from "@/components/console/agent/detail/AgentDetailView.v
 import IxVerdict from "@/components/console/IxVerdict.vue"
 import { useOperatorAgent } from "@/composables/useOperatorData"
 import { isOperatorAuthError, operatorFailureDetail } from "@/lib/operator-error"
-import { safeAgentReturn } from "@/lib/return-to"
+import { agentReturnLabel, safeAgentReturn } from "@/lib/return-to"
 
 const route = useRoute()
 const agentId = computed(() => String(route.params.agentId ?? ""))
@@ -22,6 +22,7 @@ const failureDetail = computed(() =>
   error.value && !notFound.value && !authIssue.value ? operatorFailureDetail(error.value) : null,
 )
 const returnTo = computed(() => safeAgentReturn(route.query.return))
+const returnLabel = computed(() => agentReturnLabel(returnTo.value))
 
 useHead(() => ({
   title: `${agent.value?.name ?? "Agent"} · Agents · IBEX Console`,
@@ -29,10 +30,10 @@ useHead(() => ({
 </script>
 
 <template>
-  <AgentDetailView v-if="agent" :agent="agent" :return-to="returnTo" />
+  <AgentDetailView v-if="agent" :agent="agent" :return-to="returnTo" :return-label="returnLabel" />
   <div v-else class="flex min-w-0 flex-col gap-4">
     <NuxtLink :to="returnTo" class="inline-flex text-xs text-fg-3 hover:text-fg-1">
-      ← Back to agents
+      ← {{ returnLabel }}
     </NuxtLink>
     <IxVerdict
       v-if="loading"

@@ -75,6 +75,12 @@ const ORG_B = {
 
 const ORGS = [ORG_A, ORG_B]
 const requests = []
+/**
+ * Transient failures for the retry journeys: `pathname -> { remaining, status }`.
+ * A read that fails once must be retryable by the surface that shows it, and the
+ * only honest way to test that is to fail the read the way a dependency would.
+ */
+const faults = new Map()
 /** access token -> { orgKey, family } */
 const liveAccess = new Map()
 /** refresh token -> { orgKey, family, consumed } */
@@ -362,7 +368,7 @@ function handleSessionRoute(url, request, response, body, entry) {
   return false
 }
 
-function handleTestRoute(url, request, response) {
+async function handleTestRoute(url, request, response) {
   if (url.pathname === "/__test/login") {
     response.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
@@ -385,11 +391,41 @@ function handleTestRoute(url, request, response) {
   }
   if (url.pathname === "/__test/reset" && request.method === "POST") {
     requests.length = 0
+    faults.clear()
+    response.writeHead(204, { "cache-control": "no-store" })
+    response.end()
+    return true
+  }
+  if (url.pathname === "/__test/fail" && request.method === "POST") {
+    const body = parseJson(await readBody(request))
+    const target = typeof body?.path === "string" ? body.path : ""
+    const count = Number(body?.count ?? 1)
+    const status = Number(body?.status ?? 503)
+    // Only an operator read route can be failed, so a journey cannot point the
+    // control at the session endpoints and undo the auth coverage.
+    if (!target.startsWith("/v1/operator/") || target.length > 256) {
+      writeJson(response, 400, { error: { code: "BAD_FAULT_PATH", message: "path must be an operator read" } })
+      return true
+    }
+    if (!Number.isInteger(count) || count < 1 || count > 10 || !Number.isInteger(status) || status < 500 || status > 599) {
+      writeJson(response, 400, { error: { code: "BAD_FAULT", message: "count 1-10, status 5xx" } })
+      return true
+    }
+    faults.set(target, { remaining: count, status })
     response.writeHead(204, { "cache-control": "no-store" })
     response.end()
     return true
   }
   return false
+}
+
+/** The injected status for this pathname, consuming one occurrence, or null. */
+function consumeFault(pathname) {
+  const fault = faults.get(pathname)
+  if (!fault) return null
+  fault.remaining -= 1
+  if (fault.remaining < 1) faults.delete(pathname)
+  return fault.status
 }
 
 function recordRequest(request, pathname) {
@@ -700,7 +736,7 @@ function handleAuthenticatedJson(pathname, org, response, entry) {
 
 async function handleApiRequest(request, response) {
   const url = new URL(request.url ?? "/", `https://127.0.0.1:${apiPort}`)
-  if (handleTestRoute(url, request, response)) return
+  if (await handleTestRoute(url, request, response)) return
 
   const { cookie, entry } = recordRequest(request, url.pathname)
 
@@ -722,6 +758,17 @@ async function handleApiRequest(request, response) {
     return
   }
   entry.org = org.key
+  const faultStatus = consumeFault(url.pathname)
+  if (faultStatus !== null) {
+    writeJson(
+      response,
+      faultStatus,
+      { error: { code: "INJECTED_UNAVAILABLE", message: "Injected transient failure" } },
+      {},
+      entry,
+    )
+    return
+  }
   handleAuthenticatedJson(url.pathname, org, response, entry)
 }
 

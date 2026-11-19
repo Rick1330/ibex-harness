@@ -178,8 +178,14 @@ function runEmptyAction(): void {
   clearFilters()
 }
 
+/**
+ * Refresh both reads. The agents read is the join behind the Agent column and
+ * the agent selector, so a transient failure it hits must be retryable here:
+ * refreshing only the sessions read would leave "Agent read unavailable" and an
+ * empty selector on screen after the API recovered.
+ */
 function refresh(): void {
-  void sessionsState.refresh()
+  void Promise.all([sessionsState.refresh(), agentsState.refresh()]).catch(() => undefined)
 }
 
 // A page-scoped filter describes the rows that were loaded, so a new read (a

@@ -28,12 +28,29 @@ export function safeSessionReturn(value: unknown): string {
   return value
 }
 
+// A session row links to its agent, so an agent page opened from the Sessions
+// list must be able to return there. Only the list shape is admitted: exactly
+// `/sessions`, optionally with a query. The record shape (`/sessions/<id>`) is a
+// different page and is not a target of this link, and a fragment is rejected
+// because the back link would land below the heading.
+const SESSIONS_LIST_RETURN = /^\/sessions(?:\?[^#]*)?$/
+
 export function safeAgentReturn(value: unknown): string {
   if (typeof value !== "string") return "/agents"
   if (value.startsWith("//")) return "/agents"
+  if (SESSIONS_LIST_RETURN.test(value)) return value
   if (!value.startsWith("/agents")) return "/agents"
   if (value.startsWith("/agents/")) return "/agents"
   return value
+}
+
+/**
+ * The back-link label for a sanitised agent return target. The label follows the
+ * destination, so a reader is never told "Back to agents" while the link goes to
+ * the Sessions list.
+ */
+export function agentReturnLabel(href: string): string {
+  return href.startsWith("/sessions") ? "Back to sessions" : "Back to agents"
 }
 
 export function safeDirectiveReturn(value: unknown): string {

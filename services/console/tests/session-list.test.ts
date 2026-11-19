@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  AGENT_ID_FILTER_INVALID,
   DEFAULT_SESSION_COLUMNS,
   DEFAULT_SESSION_PAGE_FILTERS,
   agentFilterOptions,
   filterSessionRows,
   formatSessionLatency,
   matchesSessionSearch,
+  parseAgentIdFilter,
   segmentSessionRows,
   sessionColumnVisible,
-  sessionCoverage,
+  sessionExtraction,
   sessionFacets,
   sessionPageFilterCount,
   activeSessionFilterCount,
@@ -126,26 +128,42 @@ describe("session row identity", () => {
   })
 })
 
-describe("session coverage", () => {
-  it("reports the extracted turn over the turn count as the contract states it", () => {
-    expect(sessionCoverage(0, 1)).toEqual({ label: "0 / 1", percent: 0 })
-    expect(sessionCoverage(3, 4)).toEqual({ label: "3 / 4", percent: 75 })
+describe("session extraction", () => {
+  it("reports a fully extracted four-turn session as its zero-based pointer, not as 4 of 4", () => {
+    // `last_extracted_turn` points at the last extracted turn, whose index is 3.
+    // The old percentage read this as 3/4 = 75% for a session with nothing left
+    // to extract.
+    const fullyExtracted = row({ turn_count: 4, last_extracted_turn: 3 })
+    expect(fullyExtracted.extractionIndex).toBe(3)
+    expect(fullyExtracted.extractionLabel).toBe("turn 3")
+    expect(fullyExtracted.extractionNote).toBe("0-based index")
   })
 
-  it("does not inflate a zero-based index into a count", () => {
-    // `last_extracted_turn` is compared literally: no `+1`, no rounding up.
-    expect(sessionCoverage(0, 5).percent).toBe(0)
+  it("reports a one-turn session as turn 0, which is also the column default", () => {
+    // 0 is both "the first turn was extracted" and "nothing has been extracted",
+    // and the contract cannot tell them apart. Neither reads as a ratio.
+    const oneTurn = row({ turn_count: 1, last_extracted_turn: 0 })
+    expect(oneTurn.extractionIndex).toBe(0)
+    expect(oneTurn.extractionLabel).toBe("turn 0")
+
+    expect(sessionExtraction(0, 1)).toEqual({ index: 0, label: "turn 0", note: "0-based index" })
   })
 
-  it("has no percentage when the session recorded no turns", () => {
-    const covered = row({ turn_count: 0, last_extracted_turn: 0 })
-    expect(covered.coverageLabel).toBe("0 / 0")
-    expect(covered.coveragePercent).toBeNull()
-    expect(covered.coverageNote).toBe("No turns recorded")
+  it("does not derive a count, a ratio or a percentage from the pointer", () => {
+    // The view model has no percentage field at all: the pointer cannot support
+    // one, so there is nothing to round.
+    expect(Object.keys(sessionExtraction(2, 5)).sort()).toEqual(["index", "label", "note"])
+    const covered = row({ turn_count: 5, last_extracted_turn: 2 })
+    expect(covered).not.toHaveProperty("coveragePercent")
+    expect(covered.extractionLabel).toBe("turn 2")
   })
 
-  it("clamps the percentage but reports the raw ratio", () => {
-    expect(sessionCoverage(5, 3)).toEqual({ label: "5 / 3", percent: 100 })
+  it("says nothing was recorded when the session has no turns to point at", () => {
+    expect(sessionExtraction(0, 0)).toEqual({
+      index: null,
+      label: "Not recorded",
+      note: "No turns recorded",
+    })
   })
 })
 
@@ -163,10 +181,34 @@ describe("session latency", () => {
 })
 
 describe("session activity", () => {
-  it("uses the completion time when the session is complete", () => {
-    const completed = row({ status: "completed", completed_at: "2026-11-02T13:00:00.000Z" })
-    expect(completed.activityKind).toBe("Ended")
+  it("uses the completion time while nothing advanced the record afterwards", () => {
+    const completed = row({
+      status: "completed",
+      completed_at: "2026-11-02T13:00:00.000Z",
+      updated_at: "2026-11-02T13:00:00.000Z",
+    })
+    expect(completed.activityKind).toBe("Completed")
     expect(completed.activityAt).toBe("2026-11-02T13:00:00.000Z")
+  })
+
+  it("uses the later update time when extraction advanced the record after completion", () => {
+    const extractedLater = row({
+      status: "completed",
+      completed_at: "2026-11-02T13:00:00.000Z",
+      updated_at: "2026-11-02T14:30:00.000Z",
+    })
+    expect(extractedLater.activityKind).toBe("Updated")
+    expect(extractedLater.activityAt).toBe("2026-11-02T14:30:00.000Z")
+  })
+
+  it("keeps the completion time when it is the later of the two", () => {
+    const completedLast = row({
+      status: "completed",
+      completed_at: "2026-11-02T15:00:00.000Z",
+      updated_at: "2026-11-02T14:00:00.000Z",
+    })
+    expect(completedLast.activityKind).toBe("Completed")
+    expect(completedLast.activityAt).toBe("2026-11-02T15:00:00.000Z")
   })
 
   it("falls back to the update time for a session that has not completed", () => {
@@ -297,22 +339,51 @@ describe("agent filter options", () => {
   })
 })
 
+describe("agent id entry path", () => {
+  it("accepts a full UUID and lowercases it for the query", () => {
+    expect(parseAgentIdFilter(MISSING_AGENT)).toBe(MISSING_AGENT)
+    expect(parseAgentIdFilter(`  ${MISSING_AGENT.toUpperCase()}  `)).toBe(MISSING_AGENT)
+  })
+
+  it("refuses anything that is not a complete UUID", () => {
+    // A partial id would be a request the API answers with a validation error,
+    // and a truncated short-id is what the table displays, not an identifier.
+    expect(parseAgentIdFilter("")).toBeNull()
+    expect(parseAgentIdFilter("99999999")).toBeNull()
+    expect(parseAgentIdFilter("99999999-9999-4999-8999-99999999999")).toBeNull()
+    expect(parseAgentIdFilter(`${MISSING_AGENT}0`)).toBeNull()
+    expect(parseAgentIdFilter("support-agent")).toBeNull()
+    expect(parseAgentIdFilter("/sessions?agent_id=x")).toBeNull()
+    expect(parseAgentIdFilter("99999999-9999-4999-8999-99999999999z")).toBeNull()
+  })
+
+  it("names the accepted shape in the error copy", () => {
+    expect(AGENT_ID_FILTER_INVALID).toContain("33333333-3333-4333-8333-333333333333")
+    expect(AGENT_ID_FILTER_INVALID).toContain("full agent UUID")
+  })
+
+  it("keeps the typed id selected in the control after the filter is applied", () => {
+    const options = agentFilterOptions([agent()], MISSING_AGENT)
+    expect(options.some((option) => option.value === MISSING_AGENT)).toBe(true)
+  })
+})
+
 describe("session columns", () => {
-  it("shows coverage by default and leaves tokens to the column control", () => {
-    expect(DEFAULT_SESSION_COLUMNS).toEqual(["coverage"])
-    expect(sessionColumnVisible(DEFAULT_SESSION_COLUMNS, "coverage")).toBe(true)
+  it("shows extraction by default and leaves tokens to the column control", () => {
+    expect(DEFAULT_SESSION_COLUMNS).toEqual(["extraction"])
+    expect(sessionColumnVisible(DEFAULT_SESSION_COLUMNS, "extraction")).toBe(true)
     expect(sessionColumnVisible(DEFAULT_SESSION_COLUMNS, "tokens")).toBe(false)
   })
 
   it("toggles a column off and back on in the canonical order", () => {
-    const withoutCoverage = toggleSessionColumn(DEFAULT_SESSION_COLUMNS, "coverage")
-    expect(withoutCoverage).toEqual([])
-    expect(sessionColumnVisible(withoutCoverage, "coverage")).toBe(false)
-    expect(toggleSessionColumn(withoutCoverage, "coverage")).toEqual(["coverage"])
-    expect(toggleSessionColumn(withoutCoverage, "tokens")).toEqual(["tokens"])
+    const withoutExtraction = toggleSessionColumn(DEFAULT_SESSION_COLUMNS, "extraction")
+    expect(withoutExtraction).toEqual([])
+    expect(sessionColumnVisible(withoutExtraction, "extraction")).toBe(false)
+    expect(toggleSessionColumn(withoutExtraction, "extraction")).toEqual(["extraction"])
+    expect(toggleSessionColumn(withoutExtraction, "tokens")).toEqual(["tokens"])
   })
 
   it("keeps the canonical order when a second column is enabled", () => {
-    expect(toggleSessionColumn(["tokens"], "coverage")).toEqual(["coverage", "tokens"])
+    expect(toggleSessionColumn(["tokens"], "extraction")).toEqual(["extraction", "tokens"])
   })
 })

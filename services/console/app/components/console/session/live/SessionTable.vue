@@ -4,6 +4,7 @@ import LiveSessionStatusPill from "./LiveSessionStatusPill.vue"
 import { formatGovernStamp } from "@/lib/govern-format"
 import {
   agentSecondaryLabel,
+  SESSION_EXTRACTION_NOTE,
   sessionColumnVisible,
   shortId,
   type SessionColumnId,
@@ -19,7 +20,7 @@ const props = defineProps<{
   agentReadFailed: boolean
 }>()
 
-const showCoverage = computed(() => sessionColumnVisible(props.columns, "coverage"))
+const showExtraction = computed(() => sessionColumnVisible(props.columns, "extraction"))
 const showTokens = computed(() => sessionColumnVisible(props.columns, "tokens"))
 const columnCount = computed(() => 5 + props.columns.length)
 
@@ -36,8 +37,9 @@ function agentHref(row: SessionListRow): string {
   <div class="overflow-x-auto rounded-lg border border-line-subtle bg-surface">
     <table class="ix-agent-table" aria-label="Sessions">
       <caption class="sr-only">
-        Metadata-only session index for this organization. Activity is the last recorded update or end, plus the summed
-        latency of the recorded turns; Coverage is the last extracted turn over the turn count.
+        Metadata-only session index for this organization. Activity is the later of the completion time and the update
+        time, and the cell says which one it shows, plus the summed latency of the recorded turns. Extraction is the
+        zero-based index of the last extracted turn, which is not a count or a completion ratio.
       </caption>
       <thead>
         <tr>
@@ -46,7 +48,7 @@ function agentHref(row: SessionListRow): string {
           <th scope="col" class="w-32">Outcome</th>
           <th scope="col" class="w-44">Activity</th>
           <th scope="col" class="w-20 text-right">Turns</th>
-          <th v-if="showCoverage" scope="col" class="w-28 text-right">Coverage</th>
+          <th v-if="showExtraction" scope="col" class="w-28 text-right">Extracted to</th>
           <th v-if="showTokens" scope="col" class="w-32 text-right">Tokens</th>
         </tr>
       </thead>
@@ -98,9 +100,12 @@ function agentHref(row: SessionListRow): string {
             <td class="text-right font-mono text-xs text-fg-1 tabular-nums">
               {{ row.turnsLabel }}<span class="sr-only"> turns</span>
             </td>
-            <td v-if="showCoverage" class="text-right">
-              <span class="block font-mono text-xs text-fg-1 tabular-nums">{{ row.coverageLabel }}</span>
-              <span class="mt-0.5 block text-[0.625rem] leading-4 whitespace-nowrap text-fg-3">{{ row.coverageNote }}</span>
+            <td v-if="showExtraction" class="text-right">
+              <span class="block font-mono text-xs text-fg-1 tabular-nums">{{ row.extractionLabel }}</span>
+              <span
+                class="mt-0.5 block text-[0.625rem] leading-4 whitespace-nowrap text-fg-3"
+                :title="SESSION_EXTRACTION_NOTE"
+              >{{ row.extractionNote }}</span>
             </td>
             <td v-if="showTokens" class="text-right font-mono text-xs whitespace-nowrap text-fg-1 tabular-nums">
               {{ row.tokensLabel }}<span class="sr-only"> input and output tokens</span>

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, ref } from "vue"
 import { X } from "@lucide/vue"
 import {
+  AGENT_ID_FILTER_INVALID,
   SESSION_DURATION_OPTIONS,
   SESSION_STATUS_LABELS,
   activeSessionFilterCount,
+  parseAgentIdFilter,
   type SessionDurationBucket,
   type SessionFilterOption,
   type SessionPageFilters,
@@ -24,9 +26,16 @@ const emit = defineEmits<{
   clear: []
 }>()
 
+const agentIdInput = ref("")
+const agentIdError = ref<string | null>(null)
+
 const activeCount = computed(() => activeSessionFilterCount(props.filters, props.scope))
 
 const linkedStatus = computed(() => (props.scope.status === null ? "" : SESSION_STATUS_LABELS[props.scope.status]))
+
+const agentIdHelpId = computed(() =>
+  agentIdError.value === null ? "session-agent-id-help" : "session-agent-id-help session-agent-id-error",
+)
 
 function readSelect(event: Event): string | null {
   const value = (event.target as HTMLSelectElement).value
@@ -35,6 +44,22 @@ function readSelect(event: Event): string | null {
 
 function onAgent(event: Event): void {
   emit("agent", readSelect(event))
+}
+
+/**
+ * The select can only list the agents one page returned. This entry path names
+ * any agent by id, but only a complete UUID: the API field is a UUID, so a
+ * partial id would be a request it answers with a validation error.
+ */
+function applyAgentId(): void {
+  const parsed = parseAgentIdFilter(agentIdInput.value)
+  if (parsed === null) {
+    agentIdError.value = AGENT_ID_FILTER_INVALID
+    return
+  }
+  agentIdError.value = null
+  agentIdInput.value = ""
+  emit("agent", parsed)
 }
 
 function onModel(event: Event): void {
@@ -78,6 +103,30 @@ function onDuration(event: Event): void {
           <option v-for="option in options.agents" :key="option.value" :value="option.value">{{ option.label }}</option>
         </select>
       </label>
+
+      <form class="flex min-w-0 flex-col gap-1" novalidate @submit.prevent="applyAgentId">
+        <label class="flex min-w-0 flex-col gap-1">
+          <span class="ix-label">Agent ID</span>
+          <input
+            v-model="agentIdInput"
+            type="text"
+            class="ix-input font-mono text-[0.6875rem]"
+            placeholder="00000000-0000-4000-8000-000000000000"
+            autocomplete="off"
+            spellcheck="false"
+            :aria-invalid="agentIdError !== null"
+            :aria-describedby="agentIdHelpId"
+            @input="agentIdError = null"
+          >
+        </label>
+        <p id="session-agent-id-help" class="text-[0.625rem] leading-4 text-fg-3">
+          The list above holds one agent page. Paste a full agent UUID to filter by an agent outside it.
+        </p>
+        <p v-if="agentIdError" id="session-agent-id-error" class="text-[0.625rem] leading-4 text-warn" role="alert">
+          {{ agentIdError }}
+        </p>
+        <button type="submit" class="ix-button-secondary self-start">Filter by ID</button>
+      </form>
     </div>
 
     <div class="flex min-w-0 flex-col gap-2.5 border-t border-line-subtle pt-3">
