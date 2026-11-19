@@ -9,7 +9,7 @@
 
 <p align="center"><strong>Self-hosted memory and context for multi-tenant AI agents.</strong></p>
 
-![IBEX Console Overview](docs/assets/console/overview.png)
+![IBEX Console Overview](engineering/assets/console/overview.png)
 
 *The Console Overview, captured from a development build in demo mode. Every value is an illustrative fixture marked
 by the `Illustrative` chip; it is not live operator data (ADR-0089 §4).*
@@ -98,19 +98,31 @@ request:
 ```bash
 make v1-secrets
 make v1-up
-make v1-bootstrap-pat   # print the one-time bootstrap PAT, then store it and delete the file
-make v1-smoke
+make v1-bootstrap-pat   # print the one-time bootstrap PAT
+make v1-smoke           # prove the profile with that PAT
 ```
+
+Store the bootstrap PAT in your secret manager and remove
+`infra/compose/v1-single-node/bootstrap/bootstrap.pat` **after** the smoke passes. The order matters: `make v1-smoke`
+reads that file to authenticate, and a run without it exits 4 (skip), which the target treats as a failure — so deleting
+the file first leaves the install unproven.
 
 `make v1-up` rebuilds the images, waits for every required service, and prints the URL. The first start downloads
 roughly 2.3 GB of embedding weights and may take up to two hours; a warm `tei-cache` volume is the recommended pre-seed
 for an offline or bandwidth-limited install. `make v1-down` stops the profile without deleting volumes.
 
-For a restricted sandbox or Podman machine:
+For a restricted sandbox or Podman machine, export the runtime so every later command sees it:
 
 ```bash
-IBEX_RUNTIME=podman IBEX_NETWORK=host make setup
+export IBEX_RUNTIME=podman
+IBEX_NETWORK=host make setup   # development-stack overlay; v1-single-node rejects host networking
 ```
+
+The scripts read `IBEX_RUNTIME` per process and default it to `auto`, which prefers Docker whenever `docker info`
+succeeds (`infra/scripts/dev-tool.sh`). On a host that runs both, prefixing a single command would leave `make v1-up`
+and `make v1-smoke` building and proving the profile on Docker, so export it once per shell instead. Leave
+`IBEX_NETWORK` out of the shell environment: `v1-single-node` refuses `host` and exits 2, and the switch means something
+only to the development stack.
 
 `make env-doctor` diagnoses runtime, port, DNS, and telemetry issues.
 
@@ -168,7 +180,7 @@ build also offers labelled illustrative fixtures (see [Console](#console)).
 | [`mcp-memory/`](services/mcp-memory/README.md) | Python | Partial; logging-only audit |
 | [`mcp-operator/`](services/mcp-operator/README.md) | Python | Local, default-off |
 | [`relay/`](services/relay/README.md) | Go | Local, default-off; no production sink |
-| [`console/`](services/console/README.md) | Nuxt 4 + Nitro | Provisional; 8 of 10 core reads live |
+| [`console/`](services/console/README.md) | Nuxt 4 + Nitro | Provisional; surface status per the registry |
 
 Status is a phrase here; the evidence and the boundary are behind each service link. The full inventory, shared
 packages, and local infrastructure are in [`services/README.md`](services/README.md),
@@ -181,24 +193,30 @@ Directives, Policies, Explore, Platform, and Settings. Incidents, drift, audit, 
 tools, and access are an explicit platform tier behind a collapsed disclosure ([ADR-0089](engineering/adr/0089-product-shape-and-console-scope.md)).
 
 It has a session. `/login` exchanges a personal access token once for an HttpOnly cookie, and
-`server/api/operator/session/{login,logout,refresh}` are the only routes that mutate cookies. Every operator **data**
-route is still a read: the Console exposes no data mutations. Eight of the ten core surfaces have a live read path;
-Policies and Settings remain labelled previews.
+`server/api/operator/session/{login,logout,refresh}` are the only routes that change session state. Every operator
+**data** route is a read, and the Console exposes no data mutations. The one write a read can cause is to its own
+session: when a data read gets a `401`, the BFF refreshes the access cookie once, retries, and relays the new cookies
+to the browser (`services/console/server/utils/operator/http.ts`, `fetchOperatorJsonAttempt` → `rotateAccessCookie`).
+
+Which core surfaces have a live read path, and which are labelled previews, is owned by the surface registry in
+[`services/console/shared/operator/surfaces.ts`](services/console/shared/operator/surfaces.ts);
+[`services/console/README.md`](services/console/README.md) derives its table from it. This README does not restate that
+status.
 
 A `Live` surface means its read path is connected and fails closed; it is not an acceptance claim. Every Console row
 remains provisional in the status ledger. See [`services/console/README.md`](services/console/README.md).
 
-![IBEX Console Explore](docs/assets/console/explore.png)
+![IBEX Console Explore](engineering/assets/console/explore.png)
 
 *Explore: trace metadata and capture completeness. Illustrative fixtures under the `Illustrative` chip, not live
 operator data (ADR-0089 §4).*
 
-![IBEX Console Platform](docs/assets/console/platform.png)
+![IBEX Console Platform](engineering/assets/console/platform.png)
 
 *Platform: dependency, ingestion, and recovery health. Illustrative fixtures under the `Illustrative` chip, not live
 operator data (ADR-0089 §4).*
 
-![IBEX Console Settings](docs/assets/console/settings.png)
+![IBEX Console Settings](engineering/assets/console/settings.png)
 
 *Settings: a labelled `Illustrative preview`. No live operator data is rendered and no contract is claimed
 (ADR-0089 §4).*
