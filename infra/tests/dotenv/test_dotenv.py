@@ -212,6 +212,59 @@ class InterpolationTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual(read("SET=\nA=${SET:-${MISSING:-c}}\n", "A"), "c")
 
+    # --- operands are evaluated lazily -------------------------------------
+    #
+    # Compose evaluates only the branch an operator selects. The reader
+    # interpolated the operand before the operator ran, so an unselected branch
+    # was evaluated too, and `${SET:-${MISSING:?error}}` raised with `SET` set:
+    # the reader rejected an environment Compose accepts. `read_value` feeds the
+    # secret generator and the profile tooling, so that aborted a valid install
+    # before any key was read.
+
+    def test_unselected_default_branch_is_not_evaluated(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                read("SET=present\nA=${SET:-${IBEX_NOT_SET_923:?error}}\n", "A"), "present"
+            )
+
+    def test_selected_default_branch_is_still_evaluated(self):
+        # The other half of the fix: laziness must not disable the error that a
+        # selected branch is supposed to raise.
+        with mock.patch.dict(os.environ, {}, clear=True), self.assertRaises(dotenv.DotenvError):
+            read("A=${IBEX_NOT_SET_924:-${IBEX_NOT_SET_925:?error}}\n", "A")
+
+    def test_unselected_alternate_branch_is_not_evaluated(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("SET=\nA=${SET:+${IBEX_NOT_SET_926:?error}}\n", "A"), "")
+
+    def test_selected_alternate_branch_is_still_evaluated(self):
+        with mock.patch.dict(os.environ, {}, clear=True), self.assertRaises(dotenv.DotenvError):
+            read("SET=present\nA=${SET:+${IBEX_NOT_SET_927:?error}}\n", "A")
+
+    def test_selected_alternate_branch_interpolates_its_operand(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                read("SET=present\nA=${SET:+${IBEX_NOT_SET_928:-chosen}}\n", "A"), "chosen"
+            )
+
+    def test_single_dash_operand_is_skipped_when_the_value_is_set_but_empty(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("SET=\nA=${SET-${IBEX_NOT_SET_929:?error}}\n", "A"), "")
+
+    def test_plain_alternate_operand_is_skipped_when_the_value_is_unset(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("A=${IBEX_NOT_SET_930+${IBEX_NOT_SET_931:?error}}\n", "A"), "")
+
+    def test_error_operand_is_skipped_when_the_value_is_non_empty(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                read("SET=present\nA=${SET:?${IBEX_NOT_SET_932:?error}}\n", "A"), "present"
+            )
+
+    def test_error_operand_is_skipped_when_the_value_is_set_but_empty(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("SET=\nA=${SET?${IBEX_NOT_SET_933:?error}}\n", "A"), "")
+
     # --- escapes Compose does not define -----------------------------------
     #
     # Compose decodes `\\`, `\"`, `\$`, `\n`, `\t` and `\r`. Any other escape is
@@ -226,6 +279,32 @@ class InterpolationTests(unittest.TestCase):
 
     def test_known_escapes_still_decode(self):
         self.assertEqual(read('A="a\\\\b"\n', "A"), "a\\b")
+
+
+class MatchingBraceTests(unittest.TestCase):
+    """Depth counting decides where an expression ends, so pin its shape."""
+
+    def test_nested_expression_closes_at_the_outer_brace(self):
+        value = "${A:-${B:-c}}"
+        self.assertEqual(dotenv._matching_brace(value, 0), len(value) - 1)
+
+    def test_sibling_expressions_close_independently(self):
+        value = "${A:-${B:-c}}${D:-e}"
+        self.assertEqual(dotenv._matching_brace(value, 0), value.index("}${D"))
+        self.assertEqual(dotenv._matching_brace(value, value.index("${D")), len(value) - 1)
+
+    def test_unterminated_expression_returns_minus_one(self):
+        self.assertEqual(dotenv._matching_brace("${A:-${B:-c}", 0), -1)
+
+    def test_brace_outside_an_expression_is_ignored(self):
+        # The `}` before the opening `${` and the one after the closing brace are
+        # ordinary text, not depth counting.
+        value = "}x${A:-b}}"
+        self.assertEqual(dotenv._matching_brace(value, 2), 8)
+
+    def test_brace_outside_an_expression_survives_interpolation(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("A=}x${MISSING:-b}}\n", "A"), "}xb}")
 
 
 if __name__ == "__main__":

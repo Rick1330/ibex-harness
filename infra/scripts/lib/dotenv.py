@@ -29,6 +29,7 @@ from __future__ import annotations
 import os
 import string
 import sys
+from collections.abc import Callable
 
 
 class DotenvError(ValueError):
@@ -108,32 +109,40 @@ def _parse(raw: str) -> tuple[str, str | None]:
     return (value[:comment].strip() if comment != -1 else value), None
 
 
-def _default_if_empty(value, operand: str) -> str:
-    return value if value else operand
+# An operand is an expression too, and Compose evaluates only the branch the
+# operator selects. Operators therefore receive a zero-argument callable and
+# interpolate the operand on that branch alone. Interpolating eagerly evaluated
+# both branches, so `${SET:-${MISSING:?error}}` raised with `SET` set even though
+# Compose resolves it to the value of `SET` and never reads the error branch.
+Operand = Callable[[], str]
 
 
-def _default_if_unset(value, operand: str) -> str:
-    return value if value is not None else operand
+def _default_if_empty(value, operand: Operand) -> str:
+    return value if value else operand()
 
 
-def _required_if_empty(value, operand: str) -> str:
+def _default_if_unset(value, operand: Operand) -> str:
+    return value if value is not None else operand()
+
+
+def _required_if_empty(value, operand: Operand) -> str:
     if not value:
-        raise DotenvError(operand or "required variable is empty or unset")
+        raise DotenvError(operand() or "required variable is empty or unset")
     return value
 
 
-def _required_if_unset(value, operand: str) -> str:
+def _required_if_unset(value, operand: Operand) -> str:
     if value is None:
-        raise DotenvError(operand or "required variable is unset")
+        raise DotenvError(operand() or "required variable is unset")
     return value
 
 
-def _alternate_if_empty(value, operand: str) -> str:
-    return operand if value else ""
+def _alternate_if_empty(value, operand: Operand) -> str:
+    return operand() if value else ""
 
 
-def _alternate_if_unset(value, operand: str) -> str:
-    return operand if value is not None else ""
+def _alternate_if_unset(value, operand: Operand) -> str:
+    return operand() if value is not None else ""
 
 
 # Order matters: the colon forms are matched before their plain counterparts.
@@ -160,7 +169,7 @@ def _split_operator(expression: str) -> tuple[str, str | None, str]:
 
 
 def _lookup(expression: str, seen: dict[str, str]) -> str:
-    name, operator, operand = _split_operator(expression)
+    name, operator, raw_operand = _split_operator(expression)
     if not name:
         return ""
     value = os.environ[name] if name in os.environ else seen.get(name)
@@ -168,8 +177,10 @@ def _lookup(expression: str, seen: dict[str, str]) -> str:
         return value or ""
     # The operand is an expression too: Compose resolves `${A:-${B:-c}}` by
     # substituting the nested reference before applying the operator. Applying
-    # the operator to the raw operand returned the literal text `${B:-c}`.
-    return OPERATOR_FUNCS[operator](value, _interpolate(operand, seen))
+    # the operator to the raw operand returned the literal text `${B:-c}`. The
+    # substitution is deferred to the branch that yields the operand, so a
+    # selected branch still nests and an unselected one is never evaluated.
+    return OPERATOR_FUNCS[operator](value, lambda: _interpolate(raw_operand, seen))
 
 
 def _name_end(value: str, start: int) -> int:
@@ -179,25 +190,36 @@ def _name_end(value: str, start: int) -> int:
     return end
 
 
+def _brace_step(value: str, position: int, depth: int) -> tuple[int, int]:
+    """Return ``(next_position, depth)`` after reading the character at `position`.
+
+    ``${`` opens a nesting level and is two characters wide, ``}`` closes one,
+    and anything else is ordinary text. Deciding that here keeps the scan loop
+    flat: the nesting it counts is the expression's, not the code's.
+    """
+    if value.startswith("${", position):
+        return position + 2, depth + 1
+    if value[position] == "}":
+        return position + 1, depth - 1
+    return position + 1, depth
+
+
 def _matching_brace(value: str, index: int) -> int:
     """Return the `}` that closes the `${` opened at `index`, or -1.
 
     Expressions nest, so the first `}` does not necessarily close the outer
     one: in `${A:-${B:-c}}` it closes `B`. Counting depth finds the right brace
-    and keeps a nested default from being returned as literal text.
+    and keeps a nested default from being returned as literal text. `index`
+    points at the `$` of an opening `${`, so the first step raises the depth,
+    and only a closing `}` lowers it back to zero.
     """
     depth = 0
     position = index
     while position < len(value):
-        if value.startswith("${", position):
-            depth += 1
-            position += 2
-            continue
-        if value[position] == "}":
-            depth -= 1
-            if depth == 0:
-                return position
-        position += 1
+        start = position
+        position, depth = _brace_step(value, position, depth)
+        if depth == 0:
+            return start
     return -1
 
 
