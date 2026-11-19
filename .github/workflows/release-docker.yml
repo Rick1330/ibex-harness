@@ -165,6 +165,13 @@ jobs:
       # and every sleep is clipped to what is left of it, so growing delays cannot
       # stretch it: when it is spent the loop stops and reports instead of retrying
       # back-to-back.
+      #
+      # §8.3 also bounds *which* failures are retried: transient ones only, never auth
+      # or validation failures. A revoked token, a token without the permission this
+      # job needs, or a repository/argument that does not exist cannot recover by
+      # waiting, so such an answer stops the loop on the first lookup instead of
+      # spending the whole retry budget on it. The bundle still stays unverified: the
+      # classification decides how hard to try, never what the result means.
       - name: Fetch the bundle smoke result for this commit
         id: bundle-smoke
         env:
@@ -211,6 +218,51 @@ jobs:
           last_error=""
           checks=0
           errlog="$(mktemp)"
+
+          # AGENTS.md §8.3: retry transient failures only, never auth or validation
+          # failures. Waiting cannot fix a bad credential, a token without the
+          # permission this job needs, or a repository that does not exist, so those
+          # stop the loop on the first answer; only a failure that may recover spends
+          # the retry budget.
+          #
+          # The status code alone cannot decide it: GitHub answers 403 for rate
+          # limiting *and* for a permission denial, and the two belong on opposite
+          # sides. The message decides, and the rate-limit wording is matched first so
+          # a 403 that says "rate limit" is never mistaken for a permission problem.
+          #
+          #   permanent — cannot recover by waiting, so the loop stops:
+          #     bad credentials / must authenticate / authentication failed /
+          #     authentication scope / the `gh auth login` hint (401),
+          #     resource not accessible (covers "by personal access token" and
+          #     "by integration"), permission denied, insufficient permissions or
+          #     scope, not authorized (403 denial),
+          #     400/404/422: a malformed repository, workflow or argument.
+          #   transient — may recover, so the existing backoff applies:
+          #     rate limit / secondary rate limit / abuse detection / 408 / 429
+          #     (matched explicitly, before the permanent list), 5xx, DNS, TCP, TLS
+          #     and timeout wording, and anything unrecognised.
+          #
+          # Unrecognised is transient on purpose. Retrying a permanent failure only
+          # wastes budget, while calling a recoverable one permanent would turn a
+          # release that could have verified itself into an unverified bundle.
+          classify_lookup_failure() {
+            local msg
+            msg="$(tr '[:upper:]' '[:lower:]' <<<"${1:-}")"
+            case "$msg" in
+              *"rate limit"*|*"abuse detection"*|*"(http 408)"*|*"(http 429)"*)
+                printf 'transient' ;;
+              *"bad credentials"*|*"must authenticate"*|*"authentication failed"*|\
+              *"authentication scope"*|*"gh auth login"*|*"gh auth refresh"*|\
+              *"resource not accessible"*|*"permission denied"*|*"not authorized"*|\
+              *"insufficient permission"*|*"insufficient scope"*|\
+              *"(http 401)"*|*"(http 400)"*|*"(http 404)"*|*"(http 422)"*|\
+              *"could not resolve to a repository"*)
+                printf 'permanent' ;;
+              *)
+                printf 'transient' ;;
+            esac
+          }
+
           for (( attempt = 1; attempt <= attempts; attempt++ )); do
             checks="$attempt"
             if ! run_json="$(gh run list --repo "$REPOSITORY" --workflow ci.yml \
@@ -220,6 +272,15 @@ jobs:
               absent=0
               last_error="$(tail -n 1 "$errlog" | tr -d '\r')"
               state="could not be queried (${last_error:-no error output})"
+              # Classified on the whole stderr, reported on its last line: the
+              # not-authenticated hint spans two lines and only the first names the
+              # remedy ("please run: gh auth login"), so the last line alone would
+              # miss a failure that cannot recover by waiting.
+              if [[ "$(classify_lookup_failure "$(tr '\n' ' ' <"$errlog")")" == permanent ]]; then
+                echo "::warning::the CI run list for ${COMMIT} failed permanently and is not retried (check ${attempt}/${attempts}): ${last_error:-no error output}; bundle status stays unverified"
+                rm -f "$errlog"
+                exit 0
+              fi
               delay="$backoff_base"
               for (( backoff = 1; backoff < errors && delay < backoff_max; backoff++ )); do
                 delay=$(( delay * 2 ))

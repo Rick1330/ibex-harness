@@ -1916,9 +1916,15 @@ case "$1 $2" in
   "run list")
     n="$(grep -c '^run list' "$state/calls.log" || true)"
     # Transport failure (rate limit, 5xx): the step must retry it and must never read
-    # it as evidence that no run exists.
+    # it as evidence that no run exists, unless the message makes it permanent. A case
+    # that needs a particular failure writes it to fail-message; the default is the
+    # rate-limit 403, which is transient even though it arrives as a 403.
     if [[ -f "$state/fail-run-list.all" || -f "$state/fail-run-list.${n}" ]]; then
-      echo "gh: API rate limit exceeded for 1.2.3.4 (HTTP 403)" >&2
+      if [[ -f "$state/fail-message" ]]; then
+        cat "$state/fail-message" >&2
+      else
+        echo "gh: API rate limit exceeded for 1.2.3.4 (HTTP 403)" >&2
+      fi
       exit 1
     fi
     if [[ -f "$state/run-list.${n}.json" ]]; then
@@ -1990,6 +1996,34 @@ run_smoke_case() {
 
 lookups() { grep -c '^run list' "$fixture_dir/smoke-$1/calls.log" || true; }
 promoted() { grep -Fq 'smoke_results=smoke-results/bundle-smoke-result.json' "$fixture_dir/smoke-$1/github-output"; }
+
+# backoff_sequence_ok <budget> <base> <cap> <delay>... — true when every recorded sleep
+# is inside the range the release step allows for *that* attempt. The intended delay is
+# the base doubled once per consecutive failure and held at the cap; the jittered value
+# is uniform in [intended/2, intended] (equal jitter); and the value is clipped to what
+# is left of the wall-clock budget. This is the invariant the step actually guarantees,
+# and it is what the case below asserts instead of a decreasing tail.
+backoff_sequence_ok() {
+  local budget="$1" base="$2" cap="$3"
+  shift 3
+  local -a delays=("$@")
+  local i d intended half remaining lo hi slept=0
+  for (( i = 0; i < ${#delays[@]}; i++ )); do
+    d="${delays[i]}"
+    intended=$(( base << i ))
+    if (( intended > cap )); then intended="$cap"; fi
+    half=$(( intended / 2 ))
+    remaining=$(( budget - slept ))
+    lo="$half"
+    if (( remaining < lo )); then lo="$remaining"; fi
+    hi="$intended"
+    if (( remaining < hi )); then hi="$remaining"; fi
+    (( d >= lo && d <= hi )) || return 1
+    slept=$(( slept + d ))
+  done
+  (( slept <= budget )) || return 1
+  return 0
+}
 
 completed_run="[{\"databaseId\":4242,\"headSha\":\"${smoke_sha}\",\"status\":\"completed\",\"conclusion\":\"success\"}]"
 in_progress_run="[{\"databaseId\":4243,\"headSha\":\"${smoke_sha}\",\"status\":\"in_progress\",\"conclusion\":null}]"
@@ -2183,47 +2217,90 @@ fi
 # Case 12: the error path backs off. Every lookup fails, so every delay is a retry
 # delay: the delay must grow up to the cap, carry jitter (not a fixed drumbeat), and
 # the run must still finish inside attempts x interval instead of multiplying it.
+#
+# What is asserted is the rule the step actually implements, per attempt: the intended
+# delay is the base doubled per consecutive failure and held at the cap, the jittered
+# value is uniform in [intended/2, intended], and the value is clipped to what is left
+# of the budget. The earlier version of this case instead required every delay after
+# the growth prefix to be <= its predecessor, which is false for that rule: once the
+# delay reaches the cap each attempt draws independently from [cap/2, cap], so a rise
+# after a fall is normal. A faithful simulation of the loop rejected about 8% of legal
+# sequences (162 and 165 of 2000 across two runs), and the committed suite had failed
+# on one such run (… 48 46 54). A test that fails correct code at random teaches people
+# to re-run instead of to read, which is worse than not testing the property at all.
+backoff_base=10
+backoff_max=80
+backoff_budget=200
 mkdir -p "$fixture_dir/smoke-backoff"
 printf '%s\n' '[]' >"$fixture_dir/smoke-backoff/run-list.json"
 : >"$fixture_dir/smoke-backoff/fail-run-list.all"
 smoke_rc="$(run_smoke_case backoff 200 IBEX_SMOKE_RUN_INTERVAL=1 \
-  IBEX_SMOKE_BACKOFF_BASE=10 IBEX_SMOKE_BACKOFF_MAX=80)"
+  IBEX_SMOKE_BACKOFF_BASE="$backoff_base" IBEX_SMOKE_BACKOFF_MAX="$backoff_max")"
 backoff_out="$(cat "$fixture_dir/smoke-backoff/stdout")"
 mapfile -t backoff_delays <"$fixture_dir/smoke-backoff/sleeps.log"
 backoff_n=${#backoff_delays[@]}
 backoff_total=0
-backoff_cap_ok=1
 for (( i = 0; i < backoff_n; i++ )); do
   backoff_total=$(( backoff_total + backoff_delays[i] ))
-  (( backoff_delays[i] <= 80 )) || backoff_cap_ok=0
 done
-# The delay grows until the budget starts clipping it to what is left, and from there
-# it can only shrink. Both halves are asserted: the growth on the unclipped prefix, and
-# that the clipped tail never turns back up.
-backoff_growth=0
-backoff_prev=0
-for (( i = 0; i < backoff_n && backoff_delays[i] >= backoff_prev; i++ )); do
-  backoff_prev="${backoff_delays[i]}"
-  backoff_growth=$(( i + 1 ))
+# The intended delay grows to the cap and then stops growing. Asserted on the intended
+# value, not on the recorded one, because the recorded value is jittered and clipping
+# legitimately makes it shrink near the end of the budget.
+backoff_growth_ok=1
+backoff_intended_prev=0
+for (( i = 0; i < backoff_n; i++ )); do
+  backoff_intended=$(( backoff_base << i ))
+  if (( backoff_intended > backoff_max )); then backoff_intended="$backoff_max"; fi
+  (( backoff_intended >= backoff_intended_prev )) || backoff_growth_ok=0
+  backoff_intended_prev="$backoff_intended"
 done
-backoff_tail_ok=1
-for (( i = backoff_growth; i < backoff_n; i++ )); do
-  (( i > 0 && backoff_delays[i] <= backoff_delays[i - 1] )) || backoff_tail_ok=0
+# The unclipped prefix increases. While the whole intended delay still fits the budget
+# no clipping can occur, and each draw is at least the previous attempt's intended
+# delay, so the first four values are non-decreasing on correct code — and are not if
+# the doubling stops.
+backoff_prefix_ok=1
+for (( i = 1; i < backoff_n && i < 4; i++ )); do
+  (( backoff_delays[i] >= backoff_delays[i - 1] )) || backoff_prefix_ok=0
 done
 backoff_distinct="$(printf '%s\n' "${backoff_delays[@]}" | sort -n -u | wc -l)"
 if [[ "$smoke_rc" == 0 ]] && (( backoff_n >= 4 )) &&
-  (( backoff_cap_ok && backoff_tail_ok )) &&
-  (( backoff_growth >= 4 )) &&
-  (( backoff_delays[0] >= 5 && backoff_delays[0] <= 10 )) &&
+  backoff_sequence_ok "$backoff_budget" "$backoff_base" "$backoff_max" "${backoff_delays[@]}" &&
+  (( backoff_growth_ok && backoff_prefix_ok )) &&
   (( backoff_delays[3] >= 4 * backoff_delays[0] )) &&
-  (( backoff_total <= 200 )) &&
+  (( backoff_total <= backoff_budget && backoff_total > 0 )) &&
   (( backoff_distinct >= 3 )) &&
   (( $(lookups backoff) < 200 )) &&
   grep -Fq 'could not be established' <<<"$backoff_out" &&
   ! grep -Fq 'no CI push run' <<<"$backoff_out"; then
-  pass "a failed lookup retries on a growing, jittered delay (${backoff_delays[*]}) that still fits the 200s budget"
+  pass "a failed lookup retries on a growing, jittered delay (${backoff_delays[*]}), each inside its own range and within the ${backoff_budget}s budget"
 else
-  bad "the error path did not back off inside the budget (delays: ${backoff_delays[*]:-none}, total ${backoff_total}, growth ${backoff_growth}, cap ${backoff_cap_ok}, tail ${backoff_tail_ok}, distinct ${backoff_distinct:-0}, $(lookups backoff) lookups): ${backoff_out}"
+  bad "the error path did not back off inside the budget (delays: ${backoff_delays[*]:-none}, total ${backoff_total}, growth ${backoff_growth_ok}, prefix ${backoff_prefix_ok}, distinct ${backoff_distinct:-0}, $(lookups backoff) lookups): ${backoff_out}"
+fi
+
+# Case 12b: the witness for the assertion that was replaced. This sequence is legal by
+# the production rule — each value is inside its own [intended/2, intended] range, the
+# intended delays reach the 80s cap and hold, and the 255s total fits a 300s budget —
+# but the retired decreasing-tail rule rejected it, because 60 follows 45 after the cap.
+# Constructed by hand so the proof does not depend on the generator: if the current
+# check ever rejects it, the check has re-encoded the false invariant.
+legal_jitter=(10 20 40 80 45 60)
+legal_budget=300
+retired_prefix=0
+retired_prev=0
+for (( i = 0; i < ${#legal_jitter[@]} && legal_jitter[i] >= retired_prev; i++ )); do
+  retired_prev="${legal_jitter[i]}"
+  retired_prefix=$(( i + 1 ))
+done
+retired_tail_ok=1
+for (( i = retired_prefix; i < ${#legal_jitter[@]}; i++ )); do
+  (( i > 0 && legal_jitter[i] <= legal_jitter[i - 1] )) || retired_tail_ok=0
+done
+if (( retired_tail_ok )); then
+  bad "the witness sequence ${legal_jitter[*]} no longer reproduces the retired decreasing-tail rule, so it proves nothing"
+elif ! backoff_sequence_ok "$legal_budget" "$backoff_base" "$backoff_max" "${legal_jitter[@]}"; then
+  bad "the backoff check rejects a legal jittered sequence (${legal_jitter[*]}, ${legal_budget}s budget)"
+else
+  pass "a legal jittered sequence the retired decreasing-tail rule rejected (${legal_jitter[*]}) is accepted"
 fi
 
 # Case 13: a successful but empty lookup is not a failure, so it keeps the fixed
@@ -2257,6 +2334,92 @@ if [[ -n "$budget_attempts" && -n "$budget_interval" && -n "$budget_absent" ]] &
   pass "the release wait budget is ${budget_attempts} x ${budget_interval}s = $(( budget_attempts * budget_interval ))s with an absence grace of ${budget_absent}, above the 381 s v0.1.10 needed"
 else
   bad "the release wait budget is below the measured requirement (attempts=${budget_attempts:-?} interval=${budget_interval:-?} absent=${budget_absent:-?})"
+fi
+
+# Case 15: a permanent failure is not retried. A revoked token cannot recover by
+# waiting, so the loop must stop after one lookup instead of spending the whole budget
+# (AGENTS.md §8.3), name the failure it saw, and still leave the bundle unverified —
+# the same verdict as an outage, reached immediately instead of after 1200 s.
+mkdir -p "$fixture_dir/smoke-permanent"
+printf '%s\n' '[]' >"$fixture_dir/smoke-permanent/run-list.json"
+: >"$fixture_dir/smoke-permanent/fail-run-list.all"
+printf 'gh: Bad credentials (HTTP 401)\n' >"$fixture_dir/smoke-permanent/fail-message"
+smoke_rc="$(run_smoke_case permanent 40 IBEX_SMOKE_RUN_INTERVAL=1)"
+permanent_out="$(cat "$fixture_dir/smoke-permanent/stdout")"
+if [[ "$smoke_rc" == 0 ]] &&
+  [[ ! -s "$fixture_dir/smoke-permanent/github-output" ]] &&
+  [[ "$(lookups permanent)" == 1 ]] &&
+  [[ ! -s "$fixture_dir/smoke-permanent/sleeps.log" ]] &&
+  grep -Fq 'failed permanently and is not retried' <<<"$permanent_out" &&
+  grep -Fq 'gh: Bad credentials (HTTP 401)' <<<"$permanent_out" &&
+  grep -Fq 'bundle status stays unverified' <<<"$permanent_out" &&
+  ! grep -Fq 'could not be established' <<<"$permanent_out" &&
+  ! grep -Fq 'no CI push run' <<<"$permanent_out"; then
+  pass "a permanent gh failure is not retried: one lookup, the failure named, no sleep, bundle unverified"
+else
+  bad "a permanent gh failure spent retries or lost its name (exit ${smoke_rc}, $(lookups permanent) lookups): ${permanent_out}"
+fi
+
+# Case 15b: the same status code as case 17 and the opposite verdict. A permission 403
+# is permanent; only the message separates it from a rate-limit 403.
+mkdir -p "$fixture_dir/smoke-permanent-403"
+printf '%s\n' '[]' >"$fixture_dir/smoke-permanent-403/run-list.json"
+: >"$fixture_dir/smoke-permanent-403/fail-run-list.all"
+printf 'gh: Resource not accessible by personal access token (HTTP 403)\n' \
+  >"$fixture_dir/smoke-permanent-403/fail-message"
+smoke_rc="$(run_smoke_case permanent-403 40 IBEX_SMOKE_RUN_INTERVAL=1)"
+permanent_403_out="$(cat "$fixture_dir/smoke-permanent-403/stdout")"
+if [[ "$smoke_rc" == 0 ]] &&
+  [[ ! -s "$fixture_dir/smoke-permanent-403/github-output" ]] &&
+  [[ "$(lookups permanent-403)" == 1 ]] &&
+  grep -Fq 'failed permanently and is not retried' <<<"$permanent_403_out" &&
+  grep -Fq 'Resource not accessible by personal access token' <<<"$permanent_403_out"; then
+  pass "a permission 403 is permanent even though a rate-limit 403 is not"
+else
+  bad "a permission 403 was retried or lost its name ($(lookups permanent-403) lookups): ${permanent_403_out}"
+fi
+
+# Case 16: the other side of the classification. A 5xx is transient, so it keeps the
+# existing backoff and the run still promotes once it answers.
+mkdir -p "$fixture_dir/smoke-transient-then-ok"
+printf '%s\n' "$completed_run" >"$fixture_dir/smoke-transient-then-ok/run-list.json"
+: >"$fixture_dir/smoke-transient-then-ok/fail-run-list.1"
+printf 'gh: Server Error (HTTP 502)\n' >"$fixture_dir/smoke-transient-then-ok/fail-message"
+smoke_rc="$(run_smoke_case transient-then-ok 24 IBEX_SMOKE_RUN_INTERVAL=1 \
+  IBEX_SMOKE_BACKOFF_BASE=10 IBEX_SMOKE_BACKOFF_MAX=80)"
+transient_out="$(cat "$fixture_dir/smoke-transient-then-ok/stdout")"
+mapfile -t transient_delays <"$fixture_dir/smoke-transient-then-ok/sleeps.log"
+if [[ "$smoke_rc" == 0 ]] && promoted transient-then-ok &&
+  [[ "$(lookups transient-then-ok)" == 2 ]] &&
+  (( ${#transient_delays[@]} == 1 )) &&
+  (( transient_delays[0] >= 5 && transient_delays[0] <= 10 )) &&
+  ! grep -Fq 'failed permanently' <<<"$transient_out"; then
+  pass "a transient 5xx is retried with backoff and still promotes when the run appears"
+else
+  bad "a transient 5xx was not retried into a promotion (exit ${smoke_rc}, $(lookups transient-then-ok) lookups, delays ${transient_delays[*]:-none}): ${transient_out}"
+fi
+
+# Case 17: the case most likely to be got wrong. GitHub returns 403 for rate limiting
+# *and* for permission denial, and they belong on opposite sides. This is the rate-limit
+# 403, so it must be retried for the whole budget — never the immediate stop of case 15b
+# — even though the status code is identical.
+mkdir -p "$fixture_dir/smoke-rate-limit-403"
+printf '%s\n' '[]' >"$fixture_dir/smoke-rate-limit-403/run-list.json"
+: >"$fixture_dir/smoke-rate-limit-403/fail-run-list.all"
+printf 'gh: API rate limit exceeded for 1.2.3.4 (HTTP 403)\n' \
+  >"$fixture_dir/smoke-rate-limit-403/fail-message"
+smoke_rc="$(run_smoke_case rate-limit-403 6 IBEX_SMOKE_RUN_INTERVAL=2 \
+  IBEX_SMOKE_BACKOFF_BASE=10 IBEX_SMOKE_BACKOFF_MAX=80)"
+ratelimit_out="$(cat "$fixture_dir/smoke-rate-limit-403/stdout")"
+ratelimit_lookups="$(lookups rate-limit-403)"
+if [[ "$smoke_rc" == 0 ]] &&
+  [[ ! -s "$fixture_dir/smoke-rate-limit-403/github-output" ]] &&
+  (( ratelimit_lookups >= 2 && ratelimit_lookups <= 6 )) &&
+  grep -Fq 'could not be established' <<<"$ratelimit_out" &&
+  ! grep -Fq 'failed permanently' <<<"$ratelimit_out"; then
+  pass "a rate-limit 403 is retried for the whole budget, not classified permanent like a permission 403"
+else
+  bad "a rate-limit 403 was classified permanent or stopped being retried (${ratelimit_lookups} lookups): ${ratelimit_out}"
 fi
 
 if (( fail != 0 )); then
