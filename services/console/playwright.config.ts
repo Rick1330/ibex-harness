@@ -4,7 +4,9 @@ const baseURL = "http://127.0.0.1:3280"
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: ["live-d1.spec.ts"],
+  // The live suite needs the loopback operator stand-in and its sessions; it is
+  // run by `playwright.live.config.ts` (test:e2e:live).
+  testIgnore: ["live-d1.spec.ts", "login-journey.spec.ts", "tenant-journey.spec.ts"],
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,

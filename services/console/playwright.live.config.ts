@@ -4,7 +4,7 @@ const baseURL = "https://127.0.0.1:3282"
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: "live-d1.spec.ts",
+  testMatch: ["live-d1.spec.ts", "login-journey.spec.ts", "tenant-journey.spec.ts"],
   fullyParallel: false,
   workers: 1,
   forbidOnly: Boolean(process.env.CI),
