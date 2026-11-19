@@ -25,6 +25,32 @@ export const SESSION_STATUS_LABELS: Record<SessionStatus, string> = {
   error: "Error",
 }
 
+/**
+ * What the Activity cell calls its timestamp.
+ *
+ * `Updated` is the later `updated_at`. A timestamp taken from `completed_at` is
+ * labelled from `status`, never from which field won.
+ */
+export type SessionActivityKind = "Completed" | "Updated" | "Abandoned" | "Ended"
+
+/**
+ * The label for a timestamp read from `completed_at`. It has to agree with the
+ * Outcome pill beside it.
+ *
+ * `ibex_core.sessions_abandon_idle` sets `status='abandoned'` and
+ * `completed_at=NOW()` in one statement, and the `sessions_updated_at` BEFORE
+ * UPDATE trigger stamps `updated_at` to that same instant, so an abandoned
+ * session reaches the equal-timestamp branch. Reading the label from the field
+ * would therefore print "completed" next to an "Abandoned" pill.
+ */
+export function sessionEndLabel(status: SessionStatus): SessionActivityKind {
+  if (status === "completed") return "Completed"
+  if (status === "abandoned") return "Abandoned"
+  // Nothing writes `error` today and `active` cannot hold a completion, so a
+  // `completed_at` under either is incoherent data: say when it ended, not how.
+  return "Ended"
+}
+
 /** Display in the agent cell when the joined agent read does not carry the id. */
 export const AGENT_NOT_JOINED_NOTE = "Name not in this agent page"
 
@@ -57,8 +83,8 @@ export type SessionListRow = {
   extractionLabel: string
   extractionNote: string
   activityAt: string
-  /** Which field `activityAt` came from: the later of `completed_at` and `updated_at`. */
-  activityKind: "Completed" | "Updated"
+  /** What `activityAt` is: the later of `completed_at` and `updated_at`, labelled from `status`. */
+  activityKind: SessionActivityKind
   createdAt: string
 }
 
@@ -180,11 +206,14 @@ function sessionMeta(externalId: string | null, model: string): string {
  *
  * Extraction advances `updated_at` after a session has completed, so preferring
  * `completed_at` unconditionally would hide the most recent activity. The kind
- * travels with the timestamp so the cell says which field it is showing.
+ * travels with the timestamp so the cell says what it is showing; when the
+ * timestamp comes from `completed_at` the label is read from `status`
+ * (`sessionEndLabel`), because the idle sweeper stores its abandon instant in
+ * that same field.
  */
 function sessionActivity(session: OperatorSessionRecord): {
   at: string
-  kind: "Completed" | "Updated"
+  kind: SessionActivityKind
 } {
   if (session.completed_at === null) return { at: session.updated_at, kind: "Updated" }
   const completed = Date.parse(session.completed_at)
@@ -193,7 +222,7 @@ function sessionActivity(session: OperatorSessionRecord): {
   // Equal timestamps report the terminal event; an unparseable `updated_at`
   // cannot be later than a parsed completion.
   if (!Number.isFinite(updated) || completed >= updated) {
-    return { at: session.completed_at, kind: "Completed" }
+    return { at: session.completed_at, kind: sessionEndLabel(session.status) }
   }
   return { at: session.updated_at, kind: "Updated" }
 }

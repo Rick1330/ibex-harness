@@ -4,6 +4,7 @@ import {
   AGENT_ID_FILTER_INVALID,
   DEFAULT_SESSION_COLUMNS,
   DEFAULT_SESSION_PAGE_FILTERS,
+  SESSION_STATUS_ORDER,
   agentFilterOptions,
   filterSessionRows,
   formatSessionLatency,
@@ -215,6 +216,46 @@ describe("session activity", () => {
     const active = row()
     expect(active.activityKind).toBe("Updated")
     expect(active.activityAt).toBe("2026-11-02T12:00:01.000Z")
+  })
+
+  it("does not call an abandoned session's end time a completion", () => {
+    // The record `ibex_core.sessions_abandon_idle` writes: one statement sets
+    // `status='abandoned'` and `completed_at=NOW()`, and the `sessions_updated_at`
+    // BEFORE UPDATE trigger stamps `updated_at` to that same instant. The equal
+    // timestamps therefore reach the terminal branch, and the label must agree
+    // with the Abandoned pill beside it instead of claiming completion.
+    const abandoned = row({
+      status: "abandoned",
+      completed_at: "2026-11-02T13:00:00.000Z",
+      updated_at: "2026-11-02T13:00:00.000Z",
+    })
+    expect(abandoned.activityKind).not.toBe("Completed")
+    expect(abandoned.activityKind).toBe("Abandoned")
+    expect(abandoned.activityAt).toBe("2026-11-02T13:00:00.000Z")
+  })
+
+  it("labels a selected completed_at from the status, for every status in the schema", () => {
+    const stamp = "2026-11-02T13:00:00.000Z"
+    const labels = SESSION_STATUS_ORDER.map(
+      (status) => [status, row({ status, completed_at: stamp, updated_at: stamp }).activityKind] as const,
+    )
+    expect(labels).toEqual([
+      ["active", "Ended"],
+      ["completed", "Completed"],
+      ["abandoned", "Abandoned"],
+      ["error", "Ended"],
+    ])
+  })
+
+  it("still prefers the later update time for an abandoned record", () => {
+    // The label follows the status; which timestamp wins is unchanged.
+    const abandonedLaterUpdate = row({
+      status: "abandoned",
+      completed_at: "2026-11-02T13:00:00.000Z",
+      updated_at: "2026-11-02T14:00:00.000Z",
+    })
+    expect(abandonedLaterUpdate.activityKind).toBe("Updated")
+    expect(abandonedLaterUpdate.activityAt).toBe("2026-11-02T14:00:00.000Z")
   })
 })
 

@@ -5,7 +5,13 @@ import GovernIdChip from "@/components/console/govern/primitives/GovernIdChip.vu
 import GovernStatTile from "@/components/console/govern/primitives/GovernStatTile.vue"
 import LiveSessionStatusPill from "./LiveSessionStatusPill.vue"
 import { formatGovernNumber, formatGovernStamp } from "@/lib/govern-format"
-import { formatSessionLatency, SESSION_EXTRACTION_NOTE, sessionExtraction, shortId } from "@/lib/session-list"
+import {
+  formatSessionLatency,
+  SESSION_EXTRACTION_NOTE,
+  sessionEndLabel,
+  sessionExtraction,
+  shortId,
+} from "@/lib/session-list"
 import type { OperatorSessionTurn } from "~~/shared/operator/contracts"
 import type { PublicOperatorSessionRecordDetail } from "~~/shared/operator/public"
 
@@ -26,6 +32,9 @@ const tokensLabel = computed(
 const turnsHelper = computed(
   () => `${turns.value.length} checkpoint${turns.value.length === 1 ? "" : "s"} on this record`,
 )
+// `completed_at` is also where the idle sweeper stores its abandon instant, so
+// the field is labelled from the status (see `sessionEndLabel`).
+const endLabel = computed(() => sessionEndLabel(props.session.status))
 
 function traceHref(turn: OperatorSessionTurn): string | null {
   if (!turn.trace) return null
@@ -131,7 +140,7 @@ function evidenceNote(turn: OperatorSessionTurn): string {
             </dd>
           </div>
           <div class="min-w-0">
-            <dt class="ix-label">Completed</dt>
+            <dt class="ix-label">{{ endLabel }}</dt>
             <dd class="mt-0.5 font-mono text-xs whitespace-nowrap text-fg-1">
               {{ formatGovernStamp(session.completed_at) }}
             </dd>
