@@ -9,11 +9,6 @@
 
 <p align="center"><strong>Self-hosted memory and context for multi-tenant AI agents.</strong></p>
 
-![IBEX Console Overview](engineering/assets/console/overview.png)
-
-*The Console Overview, captured from a development build in demo mode. Every value is an illustrative fixture marked
-by the `Illustrative` chip; it is not live operator data (ADR-0089 §4).*
-
 <p align="center">
   Point your agent at an OpenAI-compatible endpoint or add the MCP server, and IBEX resolves tenant and agent identity,
   injects bounded context, stores governed memories, and attempts best-effort post-response evidence for governed
@@ -59,24 +54,10 @@ tenant-scoped infrastructure.
 - **Evidence after the response, deliberately best-effort.** Governed requests attempt an evidence outbox write once
   the response is sent. The guarantee has a stated boundary; see [Status and evidence](#status-and-evidence).
 
-## How it fits together
-
-```mermaid
-flowchart LR
-  Agent["Agent / SDK"] -->|OpenAI-compatible| Proxy["LLM proxy (Go)"]
-  Agent -->|MCP| MCP["MCP memory server"]
-  Proxy --> Auth["AuthService (Go)"]
-  Proxy --> Context["Context assembly (gRPC)"]
-  Proxy --> Memory["Memory service (FastAPI)"]
-  Proxy --> Providers["LLM providers"]
-  Memory --> PG[(PostgreSQL + pgvector)]
-  Memory --> Embedder["Embedder"]
-  API["Management API (FastAPI)"] --> PG
-  Console["Console (Nuxt 4 + Nitro)"] --> API
-  Proxy -.-> Evidence["Evidence outbox / relay"]
-```
-
-The proxy is the adoption surface. Memory, context assembly, and the evidence model are the reason to keep it.
+|  |  |
+| :---: | :---: |
+| ![Overview](engineering/assets/console/overview-dark.png)<br>Overview | ![Sessions](engineering/assets/console/sessions-dark.png)<br>Sessions |
+| ![Memories](engineering/assets/console/memories-dark.png)<br>Memories | ![Session detail](engineering/assets/console/session-detail-dark.png)<br>Session detail |
 
 ## Quick start
 
@@ -107,9 +88,9 @@ Store the bootstrap PAT in your secret manager and remove
 reads that file to authenticate, and a run without it exits 4 (skip), which the target treats as a failure — so deleting
 the file first leaves the install unproven.
 
-`make v1-up` rebuilds the images, waits for every required service, and prints the URL. The first start downloads
-roughly 2.3 GB of embedding weights and may take up to two hours; a warm `tei-cache` volume is the recommended pre-seed
-for an offline or bandwidth-limited install. `make v1-down` stops the profile without deleting volumes.
+`make v1-up` rebuilds the images, waits for every required service, and prints the URL. The first start pulls the
+embedding model into the `tei-cache` volume; pre-seed that volume for an offline or bandwidth-limited install.
+`make v1-down` stops the profile without deleting volumes.
 
 For a restricted sandbox or Podman machine, export the runtime so every later command sees it:
 
@@ -152,115 +133,48 @@ pnpm install --frozen-lockfile --ignore-scripts
 pnpm --filter @ibex/console dev
 ```
 
-Open `http://127.0.0.1:3000`. Without an operator API origin the Console fails closed on live surfaces; a development
-build also offers labelled illustrative fixtures (see [Console](#console)).
-
-## Core concepts
-
-| Concept | Meaning |
-| --- | --- |
-| **Organization** | The tenant boundary. Every row, cache key, and event carries its `org_id`. |
-| **Agent** | A named principal with credentials, permissions, and a memory scope. |
-| **Session** | A conversation or run context that groups turns and traces. |
-| **Memory** | A governed record with provenance, confidence, lifecycle state, and optional PII redaction. |
-| **Directive** | Standing context injected on every request, versioned separately from memories. |
-| **Evidence** | Best-effort post-response trace and capture facts; rows may be withheld or lost on failure. |
+Open `http://127.0.0.1:3000`. Without an operator API origin the Console fails closed rather than rendering fixtures.
 
 ## Services
 
-| Service | Runtime | Status |
-| --- | --- | --- |
-| [`proxy/`](services/proxy/README.md) | Go | Local; hosted SLO open |
-| [`auth/`](services/auth/README.md) | Go | Local; production key management gated |
-| [`memory/`](services/memory/README.md) | Python / FastAPI | Local |
-| [`context/`](services/context/README.md) | Python / gRPC | Provisional; caller boundary explicit |
-| [`embedder/`](services/embedder/README.md) | Python | Profile-dependent |
-| [`api/`](services/api/README.md) | Python / FastAPI | Mounted, tested; operator surfaces provisional |
-| [`worker/`](services/worker/README.md) | Python / Celery | Mixed; some no-op tasks |
-| [`mcp-memory/`](services/mcp-memory/README.md) | Python | Partial; logging-only audit |
-| [`mcp-operator/`](services/mcp-operator/README.md) | Python | Local, default-off |
-| [`relay/`](services/relay/README.md) | Go | Local, default-off; no production sink |
-| [`console/`](services/console/README.md) | Nuxt 4 + Nitro | Provisional; surface status per the registry |
+| Service | Runtime | What it does | Status |
+| --- | --- | --- | --- |
+| [`auth/`](services/auth/README.md) | Go | Token and agent validation, PAT lifecycle, provider-credential metadata | Local |
+| [`proxy/`](services/proxy/README.md) | Go | OpenAI-compatible LLM proxy: auth, rate limits, context injection, streaming | Local |
+| [`memory/`](services/memory/README.md) | Python / FastAPI | Tenant-scoped memory writes, semantic search, dedup, conflicts, PII | Local |
+| [`context/`](services/context/README.md) | Python / gRPC | Budgeted retrieval, ranking, and packing behind a caller-token boundary | Provisional |
+| [`embedder/`](services/embedder/README.md) | Python | Embedding contract and backend selection | Profile-dependent |
+| [`api/`](services/api/README.md) | Python / FastAPI | Management plane: tenants, tokens, providers, policies, operator reads | Provisional |
+| [`worker/`](services/worker/README.md) | Python / Celery | Extraction, erasure, billing rollups, maintenance | Mixed |
+| [`mcp-memory/`](services/mcp-memory/README.md) | Python | MCP memory tools over Streamable HTTP | Partial |
+| [`mcp-operator/`](services/mcp-operator/README.md) | Python | Read-only operator MCP tools | Default-off |
+| [`relay/`](services/relay/README.md) | Go | Evidence outbox relay daemon | Default-off |
+| [`console/`](services/console/README.md) | Nuxt 4 + Nitro | Operator application and its server-only BFF | Provisional |
 
-Status is a phrase here; the evidence and the boundary are behind each service link. The full inventory, shared
-packages, and local infrastructure are in [`services/README.md`](services/README.md),
-[`packages/README.md`](packages/README.md), and [`infra/README.md`](infra/README.md).
+Status is a one-word signal; the [status ledger](https://ibexharness.com/docs/architecture/status-and-evidence) carries
+the evidence, the boundary, and the open gaps. The full inventory, shared packages, and local infrastructure are in
+[`services/README.md`](services/README.md), [`packages/README.md`](packages/README.md), and
+[`infra/README.md`](infra/README.md).
 
 ## Console
 
-The Console is the operations plane for the memory/context lifecycle: Overview, Agents, Sessions, Memories, Evidence,
-Directives, Policies, Explore, Platform, and Settings. Incidents, drift, audit, analytics, budgets, providers, MCP
-tools, and access are an explicit platform tier behind a collapsed disclosure ([ADR-0089](engineering/adr/0089-product-shape-and-console-scope.md)).
+The Console is the canonical operator application: a Nuxt 4 server-rendered app with a server-only BFF, covering the
+memory/context lifecycle — agents, sessions, memories, evidence, directives, policies, trace exploration, platform
+health, and settings. Incidents, drift, audit, analytics, budgets, providers, MCP tools, and access are a separate
+platform tier ([ADR-0089](engineering/adr/0089-product-shape-and-console-scope.md)).
 
-It has a session. `/login` exchanges a personal access token once for an HttpOnly cookie, and
-`server/api/operator/session/{login,logout,refresh}` are the only routes that change session state. Every operator
-**data** route is a read, and the Console exposes no data mutations. The one write a read can cause is to its own
-session: when a data read gets a `401`, the BFF refreshes the access cookie once, retries, and relays the new cookies
-to the browser (`services/console/server/utils/operator/http.ts`, `fetchOperatorJsonAttempt` → `rotateAccessCookie`).
-
-Which core surfaces have a live read path, and which are labelled previews, is owned by the surface registry in
-[`services/console/shared/operator/surfaces.ts`](services/console/shared/operator/surfaces.ts);
-[`services/console/README.md`](services/console/README.md) derives its table from it. This README does not restate that
-status.
-
-A `Live` surface means its read path is connected and fails closed; it is not an acceptance claim. Every Console row
-remains provisional in the status ledger. See [`services/console/README.md`](services/console/README.md).
-
-![IBEX Console Explore](engineering/assets/console/explore.png)
-
-*Explore: trace metadata and capture completeness. Illustrative fixtures under the `Illustrative` chip, not live
-operator data (ADR-0089 §4).*
-
-![IBEX Console Platform](engineering/assets/console/platform.png)
-
-*Platform: dependency, ingestion, and recovery health. Illustrative fixtures under the `Illustrative` chip, not live
-operator data (ADR-0089 §4).*
-
-![IBEX Console Settings](engineering/assets/console/settings.png)
-
-*Settings: a labelled `Illustrative preview`. No live operator data is rendered and no contract is claimed
-(ADR-0089 §4).*
-
-These captures come from a development build in demo mode. In a live deployment the same live surfaces render from the
-operator API, and preview surfaces stay labelled previews.
-
-## Documentation
-
-- [Architecture](engineering/ARCHITECTURE.md)
-- [Development guide](engineering/DEVELOPMENT_GUIDE.md)
-- [API documentation](engineering/API_DOCUMENTATION.md)
-- [Environment variables](engineering/ENVIRONMENT_VARIABLES.md)
-- [Testing strategy](engineering/TESTING_STRATEGY.md)
-- [Architecture decision records](engineering/adr/index.md)
-- [Security](engineering/SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
-
-## Development
-
-```bash
-make check                  # fast repository gate
-make test-memory            # Python memory unit tests
-make test-worker            # Python worker unit tests
-make lint-go                # Go lint for auth, proxy, and packages
-pnpm --filter @ibex/console test
-pnpm --filter @ibex/console typecheck
-pnpm --filter @ibex/console lint
-pnpm site:build && pnpm site:check
-```
-
-The full local matrix, including integration tests with PostgreSQL, Redis, and ClickHouse, is in
-[`engineering/agent-playbook.md`](engineering/agent-playbook.md) §6 and
-[`engineering/DEVELOPMENT_GUIDE.md`](engineering/DEVELOPMENT_GUIDE.md) §4.4.
+It is read-only by design: `/login` exchanges a personal access token once for an HttpOnly cookie, and the Console
+exposes no data mutations. Which surfaces have a live read path, and which are labelled previews, is owned by the
+surface registry in [`services/console/shared/operator/surfaces.ts`](services/console/shared/operator/surfaces.ts);
+this README does not restate it. See [`services/console/README.md`](services/console/README.md).
 
 ## Security and tenancy
 
-- Tenant isolation is defense in depth: PostgreSQL RLS plus explicit `org_id` filtering on every query. Redis keys are
-  namespaced by `org_id`; ClickHouse queries require an explicit `org_id` and refuse to run without one.
-- Cross-tenant reads return `404`, not `403`, to avoid existence leaks.
-- Secrets never reach logs, traces, browser configuration, or fixture data.
-- Memory content is untrusted input: it is quarantined, delimited as data, and never treated as instructions.
-- Report vulnerabilities through the private process in [`engineering/SECURITY.md`](engineering/SECURITY.md), not a
-  public issue.
+Tenant isolation is defense in depth: PostgreSQL RLS plus explicit `org_id` filtering on every query, with Redis keys
+namespaced by `org_id`. Cross-tenant reads return `404`, not `403`, to avoid existence leaks.
+
+Report vulnerabilities through the private process in [`engineering/SECURITY.md`](engineering/SECURITY.md), not a
+public issue.
 
 ## Status and evidence
 
@@ -280,6 +194,17 @@ draining. The relay is default-off, so this is not a synchronous durable-before-
 containers came up healthy, no application connection used the owner login, and a route-level cross-tenant request was
 refused. That is a live cross-tenant read plus the integration suites — not a full acceptance suite, and not a
 two-tenant browser journey.
+
+## Documentation
+
+- [Architecture](engineering/ARCHITECTURE.md)
+- [Development guide](engineering/DEVELOPMENT_GUIDE.md)
+- [API documentation](engineering/API_DOCUMENTATION.md)
+- [Environment variables](engineering/ENVIRONMENT_VARIABLES.md)
+- [Testing strategy](engineering/TESTING_STRATEGY.md)
+- [Architecture decision records](engineering/adr/index.md)
+- [Security](engineering/SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## Contributing
 
