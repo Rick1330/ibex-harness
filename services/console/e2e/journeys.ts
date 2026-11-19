@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test"
+import { expect, type APIRequestContext, type APIResponse, type BrowserContext, type Page } from "@playwright/test"
 
 /**
  * Shared plumbing for the Console session journeys.
@@ -55,6 +55,9 @@ export type StandInRequest = {
   path: string
   cookieNames: string[]
   lastEventId: string | null
+  /** Origin the caller sent, exactly as the API's origin rule read it. */
+  origin: string | null
+  referer: string | null
   /** Stand-in org key the access cookie resolved to, or null when it refused. */
   org: string | null
   /** Status the stand-in answered with. */
@@ -102,6 +105,94 @@ export async function cookie(
   const match = cookies.find((candidate) => candidate.name === name)
   if (!match) return undefined
   return { value: match.value, httpOnly: match.httpOnly, secure: match.secure }
+}
+
+/** The three cookies one operator session consists of. */
+export type SessionCookies = { access: string; refresh: string; csrf: string }
+
+function requiredCookie(values: Record<string, string>, name: string): string {
+  const value = values[name]
+  if (!value) throw new Error(`the stand-in did not issue ${name}`)
+  return value
+}
+
+/** The session a browser context currently holds, failing loudly if partial. */
+export async function sessionCookies(context: BrowserContext): Promise<SessionCookies> {
+  const cookies = await context.cookies(consoleOrigin)
+  const values = Object.fromEntries(
+    cookies.map((candidate) => [candidate.name, candidate.value]),
+  )
+  return {
+    access: requiredCookie(values, ACCESS_COOKIE),
+    refresh: requiredCookie(values, REFRESH_COOKIE),
+    csrf: requiredCookie(values, CSRF_COOKIE),
+  }
+}
+
+/** `Set-Cookie` name=value pairs from one stand-in response. */
+function responseCookies(response: APIResponse): Record<string, string> {
+  const values: Record<string, string> = {}
+  for (const header of response.headersArray()) {
+    if (header.name.toLowerCase() !== "set-cookie") continue
+    const pair = header.value.split(";", 1)[0] ?? ""
+    const separator = pair.indexOf("=")
+    if (separator < 0) continue
+    values[pair.slice(0, separator).trim()] = pair.slice(separator + 1).trim()
+  }
+  return values
+}
+
+/**
+ * Sign in against the stand-in directly, skipping the console's BFF.
+ *
+ * The BFF relays the browser's cookies but always supplies its own `Origin` for
+ * a server-side rotation, and a browser cannot be told to send a foreign one.
+ * A rule the console cannot express through the browser is therefore pinned
+ * here, at the API boundary the console's relay is supposed to satisfy.
+ */
+export async function loginDirect(
+  api: APIRequestContext,
+  pat: string,
+): Promise<SessionCookies> {
+  const response = await api.post(`${apiOrigin}/v1/operator/session/login`, {
+    headers: { origin: consoleOrigin },
+    data: { pat },
+    failOnStatusCode: false,
+  })
+  expect(response.status(), "direct login").toBe(200)
+  const cookies = responseCookies(response)
+  return {
+    access: requiredCookie(cookies, ACCESS_COOKIE),
+    refresh: requiredCookie(cookies, REFRESH_COOKIE),
+    csrf: requiredCookie(cookies, CSRF_COOKIE),
+  }
+}
+
+/**
+ * POST one session action to the stand-in with this session's cookies and CSRF
+ * proof. `origin` and `referer` are omitted entirely when not supplied, which is
+ * the case the API's origin rule must refuse.
+ */
+export async function postSessionDirect(
+  api: APIRequestContext,
+  action: "refresh" | "logout",
+  session: SessionCookies,
+  headers: { origin?: string; referer?: string } = {},
+): Promise<APIResponse> {
+  return api.post(`${apiOrigin}/v1/operator/session/${action}`, {
+    headers: {
+      cookie: `${ACCESS_COOKIE}=${session.access}; ${REFRESH_COOKIE}=${session.refresh}; ${CSRF_COOKIE}=${session.csrf}`,
+      "x-csrf-token": session.csrf,
+      ...headers,
+    },
+    failOnStatusCode: false,
+  })
+}
+
+/** The stable error code the stand-in answered with, or "" for a success. */
+export async function sessionErrorCode(response: APIResponse): Promise<string> {
+  const body = (await response.json()) as { error?: { code?: string } }
+  return body.error?.code ?? ""
 }
 
 /**
