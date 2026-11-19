@@ -143,6 +143,8 @@ async def test_forget_response_is_additive_and_reports_pending_erasure(
     assert response.erasure.state == "pending"
     assert response.erasure.stores.objectstore == "pending"
     assert response.erasure.stores.session_event == "pending"
+    assert response.erasure.stores.cache == "pending"
+    assert response.erasure.stores.cache_hot == "pending"
 
     # The wire shape: the old keys are untouched and the new block is a sibling.
     body = response.model_dump(mode="json")
@@ -157,14 +159,31 @@ async def test_forget_response_is_additive_and_reports_pending_erasure(
     assert body["erasure"]["stores"] == {
         "objectstore": "pending",
         "session_event": "pending",
+        "cache": "pending",
+        "cache_hot": "pending",
     }
 
 
 #: The three store maps the response cases exercise: everything proven, a store
 #: with nothing to erase, and a store that could not be reached.
-_ALL_VERIFIED = {"objectstore": "verified", "session_event": "verified"}
-_NOT_APPLICABLE = {"objectstore": "verified", "session_event": "not_applicable"}
-_ONE_FAILED = {"objectstore": "verified", "session_event": "failed"}
+_ALL_VERIFIED = {
+    "objectstore": "verified",
+    "session_event": "verified",
+    "cache": "verified",
+    "cache_hot": "verified",
+}
+_NOT_APPLICABLE = {
+    "objectstore": "verified",
+    "session_event": "not_applicable",
+    "cache": "not_applicable",
+    "cache_hot": "not_applicable",
+}
+_ONE_FAILED = {
+    "objectstore": "verified",
+    "session_event": "failed",
+    "cache": "verified",
+    "cache_hot": "verified",
+}
 
 
 @pytest.mark.parametrize(
@@ -267,6 +286,8 @@ async def test_erasure_view_never_reports_another_tenants_receipts(
     assert erasure.stores.model_dump() == {
         "objectstore": "pending",
         "session_event": "pending",
+        "cache": "pending",
+        "cache_hot": "pending",
     }
 
 

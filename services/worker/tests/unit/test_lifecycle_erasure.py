@@ -333,7 +333,12 @@ def test_clickhouse_is_not_a_provable_store() -> None:
     settled when a ref names one.
     """
     assert "clickhouse" not in RECEIPT_STORES
-    assert set(RECEIPT_STORES) == {"objectstore", "session_event"}
+    assert set(RECEIPT_STORES) == {
+        "objectstore",
+        "session_event",
+        "cache",
+        "cache_hot",
+    }
 
 
 def test_stores_to_stage_adds_ref_named_stores_only() -> None:
@@ -343,9 +348,15 @@ def test_stores_to_stage_adds_ref_named_stores_only() -> None:
     staged = le._stores_to_stage(
         {"objectstore": ("s3://b/o/a.json",), "clickhouse": ("event-1",)}
     )
-    assert set(staged) == {"objectstore", "session_event", "clickhouse"}
+    assert set(staged) == {"objectstore", "session_event", "cache", "cache_hot", "clickhouse"}
     # Deterministic order: the provable set first, then ref-named stores sorted.
-    assert staged == ("objectstore", "session_event", "clickhouse")
+    assert staged == (
+        "objectstore",
+        "session_event",
+        "cache",
+        "cache_hot",
+        "clickhouse",
+    )
 
 
 @pytest.mark.asyncio
@@ -445,7 +456,13 @@ def test_stage_table_covers_every_receipt_store() -> None:
     the key set is pinned so a new stage cannot appear without a decision here.
     """
     assert set(RECEIPT_STORES) <= set(le._STAGE_BY_STORE)
-    assert set(le._STAGE_BY_STORE) == {"objectstore", "clickhouse", "session_event"}
+    assert set(le._STAGE_BY_STORE) == {
+        "objectstore",
+        "clickhouse",
+        "session_event",
+        "cache",
+        "cache_hot",
+    }
 
 
 def test_event_scoped_clickhouse_op_binds_org_and_event() -> None:
@@ -556,3 +573,130 @@ async def test_sweep_skips_without_a_database_url(
     monkeypatch.delenv("IBEX_WORKER_DATABASE_URL", raising=False)
     out = await le._run_sweep(settings=Settings(database_url=None))
     assert out == {"status": "skipped", "reason": "missing_dsn"}
+
+
+# ---------------------------------------------------------------------------
+# Cache stages
+# ---------------------------------------------------------------------------
+#
+# Redis is real in ``tests/integration/test_memory_cache_erasure_postgres.py``.
+# Here the client is a stub only so the stage's decision rules can be driven
+# without a server: what it refuses, what verb it applies, and when it refuses to
+# call a surviving copy "gone".
+
+
+class _FakeRedis:
+    """Just enough of the async Redis surface the cache stages use."""
+
+    def __init__(
+        self,
+        *,
+        surviving_keys: set[str] | None = None,
+        surviving_members: set[str] | None = None,
+    ) -> None:
+        self.deleted: list[str] = []
+        self.zremoved: list[tuple[str, str]] = []
+        self.closed = False
+        self._surviving_keys = surviving_keys or set()
+        self._surviving_members = surviving_members or set()
+
+    async def delete(self, *keys: str) -> int:
+        self.deleted.extend(keys)
+        return len(keys)
+
+    async def exists(self, *keys: str) -> int:
+        return sum(1 for key in keys if key in self._surviving_keys)
+
+    async def zrem(self, key: str, member: str) -> int:
+        self.zremoved.append((key, member))
+        return 1
+
+    async def zscore(self, key: str, member: str) -> float | None:
+        return 1.0 if member in self._surviving_members else None
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def _cache_target(store: str, locator: str) -> _StoreTarget:
+    return _StoreTarget(store, (locator,))
+
+
+@pytest.mark.asyncio
+async def test_cache_stage_deletes_the_entry_and_waits_for_absence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The content-bearing entry is deleted and the stage only returns when gone."""
+    fake = _FakeRedis()
+    monkeypatch.setattr(le, "_redis_client", lambda _settings: fake)
+    key = "00000000-0000-0000-0000-000000000002:memory:00000000-0000-0000-0000-000000000003"
+
+    await le._stage(_cache_target("cache", key), _erasure(), time.monotonic() + 5)
+
+    assert fake.deleted == [key]
+    assert fake.closed, "the stage must not leak its client"
+
+
+@pytest.mark.asyncio
+async def test_cache_stage_fails_when_the_entry_survives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A surviving cache entry is a failed store, never a verified one."""
+    key = "00000000-0000-0000-0000-000000000002:memory:00000000-0000-0000-0000-000000000003"
+    fake = _FakeRedis(surviving_keys={key})
+    monkeypatch.setattr(le, "_redis_client", lambda _settings: fake)
+
+    with pytest.raises(TimeoutError):
+        await le._stage(_cache_target("cache", key), _erasure(), time.monotonic() - 1)
+
+
+@pytest.mark.asyncio
+async def test_cache_hot_stage_removes_the_member_and_never_deletes_the_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hot set belongs to the agent; only this memory's member may leave."""
+    fake = _FakeRedis()
+    monkeypatch.setattr(le, "_redis_client", lambda _settings: fake)
+    key = "00000000-0000-0000-0000-000000000002:hot_memories:00000000-0000-0000-0000-000000000004"
+
+    await le._stage(_cache_target("cache_hot", key), _erasure(), time.monotonic() + 5)
+
+    assert fake.zremoved == [(key, "00000000-0000-0000-0000-000000000003")]
+    assert fake.deleted == [], "DEL of the hot key would evict live memories"
+
+
+@pytest.mark.asyncio
+async def test_cache_locator_outside_the_namespace_is_a_permanent_failure() -> None:
+    """A ref naming ``{org}:directive:...`` cannot become valid on a retry."""
+    outcome = await le._stage_store(
+        _erasure(),
+        _cache_target(
+            "cache", "00000000-0000-0000-0000-000000000002:directive:live"
+        ),
+        time.monotonic() + 5,
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.permanent is True
+
+
+@pytest.mark.asyncio
+async def test_cache_stage_without_a_redis_url_is_failed_not_verified() -> None:
+    """A deployment with no cache cannot prove a ref-named cache store."""
+    from types import SimpleNamespace
+
+    key = "00000000-0000-0000-0000-000000000002:memory:00000000-0000-0000-0000-000000000003"
+    no_cache = _Erasure(
+        row=_row(),
+        settings=SimpleNamespace(
+            redis_url=None, lifecycle_erasure_store_timeout_seconds=20.0
+        ),
+        factory=object(),
+    )
+
+    outcome = await le._stage_store(
+        no_cache, _cache_target("cache", key), time.monotonic() + 5
+    )
+
+    assert outcome.status == "failed"
+    assert "redis" in (outcome.error or "").lower()

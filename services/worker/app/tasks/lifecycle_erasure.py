@@ -40,6 +40,13 @@ Contract, in the order the details are easy to get wrong:
   "this memory has no ClickHouse copy". A ref that does name ClickHouse is still
   erased and receipted; a memory with no such ref simply makes no ClickHouse
   claim, instead of the false ``not_applicable`` a missing ref used to produce.
+* The two cache stores are the disclosure fix. ``cache`` is the object entry that
+  carries the memory's ``content``; ``cache_hot`` is the per-agent hot sorted set,
+  whose member is removed with ZREM rather than the key with DEL — the key holds
+  every other memory's score for that agent. A cache locator is caller-written
+  text, so each stage refuses a key outside its own ``<org>:{namespace}:`` before
+  deleting anything, and an unreachable or unconfigured Redis is ``failed``, never
+  ``verified``.
 
 Tenant boundary: discovery runs through the ``SECURITY DEFINER`` claim function
 (the outbox is RLS-scoped, so a sweep with no tenant selected would see nothing)
@@ -95,12 +102,18 @@ logger = logging.getLogger(__name__)
 ERASURE_EVENT_TYPES: tuple[str, ...] = ("forgotten", "purged", "expired")
 
 #: Stores whose erasure this consumer can prove: a producer records a ref for
-#: every copy it writes (``capture_redaction`` for object store and session event).
-#: ClickHouse is absent on purpose — nothing writes a per-memory ClickHouse ref,
-#: so "no ref" would mean "not checked", not "no copy", and a receipt saying
-#: ``not_applicable`` there would certify an erasure nobody performed. A ref that
-#: names a store outside this set is still staged (see ``_stores_to_stage``).
-RECEIPT_STORES: tuple[str, ...] = ("objectstore", "session_event")
+#: every copy it writes (``capture_redaction`` for object store and session event,
+#: the forget transaction for the two cache structures). ClickHouse is absent on
+#: purpose — nothing writes a per-memory ClickHouse ref, so "no ref" would mean
+#: "not checked", not "no copy", and a receipt saying ``not_applicable`` there
+#: would certify an erasure nobody performed. A ref that names a store outside
+#: this set is still staged (see ``_stores_to_stage``).
+#:
+#: ``cache`` is the object cache entry that carries the memory's content; the
+#: DEL of that key is the disclosure fix. ``cache_hot`` is the per-agent hot
+#: sorted set, whose single member is removed rather than the key itself: a DEL
+#: there would evict every other memory's hot score for that agent.
+RECEIPT_STORES: tuple[str, ...] = ("objectstore", "session_event", "cache", "cache_hot")
 
 #: Receipt statuses that prove a store without further work.
 SATISFIED_RECEIPT_STATUSES = frozenset({"verified", "not_applicable"})
@@ -178,6 +191,10 @@ SELECT store, status
 
 # The unique key from 000073 is the idempotency mechanism: a redelivery of the
 # same (org, memory, revision, store) updates the one row instead of adding one.
+# The conflict guard is monotonic: a receipt that already says ``verified`` is
+# never replaced by a weaker status. The request path can write a ``failed``
+# cache receipt while this sweep is settling the same revision, and a late
+# failure must not overwrite the proof this run earned.
 _UPSERT_RECEIPT_SQL = """
 INSERT INTO ibex_core.erasure_store_receipts (
     org_id, memory_id, revision, store, status, verified_absent_at,
@@ -192,6 +209,8 @@ ON CONFLICT (org_id, memory_id, revision, store) DO UPDATE
        verified_absent_at = EXCLUDED.verified_absent_at,
        error = EXCLUDED.error,
        idempotency_key = EXCLUDED.idempotency_key
+ WHERE ibex_core.erasure_store_receipts.status <> 'verified'
+    OR EXCLUDED.status = 'verified'
 """
 
 #: Every settle statement names the org as well as the row. RLS already fences
@@ -668,13 +687,127 @@ async def _stage_session_events(
                 raise RuntimeError("session_event row is still present after delete")
 
 
-#: Store name to stage. A store missing here fails closed rather than silently
-#: reporting absence; ``test_lifecycle_erasure_contract`` pins the key set to
-#: ``RECEIPT_STORES``.
+async def _stage_cache(
+    locators: tuple[str, ...], erasure: _Erasure, deadline: float
+) -> None:
+    """Delete each cached memory object and wait until EXISTS reports it gone.
+
+    The object entry carries the memory's ``content``; this is the store whose
+    stale copy is the disclosure. DEL is idempotent, so a retry after a partial
+    failure and a redelivery of the same revision are both safe.
+    """
+    client = _redis_client(erasure.settings)
+    try:
+        keys = [
+            _cache_key("cache", locator, org_id=erasure.row.org_id)
+            for locator in locators
+        ]
+        await client.delete(*keys)
+        await _wait_cache_keys_absent(client, keys, deadline, "cache entry")
+    finally:
+        await client.aclose()
+
+
+async def _stage_cache_hot(
+    locators: tuple[str, ...], erasure: _Erasure, deadline: float
+) -> None:
+    """Remove this memory's member from each hot sorted set, then confirm it.
+
+    ZREM of one member, never DEL of the key: the key belongs to the agent and
+    holds every hot memory's score. Deleting it would erase live state for
+    memories this forget has nothing to do with.
+    """
+    client = _redis_client(erasure.settings)
+    member = erasure.row.memory_id
+    try:
+        keys = [
+            _cache_key("cache_hot", locator, org_id=erasure.row.org_id)
+            for locator in locators
+        ]
+        for key in keys:
+            await client.zrem(key, member)
+        await _wait_cache_member_absent(client, keys, member, deadline)
+    finally:
+        await client.aclose()
+
+
+def _cache_key(store: str, locator: str, *, org_id: str) -> str:
+    """Refuse a cache locator outside this store's tenant namespace.
+
+    The message is fixed and never echoes the locator: a ref row is
+    caller-written, so the value is attacker-influenced and it reaches both the
+    receipt's ``error`` column and the worker log.
+    """
+    if not org_id:
+        raise PermanentErasureFailure("tenant id required for cache access")
+    prefix = f"{org_id}:{_CACHE_NAMESPACES[store]}:"
+    if not locator.startswith(prefix):
+        raise PermanentErasureFailure("cache locator is outside the tenant namespace")
+    return locator
+
+
+def _redis_client(settings: Any) -> Any:
+    """An async Redis client for the erasure stage, or a fail-closed refusal.
+
+    A ref that names a cache store while this deployment has no Redis URL is a
+    deployment that cannot prove the store: reporting ``verified`` would be a
+    claim nobody checked, so the stage raises and the receipt says ``failed``.
+    """
+    redis_url = getattr(settings, "redis_url", None)
+    if not redis_url:
+        raise RuntimeError("redis is unreachable (no REDIS_URL configured)")
+    from redis.asyncio import Redis
+
+    return Redis.from_url(
+        redis_url, socket_connect_timeout=5.0, socket_timeout=5.0
+    )
+
+
+async def _wait_cache_keys_absent(
+    client: Any, keys: list[str], deadline: float, what: str
+) -> None:
+    """Wait until no key exists, or fail rather than report a stale copy gone."""
+    while await client.exists(*keys):
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"{what} is still present after delete")
+        await asyncio.sleep(0.1)
+
+
+async def _wait_cache_member_absent(
+    client: Any, keys: list[str], member: str, deadline: float
+) -> None:
+    """Wait until no sorted set still scores this member."""
+    while await _member_still_scored(client, keys, member):
+        if time.monotonic() >= deadline:
+            raise TimeoutError("hot cache member is still present after zrem")
+        await asyncio.sleep(0.1)
+
+
+async def _member_still_scored(client: Any, keys: list[str], member: str) -> bool:
+    """Whether any of the sorted sets still scores ``member``."""
+    for key in keys:
+        if await client.zscore(key, member) is not None:
+            return True
+    return False
+
+
+# Redis namespace each cache store may address. The namespace check is the tenant
+# guard *and* the blast-radius guard: a ref is caller-written text, so a locator
+# naming ``{org}:directive:...`` must be refused rather than deleted. Checking the
+# namespace rather than an exact key keeps the worker independent of the memory
+# service's key format while still refusing every key that is not one of this
+# store's own structures.
+_CACHE_NAMESPACES = {"cache": "memory", "cache_hot": "hot_memories"}
+
+# Store name to stage. A store missing here fails closed rather than silently
+# reporting absence; ``test_lifecycle_erasure_contract`` pins the key set to
+# ``RECEIPT_STORES``.
 _STAGE_BY_STORE = {
     "objectstore": _stage_objectstore,
     "clickhouse": _stage_clickhouse,
     "session_event": _stage_session_events,
+    "cache": _stage_cache,
+    "cache_hot": _stage_cache_hot,
 }
 
 

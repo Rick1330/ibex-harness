@@ -37,6 +37,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+import redis as redis_sync
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
@@ -201,6 +202,8 @@ class Forgotten:
     session_event_id: int
     ch_event_id: UUID
     object_uri: str
+    object_cache_key: str
+    hot_cache_key: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,6 +329,45 @@ async def read_outbox(
     return row[0], row[1], row[2], int(row[3])
 
 
+def seed_cache_copies(
+    redis_url: str, *, org_id: UUID, agent_id: UUID, memory_id: UUID
+) -> tuple[str, str]:
+    """Write both cached copies a memory write produces; return their keys.
+
+    The object entry carries content — it is the disclosure a failed eviction
+    would leave readable. The hot set carries the memory id and a score, and the
+    erasure must remove the member, not the key, so the fixture seeds a second
+    live member that must survive.
+    """
+    object_key = f"{org_id}:memory:{memory_id}"
+    hot_key = f"{org_id}:hot_memories:{agent_id}"
+    client = redis_sync.Redis.from_url(redis_url, decode_responses=True)
+    try:
+        client.set(object_key, json.dumps({"id": str(memory_id), "content": "cached"}))
+        client.zadd(hot_key, {str(memory_id): 1.0, "live-other-memory": 0.5})
+    finally:
+        client.close()
+    return object_key, hot_key
+
+
+def cache_key_exists(redis_url: str, key: str) -> bool:
+    """Whether the object cache entry is still present."""
+    client = redis_sync.Redis.from_url(redis_url, decode_responses=True)
+    try:
+        return bool(client.exists(key))
+    finally:
+        client.close()
+
+
+def cache_member_scored(redis_url: str, key: str, member: str) -> bool:
+    """Whether the hot sorted set still scores this memory id."""
+    client = redis_sync.Redis.from_url(redis_url, decode_responses=True)
+    try:
+        return client.zscore(key, member) is not None
+    finally:
+        client.close()
+
+
 # ---------------------------------------------------------------------------
 # The harness
 # ---------------------------------------------------------------------------
@@ -347,20 +389,29 @@ class Harness:
 
     env: ErasureEnv
 
-    def settings(self, *, ch_dsn: str | None) -> Settings:
-        """Consumer settings for one run; ``ch_dsn=None`` means unreachable."""
+    def settings(
+        self, *, ch_dsn: str | None, redis_url: str | None = None
+    ) -> Settings:
+        """Consumer settings for one run.
+
+        ``ch_dsn=None`` means ClickHouse is deployed but unreachable;
+        ``redis_url`` overrides the cache endpoint so a test can make Redis
+        unreachable without touching the real one.
+        """
         return Settings(
             database_url=self.env.dsn,
-            redis_url=self.env.redis_url,
+            redis_url=redis_url or self.env.redis_url,
             clickhouse_dsn=ch_dsn,
             s3_endpoint="https://objectstore.invalid",
             lifecycle_erasure_job_timeout_seconds=60.0,
             lifecycle_erasure_store_timeout_seconds=20.0,
         )
 
-    async def run(self, *, ch_dsn: str | None) -> dict[str, Any]:
+    async def run(
+        self, *, ch_dsn: str | None, redis_url: str | None = None
+    ) -> dict[str, Any]:
         """One sweep, with the batch size the suite standardises on."""
-        settings = self.settings(ch_dsn=ch_dsn)
+        settings = self.settings(ch_dsn=ch_dsn, redis_url=redis_url)
         return await lifecycle_erasure._run_sweep(settings=settings, claim_batch=5)
 
     @asynccontextmanager
@@ -388,6 +439,14 @@ class Harness:
         await insert_memory(
             owner, org_id=org_id, agent_id=agent_id, memory_id=memory_id
         )
+        object_cache_key = hot_cache_key = ""
+        if with_refs:
+            object_cache_key, hot_cache_key = seed_cache_copies(
+                self.env.redis_url,
+                org_id=org_id,
+                agent_id=agent_id,
+                memory_id=memory_id,
+            )
         event_id = await seed_session_event(
             owner,
             SessionEventSeed(
@@ -403,6 +462,8 @@ class Harness:
             session_event_id=event_id,
             ch_event_id=ch_event_id,
             object_uri=object_uri,
+            object_cache_key=object_cache_key,
+            hot_cache_key=hot_cache_key,
         )
         if with_refs:
             seed_clickhouse_event(
@@ -417,6 +478,8 @@ class Harness:
                         "objectstore": object_uri,
                         "clickhouse": str(ch_event_id),
                         "session_event": str(event_id),
+                        "cache": object_cache_key,
+                        "cache_hot": hot_cache_key,
                     },
                 )
             )
@@ -479,6 +542,33 @@ class Harness:
             " WHERE id = :id AND org_id = :org",
             id=forgotten.session_event_id,
             org=forgotten.org_id,
+        )
+
+    def cached_object_present(self, forgotten: Forgotten) -> bool:
+        """Whether the content-bearing object cache entry still exists."""
+        return cache_key_exists(self.env.redis_url, forgotten.object_cache_key)
+
+    def hot_member_present(self, forgotten: Forgotten) -> bool:
+        """Whether the hot sorted set still scores this memory id."""
+        return cache_member_scored(
+            self.env.redis_url, forgotten.hot_cache_key, str(forgotten.memory_id)
+        )
+
+    def hot_other_member_present(self, forgotten: Forgotten) -> bool:
+        """Whether the fixture's second, live member survived the purge."""
+        return cache_member_scored(
+            self.env.redis_url, forgotten.hot_cache_key, "live-other-memory"
+        )
+
+    async def receipt_row_count(self, forgotten: Forgotten, store: str) -> int:
+        """How many receipt rows exist for one store (the unique key allows one)."""
+        return await count_rows(
+            self.env.owner,
+            "SELECT count(*) FROM ibex_core.erasure_store_receipts"
+            " WHERE org_id = :org AND memory_id = :memory AND store = :store",
+            org=forgotten.org_id,
+            memory=forgotten.memory_id,
+            store=store,
         )
 
     async def artifact_ref_count(self, forgotten: Forgotten) -> int:

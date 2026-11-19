@@ -590,10 +590,16 @@ def test_forget_returns_success_when_post_commit_cache_invalidation_fails(
             return _FakeContext()
 
     class _FailingCacheWriter:
+        def object_key(self, org_id, memory_id):
+            return f"{org_id}:memory:{memory_id}"
+
+        def hot_key(self, org_id, agent_id):
+            return f"{org_id}:hot_memories:{agent_id}"
+
         async def forget_memory(self, **_kwargs):
             raise RuntimeError("unexpected cache failure")
 
-    async def _forget(_session, _request):
+    async def _forget(_session, _request, *, cache_scope=None):
         return 2
 
     memory_id = uuid4()
@@ -671,7 +677,7 @@ def test_forget_succeeds_with_write_permission(client, monkeypatch) -> None:
     http, _mock_orch = client
     memory_id = uuid4()
 
-    async def _forget(_session, _request):
+    async def _forget(_session, _request, *, cache_scope=None):
         return 2
 
     monkeypatch.setattr(memory_forget_support, "forget_memory_session", _forget)
@@ -704,7 +710,7 @@ def test_forget_maps_domain_errors(client, monkeypatch, side_effect, expected) -
     http, _mock_orch = client
     expected_status, expected_code = expected
 
-    async def _forget(_session, _request):
+    async def _forget(_session, _request, *, cache_scope=None):
         raise side_effect
 
     monkeypatch.setattr(memory_forget_support, "forget_memory_session", _forget)
