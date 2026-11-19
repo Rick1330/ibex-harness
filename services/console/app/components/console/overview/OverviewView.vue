@@ -287,7 +287,6 @@ const shortcutGroups = [
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-3 pb-2">
     <ConsolePageHeader
       title="Overview"
-      definition="What the platform reported for this organization at the moment this page was read — the counts it owns, the dependency states it checks, and the newest run records it published."
       :state="headerState"
       :observed="observedAt ? formatGovernStamp(observedAt) : undefined"
       :scope="scopeText"

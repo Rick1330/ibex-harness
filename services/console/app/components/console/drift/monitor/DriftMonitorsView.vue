@@ -122,9 +122,6 @@ const shortcutGroups = [
           <div class="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
             <h1 class="ix-page-title text-fg-1">Monitors</h1>
                       </div>
-          <p class="mt-1 max-w-2xl text-sm leading-5 text-fg-2">
-            The checks that compare agent behaviour to a certified baseline and open a signal when it moves.
-          </p>
         </div>
 
         <div class="flex shrink-0 flex-wrap items-center gap-2">

@@ -327,7 +327,6 @@ const aboutNotes = [
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-3 pb-2">
     <ConsolePageHeader
       title="Incidents"
-      definition="What is broken right now, who owns it, and how far it has spread."
       state="illustrative"
       :verdict="`Preview renders ${incidents.length} illustrative incidents. The incident object contract is not connected, so no live count, owner, or severity is claimed.`"
       contract="operator.incidents.v1 [NEEDS-BACKEND]"

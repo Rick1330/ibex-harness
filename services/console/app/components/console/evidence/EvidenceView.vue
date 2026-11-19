@@ -104,7 +104,6 @@ function update(patch: Partial<LiveEvidenceQuery>): void {
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-3 pb-2">
     <ConsolePageHeader
       title="Evidence"
-      definition="Which runs hold a complete capture, which do not, and whether the delivery chain behind them settled."
       state="live"
       :verdict="verdict"
       contract="operator.evidence.summary.v1"

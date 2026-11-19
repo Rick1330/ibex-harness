@@ -79,10 +79,6 @@ function idempotency(event: AuditEvent): string {
             <GovernIdChip :value="id" label="Object ID" />
           </div>
           <h1 class="mt-1 ix-page-title text-fg-1">{{ name }}</h1>
-          <p class="mt-1 max-w-2xl text-sm leading-5 text-fg-2">
-            Every recorded change to this {{ typeLabel.toLowerCase() }}, newest first, with who made it and whether it
-            was applied exactly once.
-          </p>
         </div>
 
         <div class="flex shrink-0 flex-wrap items-center gap-2">

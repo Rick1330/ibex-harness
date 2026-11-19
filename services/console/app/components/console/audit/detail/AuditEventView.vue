@@ -24,7 +24,6 @@ import {
   AUDIT_EVIDENCE_LABELS,
   AUDIT_ORIGIN_LABELS,
   AUDIT_TARGET_TYPE_LABELS,
-  auditAction,
   auditActorAuth,
   auditActorSubline,
   auditDiffChangedCount,
@@ -55,7 +54,6 @@ const badges = computed<Record<string, string>>(() => {
   return map
 })
 const neighbours = computed(() => auditPrevNext(props.event.id))
-const action = computed(() => auditAction(props.event.action))
 const idempotency = computed(() => auditIdempotencyAnswer(props.event))
 const changedKeys = computed(() => (props.event.diff ? auditDiffChangedCount(props.event.diff) : 0))
 const targetHref = computed(() => auditTargetHref(props.event.target))
@@ -115,7 +113,6 @@ useGovernShortcuts({
             <GovernIdChip :value="event.id" label="Event ID" />
           </div>
           <h1 class="mt-1 max-w-3xl ix-page-title text-fg-1">{{ event.summary }}</h1>
-          <p class="mt-1 text-sm leading-5 text-fg-2">{{ action.sentence }}.</p>
           <div class="mt-2 flex flex-wrap items-center gap-1.5">
             <GovernResultChip :result="event.result" />
             <GovernEvidenceChip :evidence="event.evidence" />

@@ -93,9 +93,11 @@ const { helpOpen } = useGovernShortcuts({
           <div class="mt-1 flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
             <h1 class="ix-page-title text-fg-1">Compare snapshots</h1>
                       </div>
-          <p class="mt-1 max-w-2xl text-sm leading-5 text-fg-2">
-            Two recorded snapshots, compared rule by rule. A missing revision means the rule was not published on
-            that side, not that it was deleted at runtime.
+          <p class="mt-1.5 flex max-w-2xl items-start gap-1.5 text-xs leading-5 text-warn">
+            <span class="mt-2 size-1.5 shrink-0 rounded-full bg-warn" aria-hidden="true" />
+            <span class="text-pretty">
+              A rule missing on one side was not published there; it was not deleted at runtime.
+            </span>
           </p>
         </div>
         <div class="flex shrink-0 flex-wrap items-center gap-2">

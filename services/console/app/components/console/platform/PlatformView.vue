@@ -183,7 +183,6 @@ const shortcutGroups = [
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-3 pb-2">
     <ConsolePageHeader
       title="Platform"
-      definition="The one snapshot the platform publishes about itself: which dependency checks it ran, what it says it is serving in, and which recovery and deployment facts it recorded."
       :state="headerState"
       :observed="health?.observed_at ? formatGovernStamp(health.observed_at) : undefined"
       :scope="scopeText"

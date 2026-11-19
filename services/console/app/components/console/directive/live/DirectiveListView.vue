@@ -97,7 +97,6 @@ function detailHref(directiveId: string): string {
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-3 pb-2">
     <ConsolePageHeader
       title="Directives"
-      definition="Which instruction version a new session would resolve to, which versions exist, and where the pointer has moved."
       state="live"
       :verdict="verdict"
       contract="operator.directives.versions.v1"

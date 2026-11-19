@@ -62,7 +62,6 @@ function piiLabel(): string {
   <div class="flex min-w-0 flex-col gap-5">
     <ConsolePageHeader
       :title="`Memory ${shortId}`"
-      definition="Metadata, lifecycle, provenance, and validity for one memory record."
       state="live"
       :verdict="`Status: ${memory.status}`"
       contract="operator.memories.v1"

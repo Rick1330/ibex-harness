@@ -137,7 +137,6 @@ function refresh(): void {
   <div class="flex min-w-0 flex-col gap-5">
     <ConsolePageHeader
       title="Agents"
-      definition="The tenant-scoped agent inventory: identity, status, provider, usage counters, and last activity."
       state="live"
       :verdict="verdict"
       contract="operator.agents.v1"

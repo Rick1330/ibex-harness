@@ -296,3 +296,48 @@ test("live Sessions renders the turn ledger and trace link with axe coverage", a
   await expect(page.getByText("No evidence")).toHaveCount(0)
   await expectNoAxeViolations(page)
 })
+
+test("live Sessions joins the agent, segments by status, and filters without inventing a total", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+
+  await page.goto("/sessions")
+  await waitForHydration(page)
+
+  // The Agent column is the join against the agents read, not the session id.
+  const row = page.locator("tr[data-session-row]")
+  await expect(row.getByRole("link", { name: "Support Agent" })).toBeVisible()
+  await expect(row.getByText("support-agent", { exact: true })).toBeVisible()
+
+  // Segments come from the statuses that occur, with a per-page count.
+  const tabs = page.getByRole("tab")
+  await expect(tabs).toHaveCount(2)
+  await expect(tabs.first()).toContainText("All sessions")
+  await expect(page.getByRole("tab", { name: /Completed/ })).toBeVisible()
+  await expect(page.getByText(/no organization total/)).toBeVisible()
+
+  // The column control hides one of the optional columns.
+  await page.getByRole("button", { name: "Columns" }).click()
+  await page.getByRole("switch", { name: "Coverage" }).click()
+  await expect(page.getByRole("columnheader", { name: "Coverage" })).toHaveCount(0)
+  await page.keyboard.press("Escape")
+
+  // Search narrows on the external id, and an empty result says so.
+  await page.getByRole("searchbox", { name: "Search sessions" }).fill("ext-a-1")
+  await expect(row).toHaveCount(1)
+  await page.getByRole("searchbox", { name: "Search sessions" }).fill("no-such-session")
+  await expect(page.getByText("No sessions match these filters")).toBeVisible()
+  await page.getByRole("button", { name: "Clear filters" }).click()
+  await expect(row).toHaveCount(1)
+
+  // The agent filter is server-side: it lands in the address bar and the read.
+  await page.getByRole("combobox", { name: "Agent" }).selectOption({ label: "Support Agent · support-agent" })
+  await expect(page).toHaveURL(/agent_id=33333333-3333-4333-8333-333333333333/)
+  await expect
+    .poll(async () => {
+      const entries = await fetchFixtureRequests(page)
+      return entries.filter((entry) => entry.path === "/v1/operator/sessions").length
+    })
+    .toBeGreaterThan(1)
+  await expectNoAxeViolations(page)
+})

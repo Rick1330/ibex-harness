@@ -180,7 +180,6 @@ const shortcutGroups = [
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-3 pb-2">
     <ConsolePageHeader
       :title="`Trace ${traceId.length > 14 ? `${traceId.slice(0, 12)}…` : traceId}`"
-      definition="Every run the platform linked to this trace, inside your organization, with the evidence state of each one."
       :state="headerState"
       :observed="runs?.observed_at ?? null"
       :scope="demoActive ? `ibex-demo · illustrative trace ${traceId}` : `Current organization · trace ${traceId}`"

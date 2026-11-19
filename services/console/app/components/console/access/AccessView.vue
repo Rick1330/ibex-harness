@@ -267,7 +267,6 @@ function sessionTone(session: AccessSession): string {
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-4 overflow-x-hidden pb-2">
     <ConsolePageHeader
       title="Access"
-      definition="Keys, sessions, and roles that can reach this organization — and what each one is allowed to do."
       state="illustrative"
       verdict="Preview renders six keys, four members, four sessions, and a static role matrix. The access, identity, and key-management contracts are not connected, so no live credential or session state is claimed."
       contract="operator.access.keys.v1 + members.v1 [NEEDS-BACKEND]"

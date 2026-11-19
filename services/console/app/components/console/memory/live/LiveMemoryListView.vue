@@ -128,7 +128,6 @@ function refresh(): void {
   <div class="flex min-w-0 flex-col gap-5">
     <ConsolePageHeader
       title="Memories"
-      definition="The tenant-scoped memory index: classification, lifecycle, provenance, usage counters, and validity."
       state="live"
       :verdict="verdict"
       contract="operator.memories.v1"

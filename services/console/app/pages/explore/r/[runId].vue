@@ -186,7 +186,6 @@ function backToList(): void {
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-3 pb-2">
     <ConsolePageHeader
       :title="`Run ${runId.length > 14 ? `${runId.slice(0, 12)}…` : runId}`"
-      definition="Everything the detail contract returned for this run — and the sections it explicitly did not."
       :state="headerState"
       :observed="detail?.evidence.observed_at ?? null"
       :scope="demoActive ? `ibex-demo · illustrative run ${runId}` : `Current organization · run ${runId}`"
