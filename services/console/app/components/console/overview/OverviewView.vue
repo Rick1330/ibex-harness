@@ -308,6 +308,7 @@ const shortcutGroups = [
       :title="verdict.text"
       :body="verdict.caveat ?? undefined"
       :meta="observedAt ? formatGovernStamp(observedAt) : undefined"
+      :sign-in="authIssue"
     />
 
     <section class="grid grid-cols-2 gap-2 xl:grid-cols-4" aria-label="What this read reported">

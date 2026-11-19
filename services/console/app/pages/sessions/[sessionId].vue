@@ -54,6 +54,7 @@ useHead(() => ({
       eyebrow="Live operator read"
       title="An operator session is required to read this session"
       body="Sign in with a session that can read this organization. No fixture record is substituted."
+      sign-in
     />
     <IxVerdict
       v-else

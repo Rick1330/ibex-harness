@@ -568,6 +568,7 @@ const completenessChips = computed(() =>
         <p class="mt-1 text-xs leading-4 text-fg-2">
           The access cookie is missing, expired, or lacks metadata-read permission. Nothing is substituted for it here.
         </p>
+        <SessionSignInLink class="mt-3 h-8 px-3 text-xs" />
       </div>
 
       <GovernCaveat v-else-if="!parsed" tone="warning" title="Query refused before it was sent">

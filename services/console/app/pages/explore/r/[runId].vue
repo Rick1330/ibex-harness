@@ -307,6 +307,7 @@ function backToList(): void {
       title="Operator session required"
       reason="The access cookie is missing, expired, or lacks run-detail permission. No preview record is substituted for a refused read."
       next-step="Sign in with an operator account that holds metadata-read permission."
+      sign-in
     />
 
     <GovernEmptyState

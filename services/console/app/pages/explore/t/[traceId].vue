@@ -266,6 +266,7 @@ const shortcutGroups = [
         title="Operator session required"
         reason="The access cookie is missing, expired, or lacks metadata-read permission. No preview rows are substituted for it."
         next-step="Sign in with an operator account that holds metadata-read permission."
+        sign-in
       />
 
       <GovernEmptyState

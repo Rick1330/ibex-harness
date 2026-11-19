@@ -7,8 +7,10 @@ withDefaults(
     reason?: string | null
     nextStep?: string | null
     actionLabel?: string | null
+    /** Render the sign-in link a session refusal names. */
+    signIn?: boolean
   }>(),
-  { reason: null, nextStep: null, actionLabel: null },
+  { reason: null, nextStep: null, actionLabel: null, signIn: false },
 )
 
 const emit = defineEmits<{ action: [] }>()
@@ -28,5 +30,6 @@ const emit = defineEmits<{ action: [] }>()
     >
       {{ actionLabel }}
     </button>
+    <SessionSignInLink v-if="signIn" class="mt-2 h-8 px-3 text-xs" />
   </div>
 </template>
