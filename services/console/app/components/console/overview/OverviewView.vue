@@ -22,7 +22,7 @@ import {
   type OverviewState,
   type OverviewTab,
 } from "@/lib/govern-query"
-import { isOperatorAuthError, operatorFailureDetail } from "@/lib/operator-error"
+import { isOperatorAuthError, operatorAuthStatus, operatorFailureDetail } from "@/lib/operator-error"
 import {
   OVERVIEW_CONTRACT,
   OVERVIEW_NOTES,
@@ -67,6 +67,16 @@ onBeforeUnmount(() => {
   if (clock) clearInterval(clock)
 })
 
+/**
+ * The page verdict refuses only when a read the whole screen rests on was
+ * refused: the organization snapshot, the session context or platform health.
+ *
+ * The trace read is deliberately not part of this. It feeds one panel, and the
+ * other reads on the same screen are still readable with this session, so a
+ * page-level refusal would hide data the operator can legitimately see — and a
+ * 403 there is not a session problem at all. The runs panel carries that
+ * refusal and its remedy instead (see `OverviewRunsPanel`).
+ */
 const authIssue = computed(
   () =>
     !demoActive.value &&
@@ -372,7 +382,7 @@ const shortcutGroups = [
       :traces="traces"
       :loading="tracesLoading"
       :failed="Boolean(tracesState.error.value) && !traces"
-      :auth-issue="isOperatorAuthError(tracesState.error.value)"
+      :auth-status="operatorAuthStatus(tracesState.error.value)"
       :now-ms="nowMs"
       @open-run="openRun"
       @goto="goto"

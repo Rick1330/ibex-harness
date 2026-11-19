@@ -18,12 +18,32 @@ export function operatorErrorCode(error: unknown): string | null {
   )
 }
 
+/** A refused operator read a session change can or cannot resolve. */
+export type OperatorAuthStatus = 401 | 403
+
+/**
+ * The status of a refusal that a session change may resolve, or null.
+ *
+ * 401 and 403 are one classification with two outcomes, and the remedy differs:
+ * a 401 means there is no signed-in session and signing in fixes it; a 403 means
+ * the session is signed in without this read's grant and signing in again does
+ * not grant it. Every surface reads this one function so a 401 cannot be shown
+ * as the 403 refusal — or the reverse — in a second copy of the rule.
+ */
+export function operatorAuthStatus(error: unknown): OperatorAuthStatus | null {
+  const candidate = error as { statusCode?: number; status?: number } | null
+  // `statusCode` first: ofetch puts the response status there, and the SSR path
+  // in `useOperatorData` sets both fields to the same value.
+  const outer = candidate?.statusCode
+  if (outer === 401 || outer === 403) return outer
+  const inner = candidate?.status
+  if (inner === 401 || inner === 403) return inner
+  return null
+}
+
 /** A 401/403 means the operator session cannot read this tenant — never a data gap. */
 export function isOperatorAuthError(error: unknown): boolean {
-  const status = (error as { statusCode?: number; status?: number } | null)?.statusCode
-  if (status === 401 || status === 403) return true
-  const inner = (error as { status?: number } | null)?.status
-  return inner === 401 || inner === 403
+  return operatorAuthStatus(error) !== null
 }
 
 export function operatorFailureDetail(error: unknown): string {

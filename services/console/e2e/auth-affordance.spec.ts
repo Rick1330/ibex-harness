@@ -99,6 +99,118 @@ test("a session can be started from the verdict that asks for one", async ({ pag
   await expect(page.getByRole("heading", { name: "Sign in to IBEX Console" })).toBeVisible()
 })
 
+/**
+ * B3/B4 — a trace read that fails on its own, inside a page that is readable.
+ *
+ * The organization snapshot and platform health resolve for this session, so the
+ * missing trace read is a panel-level gap, not a page-level refusal: the verdict
+ * keeps its normal sentence and the runs panel carries the remedy. The two
+ * refusal statuses are not the same remedy — 401 means there is no signed-in
+ * session, 403 means the session is signed in without the trace grant.
+ */
+const LIVE_CONTEXT = {
+  schema_version: "operator.context.v1",
+  org_name: "Northwind",
+  org_slug: "org_demo_42",
+  org_status: "active",
+  role: "admin",
+}
+
+const LIVE_OVERVIEW = {
+  schema_version: "operator.overview.v1",
+  org_name: "Northwind",
+  org_slug: "org_demo_42",
+  org_status: "active",
+  counts: { active_users: 4, agents: 9, active_agents: 6 },
+  completeness: "complete",
+}
+
+const LIVE_HEALTH = {
+  dependency_health: { postgres: "ok", redis: "ok" },
+  last_backup_at: "2026-11-18T02:00:00Z",
+  last_restore_drill: { completed_at: "2026-11-01T03:00:00Z", duration_seconds: 1_440 },
+  retention_horizon_days: 90,
+  ingestion_lag_seconds: 3,
+  dlq_depth: 0,
+  degraded_mode: false,
+  outbox_max_aggregate_seq: 41,
+  deploy_image_digest: "sha256:1f2c3d",
+}
+
+/** Refuse the trace read only: the other three reads answer as a signed-in session. */
+async function serveReadsExceptTraces(page: Page, traceStatus: 401 | 403): Promise<void> {
+  const observed = () => new Date().toISOString()
+  await page.route(/\/api\/operator\/context$/, (route) =>
+    route.fulfill({ json: { ...LIVE_CONTEXT, observed_at: observed() } }),
+  )
+  await page.route(/\/api\/operator\/overview$/, (route) =>
+    route.fulfill({ json: { ...LIVE_OVERVIEW, observed_at: observed() } }),
+  )
+  await page.route(/\/api\/operator\/platform\/health$/, (route) =>
+    route.fulfill({ json: { ...LIVE_HEALTH, observed_at: observed() } }),
+  )
+  await page.route(/\/api\/operator\/traces(\?.*)?$/, (route) =>
+    route.fulfill({
+      status: traceStatus,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: {
+          code: traceStatus === 401 ? "UNAUTHENTICATED" : "PERMISSION_DENIED",
+          message: traceStatus === 401 ? "Operator session required" : "Trace read not granted",
+        },
+      }),
+    }),
+  )
+}
+
+test("a trace-only 401 offers the sign-in the session needs", async ({ page }) => {
+  await page.goto("/?demo=0&tab=runs")
+  await waitForHydration(page)
+  await serveReadsExceptTraces(page, 401)
+  await page.getByRole("button", { name: "Re-read" }).click()
+
+  // The page-level verdict is not a refusal: the snapshot and health were read,
+  // and their values stay on screen.
+  await expect(page.getByRole("heading", { name: "Sign in to read this organization." })).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: "1 reported finding; none is critical." })).toBeVisible()
+
+  const runs = page.getByRole("region", { name: "Recent runs" })
+  await expect(runs.getByText("Run metadata needs a signed-in session", { exact: true })).toBeVisible()
+  await expect(runs.getByText(/is not signed in/)).toBeVisible()
+  // Not the retryable failure: a 401 is answered by a session, not a second read.
+  await expect(runs.getByRole("button", { name: "Retry this read" })).toHaveCount(0)
+
+  const signIn = page.getByRole("link", { name: "Sign in", exact: true })
+  await expect(signIn).toHaveCount(1)
+  await expect(signIn).toHaveAttribute("href", /^\/login\?next=/)
+  const next = new URL(await signIn.getAttribute("href") ?? "", "https://console.example").searchParams.get("next")
+  expect(next).toBe("/?demo=0&tab=runs")
+  await expectNoAxeViolations(page)
+
+  await signIn.click()
+  await expect(page).toHaveURL(/\/login\?next=/)
+  await expect(page.getByRole("heading", { name: "Sign in to IBEX Console" })).toBeVisible()
+})
+
+test("a trace-only 403 refuses without a sign-in that cannot help", async ({ page }) => {
+  await page.goto("/?demo=0&tab=runs")
+  await waitForHydration(page)
+  await serveReadsExceptTraces(page, 403)
+  await page.getByRole("button", { name: "Re-read" }).click()
+
+  // Same page-level verdict: authorization is not authentication, and this
+  // session can still read everything else on the screen.
+  await expect(page.getByRole("heading", { name: "Sign in to read this organization." })).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: "1 reported finding; none is critical." })).toBeVisible()
+
+  const runs = page.getByRole("region", { name: "Recent runs" })
+  await expect(runs.getByText("Run metadata needs the metadata read permission", { exact: true })).toBeVisible()
+  await expect(runs.getByText(/Signing in again does not add this permission/)).toBeVisible()
+  await expect(runs.getByRole("button", { name: "Retry this read" })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Sign in", exact: true })).toHaveCount(0)
+  await expectNoAxeViolations(page)
+})
+
 test("a session can be ended from the session menu", async ({ page }) => {
   await page.goto("/")
   await waitForHydration(page)
