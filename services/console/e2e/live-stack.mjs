@@ -11,14 +11,76 @@ const keyPath = join(tempDir, "server.key")
 const certPath = join(tempDir, "server.crt")
 const apiPort = 3283
 const consolePort = 3282
-const sessionCookie = "ibex_session=fixture-access-secret"
-const orgId = "bfc3f97b-7a61-498d-9faa-96f34fbd4f2f"
+const consoleOrigin = `https://127.0.0.1:${consolePort}`
 const observedAt = "2026-09-26T17:00:00Z"
-const runId = "11111111-1111-4111-8111-111111111111"
-const agentId = "33333333-3333-4333-8333-333333333333"
-const memoryId = "44444444-4444-4444-8444-444444444444"
-const sessionId = "88888888-8888-4888-8888-888888888888"
+
+/**
+ * The access token `live-d1.spec.ts` mints directly. It is kept so that suite
+ * still exercises the read path, and it binds to org A. The session journeys do
+ * not use it: they obtain a token from `POST /v1/operator/session/login` exactly
+ * as the browser does.
+ */
+const LEGACY_FIXTURE_ACCESS = "fixture-access-secret"
+
+const SESSION_COOKIE = "ibex_session"
+const REFRESH_COOKIE = "ibex_refresh"
+const CSRF_COOKIE = "ibex_csrf"
+
+/**
+ * Two tenants behind one stand-in operator API.
+ *
+ * The stand-in issues a session per PAT and resolves every read through that
+ * session's org, so a record id belonging to the other org is a 404 — which is
+ * what the real API's tenant-scoped queries do. Distinct ids per org are what
+ * make the browser-level negative meaningful: org A's session must ask for an id
+ * that exists *somewhere* and still be told it does not exist.
+ */
+const ORG_A = {
+  key: "a",
+  id: "bfc3f97b-7a61-498d-9faa-96f34fbd4f2f",
+  name: "Live Workspace",
+  slug: "live-workspace",
+  pat: "pat-live-workspace-fixture",
+  runId: "11111111-1111-4111-8111-111111111111",
+  traceId: "trace-live-1",
+  agentId: "33333333-3333-4333-8333-333333333333",
+  agentSlug: "support-agent",
+  agentName: "Support Agent",
+  agentDescription: "Answers customer questions from the memory store.",
+  memoryId: "44444444-4444-4444-8444-444444444444",
+  sessionId: "88888888-8888-4888-8888-888888888888",
+  activeUsers: 7,
+  agents: 3,
+  activeAgents: 2,
+}
+
+const ORG_B = {
+  key: "b",
+  id: "c1d2e3f4-a5b6-47c8-9d0e-1f2a3b4c5d6e",
+  name: "Second Workspace",
+  slug: "second-workspace",
+  pat: "pat-second-workspace-fixture",
+  runId: "22222222-2222-4222-8222-222222222222",
+  traceId: "trace-second-1",
+  agentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  agentSlug: "billing-agent",
+  agentName: "Billing Agent",
+  agentDescription: "Reconciles invoices from the memory store.",
+  memoryId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  sessionId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  activeUsers: 4,
+  agents: 1,
+  activeAgents: 1,
+}
+
+const ORGS = [ORG_A, ORG_B]
 const requests = []
+/** access token -> { orgKey, family } */
+const liveAccess = new Map()
+/** refresh token -> { orgKey, family, consumed } */
+const liveRefresh = new Map()
+/** family id -> { revoked } */
+const families = new Map()
 let eventStreams = 0
 let closing = false
 let consoleProcess
@@ -32,7 +94,8 @@ function assertUnderTempDir(candidate) {
   return resolved
 }
 
-function writeJson(response, status, body, extraHeaders = {}) {
+function writeJson(response, status, body, extraHeaders = {}, entry = null) {
+  if (entry) entry.status = status
   response.writeHead(status, {
     "content-type": "application/json",
     "cache-control": "no-store",
@@ -41,8 +104,222 @@ function writeJson(response, status, body, extraHeaders = {}) {
   response.end(JSON.stringify(body))
 }
 
-function writeUnauthorized(response) {
-  writeJson(response, 401, { error: { code: "INVALID_SESSION", message: "Session required" } })
+function writeUnauthorized(response, entry = null) {
+  writeJson(
+    response,
+    401,
+    { error: { code: "INVALID_SESSION", message: "Session required" } },
+    {},
+    entry,
+  )
+}
+
+/** Read a request body under a hard cap, without trusting `Content-Length`. */
+function readBody(request, limit = 8 * 1024) {
+  return new Promise((resolve) => {
+    const chunks = []
+    let total = 0
+    let aborted = false
+    request.on("data", (chunk) => {
+      total += chunk.length
+      if (total > limit) {
+        aborted = true
+        request.resume()
+        resolve(null)
+        return
+      }
+      if (!aborted) chunks.push(chunk)
+    })
+    request.on("end", () => {
+      if (!aborted) resolve(Buffer.concat(chunks).toString("utf8"))
+    })
+    request.on("error", () => {
+      if (!aborted) resolve(null)
+    })
+  })
+}
+
+function parseJson(raw) {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The stand-in API's session rules.
+ *
+ * These are the parts of `services/api/app/routers/session.py` the Console's BFF
+ * depends on, expressed at the same strength: a PAT exchange issues an HttpOnly
+ * access cookie, an HttpOnly refresh cookie and a JavaScript-readable CSRF
+ * cookie; refresh is single-use and rotates all three; reuse revokes the family;
+ * logout revokes the family; and every state-changing call is protected by the
+ * cookie/header double-submit proof. A stand-in that skipped any of this would
+ * let the Console's relay pass a test the real API would fail.
+ */
+
+function parseCookies(header) {
+  const cookies = {}
+  for (const part of String(header ?? "").split(";")) {
+    const separator = part.indexOf("=")
+    if (separator < 0) continue
+    const name = part.slice(0, separator).trim()
+    if (name) cookies[name] = part.slice(separator + 1).trim()
+  }
+  return cookies
+}
+
+function orgByPat(pat) {
+  return ORGS.find((org) => org.pat === pat) ?? null
+}
+
+function familyIsLive(familyKey) {
+  const family = families.get(familyKey)
+  return Boolean(family) && !family.revoked
+}
+
+function revokeFamily(familyKey) {
+  const family = families.get(familyKey)
+  if (family) family.revoked = true
+}
+
+/** The org a request's access cookie belongs to, or null. */
+function sessionOrg(cookieHeader) {
+  const access = parseCookies(cookieHeader)[SESSION_COOKIE]
+  if (!access) return null
+  if (access === LEGACY_FIXTURE_ACCESS) return ORG_A
+  const session = liveAccess.get(access)
+  if (!session || !familyIsLive(session.family)) return null
+  return ORGS.find((org) => org.key === session.orgKey) ?? null
+}
+
+function newToken(prefix) {
+  return `${prefix}-${crypto.randomUUID()}`
+}
+
+function sessionCookieHeaders({ access, refresh, csrf }) {
+  const headers = [
+    `${SESSION_COOKIE}=${access}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+    `${REFRESH_COOKIE}=${refresh}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+    `${CSRF_COOKIE}=${csrf}; Path=/; Secure; SameSite=Lax`,
+  ]
+  return headers
+}
+
+function issueSession(org) {
+  const family = newToken("fam")
+  families.set(family, { revoked: false })
+  const access = newToken("access")
+  const refresh = newToken("refresh")
+  const csrf = newToken("csrf")
+  liveAccess.set(access, { orgKey: org.key, family })
+  liveRefresh.set(refresh, { orgKey: org.key, family, consumed: false })
+  return { access, refresh, csrf, family }
+}
+
+function dropAccess(access) {
+  const session = liveAccess.get(access)
+  if (!session) return
+  liveAccess.delete(access)
+  const family = families.get(session.family)
+  if (family) family.revoked = true
+}
+
+function sessionPayload(org, csrf) {
+  return { status: "ok", provisional: false, org_id: org.id, csrf_token: csrf }
+}
+
+function csrfAccepted(request, cookies) {
+  const header = request.headers["x-csrf-token"]
+  const cookie = cookies[CSRF_COOKIE]
+  return Boolean(header) && Boolean(cookie) && header === cookie
+}
+
+/** The API rejects a cross-origin state-changing request before its handler runs. */
+function originAccepted(request) {
+  const origin = request.headers.origin
+  return !origin || origin === consoleOrigin
+}
+
+function rejectSession(response, entry, status, code, message) {
+  writeJson(response, status, { error: { code, message } }, {}, entry)
+  return true
+}
+
+function issueSessionResponse(response, entry, org, issued) {
+  writeJson(
+    response,
+    200,
+    sessionPayload(org, issued.csrf),
+    { "set-cookie": sessionCookieHeaders(issued) },
+    entry,
+  )
+  return true
+}
+
+function handleLogin(request, response, body, entry) {
+  if (!originAccepted(request)) {
+    return rejectSession(response, entry, 403, "ORIGIN_REJECTED", "Origin rejected")
+  }
+  const pat = typeof body?.pat === "string" ? body.pat.trim() : ""
+  const org = orgByPat(pat)
+  if (!org) {
+    return rejectSession(response, entry, 401, "INVALID_TOKEN", "invalid personal access token")
+  }
+  return issueSessionResponse(response, entry, org, issueSession(org))
+}
+
+function handleRefresh(request, response, entry) {
+  const cookies = parseCookies(request.headers.cookie)
+  const refresh = liveRefresh.get(cookies[REFRESH_COOKIE] ?? "")
+  // CSRF is checked before the token is looked at, matching the middleware
+  // order upstream: a missing or mismatched proof never reaches the handler.
+  if (!csrfAccepted(request, cookies)) {
+    return rejectSession(response, entry, 403, "CSRF_FAILED", "CSRF token rejected")
+  }
+  if (!refresh || !familyIsLive(refresh.family) || refresh.consumed) {
+    // Replay of a consumed refresh token is treated as family compromise.
+    if (refresh) revokeFamily(refresh.family)
+    return rejectSession(response, entry, 401, "INVALID_TOKEN", "invalid refresh token")
+  }
+  const org = ORGS.find((candidate) => candidate.key === refresh.orgKey)
+  refresh.consumed = true
+  const issued = issueSession(org)
+  // The rotated family replaces the old one; the old tokens stay dead.
+  revokeFamily(refresh.family)
+  return issueSessionResponse(response, entry, org, issued)
+}
+
+function handleLogout(request, response, entry) {
+  const cookies = parseCookies(request.headers.cookie)
+  if (!csrfAccepted(request, cookies)) {
+    return rejectSession(response, entry, 403, "CSRF_FAILED", "CSRF token rejected")
+  }
+  const refresh = liveRefresh.get(cookies[REFRESH_COOKIE] ?? "")
+  // Revoke the family the session belongs to, whichever cookie proves it.
+  if (cookies[SESSION_COOKIE]) dropAccess(cookies[SESSION_COOKIE])
+  if (refresh) revokeFamily(refresh.family)
+  const cleared = [SESSION_COOKIE, REFRESH_COOKIE, CSRF_COOKIE].map(
+    (name) => `${name}=; Path=/; Max-Age=0; Secure; SameSite=Lax`,
+  )
+  writeJson(response, 200, { status: "signed_out" }, { "set-cookie": cleared }, entry)
+  return true
+}
+
+/** Dispatch one of the API's session routes; false when the path is not ours. */
+function handleSessionRoute(url, request, response, body, entry) {
+  if (url.pathname === "/v1/operator/session/login") {
+    return handleLogin(request, response, body, entry)
+  }
+  if (url.pathname === "/v1/operator/session/refresh") {
+    return handleRefresh(request, response, entry)
+  }
+  if (url.pathname === "/v1/operator/session/logout") {
+    return handleLogout(request, response, entry)
+  }
+  return false
 }
 
 function handleTestRoute(url, request, response) {
@@ -50,7 +327,7 @@ function handleTestRoute(url, request, response) {
     response.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
-      "set-cookie": `${sessionCookie}; Path=/; Secure; SameSite=Lax`,
+      "set-cookie": `${SESSION_COOKIE}=${LEGACY_FIXTURE_ACCESS}; Path=/; Secure; SameSite=Lax`,
     })
     response.end(`<!doctype html>
 <html lang="en">
@@ -81,19 +358,28 @@ function recordRequest(request, pathname) {
     .split(";")
     .map((part) => part.trim().split("=", 1)[0])
     .filter(Boolean)
-  requests.push({
+  const entry = {
     method: request.method,
     path: pathname,
     cookieNames,
     lastEventId: request.headers["last-event-id"] ?? null,
-  })
-  return cookie
+    org: null,
+    status: null,
+  }
+  requests.push(entry)
+  return { cookie, entry }
 }
 
-function handleEventStream(cookie, response) {
-  if (cookie !== sessionCookie) {
+function handleEventStream(cookie, response, entry) {
+  const org = sessionOrg(cookie)
+  if (!org) {
+    if (entry) entry.status = 401
     writeUnauthorized(response)
     return
+  }
+  if (entry) {
+    entry.org = org.key
+    entry.status = 200
   }
   response.writeHead(200, {
     "content-type": "text/event-stream",
@@ -113,11 +399,11 @@ function handleEventStream(cookie, response) {
   response.on("close", () => clearInterval(heartbeat))
 }
 
-function fixtureBodies() {
+function fixtureBodies(org) {
   const traceItem = {
-    trace_id: "trace-live-1",
-    run_id: runId,
-    request_id: "request-live-1",
+    trace_id: org.traceId,
+    run_id: org.runId,
+    request_id: `request-${org.key}-1`,
     agent_id: null,
     session_id: null,
     checkpoint_id: null,
@@ -175,10 +461,10 @@ function fixtureBodies() {
     score_schema_note: null,
   }
   const agent = {
-    id: agentId,
-    slug: "support-agent",
-    name: "Support Agent",
-    description: "Answers customer questions from the memory store.",
+    id: org.agentId,
+    slug: org.agentSlug,
+    name: org.agentName,
+    description: org.agentDescription,
     status: "active",
     default_provider: "openai",
     default_model: "gpt-4.1",
@@ -191,8 +477,8 @@ function fixtureBodies() {
     updated_at: observedAt,
   }
   const memory = {
-    id: memoryId,
-    agent_id: agentId,
+    id: org.memoryId,
+    agent_id: org.agentId,
     session_id: null,
     category: "factual",
     status: "active",
@@ -222,7 +508,7 @@ function fixtureBodies() {
     lineage: {
       superseded_by: null,
       merged_into: null,
-      tip: { id: memoryId, status: "active", tombstoned: false },
+      tip: { id: org.memoryId, status: "active", tombstoned: false },
       replaces: [],
       replaced_by: [],
       edges_truncated: false,
@@ -231,7 +517,7 @@ function fixtureBodies() {
   const sessionTurn = {
     id: "99999999-9999-4999-8999-999999999999",
     turn_index: 0,
-    request_id: "req-live-1",
+    request_id: `req-${org.key}-1`,
     input_tokens: 10,
     output_tokens: 20,
     model: "gpt-4.1",
@@ -241,8 +527,8 @@ function fixtureBodies() {
     is_complete: true,
     created_at: observedAt,
     trace: {
-      trace_id: "trace-live-1",
-      run_id: runId,
+      trace_id: org.traceId,
+      run_id: org.runId,
       completeness: "complete",
       status: "ok",
       error_code: null,
@@ -251,9 +537,9 @@ function fixtureBodies() {
     },
   }
   const session = {
-    id: sessionId,
-    agent_id: agentId,
-    external_id: "ext-live-1",
+    id: org.sessionId,
+    agent_id: org.agentId,
+    external_id: `ext-${org.key}-1`,
     status: "completed",
     model: "gpt-4.1",
     provider: "openai",
@@ -289,20 +575,24 @@ function fixtureBodies() {
     agent,
     context: {
       schema_version: "operator.context.v1",
-      org_id: orgId,
+      org_id: org.id,
       role: "admin",
-      org_name: "Live Workspace",
-      org_slug: "live-workspace",
+      org_name: org.name,
+      org_slug: org.slug,
       org_status: "active",
       observed_at: observedAt,
     },
     overview: {
       schema_version: "operator.overview.v1",
-      org_id: orgId,
-      org_name: "Live Workspace",
-      org_slug: "live-workspace",
+      org_id: org.id,
+      org_name: org.name,
+      org_slug: org.slug,
       org_status: "active",
-      counts: { active_users: 7, agents: 3, active_agents: 2 },
+      counts: {
+        active_users: org.activeUsers,
+        agents: org.agents,
+        active_agents: org.activeAgents,
+      },
       observed_at: observedAt,
       completeness: "complete",
     },
@@ -323,24 +613,24 @@ function fixtureBodies() {
   }
 }
 
-function resolveFixtureBody(pathname) {
-  const bodies = fixtureBodies()
+function resolveFixtureBody(pathname, org) {
+  const bodies = fixtureBodies(org)
   if (pathname === "/v1/operator/sessions") return { status: 200, payload: bodies.sessions }
-  if (pathname === `/v1/operator/sessions/${sessionId}`) {
+  if (pathname === `/v1/operator/sessions/${org.sessionId}`) {
     return { status: 200, payload: bodies.sessionDetail }
   }
   if (pathname.startsWith("/v1/operator/sessions/")) {
     return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Session not found" } } }
   }
   if (pathname === "/v1/operator/memories") return { status: 200, payload: bodies.memories }
-  if (pathname === `/v1/operator/memories/${memoryId}`) {
+  if (pathname === `/v1/operator/memories/${org.memoryId}`) {
     return { status: 200, payload: bodies.memoryDetail }
   }
   if (pathname.startsWith("/v1/operator/memories/")) {
     return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Memory not found" } } }
   }
   if (pathname === "/v1/operator/agents") return { status: 200, payload: bodies.agents }
-  if (pathname === `/v1/operator/agents/${agentId}`) {
+  if (pathname === `/v1/operator/agents/${org.agentId}`) {
     return { status: 200, payload: bodies.agent }
   }
   if (pathname.startsWith("/v1/operator/agents/")) {
@@ -350,35 +640,46 @@ function resolveFixtureBody(pathname) {
   if (pathname === "/v1/operator/overview") return { status: 200, payload: bodies.overview }
   if (pathname === "/v1/operator/platform/health") return { status: 200, payload: bodies.health }
   if (pathname === "/v1/operator/traces") return { status: 200, payload: bodies.traces }
-  if (pathname === `/v1/operator/traces/runs/${runId}`) {
+  if (pathname === `/v1/operator/traces/runs/${org.runId}`) {
     return { status: 200, payload: bodies.traceDetail }
   }
-  if (pathname === "/v1/operator/traces/trace-live-1") return { status: 200, payload: bodies.traces }
+  if (pathname === `/v1/operator/traces/${org.traceId}`) return { status: 200, payload: bodies.traces }
   if (pathname.startsWith("/v1/operator/traces/")) {
     return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Trace not found" } } }
   }
   return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Not found" } } }
 }
 
-function handleAuthenticatedJson(pathname, response) {
-  const resolved = resolveFixtureBody(pathname)
-  writeJson(response, resolved.status, resolved.payload)
+function handleAuthenticatedJson(pathname, org, response, entry) {
+  const resolved = resolveFixtureBody(pathname, org)
+  writeJson(response, resolved.status, resolved.payload, {}, entry)
 }
 
-function handleApiRequest(request, response) {
+async function handleApiRequest(request, response) {
   const url = new URL(request.url ?? "/", `https://127.0.0.1:${apiPort}`)
   if (handleTestRoute(url, request, response)) return
 
-  const cookie = recordRequest(request, url.pathname)
+  const { cookie, entry } = recordRequest(request, url.pathname)
+
+  if (url.pathname.startsWith("/v1/operator/session/")) {
+    const body = url.pathname === "/v1/operator/session/login"
+      ? parseJson(await readBody(request))
+      : null
+    handleSessionRoute(url, request, response, body, entry)
+    return
+  }
+
   if (url.pathname === "/v1/operator/events/stream") {
-    handleEventStream(cookie, response)
+    handleEventStream(cookie, response, entry)
     return
   }
-  if (cookie !== sessionCookie) {
-    writeUnauthorized(response)
+  const org = sessionOrg(cookie)
+  if (!org) {
+    writeUnauthorized(response, entry)
     return
   }
-  handleAuthenticatedJson(url.pathname, response)
+  entry.org = org.key
+  handleAuthenticatedJson(url.pathname, org, response, entry)
 }
 
 const previousCwd = process.cwd()
@@ -399,7 +700,15 @@ try {
   process.chdir(previousCwd)
 }
 
-const api = createServer({ key: tlsKey, cert: tlsCert }, handleApiRequest)
+const api = createServer({ key: tlsKey, cert: tlsCert }, (request, response) => {
+  handleApiRequest(request, response).catch(() => {
+    if (response.headersSent) {
+      response.end()
+      return
+    }
+    writeJson(response, 500, { error: { code: "STANDIN_FAILED", message: "Stand-in failed" } })
+  })
+})
 api.listen(apiPort, "127.0.0.1")
 
 consoleProcess = spawn(
