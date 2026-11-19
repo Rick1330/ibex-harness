@@ -10,8 +10,6 @@ type AboutNote = { lead: string; body: string }
 const props = withDefaults(
   defineProps<{
     title: string
-    /** One sentence: the question this page answers. */
-    definition: string
     state?: DataState
     verdict: string
     contract: string
@@ -21,7 +19,7 @@ const props = withDefaults(
     observed?: string | null
     request?: string | null
     notes?: AboutNote[]
-    /** At most one material caveat, shown under the definition. */
+    /** At most one material caveat, shown under the title. */
     caveat?: string | null
     crossLink?: { text: string; href: string; label: string } | null
   }>(),
@@ -54,9 +52,6 @@ defineExpose({ openAbout })
         <h1 class="ix-page-title max-w-3xl text-balance break-words text-fg-1">
           {{ props.title }}
         </h1>
-        <p class="mt-1 max-w-2xl text-xs leading-5 text-fg-3 text-pretty">
-          {{ props.definition }}
-        </p>
         <p v-if="crossLink" class="mt-1 text-xs leading-5 text-fg-3">
           {{ crossLink.text }}
           <NuxtLink :to="crossLink.href" class="ix-link font-medium">{{ crossLink.label }}</NuxtLink>

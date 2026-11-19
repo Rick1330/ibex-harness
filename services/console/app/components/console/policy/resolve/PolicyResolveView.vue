@@ -122,9 +122,6 @@ const { helpOpen } = useGovernShortcuts({
           <div class="mt-1 flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
             <h1 class="ix-page-title text-fg-1">Resolve a run</h1>
                       </div>
-          <p class="mt-1 max-w-2xl text-sm leading-5 text-fg-2">
-            See what a recorded run decided, or which rules were in force at a given moment.
-          </p>
         </div>
         <div class="flex shrink-0 flex-wrap items-center gap-2">
           <GovernDataSourceChip @open="about?.open()" />

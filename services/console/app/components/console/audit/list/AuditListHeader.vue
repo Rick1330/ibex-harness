@@ -40,7 +40,6 @@ const aboutNotes = [
 <template>
   <ConsolePageHeader
     title="Audit log"
-    definition="Every change made in this workspace: who did it, what changed, and whether it was applied exactly once."
     state="illustrative"
     verdict="Every event, retry, and evidence mark on this page is a recorded preview fixture. No audit stream is connected, so this page cannot prove completeness."
     contract="operator.audit.list.v1 [NEEDS-BACKEND]"

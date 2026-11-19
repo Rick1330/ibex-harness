@@ -36,7 +36,6 @@ function providerLabel(): string {
   <div class="flex min-w-0 flex-col gap-5">
     <ConsolePageHeader
       :title="agent.name"
-      :definition="agent.description ?? 'Agent profile from the operator read model.'"
       state="live"
       :verdict="`Status: ${agent.status}`"
       contract="operator.agents.v1"
@@ -124,6 +123,10 @@ function providerLabel(): string {
           <div>
             <dt class="ix-label">Updated</dt>
             <dd class="mt-0.5 font-mono text-xs text-fg-1">{{ formatGovernStamp(agent.updated_at) }}</dd>
+          </div>
+          <div v-if="agent.description" class="min-w-0 sm:col-span-2">
+            <dt class="ix-label">Description</dt>
+            <dd class="mt-0.5 text-xs leading-5 text-fg-2 text-pretty">{{ agent.description }}</dd>
           </div>
         </dl>
       </div>

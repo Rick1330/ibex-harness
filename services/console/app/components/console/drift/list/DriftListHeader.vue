@@ -31,7 +31,6 @@ defineExpose({ openAbout })
   <ConsolePageHeader
     ref="about"
     title="Drift"
-    definition="Where agent behaviour has moved away from its certified baseline, and what changed just before."
     state="illustrative"
     verdict="Every signal, band, and cause on this page is an illustrative fixture. No drift read model is connected to this console."
     contract="operator.drift.alerts.v1 [NEEDS-BACKEND]"

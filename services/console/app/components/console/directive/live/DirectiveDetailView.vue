@@ -120,7 +120,6 @@ function copyLink(): void {
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-3 pb-2">
     <ConsolePageHeader
       :title="detail ? detail.agent_name : 'Directive'"
-      definition="The version a new session resolves to, every version behind it, and which of them actually served traffic."
       state="live"
       :verdict="verdict"
       contract="operator.directives.versions.v1"

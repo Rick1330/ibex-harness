@@ -58,9 +58,6 @@ function setFormat(value: string): void {
           <div class="mt-1.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
             <h1 class="ix-page-title text-fg-1">Audit integrity</h1>
                       </div>
-          <p class="mt-1 max-w-2xl text-sm leading-5 text-fg-2">
-            Whether the recorded chain is complete, how long records are kept, and what an export would include.
-          </p>
         </div>
 
         <div class="flex shrink-0 flex-wrap items-center gap-2">

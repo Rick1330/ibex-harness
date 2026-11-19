@@ -1,25 +1,47 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
-import { RefreshCw, X } from "@lucide/vue"
+import { RefreshCw, Search, SlidersHorizontal } from "@lucide/vue"
 import ConsolePageHeader from "@/components/console/ConsolePageHeader.vue"
+import GovernEmptyState from "@/components/console/govern/primitives/GovernEmptyState.vue"
+import GovernTabBar from "@/components/console/govern/primitives/GovernTabBar.vue"
 import IxVerdict from "@/components/console/IxVerdict.vue"
-import LiveSessionStatusPill from "./LiveSessionStatusPill.vue"
-import { useOperatorSessions } from "@/composables/useOperatorData"
-import { formatGovernNumber, formatGovernStamp } from "@/lib/govern-format"
+import SessionColumnsMenu from "./SessionColumnsMenu.vue"
+import SessionFilterPanel from "./SessionFilterPanel.vue"
+import SessionTable from "./SessionTable.vue"
+import { useOperatorAgents, useOperatorSessions } from "@/composables/useOperatorData"
 import { isOperatorAuthError, operatorFailureDetail } from "@/lib/operator-error"
 import {
-  serializeLiveSessionQuery,
-  type LiveSessionQuery,
-} from "~~/shared/operator/session-query"
+  DEFAULT_SESSION_COLUMNS,
+  DEFAULT_SESSION_PAGE_FILTERS,
+  activeSessionFilterCount,
+  agentFilterOptions,
+  filterSessionRows,
+  segmentSessionRows,
+  sessionFacets,
+  sessionSegments,
+  toSessionListRows,
+  type SessionColumnId,
+  type SessionPageFilters,
+  type SessionSegment,
+} from "@/lib/session-list"
+import { serializeLiveSessionQuery, type LiveSessionQuery } from "~~/shared/operator/session-query"
 import type { OperatorSessionRecord, SessionStatus } from "~~/shared/operator/contracts"
 
 const props = defineProps<{ state: LiveSessionQuery; returnTo: string }>()
 const emit = defineEmits<{ update: [state: LiveSessionQuery] }>()
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/**
+ * The agents read is the join source for the Agent column. 100 is the API's
+ * page cap, and there is no "agents by id" query, so a session whose agent is
+ * outside this page keeps its own id and reports no name.
+ */
+const AGENT_PAGE_QUERY = new URLSearchParams({ limit: "100" })
 
 const sessionsState = useOperatorSessions(() => serializeLiveSessionQuery(props.state))
+const agentsState = useOperatorAgents(() => AGENT_PAGE_QUERY)
+
 const sessions = computed<OperatorSessionRecord[]>(() => sessionsState.data.value?.data ?? [])
+const agents = computed(() => agentsState.data.value?.data ?? [])
 const pagination = computed(() => sessionsState.data.value?.pagination ?? null)
 const error = computed(() => sessionsState.error.value)
 const pending = computed(() => sessionsState.status.value === "pending")
@@ -29,76 +51,152 @@ const failureDetail = computed(() =>
   error.value && !authIssue.value ? operatorFailureDetail(error.value) : null,
 )
 
-const hasFilters = computed(() => Boolean(props.state.agentId || props.state.status))
+const pageFilters = ref<SessionPageFilters>({ ...DEFAULT_SESSION_PAGE_FILTERS })
+const segment = ref<SessionSegment["id"]>("all")
+const columns = ref<SessionColumnId[]>([...DEFAULT_SESSION_COLUMNS])
+const filtersOpen = ref(false)
+
+const rows = computed(() => toSessionListRows(sessions.value, agents.value))
+const filteredRows = computed(() => filterSessionRows(rows.value, pageFilters.value))
+const segments = computed(() => sessionSegments(filteredRows.value))
+const activeSegment = computed<SessionSegment["id"]>(() =>
+  segments.value.some((entry) => entry.id === segment.value) ? segment.value : "all",
+)
+
+// The tab on screen is the state: a narrowing filter can remove the selected
+// segment, and a later read must not resurrect a segment nobody can see.
+watch(activeSegment, (value) => {
+  segment.value = value
+})
+const visibleRows = computed(() => segmentSessionRows(filteredRows.value, activeSegment.value))
+const segmentTabs = computed(() => segments.value.map((entry) => ({ id: entry.id, label: entry.label })))
+const segmentBadges = computed<Record<string, string>>(() =>
+  Object.fromEntries(segments.value.map((entry) => [entry.id, String(entry.count)])),
+)
+const facets = computed(() => ({
+  models: sessionFacets(rows.value, "model"),
+  providers: sessionFacets(rows.value, "provider"),
+}))
+const agentOptions = computed(() => agentFilterOptions(agents.value, props.state.agentId))
+const filterCount = computed(() =>
+  activeSessionFilterCount(pageFilters.value, { status: props.state.status, agentId: props.state.agentId }),
+)
+
 const verdict = computed(() => {
   if (loading.value) return "Reading the session index…"
   if (authIssue.value) return "The operator session cannot read this organization"
   if (error.value) return "Session index unavailable"
-  if (sessions.value.length === 0) {
-    return hasFilters.value ? "No sessions match these filters" : "No sessions in this organization yet"
-  }
-  return `${sessions.value.length} sessions on this page`
+  return `${visibleRows.value.length} of ${rows.value.length} sessions on this page shown`
 })
+
 const coverage = computed(() => {
   if (error.value) return "No data shown"
   if (loading.value) return "Reading live data"
-  return `${sessions.value.length} live rows`
+  return `${rows.value.length} rows in one cursor page`
 })
 
-const agentDraft = ref(props.state.agentId ?? "")
-const agentError = ref("")
+const resultText = computed(() => {
+  if (loading.value) return "Reading the page…"
+  if (error.value) return "No rows shown"
+  return `${visibleRows.value.length} of ${rows.value.length} rows on this page`
+})
 
-watch(
-  () => props.state.agentId,
-  (value) => {
-    if ((value ?? "") !== agentDraft.value) agentDraft.value = value ?? ""
-  },
-)
+type SessionEmpty = {
+  title: string
+  reason: string
+  nextStep: string | null
+  actionLabel: string | null
+  action: "clear" | "first" | null
+}
 
-function emitFilter(patch: Partial<LiveSessionQuery>): void {
+function emptyCopy(): SessionEmpty {
+  if (rows.value.length > 0) {
+    return {
+      title: "No sessions match these filters",
+      reason: "The rows loaded on this page were narrowed to nothing. The API returned the page before these filters ran.",
+      nextStep: "Clear the filters to widen the search.",
+      actionLabel: "Clear filters",
+      action: "clear",
+    }
+  }
+  if (props.state.cursor) {
+    return {
+      title: "No sessions on this page",
+      reason: "This cursor page is empty, but earlier pages may still hold sessions.",
+      nextStep: null,
+      actionLabel: "First page",
+      action: "first",
+    }
+  }
+  if (props.state.status !== null || props.state.agentId !== null) {
+    return {
+      title: "No sessions match this filter",
+      reason: "The linked read returned no rows for this organization.",
+      nextStep: "Remove the filter to read every outcome.",
+      actionLabel: "Clear filters",
+      action: "clear",
+    }
+  }
+  return {
+    title: "No sessions in this organization yet",
+    reason: "Sessions appear here once an agent records a turn for this tenant.",
+    nextStep: null,
+    actionLabel: null,
+    action: null,
+  }
+}
+
+const empty = computed(() => emptyCopy())
+
+function emitQuery(patch: Partial<LiveSessionQuery>): void {
   emit("update", { ...props.state, ...patch, cursor: null })
 }
 
-function applyAgent(): void {
-  const value = agentDraft.value.trim().toLowerCase()
-  if (!value) {
-    agentError.value = ""
-    if (props.state.agentId) emitFilter({ agentId: null })
-    return
-  }
-  if (!UUID_RE.test(value)) {
-    agentError.value = "Enter a full agent UUID"
-    return
-  }
-  agentError.value = ""
-  if (value !== props.state.agentId) emitFilter({ agentId: value })
+function onAgent(value: string | null): void {
+  if (value !== props.state.agentId) emitQuery({ agentId: value })
 }
 
-function onStatusChange(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value
-  emitFilter({ status: value ? (value as SessionStatus) : null })
+function onStatus(value: SessionStatus | null): void {
+  if (value !== props.state.status) emitQuery({ status: value })
+}
+
+function onPageFilters(patch: Partial<SessionPageFilters>): void {
+  pageFilters.value = { ...pageFilters.value, ...patch }
 }
 
 function clearFilters(): void {
-  agentDraft.value = ""
-  agentError.value = ""
-  emit("update", { ...props.state, agentId: null, status: null, cursor: null })
+  pageFilters.value = { ...DEFAULT_SESSION_PAGE_FILTERS }
+  segment.value = "all"
+  if (props.state.status !== null || props.state.agentId !== null) emitQuery({ status: null, agentId: null })
 }
 
-function sessionHref(session: OperatorSessionRecord): string {
-  return `/sessions/${encodeURIComponent(session.id)}?return=${encodeURIComponent(props.returnTo)}`
+function runEmptyAction(): void {
+  if (empty.value.action === "first") {
+    emitQuery({ cursor: null })
+    return
+  }
+  clearFilters()
 }
 
 function refresh(): void {
   void sessionsState.refresh()
 }
+
+// A page-scoped filter describes the rows that were loaded, so a new read (a
+// cursor page, a filter change from the address bar) starts from a clean page.
+watch(
+  () => props.state,
+  () => {
+    pageFilters.value = { ...DEFAULT_SESSION_PAGE_FILTERS }
+    segment.value = "all"
+  },
+)
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-5">
+  <div class="flex min-w-0 flex-col gap-4">
     <ConsolePageHeader
       title="Sessions"
-      definition="The tenant-scoped session index: status, turn counts, token totals, latency, and extraction progress."
       state="live"
       :verdict="verdict"
       contract="operator.sessions.v1"
@@ -108,43 +206,51 @@ function refresh(): void {
       caveat="Message content, hashes, and provider request ids are not part of this contract and are not shown."
     >
       <template #actions>
-        <button type="button" class="ix-button-secondary inline-flex items-center gap-1.5" :disabled="pending" @click="refresh">
+        <button
+          type="button"
+          class="ix-button-secondary inline-flex items-center gap-1.5"
+          :disabled="pending"
+          @click="refresh"
+        >
           <RefreshCw :size="13" :stroke-width="2" :class="{ 'animate-spin': pending }" aria-hidden="true" />
           Refresh
         </button>
       </template>
     </ConsolePageHeader>
 
-    <form class="flex flex-wrap items-start gap-2" role="search" @submit.prevent>
-      <label class="flex w-72 flex-col gap-1">
-        <span class="ix-label">Agent ID</span>
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="relative min-w-56 flex-1 sm:max-w-80">
+        <Search
+          :size="14"
+          :stroke-width="2"
+          class="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-fg-3"
+          aria-hidden="true"
+        />
         <input
-          v-model="agentDraft"
-          type="text"
-          class="ix-input w-full font-mono text-xs"
-          placeholder="00000000-0000-4000-8000-000000000000"
+          v-model="pageFilters.search"
+          type="search"
+          class="ix-input w-full pl-8"
+          placeholder="Session ID or external ID"
+          aria-label="Search sessions"
           autocomplete="off"
-          :aria-invalid="Boolean(agentError)"
-          @keyup.enter="applyAgent"
-          @blur="applyAgent"
         >
-        <span v-if="agentError" class="text-[0.6875rem] text-crit">{{ agentError }}</span>
-      </label>
-      <label class="flex w-40 flex-col gap-1">
-        <span class="ix-label">Status</span>
-        <select class="ix-input" :value="state.status ?? ''" @change="onStatusChange">
-          <option value="">All statuses</option>
-          <option value="active">Active</option>
-          <option value="completed">Completed</option>
-          <option value="abandoned">Abandoned</option>
-          <option value="error">Error</option>
-        </select>
-      </label>
-      <button v-if="hasFilters" type="button" class="ix-button-secondary mt-5 inline-flex items-center gap-1.5" @click="clearFilters">
-        <X :size="13" :stroke-width="2" aria-hidden="true" />
-        Clear
+      </div>
+
+      <button
+        type="button"
+        class="ix-button-secondary inline-flex items-center gap-1.5 lg:hidden"
+        :aria-expanded="filtersOpen"
+        aria-controls="session-filters"
+        @click="filtersOpen = !filtersOpen"
+      >
+        <SlidersHorizontal :size="13" :stroke-width="2" aria-hidden="true" />
+        Filters<span v-if="filterCount > 0" class="font-mono text-[0.6875rem] text-accent">{{ filterCount }}</span>
       </button>
-    </form>
+
+      <SessionColumnsMenu v-model="columns" />
+
+      <p class="ml-auto text-[0.6875rem] leading-4 text-fg-3">{{ resultText }}</p>
+    </div>
 
     <IxVerdict
       v-if="authIssue"
@@ -171,84 +277,61 @@ function refresh(): void {
       </template>
     </IxVerdict>
 
-    <IxVerdict
-      v-else-if="!loading && sessions.length === 0"
-      tone="unknown"
-      eyebrow="Live operator read"
-      :title="hasFilters ? 'No sessions match these filters' : 'No sessions in this organization yet'"
-      :body="
-        hasFilters
-          ? 'Clear or change the filters to widen the search. The API returned no rows for this query.'
-          : 'Sessions appear here once an agent completes a turn for this tenant.'
-      "
-    >
-      <template #actions>
-        <button v-if="state.cursor" type="button" class="ix-button-secondary" @click="emit('update', { ...state, cursor: null })">
-          First page
-        </button>
-        <button v-if="hasFilters" type="button" class="ix-button-secondary" @click="clearFilters">Clear filters</button>
-      </template>
-    </IxVerdict>
+    <div v-else class="grid min-w-0 gap-4 lg:grid-cols-[15rem_minmax(0,1fr)] lg:items-start">
+      <div :class="filtersOpen ? 'block' : 'hidden lg:block'" class="min-w-0 lg:sticky lg:top-4">
+        <SessionFilterPanel
+          :scope="{ status: state.status, agentId: state.agentId }"
+          :options="{ agents: agentOptions, models: facets.models, providers: facets.providers }"
+          :filters="pageFilters"
+          @agent="onAgent"
+          @status="onStatus"
+          @page="onPageFilters"
+          @clear="clearFilters"
+        />
+      </div>
 
-    <div v-else class="overflow-x-auto rounded-lg border border-line-subtle bg-surface">
-      <table class="ix-agent-table" aria-label="Sessions">
-        <caption class="sr-only">Metadata-only session index for this organization.</caption>
-        <thead>
-          <tr>
-            <th scope="col" class="!pl-4">Session</th>
-            <th scope="col" class="w-28">Status</th>
-            <th scope="col" class="w-20 text-right">Turns</th>
-            <th scope="col" class="hidden w-28 text-right min-[1000px]:table-cell">Tokens</th>
-            <th scope="col" class="hidden w-24 text-right min-[1000px]:table-cell">Latency</th>
-            <th scope="col" class="hidden w-24 text-right min-[1100px]:table-cell">Extracted</th>
-            <th scope="col" class="w-36">Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          <template v-if="loading">
-            <tr v-for="index in 5" :key="`skeleton-${index}`" aria-hidden="true">
-              <td class="!pl-4"><span class="block h-3 w-48 animate-pulse rounded bg-raised" /></td>
-              <td><span class="block h-3 w-16 animate-pulse rounded bg-raised" /></td>
-              <td><span class="ml-auto block h-3 w-8 animate-pulse rounded bg-raised" /></td>
-              <td class="hidden min-[1000px]:table-cell"><span class="ml-auto block h-3 w-16 animate-pulse rounded bg-raised" /></td>
-              <td class="hidden min-[1000px]:table-cell"><span class="ml-auto block h-3 w-10 animate-pulse rounded bg-raised" /></td>
-              <td class="hidden min-[1100px]:table-cell"><span class="ml-auto block h-3 w-10 animate-pulse rounded bg-raised" /></td>
-              <td><span class="block h-3 w-20 animate-pulse rounded bg-raised" /></td>
-            </tr>
-          </template>
-          <template v-else>
-            <tr v-for="session in sessions" :key="session.id" :data-session-row="session.id">
-              <td class="!pl-4">
-                <NuxtLink
-                  :to="sessionHref(session)"
-                  class="block font-mono text-xs font-medium text-fg-1 underline-offset-3 hover:text-accent-memory hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-memory"
-                >
-                  {{ session.id.slice(0, 8) }}…{{ session.id.slice(-4) }}
-                </NuxtLink>
-                <span class="mt-0.5 block truncate font-mono text-[0.625rem] leading-4 text-fg-3">
-                  agent {{ session.agent_id.slice(0, 8) }} · {{ session.model }}
-                </span>
-              </td>
-              <td><LiveSessionStatusPill :status="session.status" /></td>
-              <td class="text-right font-mono text-xs text-fg-1 tabular-nums">{{ formatGovernNumber(session.turn_count) }}</td>
-              <td class="hidden text-right font-mono text-xs text-fg-1 tabular-nums min-[1000px]:table-cell">
-                {{ formatGovernNumber(session.total_input_tokens) }} / {{ formatGovernNumber(session.total_output_tokens) }}
-              </td>
-              <td class="hidden text-right font-mono text-xs text-fg-1 tabular-nums min-[1000px]:table-cell">
-                {{ formatGovernNumber(session.total_latency_ms) }} ms
-              </td>
-              <td class="hidden text-right font-mono text-xs text-fg-1 tabular-nums min-[1100px]:table-cell">
-                {{ formatGovernNumber(session.last_extracted_turn) }} / {{ formatGovernNumber(session.turn_count) }}
-              </td>
-              <td class="text-xs whitespace-nowrap text-fg-2">{{ formatGovernStamp(session.created_at) }}</td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
+      <div
+        id="session-results"
+        role="tabpanel"
+        :aria-labelledby="`govern-tab-${activeSegment}`"
+        class="flex min-w-0 flex-col gap-3"
+      >
+        <GovernTabBar
+          :tabs="segmentTabs"
+          :model-value="activeSegment"
+          :badges="segmentBadges"
+          aria-label="Session status segments"
+          panel-id="session-results"
+          @update:model-value="segment = $event as SessionSegment['id']"
+        />
+        <p class="text-[0.6875rem] leading-4 text-fg-3">
+          Segment counts cover the rows loaded on this page. The API returns no organization total, so none is claimed.
+        </p>
+
+        <GovernEmptyState
+          v-if="!loading && visibleRows.length === 0"
+          :title="empty.title"
+          :reason="empty.reason"
+          :next-step="empty.nextStep"
+          :action-label="empty.actionLabel"
+          @action="runEmptyAction"
+        />
+        <SessionTable
+          v-else
+          :rows="visibleRows"
+          :loading="loading"
+          :columns="columns"
+          :return-to="returnTo"
+          :agent-read-failed="Boolean(agentsState.error.value)"
+        />
+      </div>
     </div>
 
-    <nav v-if="!error && (sessions.length > 0 || state.cursor)" class="flex flex-wrap items-center justify-between gap-2" aria-label="Session pages">
-      <p class="text-xs text-fg-3">Showing {{ sessions.length }} session{{ sessions.length === 1 ? "" : "s" }} from the operator API.</p>
+    <nav
+      v-if="!error && (sessions.length > 0 || state.cursor)"
+      class="flex flex-wrap items-center justify-end gap-2"
+      aria-label="Session pages"
+    >
       <div class="flex items-center gap-2">
         <button
           type="button"

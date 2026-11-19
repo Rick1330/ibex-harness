@@ -427,7 +427,6 @@ const completenessChips = computed(() =>
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-3 pb-2">
     <ConsolePageHeader
       title="Explore"
-      definition="Trace metadata and evidence freshness for your organization — what was captured, how complete the capture was, and whether the evidence row behind it was published."
       :state="headerState"
       :observed="traces?.observed_at ?? null"
       :scope="demoActive ? 'ibex-demo · illustrative development read' : `Current organization · ${resultText || 'no page read'}`"

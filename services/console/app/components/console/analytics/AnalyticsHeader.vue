@@ -39,7 +39,6 @@ defineExpose({ openAbout })
   <ConsolePageHeader
     ref="header"
     title="Analytics"
-    definition="Volume, spend, latency and refusals across the recorded days — and how much of each number the platform can actually stand behind."
     state="illustrative"
     verdict="Every series, percentile, and split on this page is a derived preview fixture. The usage contract is not connected, so no figure here is billing or SLO evidence."
     :contract="ANALYTICS_USAGE_CONTRACT"

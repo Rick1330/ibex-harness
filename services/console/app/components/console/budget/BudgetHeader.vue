@@ -39,7 +39,6 @@ defineExpose({ openAbout })
   <ConsolePageHeader
     ref="header"
     title="Budgets"
-    definition="What each scope has already spent, what is still held in flight, and how much room is left before the runtime refuses work."
     state="illustrative"
     verdict="Every amount on this page is a recorded preview fixture. No accounting watermark is connected, so no figure here is final cost."
     contract="operator.budgets.reservations.v1 [NEEDS-BACKEND]"

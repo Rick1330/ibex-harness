@@ -7,8 +7,10 @@ const props = withDefaults(
     modelValue: string
     ariaLabel?: string
     badges?: Record<string, string>
+    /** The region the tabs switch. Omitted when the tabs filter in place. */
+    panelId?: string | null
   }>(),
-  { ariaLabel: "Sections", badges: () => ({}) },
+  { ariaLabel: "Sections", badges: () => ({}), panelId: null },
 )
 
 const emit = defineEmits<{ "update:modelValue": [value: string] }>()
@@ -46,6 +48,7 @@ function onKeydown(event: KeyboardEvent): void {
       type="button"
       role="tab"
       :aria-selected="tab.id === modelValue"
+      :aria-controls="panelId ?? undefined"
       :tabindex="tab.id === modelValue ? 0 : -1"
       class="-mb-px inline-flex h-10 shrink-0 items-center gap-1.5 border-b-2 px-3 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
       :class="

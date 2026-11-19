@@ -282,7 +282,6 @@ const groupedTools = computed(() =>
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-3 pb-2">
     <ConsolePageHeader
       title="MCP tools"
-      definition="Which operator tools exist, what they touch, and who may call them."
       :verdict="`Preview renders ${tools.length} illustrative tools across ${summary.servers} MCP servers. The tool catalogue, schemas, and invocation log are not connected, so no live capability or invocation is claimed.`"
       contract="operator.mcp.tools.v1 [NEEDS-BACKEND]"
       scope="org_demo_42 · workspace connector"

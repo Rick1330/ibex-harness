@@ -221,7 +221,6 @@ function setTheme(theme: "light" | "dark" | "system"): void {
   <div class="mx-auto flex w-full max-w-[72rem] min-w-0 flex-1 flex-col gap-5 pb-8">
     <ConsolePageHeader
       title="Settings"
-      definition="How this organization is configured, who owns each value, and which changes are blocked without a write contract."
       state="illustrative"
       verdict="Every value on this page is a recorded preview fixture. The settings, identity, and audit contracts are not connected, so no configuration here is live organization state."
       contract="operator.settings.organization.v1 [NEEDS-BACKEND]"

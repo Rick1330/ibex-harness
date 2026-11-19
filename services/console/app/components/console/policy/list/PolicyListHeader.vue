@@ -40,7 +40,6 @@ defineExpose({ openAbout })
   <ConsolePageHeader
     ref="about"
     title="Policies"
-    definition="The rules the runtime checks before an agent acts, and how often each one fired."
     state="illustrative"
     verdict="Every value on this page is an illustrative fixture. The runtime does not serve policy data to this console yet."
     contract="operator.policies.snapshots.v1 [NEEDS-BACKEND]"

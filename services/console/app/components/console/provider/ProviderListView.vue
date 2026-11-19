@@ -331,7 +331,6 @@ const aboutNotes = [
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-3 pb-2">
     <ConsolePageHeader
       title="Providers"
-      definition="Which model providers and credentials this organization can call, and what each one can do."
       :verdict="`Preview renders ${providers.length} illustrative provider manifests and ${providerModels.length} models. The provider registry is not connected, so no live endpoint, model, or credential state is claimed.`"
       contract="operator.providers.v1 [NEEDS-BACKEND]"
       scope="org_demo_42 · all environments"
