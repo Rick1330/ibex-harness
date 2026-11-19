@@ -5,14 +5,20 @@ import GovernIdChip from "@/components/console/govern/primitives/GovernIdChip.vu
 import GovernStatTile from "@/components/console/govern/primitives/GovernStatTile.vue"
 import LiveSessionStatusPill from "./LiveSessionStatusPill.vue"
 import { formatGovernNumber, formatGovernStamp } from "@/lib/govern-format"
-import { formatSessionLatency, sessionCoverage, shortId } from "@/lib/session-list"
+import { formatSessionLatency, SESSION_EXTRACTION_NOTE, sessionExtraction, shortId } from "@/lib/session-list"
 import type { OperatorSessionTurn } from "~~/shared/operator/contracts"
 import type { PublicOperatorSessionRecordDetail } from "~~/shared/operator/public"
 
 const props = defineProps<{ session: PublicOperatorSessionRecordDetail; returnTo: string }>()
 
 const turns = computed<OperatorSessionTurn[]>(() => props.session.turns)
-const coverage = computed(() => sessionCoverage(props.session.last_extracted_turn, props.session.turn_count))
+const extraction = computed(() => sessionExtraction(props.session.last_extracted_turn, props.session.turn_count))
+const extractionHelper = computed(() =>
+  extraction.value.index === null ? "No turns recorded" : SESSION_EXTRACTION_NOTE,
+)
+const extractionValue = computed(() =>
+  extraction.value.index === null ? "Not recorded" : formatGovernNumber(extraction.value.index),
+)
 const agentHref = computed(() => `/agents/${encodeURIComponent(props.session.agent_id)}`)
 const tokensLabel = computed(
   () => `${formatGovernNumber(props.session.total_input_tokens)} / ${formatGovernNumber(props.session.total_output_tokens)}`,
@@ -79,9 +85,9 @@ function evidenceNote(turn: OperatorSessionTurn): string {
         helper="Sum of recorded turns"
       />
       <GovernStatTile
-        label="Coverage"
-        :value="coverage.label"
-        :helper="coverage.percent === null ? 'No turns recorded' : `${coverage.percent}% extracted`"
+        label="Extracted to"
+        :value="extractionValue"
+        helper="Zero-based turn index"
       />
     </section>
 
@@ -144,10 +150,8 @@ function evidenceNote(turn: OperatorSessionTurn): string {
         <dl class="mt-3 flex flex-col gap-3">
           <div class="min-w-0">
             <dt class="ix-label">Last extracted turn</dt>
-            <dd class="mt-0.5 font-mono text-xs text-fg-1 tabular-nums">{{ coverage.label }}</dd>
-            <dd class="mt-0.5 text-[0.6875rem] leading-4 text-fg-3">
-              {{ coverage.percent === null ? "No turns recorded" : `${coverage.percent}% extracted` }}
-            </dd>
+            <dd class="mt-0.5 font-mono text-xs text-fg-1 tabular-nums">{{ extraction.label }}</dd>
+            <dd class="mt-0.5 text-[0.6875rem] leading-4 text-fg-3">{{ extractionHelper }}</dd>
           </div>
           <div class="min-w-0">
             <dt class="ix-label">Lifecycle revision</dt>

@@ -18,6 +18,12 @@ async function resetFixtureApi(page: Page): Promise<void> {
   await page.request.post(`${apiOrigin}/__test/reset`)
 }
 
+/** Fail the next `count` reads of an operator path with a 503. */
+async function failNextRead(page: Page, path: string, count = 1): Promise<void> {
+  const response = await page.request.post(`${apiOrigin}/__test/fail`, { data: { path, count } })
+  expect(response.ok()).toBe(true)
+}
+
 async function seedOperatorCookies(page: Page): Promise<void> {
   await page.context().addCookies([
     {
@@ -316,11 +322,17 @@ test("live Sessions joins the agent, segments by status, and filters without inv
   await expect(page.getByRole("tab", { name: /Completed/ })).toBeVisible()
   await expect(page.getByText(/no organization total/)).toBeVisible()
 
-  // The column control hides one of the optional columns.
-  await page.getByRole("button", { name: "Columns" }).click()
-  await page.getByRole("switch", { name: "Coverage" }).click()
-  await expect(page.getByRole("columnheader", { name: "Coverage" })).toHaveCount(0)
+  // The column control hides one of the optional columns, and Escape returns
+  // focus to the trigger that opened it.
+  const columnsTrigger = page.getByRole("button", { name: "Columns" })
+  await columnsTrigger.click()
+  await page.getByRole("switch", { name: "Extraction" }).click()
+  await expect(page.getByRole("columnheader", { name: "Extracted to" })).toHaveCount(0)
+  // The pointer is an index, not a ratio: no percentage is printed anywhere.
+  await expect(page.getByText(/%\s*extracted/)).toHaveCount(0)
   await page.keyboard.press("Escape")
+  await expect(columnsTrigger).toBeFocused()
+  await expect(columnsTrigger).toHaveAttribute("aria-expanded", "false")
 
   // Search narrows on the external id, and an empty result says so.
   await page.getByRole("searchbox", { name: "Search sessions" }).fill("ext-a-1")
@@ -340,4 +352,113 @@ test("live Sessions joins the agent, segments by status, and filters without inv
     })
     .toBeGreaterThan(1)
   await expectNoAxeViolations(page)
+})
+
+test("live Sessions keeps the extraction pointer an index and prints no ratio", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+
+  await page.goto("/sessions")
+  await waitForHydration(page)
+
+  // The fixture session has one turn and stores pointer 0. That is the index of
+  // turn 0 and also the column default: the contract cannot say which, so the
+  // page states the index and claims no completion.
+  const row = page.locator("tr[data-session-row]")
+  await expect(page.getByRole("columnheader", { name: "Extracted to" })).toBeVisible()
+  await expect(row.getByText("turn 0", { exact: true })).toBeVisible()
+  await expect(row.getByText("0-based index", { exact: true })).toBeVisible()
+  await expect(page.getByText(/\d+%\s+extracted/)).toHaveCount(0)
+  await expectNoAxeViolations(page)
+
+  await page.getByRole("link", { name: /88888888/ }).click()
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: /Session 88888888/ })).toBeVisible()
+  await expect(page.getByText("Extracted to")).toBeVisible()
+  await expect(page.getByText(/Zero-based turn index\. 0 is also the column default/)).toBeVisible()
+  await expect(page.getByText(/\d+%\s+extracted/)).toHaveCount(0)
+  await expectNoAxeViolations(page)
+})
+
+test("live Sessions retries the agents read on refresh", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+  // The agents read fails once. Nothing is retained to hide it: the Agent column
+  // has no names and the selector lists no agents.
+  await failNextRead(page, "/v1/operator/agents")
+
+  await page.goto("/sessions")
+  await waitForHydration(page)
+  const row = page.locator("tr[data-session-row]")
+  await expect(row.getByText("Agent read unavailable")).toBeVisible()
+  await expect(page.getByRole("combobox", { name: "Agent" }).locator("option")).toHaveCount(1)
+  await expect(page.getByText("Name not in this agent page")).toHaveCount(0)
+
+  // Before the fix this refresh only retried the sessions read, so the failed
+  // join outlived the recovery and no session filter could retry it either.
+  // Both reads are refreshed now.
+  await page.getByRole("button", { name: "Refresh" }).click()
+  await expect(row.getByRole("link", { name: "Support Agent" })).toBeVisible()
+  await expect(page.getByRole("combobox", { name: "Agent" }).locator("option")).toHaveCount(2)
+  await expect(page.getByText("Agent read unavailable")).toHaveCount(0)
+})
+
+test("live Sessions filters by an agent UUID outside the listed page", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+
+  await page.goto("/sessions")
+  await waitForHydration(page)
+  const agentInput = page.getByRole("textbox", { name: "Agent ID" })
+
+  // A partial id is refused with a stated reason, and nothing is requested.
+  await agentInput.fill("bbbbbbbb")
+  await page.getByRole("button", { name: "Filter by ID" }).click()
+  await expect(page.getByRole("alert")).toContainText("full agent UUID")
+  await expect(page).not.toHaveURL(/agent_id=/)
+
+  // A full UUID becomes the server-side filter even though the agents page in
+  // the fixture only lists the other agent.
+  await agentInput.fill("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+  await page.getByRole("button", { name: "Filter by ID" }).click()
+  await expect(page).toHaveURL(/agent_id=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/)
+  await expect(page.getByRole("combobox", { name: "Agent" })).toHaveValue(
+    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  )
+  await expect(page.getByRole("alert")).toHaveCount(0)
+})
+
+test("live Sessions is axe-clean at the narrow viewport, filters open", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+  await page.setViewportSize({ width: 390, height: 844 })
+
+  await page.goto("/sessions")
+  await waitForHydration(page)
+  await page.getByRole("button", { name: /Filters/ }).click()
+  await expect(page.getByRole("textbox", { name: "Agent ID" })).toBeVisible()
+  await expectNoAxeViolations(page)
+})
+
+test("live Sessions returns from an agent to the filtered list it came from", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+
+  await page.goto("/sessions?status=completed")
+  await waitForHydration(page)
+  await page.locator("tr[data-session-row]").getByRole("link", { name: "Support Agent" }).click()
+  await waitForHydration(page)
+
+  await expect(page.getByRole("heading", { name: "Support Agent" })).toBeVisible()
+  // The back link follows the row it came from: the Sessions list, with its
+  // filter, and labelled as such — not "Back to agents" pointing at /agents.
+  const back = page.getByRole("link", { name: /Back to sessions/ })
+  await expect(back).toHaveAttribute("href", "/sessions?status=completed")
+  await back.click()
+  await expect(page).toHaveURL(/\/sessions\?status=completed$/)
+  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible()
+  // The request-scoped filter survived the round trip: the panel says the read
+  // is limited to Completed sessions.
+  await expect(page.getByText(/This link limits the read to/)).toBeVisible()
 })
