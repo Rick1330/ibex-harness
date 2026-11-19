@@ -1875,6 +1875,13 @@ fi
 # lookup that fails must never be read as an absent run, and an absent, stalled,
 # failed or artifact-less run must stay `unverified` without pretending otherwise.
 # The bound itself is asserted too, against the 381 s v0.1.10 turned out to need.
+#
+# The step reports three different verdicts and the cases keep them apart: a run that
+# was seen but never completed, absence proven by a streak of empty answers, and "could
+# not be established" when the budget ran out with neither. Only the second is a claim
+# about the world, so a mixed pattern of empties and failures must never produce it.
+# Retry delays are recorded by a `sleep` stub instead of waited out, so the error path's
+# backoff and the healthy poll's fixed interval are asserted on the numbers themselves.
 step_run_body() {
   local workflow="$1" step="$2"
   awk -v want="      - name: $step" '
@@ -1941,18 +1948,32 @@ case "$1 $2" in
 esac
 STUB
 chmod +x "$stub_dir/gh"
+# `sleep` stub: the retry policy is asserted on the recorded delays, and the suite must
+# not spend the release budget waiting. Only the run_smoke_case subshells see this.
+cat >"$stub_dir/sleep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "${1:-0}" >>"${GH_SLEEP_LOG:-/dev/null}"
+STUB
+chmod +x "$stub_dir/sleep"
 
 smoke_sha="0123456789abcdef0123456789abcdef01234567"
+# run_smoke_case <name> [attempts|default] [K=V]... — extra K=V pairs are exported into
+# the step's environment, which is how a case sets a non-zero interval or a backoff knob.
 run_smoke_case() {
   local name="$1" attempts="${2:-3}"
   local case_dir="$fixture_dir/smoke-${name}"
   mkdir -p "$case_dir"
   : >"$case_dir/calls.log"
   : >"$case_dir/github-output"
-  local rc=0
+  : >"$case_dir/sleeps.log"
+  shift
+  shift || true
+  local override rc=0
   (
     cd "$case_dir" || exit 1
     export PATH="$stub_dir:$PATH" GH_STUB_DIR="$case_dir" GH_STUB_COMMIT="$smoke_sha"
+    export GH_SLEEP_LOG="$case_dir/sleeps.log"
     export COMMIT="$smoke_sha" REPOSITORY=owner/repo GH_TOKEN=stub
     export GITHUB_OUTPUT="$case_dir/github-output"
     export IBEX_SMOKE_RUN_INTERVAL=0
@@ -1961,6 +1982,7 @@ run_smoke_case() {
     if [[ "$attempts" != default ]]; then
       export IBEX_SMOKE_RUN_ATTEMPTS="$attempts"
     fi
+    for override in "$@"; do export "$override"; done
     bash "$smoke_fetch"
   ) >"$case_dir/stdout" 2>"$case_dir/stderr" || rc=$?
   printf '%s' "$rc"
@@ -2066,6 +2088,7 @@ smoke_rc="$(run_smoke_case api-down 6)"
 if [[ "$smoke_rc" == 0 ]] &&
   [[ ! -s "$fixture_dir/smoke-api-down/github-output" ]] &&
   grep -Fq 'could not be queried' "$fixture_dir/smoke-api-down/stdout" &&
+  grep -Fq 'could not be established' "$fixture_dir/smoke-api-down/stdout" &&
   ! grep -Fq 'no CI push run' "$fixture_dir/smoke-api-down/stdout"; then
   pass "an unreachable run list reports the outage instead of claiming the run is absent"
 else
@@ -2080,6 +2103,8 @@ smoke_rc="$(run_smoke_case absent 24)"
 if [[ "$smoke_rc" == 0 ]] &&
   [[ ! -s "$fixture_dir/smoke-absent/github-output" ]] &&
   grep -Fq 'no CI push run on main for' "$fixture_dir/smoke-absent/stdout" &&
+  grep -Fq 'in 8 consecutive lookups' "$fixture_dir/smoke-absent/stdout" &&
+  ! grep -Fq 'could not be established' "$fixture_dir/smoke-absent/stdout" &&
   [[ "$(lookups absent)" == 8 ]] &&
   ! grep -Fq 'run download' "$fixture_dir/smoke-absent/calls.log"; then
   pass "an absent CI run is declared absent at the grace of 8 lookups, not at 3 and not at the bound"
@@ -2087,7 +2112,140 @@ else
   bad "an absent CI run did not stop at the grace of 8 lookups ($(lookups absent) lookups): $(cat "$fixture_dir/smoke-absent/stdout")"
 fi
 
-# Case 9: the bound and the absence grace themselves. The number is the fix, so a
+# Case 9: one empty answer, then transport failures to the end of the budget. A single
+# empty lookup is a sample of one and says nothing about the world; the verdict has to
+# say the result could not be established, name how many lookups failed, and keep the
+# last error for the operator.
+mkdir -p "$fixture_dir/smoke-empty-then-down"
+printf '%s\n' '[]' >"$fixture_dir/smoke-empty-then-down/run-list.json"
+printf '%s\n' '[]' >"$fixture_dir/smoke-empty-then-down/run-list.1.json"
+for (( i = 2; i <= 8; i++ )); do
+  : >"$fixture_dir/smoke-empty-then-down/fail-run-list.${i}"
+done
+smoke_rc="$(run_smoke_case empty-then-down 8)"
+empty_down_out="$(cat "$fixture_dir/smoke-empty-then-down/stdout")"
+if [[ "$smoke_rc" == 0 ]] &&
+  [[ ! -s "$fixture_dir/smoke-empty-then-down/github-output" ]] &&
+  grep -Fq 'could not be established' <<<"$empty_down_out" &&
+  grep -Fq 'could not be queried for 7 of 8 lookups' <<<"$empty_down_out" &&
+  grep -Fq 'last error: gh: API rate limit exceeded' <<<"$empty_down_out" &&
+  ! grep -Fq 'no CI push run' <<<"$empty_down_out" &&
+  [[ "$(lookups empty-then-down)" == 8 ]]; then
+  pass "one empty lookup followed by transport failures reports the result as unestablished, not as an absent run"
+else
+  bad "one empty lookup plus failures claimed a fact about the world (exit ${smoke_rc}, $(lookups empty-then-down) lookups): ${empty_down_out}"
+fi
+
+# Case 10: a scattered empty-error-empty pattern. Eight empties prove absence; four
+# empties interleaved with four failures prove nothing, because each failure is an
+# unobserved interval and the streak is not consecutive. Summing them was the same
+# "invented absence" defect in a slower form.
+mkdir -p "$fixture_dir/smoke-scattered"
+printf '%s\n' '[]' >"$fixture_dir/smoke-scattered/run-list.json"
+for (( i = 1; i <= 8; i++ )); do
+  if (( i % 2 )); then
+    printf '%s\n' '[]' >"$fixture_dir/smoke-scattered/run-list.${i}.json"
+  else
+    : >"$fixture_dir/smoke-scattered/fail-run-list.${i}"
+  fi
+done
+smoke_rc="$(run_smoke_case scattered 8)"
+scattered_out="$(cat "$fixture_dir/smoke-scattered/stdout")"
+if [[ "$smoke_rc" == 0 ]] &&
+  [[ ! -s "$fixture_dir/smoke-scattered/github-output" ]] &&
+  grep -Fq 'could not be established' <<<"$scattered_out" &&
+  ! grep -Fq 'no CI push run' <<<"$scattered_out" &&
+  [[ "$(lookups scattered)" == 8 ]]; then
+  pass "a scattered empty-error pattern does not accumulate into an absence claim"
+else
+  bad "four empties interleaved with four failures were reported as absence (exit ${smoke_rc}, $(lookups scattered) lookups): ${scattered_out}"
+fi
+
+# Case 11: a run that is seen and never completes. The API-outage case exhausts its
+# retries without ever observing a run and the late-success cases exit before the
+# timeout, so this is the only path to the "did not complete within" verdict: dropping
+# it once already left `saw_run` untested.
+mkdir -p "$fixture_dir/smoke-stalled"
+printf '%s\n' "$in_progress_run" >"$fixture_dir/smoke-stalled/run-list.json"
+smoke_rc="$(run_smoke_case stalled 6 IBEX_SMOKE_RUN_INTERVAL=15)"
+stalled_out="$(cat "$fixture_dir/smoke-stalled/stdout")"
+if [[ "$smoke_rc" == 0 ]] &&
+  [[ ! -s "$fixture_dir/smoke-stalled/github-output" ]] &&
+  grep -Fq 'did not complete within' <<<"$stalled_out" &&
+  ! grep -Fq 'no CI push run' <<<"$stalled_out" &&
+  [[ "$(lookups stalled)" == 6 ]] &&
+  ! grep -Fq 'run download' "$fixture_dir/smoke-stalled/calls.log"; then
+  pass "a run that is seen but never completes reports the timeout and stays unverified"
+else
+  bad "a stalled run was not reported as a timeout (exit ${smoke_rc}, $(lookups stalled) lookups): ${stalled_out}"
+fi
+
+# Case 12: the error path backs off. Every lookup fails, so every delay is a retry
+# delay: the delay must grow up to the cap, carry jitter (not a fixed drumbeat), and
+# the run must still finish inside attempts x interval instead of multiplying it.
+mkdir -p "$fixture_dir/smoke-backoff"
+printf '%s\n' '[]' >"$fixture_dir/smoke-backoff/run-list.json"
+: >"$fixture_dir/smoke-backoff/fail-run-list.all"
+smoke_rc="$(run_smoke_case backoff 200 IBEX_SMOKE_RUN_INTERVAL=1 \
+  IBEX_SMOKE_BACKOFF_BASE=10 IBEX_SMOKE_BACKOFF_MAX=80)"
+backoff_out="$(cat "$fixture_dir/smoke-backoff/stdout")"
+mapfile -t backoff_delays <"$fixture_dir/smoke-backoff/sleeps.log"
+backoff_n=${#backoff_delays[@]}
+backoff_total=0
+backoff_cap_ok=1
+for (( i = 0; i < backoff_n; i++ )); do
+  backoff_total=$(( backoff_total + backoff_delays[i] ))
+  (( backoff_delays[i] <= 80 )) || backoff_cap_ok=0
+done
+# The delay grows until the budget starts clipping it to what is left, and from there
+# it can only shrink. Both halves are asserted: the growth on the unclipped prefix, and
+# that the clipped tail never turns back up.
+backoff_growth=0
+backoff_prev=0
+for (( i = 0; i < backoff_n && backoff_delays[i] >= backoff_prev; i++ )); do
+  backoff_prev="${backoff_delays[i]}"
+  backoff_growth=$(( i + 1 ))
+done
+backoff_tail_ok=1
+for (( i = backoff_growth; i < backoff_n; i++ )); do
+  (( i > 0 && backoff_delays[i] <= backoff_delays[i - 1] )) || backoff_tail_ok=0
+done
+backoff_distinct="$(printf '%s\n' "${backoff_delays[@]}" | sort -n -u | wc -l)"
+if [[ "$smoke_rc" == 0 ]] && (( backoff_n >= 4 )) &&
+  (( backoff_cap_ok && backoff_tail_ok )) &&
+  (( backoff_growth >= 4 )) &&
+  (( backoff_delays[0] >= 5 && backoff_delays[0] <= 10 )) &&
+  (( backoff_delays[3] >= 4 * backoff_delays[0] )) &&
+  (( backoff_total <= 200 )) &&
+  (( backoff_distinct >= 3 )) &&
+  (( $(lookups backoff) < 200 )) &&
+  grep -Fq 'could not be established' <<<"$backoff_out" &&
+  ! grep -Fq 'no CI push run' <<<"$backoff_out"; then
+  pass "a failed lookup retries on a growing, jittered delay (${backoff_delays[*]}) that still fits the 200s budget"
+else
+  bad "the error path did not back off inside the budget (delays: ${backoff_delays[*]:-none}, total ${backoff_total}, growth ${backoff_growth}, cap ${backoff_cap_ok}, tail ${backoff_tail_ok}, distinct ${backoff_distinct:-0}, $(lookups backoff) lookups): ${backoff_out}"
+fi
+
+# Case 13: a successful but empty lookup is not a failure, so it keeps the fixed
+# interval, and five of them are not the eight a claim of absence needs.
+mkdir -p "$fixture_dir/smoke-poll-interval"
+printf '%s\n' '[]' >"$fixture_dir/smoke-poll-interval/run-list.json"
+smoke_rc="$(run_smoke_case poll-interval 5 IBEX_SMOKE_RUN_INTERVAL=7)"
+poll_out="$(cat "$fixture_dir/smoke-poll-interval/stdout")"
+mapfile -t poll_delays <"$fixture_dir/smoke-poll-interval/sleeps.log"
+poll_fixed=1
+for delay_value in "${poll_delays[@]}"; do
+  (( delay_value == 7 )) || poll_fixed=0
+done
+if [[ "$smoke_rc" == 0 ]] && (( ${#poll_delays[@]} == 4 )) && (( poll_fixed )) &&
+  grep -Fq 'could not be established' <<<"$poll_out" &&
+  ! grep -Fq 'no CI push run' <<<"$poll_out"; then
+  pass "a healthy empty poll keeps the fixed interval, and five of them do not claim absence"
+else
+  bad "the healthy poll path changed its interval or claimed absence below the threshold (delays: ${poll_delays[*]:-none}): ${poll_out}"
+fi
+
+# Case 14: the bound and the absence grace themselves. The number is the fix, so a
 # future edit that shortens it has to fail here instead of in a release.
 budget_attempts="$(sed -n 's/.*IBEX_SMOKE_RUN_ATTEMPTS:-\([0-9][0-9]*\)}.*/\1/p' "$release_docker" | head -n 1)"
 budget_interval="$(sed -n 's/.*IBEX_SMOKE_RUN_INTERVAL:-\([0-9][0-9]*\)}.*/\1/p' "$release_docker" | head -n 1)"
