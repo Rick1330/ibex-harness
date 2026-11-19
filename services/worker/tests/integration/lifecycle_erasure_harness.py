@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -166,12 +167,16 @@ class FakeObjectStore:
     ``present`` is the set of URIs the store still holds; ``delete`` removes from
     it so ``object_exists`` can prove absence the way HEAD does. ``raises`` makes
     every call fail, which is how the "store answers with an error" path is
-    exercised without inventing a receipt status.
+    exercised without inventing a receipt status. ``slow_calls`` makes that many
+    HEADs take ``delay`` seconds each, which is how a slow store spends a budget
+    the caller must cap without making every later check slow too.
     """
 
     present: set[str] = field(default_factory=set)
     deleted: list[str] = field(default_factory=list)
     raises: bool = False
+    delay: float = 0.0
+    slow_calls: int = 0
 
     def delete(self, uri: str, *, org_id: str, settings: Any | None = None) -> None:
         del org_id, settings
@@ -182,6 +187,9 @@ class FakeObjectStore:
 
     def exists(self, uri: str, *, org_id: str, settings: Any | None = None) -> bool:
         del org_id, settings
+        if self.slow_calls > 0:
+            self.slow_calls -= 1
+            time.sleep(self.delay)
         if self.raises:
             raise RuntimeError("s3 head capture/1.json: 503")
         return uri in self.present
@@ -368,6 +376,20 @@ def cache_member_scored(redis_url: str, key: str, member: str) -> bool:
         client.close()
 
 
+def add_hot_member(redis_url: str, key: str, member: str) -> None:
+    """Write the hot member the way a delayed ``refresh_hot`` would land it.
+
+    This is the unguarded ZADD the memory service performs *after* its own
+    forgotten-marker check. The race tests use it to place a member at a chosen
+    instant; the fence test drives the guarded script instead.
+    """
+    client = redis_sync.Redis.from_url(redis_url, decode_responses=True)
+    try:
+        client.zadd(key, {member: 1.0})
+    finally:
+        client.close()
+
+
 # ---------------------------------------------------------------------------
 # The harness
 # ---------------------------------------------------------------------------
@@ -504,10 +526,67 @@ class Harness:
         """Write the outbox row a forget would write; return its id."""
         return await insert_outbox(self.env.owner, seed)
 
+    async def seed_receipt(
+        self,
+        forgotten: Forgotten,
+        *,
+        store: str,
+        status: str = "verified",
+        revision: int = 2,
+    ) -> None:
+        """Record the receipt an earlier run of this revision would have written.
+
+        A test that needs the durable-proof path (rather than a fresh stage) has
+        to start from a proof, and the consumer never rewrites a verified
+        receipt, so the row has to be seeded exactly as a previous run left it.
+        """
+        idem = f"erase:{forgotten.org_id}:{forgotten.memory_id}:{revision}:{store}"
+        async with self.env.owner() as session, session.begin():
+            await session.execute(
+                sql_text(
+                    """
+                    INSERT INTO ibex_core.erasure_store_receipts (
+                        org_id, memory_id, revision, store, status,
+                        verified_absent_at, idempotency_key
+                    ) VALUES (
+                        :org, :memory, :revision, :store, :status,
+                        CASE WHEN :status = 'verified' THEN NOW() ELSE NULL END,
+                        :idem
+                    )
+                    """
+                ),
+                {
+                    "org": forgotten.org_id,
+                    "memory": forgotten.memory_id,
+                    "revision": revision,
+                    "store": store,
+                    "status": status,
+                    "idem": idem,
+                },
+            )
+
     async def receipts(
         self, *, org_id: UUID, memory_id: UUID
     ) -> dict[str, tuple[str, str | None, datetime | None]]:
         return await read_receipts(self.env.owner, org_id=org_id, memory_id=memory_id)
+
+    async def artifact_refs(self, forgotten: Forgotten) -> dict[str, tuple[str, ...]]:
+        """The artifact addresses recorded for one memory, grouped by store."""
+        rows = await fetch_all(
+            self.env.owner,
+            """
+            SELECT store, locator
+              FROM ibex_core.memory_artifact_refs
+             WHERE org_id = :org AND memory_id = :memory
+             ORDER BY store, locator
+            """,
+            org=forgotten.org_id,
+            memory=forgotten.memory_id,
+        )
+        grouped: dict[str, list[str]] = {}
+        for store, locator in rows:
+            grouped.setdefault(str(store), []).append(str(locator))
+        return {store: tuple(locators) for store, locators in grouped.items()}
 
     async def outbox(
         self, *, row_id: str
@@ -552,6 +631,23 @@ class Harness:
         """Whether the hot sorted set still scores this memory id."""
         return cache_member_scored(
             self.env.redis_url, forgotten.hot_cache_key, str(forgotten.memory_id)
+        )
+
+    def add_hot_member(self, forgotten: Forgotten) -> None:
+        """Land the delayed write that recreates this memory's hot member."""
+        add_hot_member(
+            self.env.redis_url, forgotten.hot_cache_key, str(forgotten.memory_id)
+        )
+
+    def forgotten_marker_key(self, forgotten: Forgotten) -> str:
+        """The per-memory marker the memory service checks before a hot write."""
+        namespace = lifecycle_erasure._CACHE_FORGOTTEN_NAMESPACE
+        return f"{forgotten.org_id}:{namespace}:{forgotten.memory_id}"
+
+    def forgotten_marker_present(self, forgotten: Forgotten) -> bool:
+        """Whether the marker that fences a delayed hot write has been written."""
+        return cache_key_exists(
+            self.env.redis_url, self.forgotten_marker_key(forgotten)
         )
 
     def hot_other_member_present(self, forgotten: Forgotten) -> bool:

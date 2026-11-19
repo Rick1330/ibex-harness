@@ -73,30 +73,56 @@ def test_deadline_passed_only_after_the_recorded_deadline() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("verdict", "status"),
-    [
-        ("verified", "verified"),
-        ("not_applicable", "not_applicable"),
-        (None, "failed"),
-        ("pending", "failed"),
-        ("failed", "failed"),
-    ],
-)
-def test_purged_row_hot_key_reads_the_org_purge_verdict(
-    verdict: str | None, status: str
-) -> None:
-    """The org-wide Redis purge is the only proof a purged row has for the hot set.
+def test_purged_row_without_an_address_never_certifies_the_hot_member() -> None:
+    """The org-wide receipt is not a fence, so it cannot prove one member absent.
 
-    A receipt that has not been written yet, or that records a retry, is not
-    evidence of absence: the row must retry, not claim ``verified`` or
-    ``not_applicable`` on a purge nobody confirmed.
+    It says the delete ran. A create that committed before its ``refresh_hot``
+    can land after it, and the receipt records nothing about the member at that
+    point. A purged row from a saga that recorded the address is staged instead;
+    the one that reaches this rule has no address and must fail, not borrow
+    evidence for a claim nobody checked.
     """
-    purged = replace(erasure(), row=claimed_row(event_type="purged"), org_redis_purge=verdict)
+    purged = replace(
+        erasure(), row=claimed_row(event_type="purged"), org_redis_purge="verified"
+    )
+
     outcome = le._underivable_outcome(
         purged, _StoreTarget("cache_hot", (), underivable=True)
     )
-    assert (outcome.status, outcome.permanent) == (status, False)
+
+    assert (outcome.status, outcome.permanent) == ("failed", True)
+    assert "not a fence" in (outcome.error or "")
+
+
+@pytest.mark.parametrize("verdict", [None, "pending", "failed", "verified"])
+def test_only_a_missing_redis_topology_is_not_applicable(verdict: str | None) -> None:
+    """``not_applicable`` means Redis is not deployed, and nothing else.
+
+    A pending or failed stage never looked; a verified one proves the wrong
+    thing. Only the topology verdict describes a store that does not exist.
+    """
+    purged = replace(
+        erasure(), row=claimed_row(event_type="purged"), org_redis_purge=verdict
+    )
+
+    outcome = le._underivable_outcome(
+        purged, _StoreTarget("cache_hot", (), underivable=True)
+    )
+
+    assert (outcome.status, outcome.permanent) == ("failed", True)
+
+
+def test_purged_row_reads_not_applicable_when_redis_is_not_deployed() -> None:
+    """No Redis means no hot set anywhere, so the store truly does not apply."""
+    purged = replace(
+        erasure(), row=claimed_row(event_type="purged"), org_redis_purge="not_applicable"
+    )
+
+    outcome = le._underivable_outcome(
+        purged, _StoreTarget("cache_hot", (), underivable=True)
+    )
+
+    assert (outcome.status, outcome.permanent) == ("not_applicable", False)
 
 
 def test_forget_row_keeps_the_permanent_failure_even_with_a_verified_org_purge() -> None:

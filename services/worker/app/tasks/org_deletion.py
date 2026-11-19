@@ -101,6 +101,28 @@ _PG_PRE_CASCADE: tuple[str, ...] = (
     "DELETE FROM ibex_core.legal_holds WHERE org_id = CAST(:org_id AS uuid) AND cleared_at IS NOT NULL",
 )
 
+# Record each memory's hot-cache address *before* the row is deleted, in the
+# same transaction. The saga's Redis stage deletes every ``{org}:hot_memories:*``
+# key, but its receipt only says that delete ran: a create that committed before
+# its ``refresh_hot`` can land after it. Without an address the erasure consumer
+# would have to accept that receipt as proof for one member and could report
+# ``complete`` while the member survived to its TTL. With the address it writes
+# the forgotten marker, ZREMs the member and checks it is gone, which is the only
+# proof that covers a late write. The ref has no FK to ``memories`` (000072), so
+# it outlives the delete by design and is the worklist entry the sweep claims.
+# One row per memory: the purge already writes one ``purged`` outbox row per
+# memory, so this doubles that row count and adds one locator (~90 bytes) each.
+_RECORD_HOT_REFS = """
+    INSERT INTO ibex_core.memory_artifact_refs (org_id, memory_id, store, locator)
+    SELECT org_id,
+           id,
+           'cache_hot',
+           CAST(org_id AS text) || ':hot_memories:' || CAST(agent_id AS text)
+      FROM ibex_core.memories
+     WHERE org_id = CAST(:org_id AS uuid)
+    ON CONFLICT DO NOTHING
+"""
+
 _CASCADE_STATEMENTS: tuple[str, ...] = (
     "DELETE FROM ibex_core.memory_feedback WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.memory_conflict_escalations WHERE org_id = CAST(:org_id AS uuid)",
@@ -570,7 +592,15 @@ async def _resolve_archived_uris(session, *, job_id: str, org_id: str) -> list[s
 
 
 async def _stage_postgres(session, *, org_id: str) -> None:
-    for stmt in (*_PG_PRE_CASCADE, *_CASCADE_STATEMENTS):
+    """Run the PostgreSQL purge: provenance first, then evidence, then cascade.
+
+    ``_RECORD_HOT_REFS`` must run before the memories DELETE so the address is
+    recorded while its agent still exists, and it must be in this transaction so
+    a failed purge cannot leave refs for memories that were never deleted. The
+    refs carry no FK, so they survive the delete and become the erasure
+    consumer's worklist.
+    """
+    for stmt in (_RECORD_HOT_REFS, *_PG_PRE_CASCADE, *_CASCADE_STATEMENTS):
         await session.execute(text(stmt), {"org_id": org_id})
 
 

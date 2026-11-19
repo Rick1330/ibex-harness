@@ -41,7 +41,10 @@ def claimed_row(
 
 
 def erasure(
-    *, settings: Any | None = None, row: _ClaimedRow | None = None
+    *,
+    settings: Any | None = None,
+    row: _ClaimedRow | None = None,
+    job_deadline: float | None = None,
 ) -> _Erasure:
     """A claimed row plus the dependencies its store stages need."""
     return _Erasure(
@@ -52,4 +55,5 @@ def erasure(
             lifecycle_erasure_store_timeout_seconds=120.0,
         ),
         factory=object(),
+        job_deadline=job_deadline,
     )

@@ -236,6 +236,36 @@ async def test_post_postgres_commit_failure_marks_job_failed(
     assert fail_session.execute.await_count == 1
 
 
+@pytest.mark.asyncio
+async def test_stage_postgres_records_the_hot_address_before_deleting_memories() -> None:
+    """The purge records each memory's hot key while its agent still exists.
+
+    The ref is what lets the erasure consumer stage the hot store later instead
+    of trusting the org-wide Redis receipt. Recording it after the DELETE would
+    find no memory row; recording it in a separate transaction could leave refs
+    for memories a rolled-back purge never deleted.
+    """
+    session = AsyncMock()
+
+    await org_deletion._stage_postgres(session, org_id="org-1")
+
+    statements = [
+        " ".join(str(call.args[0]).split()) for call in session.execute.await_args_list
+    ]
+    assert "INSERT INTO ibex_core.memory_artifact_refs" in statements[0]
+    assert "'cache_hot'" in statements[0]
+    assert "agent_id" in statements[0]
+    assert "ON CONFLICT DO NOTHING" in statements[0]
+    delete_at = next(
+        index
+        for index, statement in enumerate(statements)
+        if "DELETE FROM ibex_core.memories" in statement
+    )
+    assert delete_at > 0, "the address must be recorded before the memory is deleted"
+    for call in session.execute.await_args_list:
+        assert call.args[1] == {"org_id": "org-1"}
+
+
 def test_cascade_includes_soft_delete_org() -> None:
     joined = "\n".join(org_deletion._CASCADE_STATEMENTS)
     assert "deleted_at" in joined

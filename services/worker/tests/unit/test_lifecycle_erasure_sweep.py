@@ -281,6 +281,57 @@ async def test_erase_row_stages_the_provable_set_then_settles(
 
 
 @pytest.mark.asyncio
+async def test_expired_proof_does_not_starve_the_stores_after_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A slow object store costs one capped check, not the row's later stores.
+
+    This is the regression the archive re-check had: its HEADs ran outside the
+    budget ``_stage_store`` applies, so a slow store could spend the job deadline
+    before the cache stores were ever attempted and fail them as
+    ``job_deadline_exceeded``.
+    """
+    monkeypatch.setattr(le.sweep, "_retire_if_stale", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        le.sweep,
+        "_read_erasure_state",
+        AsyncMock(
+            return_value=_ErasureState(
+                refs={
+                    "objectstore": ("s3://b/org-1/a.json",),
+                    "cache_hot": (f"{_ROW.org_id}:hot_memories:agent-1",),
+                },
+                receipts={"objectstore": "verified"},
+                agent_id="agent-1",
+            )
+        ),
+    )
+    monkeypatch.setattr(le.sweep, "_PROOF_HEAD_CAP_SECONDS", 0.02)
+
+    def slow_head(*_args: Any, **_kwargs: Any) -> bool:
+        time.sleep(1.5)
+        return False
+
+    staged: list[str] = []
+
+    async def record(target: _StoreTarget, *_args: Any, **_kwargs: Any) -> None:
+        staged.append(target.store)
+
+    monkeypatch.setattr(le.sweep, "object_exists", slow_head)
+    monkeypatch.setattr(le.sweep, "_stage", record)
+    monkeypatch.setattr(le.sweep, "_settle", AsyncMock(return_value="complete"))
+    started = time.monotonic()
+
+    outcome = await le._erase_row(object(), _SETTINGS, _ROW, started + 5.0)
+
+    assert outcome == "complete"
+    assert staged == ["objectstore", "cache", "cache_hot"], (
+        "the cache stores must still be tried after an expired proof"
+    )
+    assert time.monotonic() - started < 1.0, "the proof HEAD was not cut at its cap"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("rowcount", "retired"), [(1, True), (0, False)])
 async def test_retire_if_stale_reports_whether_the_row_was_retired(
     monkeypatch: pytest.MonkeyPatch, rowcount: int, retired: bool

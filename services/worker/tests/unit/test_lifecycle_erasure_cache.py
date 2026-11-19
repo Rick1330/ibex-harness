@@ -164,7 +164,8 @@ def _entry_purged(fake: _FakeRedis) -> None:
 
 
 def _member_purged(fake: _FakeRedis) -> None:
-    """What only the ``cache_hot`` row proves: one ZREM, the rest of the set intact."""
+    """What only the ``cache_hot`` row proves: marker, one ZREM, the set intact."""
+    assert fake.markers == [(_MARKER_KEY, "1", le._CACHE_FORGOTTEN_TTL_SECONDS)]
     assert fake.zremoved == [(_HOT_KEY, _MEMBER)]
     assert fake.deleted == [], "DEL of the hot key would evict live memories"
     assert _OTHER_MEMBER in fake.live_members[_HOT_KEY], (
@@ -273,15 +274,25 @@ async def test_cache_stage_fails_when_the_store_survives(
 
 
 @pytest.mark.asyncio
-async def test_cache_hot_stage_removes_the_member_and_never_deletes_the_key(
+async def test_cache_hot_stage_fences_before_removing_and_never_deletes_the_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The hot set belongs to the agent; only this memory's member may leave."""
+    """The hot set belongs to the agent; only this memory's member may leave.
+
+    The marker is written first because it is the fence: a ``refresh_hot`` that
+    was already in flight when this stage ran checks it in the same Redis script
+    as the ZADD, so a member that would otherwise reappear after the verify is
+    refused instead.
+    """
     fake = _FakeRedis(live_members={_HOT_KEY: {_MEMBER, _OTHER_MEMBER}})
     monkeypatch.setattr(le.staging, "_redis_client", lambda _settings: fake)
 
     await le._stage(_cache_target("cache_hot", _HOT_KEY), erasure(), time.monotonic() + 5)
 
+    assert fake.ops[0] == ("set", _MARKER_KEY), (
+        "the marker must precede the ZREM, or a delayed write can re-add the member"
+    )
+    assert fake.markers == [(_MARKER_KEY, "1", le._CACHE_FORGOTTEN_TTL_SECONDS)]
     assert fake.zremoved == [(_HOT_KEY, _MEMBER)]
     assert fake.deleted == [], "DEL of the hot key would evict live memories"
     assert fake.live_members[_HOT_KEY] == {_OTHER_MEMBER}, (
