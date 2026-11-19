@@ -15,6 +15,7 @@ import {
   TriangleAlert,
 } from "@lucide/vue"
 import ConsolePageHeader from "@/components/console/ConsolePageHeader.vue"
+import GovernCaveat from "@/components/console/govern/primitives/GovernCaveat.vue"
 import GovernLockedAction from "@/components/console/govern/primitives/GovernLockedAction.vue"
 import GovernTabBar from "@/components/console/govern/primitives/GovernTabBar.vue"
 import SettingsGroup from "@/components/console/SettingsGroup.vue"
@@ -42,62 +43,64 @@ const emit = defineEmits<{ update: [section: SettingsSection] }>()
 
 const colorMode = useColorMode()
 
-const SECTIONS: Record<SettingsSection, { label: string; icon: unknown; definition: string }> = {
+const SECTIONS: Record<SettingsSection, { label: string; icon: unknown }> = {
   organization: {
     label: "Organization",
     icon: Building2,
-    definition: "Identity, region, and plan boundary. Every value names its owner and the audit event that recorded it.",
   },
   environments: {
     label: "Environments",
     icon: Globe2,
-    definition: "Labels that scope runs and policies. They are configuration, not free-form tags.",
   },
   "agent-defaults": {
     label: "Agent defaults",
     icon: Bot,
-    definition: "The model, context, memory, and drift defaults a new agent inherits unless it declares its own.",
   },
   "data-mode": {
     label: "Data mode",
     icon: Database,
-    definition: "What this console may claim right now and which sources are actually connected.",
   },
   "read-only": {
     label: "Read-only",
     icon: Lock,
-    definition: "The enforced write boundary. No mutation path exists in this console.",
   },
   retention: {
     label: "Retention",
     icon: Database,
-    definition: "Separate windows for separate evidence. Analytics TTL is not canonical evidence retention.",
   },
   privacy: {
     label: "Privacy and redaction",
     icon: ScanSearch,
-    definition: "What is captured, when personal data is detected, and what happens before it is stored or returned.",
   },
   "evidence-relay": {
     label: "Evidence and relay",
     icon: ShieldCheck,
-    definition: "Canonical authority versus derived projection. A projection never certifies billing or deletion.",
   },
   display: {
     label: "Display",
     icon: Palette,
-    definition: "Density and time presentation. These preferences never change tenant scope.",
   },
   "api-origin": {
     label: "API and origin health",
     icon: Server,
-    definition: "The delivery path behind these settings. Reachability is not evidence certification.",
   },
   "danger-zone": {
     label: "Danger zone",
     icon: TriangleAlert,
-    definition: "High-impact actions stay unavailable without confirmation, approval, rollback, and audit.",
   },
+}
+
+/**
+ * The scope a section's values cannot exceed. These are limitations, not
+ * descriptions: each one is rendered above the rows it qualifies so the reader
+ * meets the boundary before the values, and no section header carries a
+ * subtitle that could suggest the rest do too.
+ */
+const CONSTRAINTS: Partial<Record<SettingsSection, string>> = {
+  "read-only": "The enforced write boundary. No mutation path exists in this console.",
+  retention: "Separate windows for separate evidence. Analytics TTL is not canonical evidence retention.",
+  "evidence-relay": "Canonical authority versus derived projection. A projection never certifies billing or deletion.",
+  "api-origin": "The delivery path behind these settings. Reachability is not evidence certification.",
 }
 
 const category = computed<SettingsCategory>(() => settingsCategoryFor(props.section))
@@ -243,7 +246,6 @@ function setTheme(theme: "light" | "dark" | "system"): void {
         :id="`settings-${entry}`"
         :key="entry"
         :title="SECTIONS[entry].label"
-        :definition="SECTIONS[entry].definition"
       >
         <template v-if="entry !== 'display' && entry !== 'danger-zone'" #actions>
           <GovernLockedAction label="Edit" :icon="Pencil" size="sm" />
@@ -280,6 +282,9 @@ function setTheme(theme: "light" | "dark" | "system"): void {
         </div>
 
         <div v-else class="divide-y divide-line-subtle">
+          <div v-if="CONSTRAINTS[entry]" class="px-4 py-3.5">
+            <GovernCaveat tone="info">{{ CONSTRAINTS[entry] }}</GovernCaveat>
+          </div>
           <SettingsRow
             v-for="row in rowsFor(entry)"
             :key="row.label"

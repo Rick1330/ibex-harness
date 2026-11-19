@@ -214,7 +214,6 @@ function ruleHref(ruleId: string): string {
         <section class="rounded-lg border border-line-subtle bg-surface-1" aria-labelledby="snapshot-lifecycle">
           <header class="border-b border-line-subtle px-4 py-2.5">
             <h2 id="snapshot-lifecycle" class="text-sm font-semibold text-fg-1">How this snapshot was published</h2>
-            <p class="mt-0.5 text-xs text-fg-3">Drafted → Validated → Simulated → Approved → Live</p>
           </header>
           <div class="px-4 py-3">
             <PolicyLifecycleStepper :steps="lifecycle" />

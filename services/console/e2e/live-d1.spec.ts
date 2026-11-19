@@ -223,7 +223,7 @@ test("live Agents renders the operator inventory and detail with axe coverage", 
   await page.goto("/agents")
   await waitForHydration(page)
   await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible()
-  await expect(page.getByText("Showing 1 agent from the operator API.")).toBeVisible()
+  await expect(page.locator("[data-agent-row]")).toHaveCount(1)
   await expect(page.getByRole("link", { name: "Support Agent" })).toBeVisible()
   await expect(page.getByText("support-agent", { exact: true })).toBeVisible()
   await expect(page.getByText("openai · gpt-4.1")).toBeVisible()
@@ -300,6 +300,12 @@ test("live Sessions renders the turn ledger and trace link with axe coverage", a
   await expect(page.getByRole("heading", { name: /Session 88888888/ })).toBeVisible()
   await expect(page.getByRole("link", { name: /trace-live-1/ })).toBeVisible()
   await expect(page.getByText("No evidence")).toHaveCount(0)
+  // `total_latency_ms` is the sum of the turn rows below the tiles, not a
+  // wall-clock duration, so the label states the aggregation and no helper
+  // repeats it.
+  await expect(page.getByText("Total turn latency", { exact: true })).toBeVisible()
+  await expect(page.getByText("Turn latency", { exact: true })).toHaveCount(0)
+  await expect(page.getByText("Sum of recorded turns")).toHaveCount(0)
   await expectNoAxeViolations(page)
 })
 

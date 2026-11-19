@@ -25,7 +25,6 @@ import { safeExploreReturn } from "@/lib/return-to"
 import {
   EXPLORE_RUN_TABS,
   EXPLORE_RUN_TAB_LABELS,
-  EXPLORE_RUN_TAB_MEANING,
   exploreRunHref,
   parseExploreRunQuery,
   type ExploreRunState,
@@ -264,7 +263,6 @@ function backToList(): void {
         aria-label="Run sections"
         @update:model-value="goTab($event as ExploreRunTab)"
       />
-      <p class="-mt-1 text-[0.6875rem] leading-4 text-fg-3">{{ EXPLORE_RUN_TAB_MEANING[state.tab] }}</p>
 
       <ExploreRunOverviewPanel v-if="state.tab === 'overview'" :detail="detail" />
       <ExploreRunTimeline

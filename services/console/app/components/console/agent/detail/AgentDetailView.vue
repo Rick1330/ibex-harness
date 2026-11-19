@@ -58,22 +58,18 @@ function providerLabel(): string {
       <GovernStatTile
         label="Sessions"
         :value="formatGovernNumber(agent.total_sessions)"
-        helper="Recorded in the operator projection"
       />
       <GovernStatTile
         label="Memories"
         :value="formatGovernNumber(agent.total_memories)"
-        helper="Attributed to this agent"
       />
       <GovernStatTile
         label="Tokens used"
         :value="formatGovernNumber(agent.total_tokens_used)"
-        helper="Cumulative across sessions"
       />
       <GovernStatTile
         label="Last active"
         :value="formatGovernStamp(agent.last_active_at)"
-        helper="Reported by the agent record"
       />
     </section>
 

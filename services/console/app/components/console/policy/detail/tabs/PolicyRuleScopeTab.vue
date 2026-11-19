@@ -36,7 +36,6 @@ const totalMatches = computed(() => matchingRuns.value.reduce((sum, entry) => su
       <section class="rounded-lg border border-line-subtle bg-surface-1" aria-labelledby="rule-scope">
         <header class="border-b border-line-subtle px-4 py-2.5">
           <h2 id="rule-scope" class="text-sm font-semibold text-fg-1">Scope</h2>
-          <p class="mt-0.5 text-xs text-fg-3">Where this rule is applied.</p>
         </header>
         <dl class="divide-y divide-line-subtle">
           <div class="flex items-baseline justify-between gap-3 px-4 py-2">

@@ -370,12 +370,9 @@ function refresh(): void {
 
     <nav
       v-if="!error && (agents.length > 0 || state.cursor)"
-      class="flex flex-wrap items-center justify-between gap-2"
+      class="flex flex-wrap items-center justify-end gap-2"
       aria-label="Agent pages"
     >
-      <p class="text-xs text-fg-3">
-        Showing {{ agents.length }} agent{{ agents.length === 1 ? "" : "s" }} from the operator API.
-      </p>
       <div class="flex items-center gap-2">
         <button
           type="button"

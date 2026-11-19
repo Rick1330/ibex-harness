@@ -799,15 +799,6 @@ export const EXPLORE_RUN_TAB_LABELS: Record<ExploreRunTab, string> = {
   raw: "Raw",
 }
 
-export const EXPLORE_RUN_TAB_MEANING: Record<ExploreRunTab, string> = {
-  overview: "Identity, timing and the sections this run did not return.",
-  timeline: "The span rows this run returned, in whichever arrangement is easiest to read.",
-  evidence: "The evidence row behind the run: completeness, publication, freshness, retention and watermark.",
-  assembly: "Context assembly stage timings, retrieval candidates and the directive version applied.",
-  tools: "Tool calls recorded for the run, with their status and error codes.",
-  raw: "The validated detail payload exactly as the contract returned it.",
-}
-
 export type ExploreRunState = {
   tab: ExploreRunTab
   lens: ExploreLens
@@ -883,12 +874,6 @@ export const OVERVIEW_TAB_LABELS: Record<OverviewTab, string> = {
   sources: "Sources and session",
 }
 
-export const OVERVIEW_TAB_MEANING: Record<OverviewTab, string> = {
-  attention: "Every open finding this page can derive from a value the platform actually reported.",
-  runs: "The newest run metadata this organization returned — five rows, no query, no inference.",
-  sources: "Which contract each figure came from, whether it resolved, and when it was read.",
-}
-
 export type OverviewState = {
   tab: OverviewTab
 }
@@ -921,13 +906,6 @@ export const PLATFORM_TAB_LABELS: Record<PlatformTab, string> = {
   pipeline: "Ingestion and outbox",
   recovery: "Recovery and deployment",
   raw: "Snapshot payload",
-}
-
-export const PLATFORM_TAB_MEANING: Record<PlatformTab, string> = {
-  dependencies: "One row per dependency the platform checked in this snapshot, sorted by how broken it is.",
-  pipeline: "Lag, dead-letter depth and the outbox watermark, plus the history that is not connected.",
-  recovery: "Backup, restore drill, retention horizon and the deployed image digest.",
-  raw: "The validated snapshot object, so a claim on this page can be checked against the payload itself.",
 }
 
 export type PlatformState = {

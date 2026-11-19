@@ -304,8 +304,7 @@ function refresh(): void {
       </table>
     </div>
 
-    <nav v-if="!error && (memories.length > 0 || state.cursor)" class="flex flex-wrap items-center justify-between gap-2" aria-label="Memory pages">
-      <p class="text-xs text-fg-3">Showing {{ memories.length }} memor{{ memories.length === 1 ? "y" : "ies" }} from the operator API.</p>
+    <nav v-if="!error && (memories.length > 0 || state.cursor)" class="flex flex-wrap items-center justify-end gap-2" aria-label="Memory pages">
       <div class="flex items-center gap-2">
         <button
           type="button"

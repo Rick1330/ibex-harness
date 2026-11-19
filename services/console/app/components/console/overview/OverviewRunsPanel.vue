@@ -118,7 +118,6 @@ const windowText = computed(() =>
       v-else-if="props.loading && !props.traces"
       title="Run metadata"
       :contract="OVERVIEW_TRACE_CONTRACT"
-      description="Reading the newest rows for this organization."
     />
     <div v-else-if="!rows.length" class="rounded-lg border border-line-subtle bg-surface p-1">
       <GovernEmptyState

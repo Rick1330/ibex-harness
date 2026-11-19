@@ -38,7 +38,6 @@ const STATUS_CLASS = {
       v-else-if="props.loading && !props.resolved"
       title="Platform snapshot"
       :contract="PLATFORM_CONTRACT"
-      description="Reading the dependency, ingestion, recovery and deployment fields in one request."
     />
 
     <div

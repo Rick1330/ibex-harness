@@ -36,7 +36,7 @@ const counts = computed(() => {
       </p>
     </div>
 
-    <p class="text-[0.6875rem] leading-4 text-fg-3">{{ props.snapshotLabel }}</p>
+    <p v-if="props.snapshotLabel" class="text-[0.6875rem] leading-4 text-fg-3">{{ props.snapshotLabel }}</p>
 
     <div
       v-if="!props.rows.length"

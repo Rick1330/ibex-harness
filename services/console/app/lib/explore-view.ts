@@ -225,19 +225,6 @@ export function exploreAttention(items: OperatorTrace[]): ExploreAttention {
   )
 }
 
-/** One sentence describing what the returned page does and does not prove. */
-export function explorePageNote(itemCount: number, attention: ExploreAttention): string {
-  if (itemCount === 0) return "No runs matched. An empty page is a valid answer, not a failure."
-  const problems: string[] = []
-  if (attention.errors > 0) problems.push(`${attention.errors} failed`)
-  if (attention.incomplete > 0) problems.push(`${attention.incomplete} incomplete`)
-  if (attention.brokenPublication > 0) problems.push(`${attention.brokenPublication} with broken publication`)
-  if (problems.length === 0) {
-    return `${itemCount} runs on this page, each with a complete record and a published evidence row.`
-  }
-  return `${itemCount} runs on this page: ${problems.join(", ")}.`
-}
-
 /**
  * The query language the contract supports. Anything outside this list is refused by the parser
  * rather than guessed at, so it is stated here instead of being invented as a facet.

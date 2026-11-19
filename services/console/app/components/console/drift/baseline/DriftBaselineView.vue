@@ -180,7 +180,6 @@ function signalHrefFor(metricName: string): string {
         <section class="rounded-lg border border-line-subtle bg-surface-1">
           <header class="border-b border-line-subtle px-4 py-2.5">
             <h2 class="text-sm font-semibold text-fg-1">Re-baseline history</h2>
-            <p class="mt-0.5 text-[0.6875rem] leading-4 text-fg-3">Newest first. Each entry records who certified it and why.</p>
           </header>
           <ol class="divide-y divide-line-subtle">
             <li v-for="entry in history" :key="entry.id" class="px-4 py-3">

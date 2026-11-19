@@ -1109,13 +1109,12 @@ export type PolicyStatus = {
   tone: "ok" | "warning" | "muted"
   text: string
   caveat: string | null
-  caveatDetail: string | null
 }
 
 export function policyStatusLine(snapshotId = CURRENT_SNAPSHOT): PolicyStatus {
   const snapshot = policySnapshotById(snapshotId)
   if (!snapshot) {
-    return { tone: "muted", text: "No policy snapshot is recorded for this workspace.", caveat: null, caveatDetail: null }
+    return { tone: "muted", text: "No policy snapshot is recorded for this workspace.", caveat: null }
   }
   const counts = policyModeCounts(snapshotId)
   const total = counts.enforced + counts.advisory
@@ -1128,9 +1127,6 @@ export function policyStatusLine(snapshotId = CURRENT_SNAPSHOT): PolicyStatus {
     tone: caveat ? "warning" : "ok",
     text: `${total} rules in force (${counts.enforced} enforced, ${counts.advisory} advisory) from snapshot ${snapshot.id}, live for ${policyDaysLive(snapshotId)} ${policyDaysLive(snapshotId) === 1 ? "day" : "days"}.`,
     caveat,
-    caveatDetail: caveat
-      ? `${provenance.complete} of ${provenance.linked} linked runs join to certified evidence. Partial provenance means the run-to-policy join is incomplete, not that the rule was skipped.`
-      : null,
   }
 }
 
