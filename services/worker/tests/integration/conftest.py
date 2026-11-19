@@ -306,10 +306,15 @@ async def clean_erasure_worklist(
 
 @pytest.fixture
 def object_store(monkeypatch: pytest.MonkeyPatch) -> erasure_harness.FakeObjectStore:
-    """Replace the object-store client with a fake this suite can assert on."""
+    """Replace the object-store client with a fake this suite can assert on.
+
+    The delete runs in the staging module and the settle re-check runs in the
+    sweep module; each reads its own imported name, so both are patched.
+    """
     fake = erasure_harness.FakeObjectStore()
-    monkeypatch.setattr(lifecycle_erasure, "delete_uri", fake.delete)
-    monkeypatch.setattr(lifecycle_erasure, "object_exists", fake.exists)
+    monkeypatch.setattr(lifecycle_erasure.staging, "delete_uri", fake.delete)
+    monkeypatch.setattr(lifecycle_erasure.staging, "object_exists", fake.exists)
+    monkeypatch.setattr(lifecycle_erasure.sweep, "object_exists", fake.exists)
     return fake
 
 

@@ -54,11 +54,13 @@ class ForgetMemory:
 
 @dataclass(frozen=True, slots=True)
 class ForgetCacheScope:
-    """The Redis addresses a forget must clear, when a cache is configured.
+    """The Redis addresses a forget must clear.
 
-    Empty when no cache writer exists, which means this deployment has no Redis
-    cache: no ref is recorded and the erasure reports the cache store as
-    ``not_applicable`` instead of claiming a purge that had nothing to purge.
+    The addresses are derived from ``(org_id, agent_id, memory_id)`` even when no
+    cache writer is configured: an absent ref means "not recorded", never "proved
+    absent", and a deployment that lost its cache configuration would otherwise
+    leave entries nothing sweeps. The worker reports ``failed`` when it reaches a
+    ref and Redis is unconfigured, which is honest about what it cannot prove.
 
     The keys are passed in rather than derived here so the key format has one
     definition (``app.cache.memory_keys``) and this transaction only records the
@@ -77,8 +79,8 @@ class ForgetCacheScope:
         )
 
 
-#: Shared default: a request with no cache writer records no cache address. A
-#: module-level singleton keeps the default immutable and obvious.
+#: Shared default: a caller that records no cache address. The route derives the
+#: real addresses; this stays the immutable default for any other caller.
 NO_CACHE_SCOPE = ForgetCacheScope()
 
 

@@ -23,6 +23,9 @@ from tests.integration.lifecycle_erasure_harness import (
     Harness,
     OutboxSeed,
     RefSeed,
+    cache_key_exists,
+    cache_member_scored,
+    seed_cache_copies,
 )
 
 pytestmark = pytest.mark.integration
@@ -107,6 +110,51 @@ async def test_a_completed_cache_receipt_is_written_once_per_store(
 
     for store in ("cache", "cache_hot"):
         assert await harness.receipt_row_count(forgotten, store) == 1, store
+
+
+@pytest.mark.asyncio
+async def test_a_row_without_cache_refs_still_erases_a_live_cached_copy(
+    harness: Harness, object_store: FakeObjectStore
+) -> None:
+    """An absent ref means "not recorded", never "proved absent" (A2).
+
+    A pre-migration row has no cache ref for either structure. The keys are
+    derivable from ``(org, agent, memory)``, so the consumer derives them,
+    deletes the live copies, and receipts ``verified``. Reporting
+    ``not_applicable`` here would complete the job with the content still in
+    Redis — the exact failure this store exists to prevent.
+    """
+    forgotten = await harness.seed(with_refs=False)
+    object_key, hot_key = seed_cache_copies(
+        harness.env.redis_url,
+        org_id=forgotten.org_id,
+        agent_id=forgotten.agent_id,
+        memory_id=forgotten.memory_id,
+    )
+    row_id = await harness.queue(OutboxSeed.for_memory(forgotten))
+    assert cache_key_exists(harness.env.redis_url, object_key)
+    assert cache_member_scored(
+        harness.env.redis_url, hot_key, str(forgotten.memory_id)
+    )
+
+    out = await harness.run(ch_dsn=harness.env.ch_dsn)
+
+    assert out["complete"] == 1, out
+    receipts = await harness.receipts(
+        org_id=forgotten.org_id, memory_id=forgotten.memory_id
+    )
+    for store in ("cache", "cache_hot"):
+        assert receipts[store][0] == "verified", (store, receipts)
+        assert receipts[store][2] is not None, f"{store}: a verified receipt is stamped"
+    assert not cache_key_exists(harness.env.redis_url, object_key)
+    assert not cache_member_scored(
+        harness.env.redis_url, hot_key, str(forgotten.memory_id)
+    )
+    assert cache_member_scored(harness.env.redis_url, hot_key, "live-other-memory"), (
+        "the agent's other hot members must survive a derived ZREM"
+    )
+    state, delivered_at, _available, _attempts = await harness.outbox(row_id=row_id)
+    assert (state, delivered_at is not None) == ("complete", True)
 
 
 @pytest.mark.asyncio

@@ -80,7 +80,7 @@ def _stage_that_raises(exc: BaseException) -> Any:
 
 def _stage_must_not_run(monkeypatch: pytest.MonkeyPatch, message: str) -> None:
     """Make staging this store fail the test instead of running."""
-    monkeypatch.setattr(le, "_stage", _stage_that_raises(AssertionError(message)))
+    monkeypatch.setattr(le.sweep, "_stage", _stage_that_raises(AssertionError(message)))
 
 
 async def _erase(
@@ -213,7 +213,7 @@ async def test_not_applicable_does_not_hide_a_ref_that_appeared_later(
     async def record(target: _StoreTarget, *_args: Any, **_kwargs: Any) -> None:
         staged.append(target.locators)
 
-    monkeypatch.setattr(le, "_stage", record)
+    monkeypatch.setattr(le.sweep, "_stage", record)
     outcome = await _erase(
         _StoreTarget("objectstore", ("s3://bucket/one.json",)),
         {"objectstore": "not_applicable"},
@@ -242,7 +242,7 @@ async def test_store_stage_that_raises_is_failed_never_verified(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        le, "_stage", _stage_that_raises(RuntimeError("s3 head capture/1.json: 503"))
+        le.sweep, "_stage", _stage_that_raises(RuntimeError("s3 head capture/1.json: 503"))
     )
     outcome = await _erase(_StoreTarget("objectstore", ("s3://bucket/one.json",)), {})
     assert outcome.status == "failed"
@@ -255,7 +255,7 @@ async def test_store_validation_failure_is_classified_permanent(
 ) -> None:
     """A locator that cannot change cannot succeed on the next sweep."""
     monkeypatch.setattr(
-        le, "_stage", _stage_that_raises(ValueError("unsupported uri"))
+        le.sweep, "_stage", _stage_that_raises(ValueError("unsupported uri"))
     )
     outcome = await _erase(
         _StoreTarget("objectstore", ("https://example.invalid/archive",)), {}
@@ -269,7 +269,7 @@ async def test_store_transport_failure_is_classified_transient(
 ) -> None:
     """A 5xx or an unreachable store is worth retrying; it is not permanent."""
     monkeypatch.setattr(
-        le, "_stage", _stage_that_raises(RuntimeError("s3 head capture/1.json: 503"))
+        le.sweep, "_stage", _stage_that_raises(RuntimeError("s3 head capture/1.json: 503"))
     )
     outcome = await _erase(_StoreTarget("objectstore", ("s3://bucket/one.json",)), {})
     assert outcome.permanent is False
@@ -285,7 +285,7 @@ async def test_session_event_locator_failure_is_permanent() -> None:
 async def test_store_stage_that_times_out_is_failed_never_verified(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(le, "_stage", _stage_that_raises(TimeoutError()))
+    monkeypatch.setattr(le.sweep, "_stage", _stage_that_raises(TimeoutError()))
     outcome = await _erase(
         _StoreTarget("clickhouse", ("00000000-0000-0000-0000-00000000000a",)), {}
     )
@@ -359,6 +359,98 @@ def test_stores_to_stage_adds_ref_named_stores_only() -> None:
     )
 
 
+def test_store_targets_derive_the_cache_keys_an_absent_ref_cannot_name() -> None:
+    """A pre-000078 row records no cache ref; the keys are still derivable.
+
+    Treating the absent ref as ``not_applicable`` left a live Redis copy nothing
+    ever swept. The derived address is what makes the erasure reach it.
+    """
+    row = _row()
+    targets = {
+        target.store: target for target in le._store_targets({}, "agent-1", row)
+    }
+
+    assert targets["cache"].locators == (f"{row.org_id}:memory:{row.memory_id}",)
+    assert targets["cache"].derived is True
+    assert targets["cache_hot"].locators == (
+        f"{row.org_id}:hot_memories:agent-1",
+    )
+    assert targets["cache_hot"].derived is True
+    assert targets["objectstore"].locators == ()
+    assert targets["objectstore"].derived is False
+
+
+def test_store_targets_keep_a_recorded_cache_ref() -> None:
+    """A recorded ref is the address; derivation does not second-guess it."""
+    targets = {
+        target.store: target
+        for target in le._store_targets(
+            {"cache": ("recorded-object-key",)}, "agent-1", _row()
+        )
+    }
+    assert targets["cache"].locators == ("recorded-object-key",)
+    assert targets["cache"].derived is False
+
+
+def test_store_targets_mark_the_hot_key_underivable_without_the_agent() -> None:
+    """Without the memory row the hot key cannot be derived; that is not absence."""
+    targets = {
+        target.store: target for target in le._store_targets({}, None, _row())
+    }
+    assert targets["cache_hot"].underivable is True
+    assert targets["cache"].underivable is False
+
+
+@pytest.mark.asyncio
+async def test_underivable_cache_address_fails_permanently() -> None:
+    """A missing agent is a property of the row, so a retry cannot fix it."""
+    outcome = await le._erase_store(
+        _erasure(),
+        _StoreTarget("cache_hot", (), underivable=True),
+        {},
+        time.monotonic() + 5,
+    )
+    assert (outcome.status, outcome.permanent) == ("failed", True)
+    assert "not derivable" in (outcome.error or "")
+
+
+#: The memory service's key definitions, which the worker cannot import.
+_MEMORY_KEYS = (
+    pathlib.Path(__file__).resolve().parents[4]
+    / "services/memory/app/cache/memory_keys.py"
+)
+
+
+def test_cache_guard_constants_match_the_memory_service() -> None:
+    """The two services must agree on the marker, or the guard protects nothing.
+
+    The worker cannot import ``app.cache.memory_keys`` (a different deployment),
+    so the namespace and the marker lifetime are duplicated deliberately and this
+    contract test is what keeps the copies equal.
+    """
+    import ast
+
+    def literal(node: ast.AST) -> object:
+        """Fold a constant or a ``*`` of constants; refuse anything else."""
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+            return literal(node.left) * literal(node.right)  # type: ignore[operator]
+        raise ValueError("not a literal")
+
+    tree = ast.parse(_MEMORY_KEYS.read_text(encoding="utf-8"))
+    values: dict[str, object] = {}
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            values[node.targets[0].id] = literal(node.value)
+    assert values["MEMORY_FORGOTTEN_NAMESPACE"] == le._CACHE_FORGOTTEN_NAMESPACE
+    assert values["MEMORY_FORGOTTEN_TTL_SECONDS"] == le._CACHE_FORGOTTEN_TTL_SECONDS
+
+
 @pytest.mark.asyncio
 async def test_store_already_proven_survives_a_later_run_with_no_locators(
     monkeypatch: pytest.MonkeyPatch,
@@ -373,7 +465,7 @@ async def test_store_already_proven_survives_a_later_run_with_no_locators(
     async def explode(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("a proven store must not be staged again")
 
-    monkeypatch.setattr(le, "_stage", explode)
+    monkeypatch.setattr(le.sweep, "_stage", explode)
     outcome = await le._erase_store(
         _erasure(),
         _StoreTarget("objectstore", ()),
@@ -397,8 +489,8 @@ async def test_object_store_stage_waits_until_head_reports_absence(
         del org_id, settings
         return uri in present
 
-    monkeypatch.setattr(le, "delete_uri", delete)
-    monkeypatch.setattr(le, "object_exists", exists)
+    monkeypatch.setattr(le.staging, "delete_uri", delete)
+    monkeypatch.setattr(le.staging, "object_exists", exists)
     await le._stage_objectstore(
         ("s3://bucket/one.json",), _erasure(), time.monotonic() + 10
     )
@@ -411,10 +503,10 @@ async def test_object_store_stage_raises_when_the_object_survives(
 ) -> None:
     """A delete the store accepted but did not apply is not an erasure."""
     monkeypatch.setattr(
-        le, "delete_uri", lambda uri, *, org_id, settings=None: None
+        le.staging, "delete_uri", lambda uri, *, org_id, settings=None: None
     )
     monkeypatch.setattr(
-        le, "object_exists", lambda uri, *, org_id, settings=None: True
+        le.staging, "object_exists", lambda uri, *, org_id, settings=None: True
     )
     with pytest.raises(TimeoutError):
         await le._stage_objectstore(
@@ -516,11 +608,14 @@ def test_settle_statements_carry_the_org_predicate() -> None:
 
 
 def test_sql_is_literal_not_built_from_values() -> None:
-    source = inspect.getsource(le)
-    assert 'f"DELETE' not in source
-    assert "f'DELETE" not in source
-    assert 'f"UPDATE' not in source
-    assert "f'UPDATE" not in source
+    sources = [
+        inspect.getsource(module) for module in (le.sql, le.staging, le.sweep)
+    ]
+    for source in sources:
+        assert 'f"DELETE' not in source
+        assert "f'DELETE" not in source
+        assert 'f"UPDATE' not in source
+        assert "f'UPDATE" not in source
 
 
 def test_task_registration_and_time_limits() -> None:
@@ -596,12 +691,20 @@ class _FakeRedis:
     ) -> None:
         self.deleted: list[str] = []
         self.zremoved: list[tuple[str, str]] = []
+        self.markers: list[tuple[str, str, int | None]] = []
+        self.ops: list[tuple[str, str]] = []
         self.closed = False
         self._surviving_keys = surviving_keys or set()
         self._surviving_members = surviving_members or set()
 
+    async def set(self, key: str, value: str, *, ex: int | None = None) -> bool:
+        self.markers.append((key, value, ex))
+        self.ops.append(("set", key))
+        return True
+
     async def delete(self, *keys: str) -> int:
         self.deleted.extend(keys)
+        self.ops.append(("delete", keys[0]))
         return len(keys)
 
     async def exists(self, *keys: str) -> int:
@@ -609,6 +712,7 @@ class _FakeRedis:
 
     async def zrem(self, key: str, member: str) -> int:
         self.zremoved.append((key, member))
+        self.ops.append(("zrem", key))
         return 1
 
     async def zscore(self, key: str, member: str) -> float | None:
@@ -626,15 +730,34 @@ def _cache_target(store: str, locator: str) -> _StoreTarget:
 async def test_cache_stage_deletes_the_entry_and_waits_for_absence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The content-bearing entry is deleted and the stage only returns when gone."""
+    """The content-bearing entry is deleted and the stage only returns when gone.
+
+    The forgotten marker is written first: a delayed after-commit create must
+    lose to an erasure even when its write lands after this stage's absence
+    check.
+    """
     fake = _FakeRedis()
-    monkeypatch.setattr(le, "_redis_client", lambda _settings: fake)
+    monkeypatch.setattr(le.staging, "_redis_client", lambda _settings: fake)
     key = "00000000-0000-0000-0000-000000000002:memory:00000000-0000-0000-0000-000000000003"
+    marker = "00000000-0000-0000-0000-000000000002:memory_forgotten:00000000-0000-0000-0000-000000000003"
 
     await le._stage(_cache_target("cache", key), _erasure(), time.monotonic() + 5)
 
+    assert fake.markers == [(marker, "1", le._CACHE_FORGOTTEN_TTL_SECONDS)]
     assert fake.deleted == [key]
+    assert fake.ops[0] == ("set", marker), (
+        "the marker must precede the delete, or a delayed write can restore the entry"
+    )
     assert fake.closed, "the stage must not leak its client"
+
+
+@pytest.mark.asyncio
+async def test_forgotten_key_stays_inside_the_tenant_namespace() -> None:
+    key = "00000000-0000-0000-0000-000000000002:memory:00000000-0000-0000-0000-000000000003"
+    assert le._forgotten_key(key) == (
+        "00000000-0000-0000-0000-000000000002:memory_forgotten:"
+        "00000000-0000-0000-0000-000000000003"
+    )
 
 
 @pytest.mark.asyncio
@@ -644,10 +767,46 @@ async def test_cache_stage_fails_when_the_entry_survives(
     """A surviving cache entry is a failed store, never a verified one."""
     key = "00000000-0000-0000-0000-000000000002:memory:00000000-0000-0000-0000-000000000003"
     fake = _FakeRedis(surviving_keys={key})
-    monkeypatch.setattr(le, "_redis_client", lambda _settings: fake)
+    monkeypatch.setattr(le.staging, "_redis_client", lambda _settings: fake)
 
     with pytest.raises(TimeoutError):
         await le._stage(_cache_target("cache", key), _erasure(), time.monotonic() - 1)
+
+
+@pytest.mark.asyncio
+async def test_cache_stage_waits_before_declaring_a_survivor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A store that answers late is given its budget, then reported failed."""
+    key = "00000000-0000-0000-0000-000000000002:memory:00000000-0000-0000-0000-000000000003"
+    fake = _FakeRedis(surviving_keys={key})
+    monkeypatch.setattr(le.staging, "_redis_client", lambda _settings: fake)
+
+    with pytest.raises(TimeoutError):
+        await le._stage(
+            _cache_target("cache", key), _erasure(), time.monotonic() + 0.01
+        )
+
+
+@pytest.mark.asyncio
+async def test_cache_hot_stage_fails_when_the_member_survives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hot member that stays scored is a failed store, never verified."""
+    key = "00000000-0000-0000-0000-000000000002:hot_memories:00000000-0000-0000-0000-000000000004"
+    fake = _FakeRedis(surviving_members={"00000000-0000-0000-0000-000000000003"})
+    monkeypatch.setattr(le.staging, "_redis_client", lambda _settings: fake)
+
+    with pytest.raises(TimeoutError):
+        await le._stage(
+            _cache_target("cache_hot", key), _erasure(), time.monotonic() + 0.01
+        )
+
+
+def test_cache_key_requires_a_tenant() -> None:
+    """An empty org cannot be a cache namespace, so it is refused before Redis."""
+    with pytest.raises(le.PermanentErasureFailure, match="tenant id required"):
+        le._cache_key("cache", "some:memory:key", org_id="")
 
 
 @pytest.mark.asyncio
@@ -656,7 +815,7 @@ async def test_cache_hot_stage_removes_the_member_and_never_deletes_the_key(
 ) -> None:
     """The hot set belongs to the agent; only this memory's member may leave."""
     fake = _FakeRedis()
-    monkeypatch.setattr(le, "_redis_client", lambda _settings: fake)
+    monkeypatch.setattr(le.staging, "_redis_client", lambda _settings: fake)
     key = "00000000-0000-0000-0000-000000000002:hot_memories:00000000-0000-0000-0000-000000000004"
 
     await le._stage(_cache_target("cache_hot", key), _erasure(), time.monotonic() + 5)

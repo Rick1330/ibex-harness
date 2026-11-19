@@ -8,13 +8,16 @@ HTTP envelopes here so the route only sequences the calls.
 Cache eviction is not best-effort. A cached memory object carries the memory's
 ``content`` for up to ``memory_cache_ttl_seconds``, so an eviction that fails and
 is only logged leaves a forgotten memory readable — a disclosure the request has
-already reported as done. The eviction is retried with bounded backoff, and when
-the retries are exhausted the outcome is written to the outbox row the worker
-already reads, so the erasure ledger answers "is anything still cached for this
-memory?" from the database and the worker's sweep retries the eviction from the
-artifact refs the forget transaction recorded. The request never waits on an
-unbounded retry: the tombstone is committed, so the response must return promptly
-and truthfully rather than hang behind a cache outage.
+already reported as done. The eviction is bounded by a total request budget
+(``CacheRetryPolicy.total_seconds``), not just by sleeps between attempts: a
+stalled ``DEL`` can consume the socket timeout on each attempt, and the route
+awaits the eviction after the tombstone commits. When the budget or the retries
+are exhausted the outcome is written to the outbox row the worker already reads,
+so the erasure ledger answers "is anything still cached for this memory?" from
+the database and the worker's sweep retries the eviction from the artifact refs
+the forget transaction recorded. Only a transient failure is retried: a Redis
+authentication, permission, or wrong-type error cannot succeed on the next
+attempt, so it is recorded immediately with its reason.
 
 Who may write what is deliberate. 000075 revoked receipt writes from the tenant
 identity: a request path that can write a receipt can forge ``verified`` for a
@@ -30,6 +33,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -37,7 +43,12 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.cache.memory_keys import HOT_CACHE_STORE, OBJECT_CACHE_STORE
+from app.cache.memory_keys import (
+    HOT_CACHE_STORE,
+    OBJECT_CACHE_STORE,
+    memory_hot_key,
+    memory_object_key,
+)
 from app.db import session_with_org
 from app.exceptions import ConflictError, MemoryNotFoundError
 from app.lifecycle import ForgetCacheScope, ForgetMemory, forget_memory_session
@@ -68,15 +79,65 @@ ERASURE_STORES: tuple[str, ...] = (
     *_CACHE_STORES,
 )
 
-#: Cache eviction retry policy. Three attempts with a 50 ms base stay under
-#: ~0.4 s of added request latency on the worst path, which is the whole point:
-#: a committed forget must not hang behind Redis. Exhaustion is not silent — the
-#: outbox attempt column records it and the worker retries from the refs.
-_CACHE_RETRY_ATTEMPTS = 3
-_CACHE_RETRY_BASE_SECONDS = 0.05
-_CACHE_RETRY_CAP_SECONDS = 0.4
-_CACHE_RETRY_JITTER_FRACTION = 0.25
 _ERROR_MAX_CHARS = 200
+
+
+@dataclass(frozen=True, slots=True)
+class ForgetAddress:
+    """The identifiers that address one memory's cached copies."""
+
+    org_id: UUID
+    agent_id: UUID
+    memory_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class ForgetEviction:
+    """A committed forget whose cached copies the request path must clear."""
+
+    address: ForgetAddress
+    revision: int
+
+
+@dataclass(frozen=True, slots=True)
+class CacheRetryPolicy:
+    """Bounds for the request path's cache eviction.
+
+    ``total_seconds`` bounds the whole eviction, not one attempt. Three attempts
+    each stalled to the default 0.5 s Redis socket timeout would add ~1.5 s
+    *before* any backoff — and the route awaits that after the tombstone commits.
+    With a total budget the request returns at the budget and the worker finishes
+    what this path could not; the recorded attempt says why. Measured with a
+    writer that stalls 0.5 s and fails on every attempt: 1.001 s median and
+    1.002 s maximum over five runs, two attempts started, outcome ``failed``.
+    """
+
+    attempts: int = 3
+    base_seconds: float = 0.05
+    cap_seconds: float = 0.4
+    jitter_fraction: float = 0.25
+    total_seconds: float = 1.0
+    rng: Callable[[], float] = field(default=random.random)
+    sleep: Callable[[float], Awaitable[None]] = field(default=asyncio.sleep)
+
+
+_DEFAULT_CACHE_RETRY = CacheRetryPolicy()
+
+
+@dataclass(frozen=True, slots=True)
+class CacheEvictionAttempt:
+    """What the request path's eviction did, for the outbox attempt column."""
+
+    state: str
+    error: str | None = None
+
+    @classmethod
+    def succeeded(cls) -> CacheEvictionAttempt:
+        return cls(state="pending")
+
+    @classmethod
+    def failed(cls, reason: str) -> CacheEvictionAttempt:
+        return cls(state="failed", error=reason)
 
 #: The outbox row's job state and the request path's cache attempt, in one read.
 #: The attempt column is tenant-writable work state, not proof: its domain is
@@ -117,21 +178,19 @@ UPDATE ibex_core.memory_lifecycle_outbox
 """
 
 
-def forget_cache_scope(
-    cache_writer: Any, *, org_id: UUID, agent_id: UUID, memory_id: UUID
-) -> ForgetCacheScope:
+def forget_cache_scope(address: ForgetAddress) -> ForgetCacheScope:
     """The cache addresses the forget transaction must record.
 
-    ``None`` means no Redis cache is configured for this deployment
-    (``_configure_redis`` returns no writer when ``redis_url`` is unset), so the
-    scope is empty, no ref is recorded, and the worker reports ``not_applicable``
-    for the cache stores instead of a purge of an address that never existed.
+    The keys are derived even when this deployment has no cache writer. A
+    deployment that had a cache and later lost its configuration would otherwise
+    leave entries nothing sweeps: an absent ref means "not recorded", never
+    "proved absent". The worker reaches the derived address and records
+    ``failed`` when Redis is unconfigured, which is honest — it cannot prove
+    absence — instead of ``not_applicable``.
     """
-    if cache_writer is None:
-        return ForgetCacheScope()
     return ForgetCacheScope(
-        object_keys=(cache_writer.object_key(org_id, memory_id),),
-        hot_keys=(cache_writer.hot_key(org_id, agent_id),),
+        object_keys=(memory_object_key(address.org_id, address.memory_id),),
+        hot_keys=(memory_hot_key(address.org_id, address.agent_id),),
     )
 
 
@@ -168,12 +227,8 @@ async def invalidate_forgotten_memory(
     cache_writer: Any,
     *,
     session_factory: Any,
-    org_id: UUID,
-    agent_id: UUID,
-    memory_id: UUID,
-    revision: int,
-    rng: Any = random.random,
-    sleep: Any = asyncio.sleep,
+    eviction: ForgetEviction,
+    retry: CacheRetryPolicy = _DEFAULT_CACHE_RETRY,
 ) -> None:
     """Evict both cached copies and record the outcome where the ledger reads.
 
@@ -183,66 +238,101 @@ async def invalidate_forgotten_memory(
     recorded as an outbox attempt, not logged and dropped, and the worker's
     receipt later supersedes it.
     """
-    state, error = await _purge_cache(
-        cache_writer,
-        org_id=org_id,
-        agent_id=agent_id,
-        memory_id=memory_id,
-        rng=rng,
-        sleep=sleep,
-    )
     if cache_writer is None:
-        # No cache in this deployment: nothing was attempted and nothing is
-        # outstanding. The worker records `not_applicable` from the absent refs.
+        # No cache writer exists, so this path attempted nothing (and the
+        # tombstone transaction still recorded the derived refs, so the worker
+        # can reach them and report honestly).
         return
-    await _record_cache_eviction(
-        session_factory,
-        org_id=org_id,
-        memory_id=memory_id,
-        revision=revision,
-        state=state,
-        error=error,
-    )
+    attempt = await _purge_cache(cache_writer, eviction.address, retry)
+    await _record_cache_eviction(session_factory, eviction, attempt)
 
 
 async def _purge_cache(
     cache_writer: Any,
-    *,
-    org_id: UUID,
-    agent_id: UUID,
-    memory_id: UUID,
-    rng: Any,
-    sleep: Any,
-) -> tuple[str, str | None]:
-    """Delete both cached copies with bounded retry; return the attempt state."""
-    if cache_writer is None:
-        return "pending", None
-    last: BaseException | None = None
-    for attempt in range(1, _CACHE_RETRY_ATTEMPTS + 1):
+    address: ForgetAddress,
+    retry: CacheRetryPolicy,
+) -> CacheEvictionAttempt:
+    """Delete both cached copies under a total budget; return the attempt state."""
+    started = time.monotonic()
+    try:
+        await asyncio.wait_for(
+            _purge_with_retry(cache_writer, address, retry),
+            timeout=retry.total_seconds,
+        )
+    except TimeoutError as exc:
+        # ``wait_for`` raises the builtin TimeoutError, and a writer (or a test
+        # double) can raise the same builtin from its own transport. Elapsed time
+        # separates the budget from a transport timeout, so the recorded reason
+        # is the truth rather than "budget" for every timeout.
+        if time.monotonic() - started >= retry.total_seconds:
+            logger.warning(  # NOSONAR pythonsecurity:S5145 - UUID hex is hex-only, not free text
+                "memory cache eviction exceeded its request budget; recorded for the erasure sweep "
+                "org_id=%s memory_id=%s budget_seconds=%s",
+                address.org_id.hex,
+                address.memory_id.hex,
+                retry.total_seconds,
+            )
+            return CacheEvictionAttempt.failed(
+                f"eviction exceeded {retry.total_seconds:.1f}s request budget"
+            )
+        logger.warning(  # NOSONAR pythonsecurity:S5145 - UUID hex is hex-only, not free text
+            "memory cache eviction timed out; recorded for the erasure sweep "
+            "org_id=%s memory_id=%s",
+            address.org_id.hex,
+            address.memory_id.hex,
+        )
+        return CacheEvictionAttempt.failed(_error_reason(exc))
+    except Exception as exc:  # noqa: BLE001 — any eviction failure is recorded
+        logger.warning(  # NOSONAR pythonsecurity:S5145 - UUID hex is hex-only, not free text
+            "memory cache eviction failed; recorded for the erasure sweep "
+            "org_id=%s memory_id=%s error_type=%s",
+            address.org_id.hex,
+            address.memory_id.hex,
+            type(exc).__name__,
+        )
+        return CacheEvictionAttempt.failed(_error_reason(exc))
+    return CacheEvictionAttempt.succeeded()
+
+
+async def _purge_with_retry(
+    cache_writer: Any,
+    address: ForgetAddress,
+    retry: CacheRetryPolicy,
+) -> None:
+    """Retry only a failure a later attempt can fix; re-raise anything else."""
+    for attempt in range(1, retry.attempts + 1):
         try:
             await cache_writer.forget_memory(
-                org_id=org_id, agent_id=agent_id, memory_id=memory_id
+                org_id=address.org_id,
+                agent_id=address.agent_id,
+                memory_id=address.memory_id,
             )
-            return "pending", None
-        except Exception as exc:  # noqa: BLE001 — any eviction failure is recorded
-            last = exc
-            if attempt < _CACHE_RETRY_ATTEMPTS:
-                await sleep(_cache_backoff_seconds(attempt, rng))
-    logger.warning(  # NOSONAR pythonsecurity:S5145 - UUID hex is hex-only, not free text
-        "memory cache eviction exhausted its retries; recorded for the erasure sweep "
-        "org_id=%s memory_id=%s error_type=%s",
-        org_id.hex,
-        memory_id.hex,
-        type(last).__name__,
-    )
-    return "failed", _error_reason(last)
+            return
+        except Exception as exc:
+            if not _retryable(exc) or attempt >= retry.attempts:
+                raise
+            await retry.sleep(_cache_backoff_seconds(attempt, retry))
 
 
-def _cache_backoff_seconds(attempt: int, rng: Any) -> float:
+def _retryable(exc: BaseException) -> bool:
+    """Whether an eviction failure is transient.
+
+    ``CacheInvalidationError`` carries the writer's classification (a timeout or
+    connection failure is retryable; authentication, permissions, and wrong-type
+    replies are not). A test double or a transport that raises ``OSError`` is the
+    same transient class.
+    """
+    classified = getattr(exc, "retryable", None)
+    if classified is not None:
+        return bool(classified)
+    return isinstance(exc, OSError)
+
+
+def _cache_backoff_seconds(attempt: int, retry: CacheRetryPolicy) -> float:
     """Capped exponential delay with bounded jitter for attempt ``attempt`` (1-based)."""
-    base = min(_CACHE_RETRY_BASE_SECONDS * (2 ** (attempt - 1)), _CACHE_RETRY_CAP_SECONDS)
-    jitter = _CACHE_RETRY_JITTER_FRACTION * (2.0 * rng() - 1.0)
-    return max(0.0, min(_CACHE_RETRY_CAP_SECONDS, base * (1.0 + jitter)))
+    base = min(retry.base_seconds * (2 ** (attempt - 1)), retry.cap_seconds)
+    jitter = retry.jitter_fraction * (2.0 * retry.rng() - 1.0)
+    return max(0.0, min(retry.cap_seconds, base * (1.0 + jitter)))
 
 
 def _error_reason(exc: BaseException | None) -> str | None:
@@ -259,12 +349,8 @@ def _error_reason(exc: BaseException | None) -> str | None:
 
 async def _record_cache_eviction(
     session_factory: Any,
-    *,
-    org_id: UUID,
-    memory_id: UUID,
-    revision: int,
-    state: str,
-    error: str | None,
+    eviction: ForgetEviction,
+    attempt: CacheEvictionAttempt,
 ) -> None:
     """Write the request path's cache attempt, or record that it is unreadable.
 
@@ -273,15 +359,16 @@ async def _record_cache_eviction(
     become a 503. The outstanding work is still reachable — the forget
     transaction recorded the cache refs, so the worker evicts them regardless.
     """
+    address = eviction.address
     params = {
-        "org_id": str(org_id),
-        "memory_id": str(memory_id),
-        "revision": revision,
-        "state": state,
-        "error": error,
+        "org_id": str(address.org_id),
+        "memory_id": str(address.memory_id),
+        "revision": eviction.revision,
+        "state": attempt.state,
+        "error": attempt.error,
     }
     try:
-        async with session_with_org(session_factory, str(org_id)) as session:
+        async with session_with_org(session_factory, str(address.org_id)) as session:
             await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                     _RECORD_CACHE_EVICTION_SQL
@@ -291,9 +378,9 @@ async def _record_cache_eviction(
     except Exception:  # a committed forget must still return
         logger.warning(  # NOSONAR pythonsecurity:S5145 - UUID hex is hex-only, not free text
             "memory cache attempt could not be recorded org_id=%s memory_id=%s revision=%s",
-            org_id.hex,
-            memory_id.hex,
-            revision,
+            address.org_id.hex,
+            address.memory_id.hex,
+            eviction.revision,
             exc_info=True,
         )
 

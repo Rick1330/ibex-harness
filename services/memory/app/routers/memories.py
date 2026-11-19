@@ -36,6 +36,8 @@ from app.lifecycle import ForgetMemory
 from app.read.lineage import DEFAULT_LINEAGE_DEPTH, MAX_LINEAGE_DEPTH, LineageQuery
 from app.read.models import HotMemoryQuery
 from app.routers.memory_forget_support import (
+    ForgetAddress,
+    ForgetEviction,
     forget_cache_scope,
     forget_memory_with_error_mapping,
     invalidate_forgotten_memory,
@@ -188,14 +190,15 @@ async def forget_memory(
     gets ``AGENT_SCOPE_REQUIRED`` rather than acting for an arbitrary agent.
     """
     agent_id = require_agent_scope(ctx.token)
-    # The cache addresses are recorded in the forget transaction itself, so the
-    # worker can still evict them if this request dies after the commit.
-    cache_scope = forget_cache_scope(
-        ctx.cache_writer,
-        org_id=ctx.token.org_id,
-        agent_id=agent_id,
-        memory_id=memory_id,
+    address = ForgetAddress(
+        org_id=ctx.token.org_id, agent_id=agent_id, memory_id=memory_id
     )
+    # The cache addresses are recorded in the forget transaction itself, so the
+    # worker can still evict them if this request dies after the commit. They are
+    # derived even when no cache writer is configured: an absent ref means "not
+    # recorded", never "proved absent", and the worker must be able to reach an
+    # entry a deployment lost the configuration for.
+    cache_scope = forget_cache_scope(address)
     revision = await forget_memory_with_error_mapping(
         session_factory=ctx.session_factory,
         command=ForgetMemory(
@@ -209,10 +212,7 @@ async def forget_memory(
     await invalidate_forgotten_memory(
         ctx.cache_writer,
         session_factory=ctx.session_factory,
-        org_id=ctx.token.org_id,
-        agent_id=agent_id,
-        memory_id=memory_id,
-        revision=revision,
+        eviction=ForgetEviction(address=address, revision=revision),
     )
     erasure = await read_forget_erasure(
         ctx.session_factory,
