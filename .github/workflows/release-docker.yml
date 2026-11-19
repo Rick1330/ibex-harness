@@ -142,14 +142,29 @@ jobs:
       # A failed lookup is not evidence of absence. `gh run list` returning non-zero
       # (rate limit, 5xx) used to be folded into an empty list, so three such answers
       # 30 s apart asserted "no CI push run on main" about a run that existed. A
-      # transport failure now retries without touching the absence counter, and
-      # absence is only declared after IBEX_SMOKE_ABSENT_CHECKS consecutive successful
-      # lookups (8 = 120 s, ~5x the 21 s observed between the CI run and the release
-      # run for the same commit) return nothing for this commit.
+      # transport failure now retries without touching the absence counter, and it
+      # breaks the streak: absence is only declared after IBEX_SMOKE_ABSENT_CHECKS
+      # *consecutive* successful lookups (8 = 120 s, ~5x the 21 s observed between the
+      # CI run and the release run for the same commit) return nothing for this commit.
+      # Consecutive, not cumulative, because an unobserved interval in the middle of a
+      # streak says nothing about what happened during it; a scattered empty-error-empty
+      # pattern must never add up to a claim, and a commit whose run never exists
+      # produces consecutive empties anyway, so the stricter rule costs nothing.
       #
-      # Absence is not an error: a tag cut after the artifact's 14-day retention, or a
-      # commit CI never built, leaves the bundle `unverified`, which is the truthful
-      # status. It is also not a silent pass — the warning names the reason.
+      # Those are three different verdicts and the warnings keep them apart: a run that
+      # was seen but never completed, absence proven by the streak, and "could not be
+      # established" when the budget ran out with neither. Exhausted retries are not
+      # evidence of absence, so one empty answer followed by a failing API reports that
+      # the result is unknown — naming how many lookups failed and the last error — not
+      # that CI never ran.
+      #
+      # A failed lookup also retries with exponential backoff and jitter (AGENTS.md
+      # §8.3) rather than on the healthy 15 s poll, so a persistent 5xx is not retried
+      # on a fixed drumbeat; a successful-but-empty lookup is not a failure and keeps
+      # the fixed interval. The wall-clock budget is attempts x interval, computed once,
+      # and every sleep is clipped to what is left of it, so growing delays cannot
+      # stretch it: when it is spent the loop stops and reports instead of retrying
+      # back-to-back.
       - name: Fetch the bundle smoke result for this commit
         id: bundle-smoke
         env:
@@ -165,9 +180,28 @@ jobs:
           interval="${IBEX_SMOKE_RUN_INTERVAL:-15}"
           # Consecutive *successful* lookups that find no run for this commit before the
           # step concludes the run does not exist. A lookup that fails never counts
-          # towards this: a 5xx says nothing about whether a run exists.
+          # towards this and resets it: a 5xx says nothing about whether a run exists, so
+          # an unobserved interval in the middle of a short streak must not be summed
+          # with the observations on either side of it.
           absent_checks="${IBEX_SMOKE_ABSENT_CHECKS:-8}"   # 8 x 15 s = 120 s
+          # Retry delay for a *failed* lookup only. The delay doubles per consecutive
+          # failure up to backoff_max, then carries equal jitter (uniform in
+          # [delay/2, delay]) so concurrent releases do not collide on the same instant.
+          # A successful-but-empty lookup is not a failure and keeps the fixed interval.
+          backoff_base="${IBEX_SMOKE_BACKOFF_BASE:-$interval}"
+          backoff_max="${IBEX_SMOKE_BACKOFF_MAX:-$(( interval * 4 ))}"   # 60 s
           (( attempts >= 1 )) || attempts=1
+          (( interval >= 0 )) || interval=0
+          (( absent_checks >= 1 )) || absent_checks=1
+          (( backoff_base >= 0 )) || backoff_base=0
+          (( backoff_max >= 1 )) || backoff_max=1
+          # attempts x interval is a wall-clock budget, not a multiplier for the backoff.
+          # It is computed once and every sleep is clipped to what is left of it; when it
+          # is spent the loop stops and reports rather than retrying back-to-back. A zero
+          # budget is only reachable through the test interval knob and means no
+          # wall-clock bound was asked for, so the attempt count is the whole bound.
+          budget=$(( attempts * interval ))
+          slept=0
 
           run_id=""
           conclusion=""
@@ -183,9 +217,18 @@ jobs:
               --commit "$COMMIT" --event push --branch main --limit 5 \
               --json databaseId,headSha,status,conclusion 2>"$errlog")"; then
               errors=$(( errors + 1 ))
+              absent=0
               last_error="$(tail -n 1 "$errlog" | tr -d '\r')"
               state="could not be queried (${last_error:-no error output})"
+              delay="$backoff_base"
+              for (( backoff = 1; backoff < errors && delay < backoff_max; backoff++ )); do
+                delay=$(( delay * 2 ))
+              done
+              if (( delay > backoff_max )); then delay="$backoff_max"; fi
+              half=$(( delay / 2 ))
+              delay=$(( half + RANDOM % (delay - half + 1) ))
             else
+              delay="$interval"
               [[ -n "$run_json" ]] || run_json='[]'
               exists="$(jq -r --arg sha "$COMMIT" \
                 'map(select(.headSha == $sha)) | length' <<<"$run_json")"
@@ -205,28 +248,39 @@ jobs:
               else
                 absent=$(( absent + 1 ))
                 state="has not appeared yet"
-                # A run that has not appeared after this many successful lookups is not
-                # slow, it does not exist. Stop waiting instead of spending the whole
-                # bound on a commit CI never built.
                 if (( absent >= absent_checks )); then
                   break
                 fi
               fi
             fi
             if (( attempt < attempts )); then
-              echo "CI push run on main for ${COMMIT} ${state} (check ${attempt}/${attempts}); waiting ${interval}s"
-              sleep "$interval"
+              remaining=$(( budget - slept ))
+              if (( budget > 0 && remaining <= 0 )); then
+                echo "CI push run on main for ${COMMIT} ${state} (check ${attempt}/${attempts}); the ${budget}s budget is spent, stopping"
+                break
+              fi
+              if (( delay > remaining )); then delay="$remaining"; fi
+              if (( delay > 0 )); then
+                echo "CI push run on main for ${COMMIT} ${state} (check ${attempt}/${attempts}); waiting ${delay}s"
+                sleep "$delay"
+                slept=$(( slept + delay ))
+              else
+                echo "CI push run on main for ${COMMIT} ${state} (check ${attempt}/${attempts})"
+              fi
             fi
           done
           rm -f "$errlog"
 
+          # Three verdicts, never merged: seen-but-unfinished, proven absence, and
+          # not established. Only the second is a claim about the world, and it reuses
+          # the exact evidence the early exit above required.
           if [[ -z "$run_id" ]]; then
             if (( saw_run )); then
-              echo "::warning::the CI push run on main for ${COMMIT} did not complete within $(( attempts * interval ))s; bundle status stays unverified"
-            elif (( absent > 0 )); then
-              echo "::warning::no CI push run on main for ${COMMIT} was found in ${checks} lookups (CI was never run for the commit, or the run and its artifact are older than retention); bundle status stays unverified"
+              echo "::warning::the CI push run on main for ${COMMIT} did not complete within the ${budget}s wait (${checks} lookups, the last still reporting it as unfinished); bundle status stays unverified"
+            elif (( absent >= absent_checks )); then
+              echo "::warning::no CI push run on main for ${COMMIT} was found in ${absent} consecutive lookups (CI was never run for the commit, or the run and its artifact are older than retention); bundle status stays unverified"
             else
-              echo "::warning::the CI run list for ${COMMIT} could not be queried (${errors} failed lookups over $(( checks * interval ))s, last error: ${last_error:-unknown}); bundle status stays unverified"
+              echo "::warning::whether a CI push run on main for ${COMMIT} exists could not be established: the run list could not be queried for ${errors} of ${checks} lookups and only ${absent} of the ${absent_checks} consecutive empty answers needed to report absence were seen (last error: ${last_error:-none}); bundle status stays unverified"
             fi
             exit 0
           fi
