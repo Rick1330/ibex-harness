@@ -9,8 +9,13 @@
 
 <p align="center"><strong>Self-hosted memory and context for multi-tenant AI agents.</strong></p>
 
+![IBEX Console Overview](docs/assets/console/overview.png)
+
+*The Console Overview, captured from a development build in demo mode. Every value is an illustrative fixture marked
+by the `Illustrative` chip; it is not live operator data (ADR-0089 §4).*
+
 <p align="center">
-  Point your agent at an OpenAI-compatible endpoint or add the MCP server. IBEX resolves tenant and agent identity,
+  Point your agent at an OpenAI-compatible endpoint or add the MCP server, and IBEX resolves tenant and agent identity,
   injects bounded context, stores governed memories, and attempts best-effort post-response evidence for governed
   sessions when the PostgreSQL evidence plane is configured.
 </p>
@@ -45,17 +50,14 @@
 ## Why IBEX
 
 Most agent stacks treat memory as a vector database and identity as an afterthought. IBEX treats both as governed,
-tenant-scoped infrastructure:
+tenant-scoped infrastructure.
 
-- **Tenant and agent identity on every call.** No `org_id` is ever accepted from a URL or browser; AuthService is the
-  authority and every data path filters explicitly.
-- **Bounded context, not a prompt dump.** Context assembly retrieves, ranks, and packs memories and directives within a
-  token budget and a deadline, and degrades to directive-only context rather than blocking the proxy.
-- **Best-effort evidence after the response.** When the PostgreSQL evidence plane is configured and the session's
-  authoritative evidence-fence version is available, governed chat-completion requests attempt an evidence outbox write
-  after the response. The session does not need to be closed first. Evidence may be withheld when the session or its
-  fence is missing, or lost when persistence fails, the bounded queue is saturated, or the process shuts down before
-  draining. The relay is default-off; this is not a synchronous durable-before-ack guarantee.
+- **Identity on every call.** No `org_id` is accepted from a URL or browser. AuthService is the authority, and every
+  data path filters explicitly.
+- **Bounded context, not a prompt dump.** Retrieval, ranking, and packing run under a token budget and a deadline, and
+  degrade to directive-only context rather than blocking the proxy.
+- **Evidence after the response, deliberately best-effort.** Governed requests attempt an evidence outbox write once
+  the response is sent. The guarantee has a stated boundary; see [Status and evidence](#status-and-evidence).
 
 ## How it fits together
 
@@ -78,8 +80,10 @@ The proxy is the adoption surface. Memory, context assembly, and the evidence mo
 
 ## Quick start
 
-Prerequisites: Docker Compose v2 or Podman Compose, GNU Make, and the versions in
-[`infra/tool-versions.conf`](infra/tool-versions.conf). See [TOOLCHAIN.md](engineering/TOOLCHAIN.md).
+The supported deployment is the `v1-single-node` profile from [ADR-0097](engineering/adr/0097-v1-supported-profile.md):
+one self-hosted Docker Compose project, no hosted offering and no HA topology. Prerequisites are Docker Compose v2 or
+Podman Compose, GNU Make, and the versions in [`infra/tool-versions.conf`](infra/tool-versions.conf); see
+[TOOLCHAIN.md](engineering/TOOLCHAIN.md).
 
 ```bash
 git clone https://github.com/Rick1330/ibex-harness.git
@@ -88,7 +92,31 @@ make setup
 make check-tools
 ```
 
-Start the local dependencies, apply migrations, and seed a development tenant:
+Generate the profile's secrets, start it, retrieve the one-time admin token, and prove it with an authenticated
+request:
+
+```bash
+make v1-secrets
+make v1-up
+make v1-bootstrap-pat   # print the one-time bootstrap PAT, then store it and delete the file
+make v1-smoke
+```
+
+`make v1-up` rebuilds the images, waits for every required service, and prints the URL. The first start downloads
+roughly 2.3 GB of embedding weights and may take up to two hours; a warm `tei-cache` volume is the recommended pre-seed
+for an offline or bandwidth-limited install. `make v1-down` stops the profile without deleting volumes.
+
+For a restricted sandbox or Podman machine:
+
+```bash
+IBEX_RUNTIME=podman IBEX_NETWORK=host make setup
+```
+
+`make env-doctor` diagnoses runtime, port, DNS, and telemetry issues.
+
+### Contributor path
+
+The development stack is for working on the code, not for running the supported profile:
 
 ```bash
 make compose-dev-up
@@ -103,24 +131,17 @@ Start AuthService and the proxy in two terminals using the commands in
 make dev-smoke
 ```
 
-For a restricted sandbox or Podman machine:
+`make db-seed` is local-development only; never run it against a shared environment.
 
-```bash
-IBEX_RUNTIME=podman IBEX_NETWORK=host make setup
-```
-
-`make env-doctor` diagnoses runtime, port, DNS, and telemetry issues. `make db-seed` is local-development only; never
-run it against a shared environment.
-
-Run the Console:
+### Run the Console
 
 ```bash
 pnpm install --frozen-lockfile --ignore-scripts
 pnpm --filter @ibex/console dev
 ```
 
-Open `http://127.0.0.1:3000`. The Console is read-only and fails closed without an operator session and
-`IBEX_OPERATOR_API_ORIGIN`.
+Open `http://127.0.0.1:3000`. Without an operator API origin the Console fails closed on live surfaces; a development
+build also offers labelled illustrative fixtures (see [Console](#console)).
 
 ## Core concepts
 
@@ -131,35 +152,59 @@ Open `http://127.0.0.1:3000`. The Console is read-only and fails closed without 
 | **Session** | A conversation or run context that groups turns and traces. |
 | **Memory** | A governed record with provenance, confidence, lifecycle state, and optional PII redaction. |
 | **Directive** | Standing context injected on every request, versioned separately from memories. |
-| **Evidence** | Best-effort post-response trace and capture facts for governed sessions when the evidence store, durable session, and authoritative fence are available; rows may be withheld or lost on failure. |
+| **Evidence** | Best-effort post-response trace and capture facts; rows may be withheld or lost on failure. |
 
 ## Services
 
 | Service | Runtime | Status |
 | --- | --- | --- |
-| [`proxy/`](services/proxy/README.md) | Go | Shipped locally; hosted SLO evidence open |
-| [`auth/`](services/auth/README.md) | Go | Shipped locally; production key management gated |
-| [`memory/`](services/memory/README.md) | Python / FastAPI | Shipped locally |
-| [`context/`](services/context/README.md) | Python / gRPC | Provisional; trusted-boundary caller limitation is explicit |
-| [`embedder/`](services/embedder/README.md) | Python | Shipped or experimental by profile |
-| [`api/`](services/api/README.md) | Python / FastAPI | Mounted and tested; operator surfaces provisional |
-| [`worker/`](services/worker/README.md) | Python / Celery | Mixed; some task families are explicit no-ops |
-| [`mcp-memory/`](services/mcp-memory/README.md) | Python | Shipped/partial; logging-only audit by default |
-| [`mcp-operator/`](services/mcp-operator/README.md) | Python | Shipped locally, default-off |
-| [`relay/`](services/relay/README.md) | Go | Implemented locally, default-off; no production sink |
-| [`console/`](services/console/README.md) | Nuxt 4 + Nitro | Provisional; 8 of 10 core surfaces have a live read path |
+| [`proxy/`](services/proxy/README.md) | Go | Local; hosted SLO open |
+| [`auth/`](services/auth/README.md) | Go | Local; production key management gated |
+| [`memory/`](services/memory/README.md) | Python / FastAPI | Local |
+| [`context/`](services/context/README.md) | Python / gRPC | Provisional; caller boundary explicit |
+| [`embedder/`](services/embedder/README.md) | Python | Profile-dependent |
+| [`api/`](services/api/README.md) | Python / FastAPI | Mounted, tested; operator surfaces provisional |
+| [`worker/`](services/worker/README.md) | Python / Celery | Mixed; some no-op tasks |
+| [`mcp-memory/`](services/mcp-memory/README.md) | Python | Partial; logging-only audit |
+| [`mcp-operator/`](services/mcp-operator/README.md) | Python | Local, default-off |
+| [`relay/`](services/relay/README.md) | Go | Local, default-off; no production sink |
+| [`console/`](services/console/README.md) | Nuxt 4 + Nitro | Provisional; 8 of 10 core reads live |
 
-The full inventory, shared packages, and local infrastructure are in [`services/README.md`](services/README.md),
+Status is a phrase here; the evidence and the boundary are behind each service link. The full inventory, shared
+packages, and local infrastructure are in [`services/README.md`](services/README.md),
 [`packages/README.md`](packages/README.md), and [`infra/README.md`](infra/README.md).
 
 ## Console
 
 The Console is the operations plane for the memory/context lifecycle: Overview, Agents, Sessions, Memories, Evidence,
-Directives, Policies, Explore, Platform, and Settings. Incidents, drift, analytics, budgets, providers, MCP tools, and
-access are an explicit platform tier behind a collapsed disclosure (ADR-0089).
+Directives, Policies, Explore, Platform, and Settings. Incidents, drift, audit, analytics, budgets, providers, MCP
+tools, and access are an explicit platform tier behind a collapsed disclosure ([ADR-0089](engineering/adr/0089-product-shape-and-console-scope.md)).
+
+It has a session. `/login` exchanges a personal access token once for an HttpOnly cookie, and
+`server/api/operator/session/{login,logout,refresh}` are the only routes that mutate cookies. Every operator **data**
+route is still a read: the Console exposes no data mutations. Eight of the ten core surfaces have a live read path;
+Policies and Settings remain labelled previews.
 
 A `Live` surface means its read path is connected and fails closed; it is not an acceptance claim. Every Console row
 remains provisional in the status ledger. See [`services/console/README.md`](services/console/README.md).
+
+![IBEX Console Explore](docs/assets/console/explore.png)
+
+*Explore: trace metadata and capture completeness. Illustrative fixtures under the `Illustrative` chip, not live
+operator data (ADR-0089 §4).*
+
+![IBEX Console Platform](docs/assets/console/platform.png)
+
+*Platform: dependency, ingestion, and recovery health. Illustrative fixtures under the `Illustrative` chip, not live
+operator data (ADR-0089 §4).*
+
+![IBEX Console Settings](docs/assets/console/settings.png)
+
+*Settings: a labelled `Illustrative preview`. No live operator data is rendered and no contract is claimed
+(ADR-0089 §4).*
+
+These captures come from a development build in demo mode. In a live deployment the same live surfaces render from the
+operator API, and preview surfaces stay labelled previews.
 
 ## Documentation
 
@@ -206,6 +251,17 @@ routes, schemas, fixtures, and design documents are not deployment evidence.
 
 The authoritative runtime claim is the [status ledger](https://ibexharness.com/docs/architecture/status-and-evidence).
 Do not infer hosted readiness, measured SLOs, HA, or restore evidence from this README.
+
+**Evidence is best-effort, by design.** When the PostgreSQL evidence plane is configured and the session's
+authoritative evidence-fence version is available, governed chat-completion requests attempt an evidence outbox write
+after the response; the session does not need to be closed first. Evidence may be withheld when the session or its
+fence is missing, or lost when persistence fails, the bounded queue is saturated, or the process shuts down before
+draining. The relay is default-off, so this is not a synchronous durable-before-ack guarantee.
+
+**The supported profile has been proven, not accepted.** On 2026-11-15 all 13 health-checked `v1-single-node`
+containers came up healthy, no application connection used the owner login, and a route-level cross-tenant request was
+refused. That is a live cross-tenant read plus the integration suites — not a full acceptance suite, and not a
+two-tenant browser journey.
 
 ## Contributing
 
