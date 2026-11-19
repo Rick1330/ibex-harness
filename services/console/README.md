@@ -32,7 +32,8 @@ pnpm --filter @ibex/console dev
 ```
 
 The API origin must be HTTPS whenever an operator session cookie is present. On operator data routes the BFF forwards
-only the configured access cookie; refresh, CSRF, and unrelated cookies are forwarded only on the three session routes.
+only the configured access cookie; the refresh and CSRF cookies are forwarded only by the three session routes and by
+the server-side rotation a `401` read triggers, and unrelated cookies are never forwarded.
 
 ## Surface status
 
@@ -96,10 +97,12 @@ Browser code calls same-origin Nuxt server routes only:
 - `GET /api/operator/session/bootstrap`
 - `POST /api/operator/session/login`, `/api/operator/session/logout`, `/api/operator/session/refresh`
 
-The session routes are the only cookie mutations — login, logout, and refresh; the fourth, `bootstrap`, is a same-origin
-read of non-secret wiring. Every operator **data** route above is a read. The BFF strips `org_id` before returning D1
-context and overview payloads. Responses use runtime Zod validation, `Cache-Control: private, no-store`, `Vary: Cookie`,
-and same-origin SSE restrictions.
+The three session routes are the only cookie actions the browser can initiate — login, logout, and refresh; the fourth,
+`bootstrap`, is a same-origin read of non-secret wiring. A data read is not inert on the cookie jar: a `401` from an
+expired access cookie makes the BFF rotate the session upstream and relay the new `Set-Cookie` headers on that response.
+Every operator **data** route above is a read and none writes an operator record. The BFF strips `org_id` before
+returning D1 context and overview payloads. Responses use runtime Zod validation, `Cache-Control: private, no-store`,
+`Vary: Cookie`, and same-origin SSE restrictions.
 
 ## Configuration boundary
 
