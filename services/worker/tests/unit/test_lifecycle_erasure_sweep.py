@@ -110,8 +110,8 @@ def _sweep_deps(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Wire ``_run_sweep`` to a fake engine and return it."""
     engine = MagicMock()
     engine.dispose = AsyncMock()
-    monkeypatch.setattr(le, "create_engine", lambda _settings: engine)
-    monkeypatch.setattr(le, "create_session_factory", lambda _engine: object())
+    monkeypatch.setattr(le.sweep, "create_engine", lambda _settings: engine)
+    monkeypatch.setattr(le.sweep, "create_session_factory", lambda _engine: object())
     return engine
 
 
@@ -133,9 +133,9 @@ async def test_sweep_claims_settles_and_disposes_the_engine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine = _sweep_deps(monkeypatch)
-    monkeypatch.setattr(le, "_claim_one", AsyncMock(return_value=_ROW))
+    monkeypatch.setattr(le.sweep, "_claim_one", AsyncMock(return_value=_ROW))
     settle = AsyncMock(return_value="complete")
-    monkeypatch.setattr(le, "_erase_row", settle)
+    monkeypatch.setattr(le.sweep, "_erase_row", settle)
 
     out = await le._run_sweep(settings=_SETTINGS)
 
@@ -154,7 +154,7 @@ async def test_sweep_claims_settles_and_disposes_the_engine(
 @pytest.mark.asyncio
 async def test_sweep_stops_when_nothing_is_claimable(monkeypatch: pytest.MonkeyPatch) -> None:
     _sweep_deps(monkeypatch)
-    monkeypatch.setattr(le, "_claim_one", AsyncMock(return_value=None))
+    monkeypatch.setattr(le.sweep, "_claim_one", AsyncMock(return_value=None))
 
     out = await le._run_sweep(settings=_SETTINGS, claim_batch=3)
 
@@ -168,9 +168,9 @@ async def test_sweep_claims_nothing_once_the_job_deadline_has_passed(
     _sweep_deps(monkeypatch)
     # Each read of the clock advances a full job budget, so the second read —
     # the loop guard — is already past the deadline the first one computed.
-    monkeypatch.setattr(le, "time", SimpleNamespace(monotonic=_Clock(step=1000.0)))
+    monkeypatch.setattr(le.sweep, "time", SimpleNamespace(monotonic=_Clock(step=1000.0)))
     claim = AsyncMock(return_value=_ROW)
-    monkeypatch.setattr(le, "_claim_one", claim)
+    monkeypatch.setattr(le.sweep, "_claim_one", claim)
 
     out = await le._run_sweep(settings=_SETTINGS)
 
@@ -195,7 +195,7 @@ async def test_claim_one_leases_for_the_job_budget(monkeypatch: pytest.MonkeyPat
         "erasure_deadline": None,
     }
     session = _FakeSession(_Result([claimed]))
-    monkeypatch.setattr(le, "session_unpinned", _scope(session))
+    monkeypatch.setattr(le.sweep, "session_unpinned", _scope(session))
 
     row = await le._claim_one(object(), _SETTINGS)
 
@@ -215,7 +215,7 @@ async def test_claim_one_returns_none_when_the_claim_is_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _FakeSession(_Result([]))
-    monkeypatch.setattr(le, "session_unpinned", _scope(session))
+    monkeypatch.setattr(le.sweep, "session_unpinned", _scope(session))
 
     assert await le._claim_one(object(), _SETTINGS) is None
 
@@ -229,9 +229,9 @@ async def test_claim_one_returns_none_when_the_claim_is_empty(
 async def test_erase_row_retires_a_superseded_revision_without_reading_refs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(le, "_retire_if_stale", AsyncMock(return_value=True))
+    monkeypatch.setattr(le.sweep, "_retire_if_stale", AsyncMock(return_value=True))
     read = AsyncMock()
-    monkeypatch.setattr(le, "_read_erasure_state", read)
+    monkeypatch.setattr(le.sweep, "_read_erasure_state", read)
 
     assert await le._erase_row(object(), _SETTINGS, _ROW, time.monotonic() + 10) == "retired"
     read.assert_not_awaited()
@@ -241,14 +241,15 @@ async def test_erase_row_retires_a_superseded_revision_without_reading_refs(
 async def test_erase_row_stages_the_provable_set_then_settles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(le, "_retire_if_stale", AsyncMock(return_value=False))
+    monkeypatch.setattr(le.sweep, "_retire_if_stale", AsyncMock(return_value=False))
     monkeypatch.setattr(
-        le,
+        le.sweep,
         "_read_erasure_state",
         AsyncMock(
             return_value=(
                 {"objectstore": ("s3://b/org-1/a.json",)},
                 {"session_event": "verified"},
+                "agent-1",
             )
         ),
     )
@@ -259,16 +260,18 @@ async def test_erase_row_stages_the_provable_set_then_settles(
         staged.append((target.store, target.locators, existing))
         return _StoreOutcome(store=target.store, status="verified")
 
-    monkeypatch.setattr(le, "_erase_store", record)
-    monkeypatch.setattr(le, "_settle", AsyncMock(return_value="complete"))
+    monkeypatch.setattr(le.sweep, "_erase_store", record)
+    monkeypatch.setattr(le.sweep, "_settle", AsyncMock(return_value="complete"))
 
     assert await le._erase_row(object(), _SETTINGS, _ROW, time.monotonic() + 10) == "complete"
+    object_key = f"{_ROW.org_id}:memory:{_ROW.memory_id}"
+    hot_key = f"{_ROW.org_id}:hot_memories:agent-1"
     assert staged == [
         ("objectstore", ("s3://b/org-1/a.json",), {"session_event": "verified"}),
         ("session_event", (), {"session_event": "verified"}),
-        ("cache", (), {"session_event": "verified"}),
-        ("cache_hot", (), {"session_event": "verified"}),
-    ]
+        ("cache", (object_key,), {"session_event": "verified"}),
+        ("cache_hot", (hot_key,), {"session_event": "verified"}),
+    ], "an absent cache ref is derived from the row, not treated as not_applicable"
 
 
 @pytest.mark.asyncio
@@ -277,7 +280,7 @@ async def test_retire_if_stale_reports_whether_the_row_was_retired(
     monkeypatch: pytest.MonkeyPatch, rowcount: int, retired: bool
 ) -> None:
     session = _FakeSession(_Result(rowcount=rowcount))
-    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+    monkeypatch.setattr(le.sweep, "session_as_erasure_org", _scope(session))
 
     assert await le._retire_if_stale(object(), _ROW) is retired
     _, params = session.statements[0]
@@ -298,21 +301,27 @@ async def test_read_erasure_state_groups_locators_and_keeps_receipts(
             ("session_event", "7"),
         ]
     )
-    session = _FakeSession(refs, _Result([("objectstore", "verified")]))
-    monkeypatch.setattr(le, "session_as_app_org", _scope(session))
+    session = _FakeSession(
+        refs, _Result([("objectstore", "verified")]), _Result([("agent-1",)])
+    )
+    monkeypatch.setattr(le.sweep, "session_as_app_org", _scope(session))
 
-    grouped, existing = await le._read_erasure_state(object(), _ROW)
+    grouped, existing, agent_id = await le._read_erasure_state(object(), _ROW)
 
     assert grouped == {
         "objectstore": ("s3://b/org-1/a.json", "s3://b/org-1/b.json"),
         "session_event": ("7",),
     }
     assert existing == {"objectstore": "verified"}
+    assert agent_id == "agent-1", "the hot cache key is derivable only with the agent"
     refs_sql, refs_params = session.statements[0]
     assert "memory_artifact_refs" in refs_sql
     assert refs_params == {"org_id": _ROW.org_id, "memory_id": _ROW.memory_id}
     _, receipt_params = session.statements[1]
     assert receipt_params["revision"] == _ROW.revision
+    agent_sql, agent_params = session.statements[2]
+    assert "FROM ibex_core.memories" in agent_sql
+    assert agent_params == {"org_id": _ROW.org_id, "memory_id": _ROW.memory_id}
     for _, params in session.statements:
         assert params["org_id"] == _ROW.org_id
         assert params["memory_id"] == _ROW.memory_id
@@ -363,7 +372,7 @@ async def test_session_event_stage_deletes_then_confirms_absence(
 ) -> None:
     # Two DELETEs (no result read) then two counts, both reporting absence.
     session = _FakeSession(_Result(), _Result(), 0, 0)
-    monkeypatch.setattr(le, "session_as_purge_org", _scope(session))
+    monkeypatch.setattr(le.staging, "session_as_purge_org", _scope(session))
 
     await le._stage_session_events(("7", "8"), _ERASURE, time.monotonic() + 5)
 
@@ -378,7 +387,7 @@ async def test_session_event_stage_fails_when_the_row_survives(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _FakeSession(_Result(), 1)
-    monkeypatch.setattr(le, "session_as_purge_org", _scope(session))
+    monkeypatch.setattr(le.staging, "session_as_purge_org", _scope(session))
 
     with pytest.raises(RuntimeError, match="still present"):
         await le._stage_session_events(("7",), _ERASURE, time.monotonic() + 5)
@@ -399,7 +408,7 @@ async def test_settle_upserts_only_fresh_receipts_then_completes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _held_session()
-    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+    monkeypatch.setattr(le.sweep, "session_as_erasure_org", _scope(session))
     outcomes = [
         _StoreOutcome(store="objectstore", status="verified", fresh=False),
         _StoreOutcome(store="session_event", status="not_applicable"),
@@ -427,7 +436,7 @@ async def test_settle_retries_with_backoff_while_the_deadline_holds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _held_session()
-    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+    monkeypatch.setattr(le.sweep, "session_as_erasure_org", _scope(session))
     erasure = replace(_ERASURE, row=replace(_ROW, attempts=3))
     outcomes = [_StoreOutcome(store="objectstore", status="failed", error="store_timeout")]
 
@@ -448,7 +457,7 @@ async def test_settle_fails_terminally_once_the_deadline_has_passed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _held_session()
-    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+    monkeypatch.setattr(le.sweep, "session_as_erasure_org", _scope(session))
     expired = replace(
         _ERASURE, row=replace(_ROW, deadline=datetime.now(tz=UTC) - timedelta(seconds=1))
     )
@@ -464,7 +473,7 @@ async def test_settle_stops_retrying_a_permanent_locator_failure(
 ) -> None:
     """A malformed or unsupported locator cannot succeed on the next sweep."""
     session = _held_session()
-    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+    monkeypatch.setattr(le.sweep, "session_as_erasure_org", _scope(session))
     outcomes = [
         _StoreOutcome(
             store="objectstore",
@@ -486,7 +495,7 @@ async def test_settle_writes_nothing_when_the_claim_is_superseded(
 ) -> None:
     """A stale worker must not overwrite the receipts a newer worker wrote."""
     session = _FakeSession(_Result([]))
-    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+    monkeypatch.setattr(le.sweep, "session_as_erasure_org", _scope(session))
 
     assert await le._settle(_ERASURE, [_StoreOutcome("objectstore", "verified")], {}) == (
         "retired"
@@ -500,7 +509,7 @@ async def test_settle_downgrades_a_store_whose_refs_changed_after_the_read(
 ) -> None:
     """A copy recorded between the first read and the settle cannot be certified."""
     session = _held_session(("objectstore", "s3://b/org-1/new.json"))
-    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+    monkeypatch.setattr(le.sweep, "session_as_erasure_org", _scope(session))
     staged = {"objectstore": ("s3://b/org-1/old.json",)}
 
     assert await le._settle(
@@ -518,8 +527,8 @@ async def test_settle_downgrades_an_object_that_reappeared_after_the_delete(
 ) -> None:
     """A re-archive at the same locator must not hide behind a verified receipt."""
     session = _held_session(("objectstore", "s3://b/org-1/a.json"))
-    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
-    monkeypatch.setattr(le, "object_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(le.sweep, "session_as_erasure_org", _scope(session))
+    monkeypatch.setattr(le.sweep, "object_exists", lambda *_a, **_k: True)
     staged = {"objectstore": ("s3://b/org-1/a.json",)}
 
     assert await le._settle(
@@ -537,12 +546,12 @@ async def test_settle_downgrades_when_the_object_store_recheck_is_unreachable(
 ) -> None:
     """A store that cannot be re-checked is not certified by the earlier HEAD."""
     session = _held_session(("objectstore", "s3://b/org-1/a.json"))
-    monkeypatch.setattr(le, "session_as_erasure_org", _scope(session))
+    monkeypatch.setattr(le.sweep, "session_as_erasure_org", _scope(session))
 
     def boom(*_args: Any, **_kwargs: Any) -> bool:
         raise RuntimeError("s3 down")
 
-    monkeypatch.setattr(le, "object_exists", boom)
+    monkeypatch.setattr(le.sweep, "object_exists", boom)
     staged = {"objectstore": ("s3://b/org-1/a.json",)}
 
     assert await le._settle(

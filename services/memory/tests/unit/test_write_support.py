@@ -93,6 +93,7 @@ async def test_cache_writer_skips_non_created() -> None:
 
 @pytest.mark.asyncio
 async def test_cache_writer_object_cache_success() -> None:
+    """The object write is the guard script; Redis is not asked to SET directly."""
     redis = MagicMock()
     redis.set = AsyncMock()
     script = AsyncMock(return_value=1)
@@ -100,8 +101,11 @@ async def test_cache_writer_object_cache_success() -> None:
     writer = MemoryCacheWriter(redis, Settings())
     outcome = WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=_row())
     await writer.write_created(outcome)
-    redis.set.assert_awaited_once()
-    script.assert_awaited_once()
+    redis.set.assert_not_awaited()
+    first, second = script.await_args_list
+    assert first.kwargs["keys"][0].endswith(f":memory:{outcome.memory.id}")
+    assert first.kwargs["keys"][1].endswith(f":memory_forgotten:{outcome.memory.id}")
+    assert second.kwargs["keys"][0].endswith(f":hot_memories:{outcome.memory.agent_id}")
 
 
 @pytest.mark.asyncio

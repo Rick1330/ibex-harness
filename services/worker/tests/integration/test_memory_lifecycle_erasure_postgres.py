@@ -118,10 +118,18 @@ async def test_memory_without_refs_is_not_applicable_not_failed(
     )
     # Only the stores whose producer records a ref for every copy get a receipt.
     # ClickHouse is not among them: "no ref" there means "not checked", so a
-    # receipt would be a claim nobody made.
-    assert set(receipts) == {"objectstore", "session_event", "cache", "cache_hot"}
-    assert {status for status, _error, _at in receipts.values()} == {"not_applicable"}
-    assert {verified_at for _status, _error, verified_at in receipts.values()} == {None}
+    # receipt would be a claim nobody made. The cache stores are different: their
+    # keys are derivable from the row, so the consumer derives them and proves
+    # them instead of reporting an absent ref as absence (A2).
+    statuses = {store: status for store, (status, _error, _at) in receipts.items()}
+    assert statuses == {
+        "objectstore": "not_applicable",
+        "session_event": "not_applicable",
+        "cache": "verified",
+        "cache_hot": "verified",
+    }
+    assert receipts["cache"][2] is not None, "a derived purge is stamped proved"
+    assert receipts["cache_hot"][2] is not None
     state, delivered_at, _available, _attempts = await harness.outbox(row_id=row_id)
     assert (state, delivered_at is not None) == ("complete", True)
     assert object_store.deleted == [], "no ref means no store call"
