@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // fakeRoundTripper lets a test pass a non-*http.Transport base to newTransport.
@@ -87,5 +90,34 @@ func TestUnit_EnqueueReportsTransportInitFailure(t *testing.T) {
 	}
 	if c.Enabled() {
 		t.Fatal("a client without a transport must not report itself enabled")
+	}
+}
+
+// TestUnit_NewClientRejectsUnclonableBase drives construction itself, not a
+// hand-built Client: a base that is not an *http.Transport cannot be cloned, so
+// newClient must keep the config for a precise Enqueue error and must not hold
+// an http.Client with a nil transport, which would fall back to the shared
+// process-global pool the private transport exists to avoid.
+func TestUnit_NewClientRejectsUnclonableBase(t *testing.T) {
+	t.Parallel()
+	c := newClient(Config{BaseURL: "http://127.0.0.1:9", Token: "t"}, fakeRoundTripper{})
+	if c.httpClient != nil {
+		t.Fatalf("httpClient=%v want nil (nil transport would use http.DefaultTransport)", c.httpClient)
+	}
+	if c.Enabled() {
+		t.Fatal("a client whose transport could not be built must not report itself enabled")
+	}
+	if c.initErr == nil {
+		t.Fatal("expected the construction failure to be retained")
+	}
+	err := c.Enqueue(context.Background(), Request{
+		OrgID: uuid.New(), AgentID: uuid.New(), SessionID: uuid.New(),
+		Turns: []Turn{{TurnIndex: 0, Role: "user", Content: "hi"}},
+	})
+	if !errors.Is(err, c.initErr) {
+		t.Fatalf("err=%v want the construction error %v", err, c.initErr)
+	}
+	if !strings.Contains(err.Error(), "base transport is") {
+		t.Fatalf("err=%v should name the unclonable base transport", err)
 	}
 }
