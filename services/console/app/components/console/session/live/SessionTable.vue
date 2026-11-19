@@ -38,8 +38,9 @@ function agentHref(row: SessionListRow): string {
     <table class="ix-agent-table" aria-label="Sessions">
       <caption class="sr-only">
         Metadata-only session index for this organization. Activity is the later of the completion time and the update
-        time, and the cell says which one it shows, plus the summed latency of the recorded turns. Extraction is the
-        zero-based index of the last extracted turn, which is not a count or a completion ratio.
+        time, labelled from the session's outcome so an abandoned session never reads as completed, plus the summed
+        latency of the recorded turns. Extraction is the zero-based index of the last extracted turn, which is not a
+        count or a completion ratio.
       </caption>
       <thead>
         <tr>
