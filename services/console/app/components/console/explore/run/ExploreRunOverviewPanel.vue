@@ -43,7 +43,6 @@ const tiles = computed(() => [
   {
     label: "Evidence observed",
     value: formatGovernStampSeconds(detail.value.evidence.observed_at),
-    helper: "When the platform read this evidence row.",
     tone: "default" as const,
   },
 ])

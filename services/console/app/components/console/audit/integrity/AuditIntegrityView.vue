@@ -185,7 +185,6 @@ function setFormat(value: string): void {
     <section class="flex flex-col gap-2" aria-labelledby="past-exports">
       <div class="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="past-exports" class="text-sm font-semibold text-fg-1">Past exports</h2>
-        <span class="text-[0.6875rem] text-fg-3">Signed files, who requested them, and the hash of each</span>
       </div>
 
       <div v-if="history.length === 0" class="rounded-lg border border-line-subtle bg-surface-1 p-2">

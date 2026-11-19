@@ -40,7 +40,6 @@ export type NavItem = {
   availability: NavAvailability
   phase: NavPhase
   question: string
-  description: string
 }
 
 export type NavGroup = {
@@ -110,7 +109,6 @@ function toNavItem(key: SurfaceKey, surface: SurfaceDefinition): NavItem {
     availability: surface.availability,
     phase: surface.phase,
     question: surface.question,
-    description: surface.description,
   }
 }
 

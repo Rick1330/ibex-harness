@@ -17,7 +17,6 @@ import { formatGovernClock, formatGovernStamp } from "@/lib/govern-format"
 import { DEMO_CONTEXT, DEMO_OVERVIEW, DEMO_PLATFORM_HEALTH, DEMO_TRACE_LIST } from "@/lib/console-demo"
 import {
   OVERVIEW_TAB_LABELS,
-  OVERVIEW_TAB_MEANING,
   overviewHref,
   type OverviewState,
   type OverviewTab,
@@ -173,10 +172,10 @@ const sources = computed(() =>
 
 const settled = computed(() => !loading.value && !healthLoading.value && !tracesLoading.value)
 
-const snapshotLabel = computed(() => {
-  if (!health.value) return "No platform snapshot has been read on this visit, so no finding is claimed."
-  return `Read ${staleness.value.label} (${formatGovernStamp(health.value.observed_at)}). Findings below restate only what that read reported.`
-})
+// The read stamp is the header's Observed value; only the absence case still needs a visible line.
+const snapshotLabel = computed(() =>
+  health.value ? "" : "No platform snapshot has been read on this visit, so no finding is claimed.",
+)
 
 const tabs = [
   { id: "attention", label: OVERVIEW_TAB_LABELS.attention },
@@ -366,8 +365,6 @@ const shortcutGroups = [
       aria-label="Overview sections"
       @update:model-value="update({ tab: $event as OverviewTab })"
     />
-
-    <p class="-mt-1 max-w-3xl text-[0.6875rem] leading-4 text-fg-3">{{ OVERVIEW_TAB_MEANING[state.tab] }}</p>
 
     <OverviewAttentionPanel
       v-if="state.tab === 'attention'"

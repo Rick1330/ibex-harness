@@ -89,7 +89,6 @@ describe("policies v2 data", () => {
     expect(status.text).toContain("6 rules in force (5 enforced, 1 advisory)")
     expect(status.text).toContain(`from snapshot ${CURRENT_SNAPSHOT}`)
     expect(status.caveat).toContain("4 of 7 linked runs")
-    expect(status.caveatDetail).toContain("not that the rule was skipped")
   })
 
   it("keeps simulation share and transitions in agreement", () => {

@@ -17,7 +17,6 @@ import { formatGovernStamp } from "@/lib/govern-format"
 import { DEMO_CONTEXT, DEMO_PLATFORM_HEALTH } from "@/lib/console-demo"
 import {
   PLATFORM_TAB_LABELS,
-  PLATFORM_TAB_MEANING,
   platformHref,
   type PlatformState,
   type PlatformTab,
@@ -244,8 +243,6 @@ const shortcutGroups = [
       aria-label="Platform sections"
       @update:model-value="update({ tab: $event as PlatformTab })"
     />
-
-    <p class="-mt-1 max-w-3xl text-[0.6875rem] leading-4 text-fg-3">{{ PLATFORM_TAB_MEANING[state.tab] }}</p>
 
     <PlatformDependencyPanel
       v-if="state.tab === 'dependencies'"

@@ -198,6 +198,23 @@ test("settings keeps its category and section in the URL and the keyboard", asyn
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible()
   await expect(page.getByRole("tab", { name: "Data" })).toHaveAttribute("aria-selected", "true")
   await expect(page.getByRole("heading", { name: "Retention", exact: true })).toBeVisible()
+  // The constraints live in the group body, above the rows they qualify. They
+  // are limitations, so the whole sentence is asserted, not a fragment.
+  await expect(
+    page.getByText("Separate windows for separate evidence. Analytics TTL is not canonical evidence retention.", {
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(
+    page.getByText("Canonical authority versus derived projection. A projection never certifies billing or deletion.", {
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(
+    page.getByText("The delivery path behind these settings. Reachability is not evidence certification.", {
+      exact: true,
+    }),
+  ).toBeVisible()
 
   await page.keyboard.press("]")
   await expect(page).toHaveURL(/\/settings$/)
@@ -214,6 +231,21 @@ test("settings keeps its category and section in the URL and the keyboard", asyn
   await expect(page.getByRole("heading", { name: "Privacy and redaction", exact: true })).toBeVisible()
   await expect(page.getByText("Presidio · enabled", { exact: true })).toBeVisible()
   await expect(page.getByText("Active legal holds", { exact: true })).toBeVisible()
+  await expectNoAxeViolations(page)
+
+  // The constraint sits in the group body as a note, not in the header as a
+  // subtitle, so no group mixes the two patterns.
+  await expect(page.locator("#settings-retention .console-panel-header")).not.toContainText("Separate windows")
+  await expect(page.locator("#settings-retention").getByRole("note")).toContainText(
+    "Analytics TTL is not canonical evidence retention.",
+  )
+
+  await page.goto("/settings?section=read-only")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Read-only", exact: true })).toBeVisible()
+  await expect(
+    page.getByText("The enforced write boundary. No mutation path exists in this console.", { exact: true }),
+  ).toBeVisible()
   await expectNoAxeViolations(page)
 })
 

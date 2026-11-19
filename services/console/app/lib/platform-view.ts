@@ -60,7 +60,6 @@ export type PlatformVerdict = {
   tone: "ok" | "warning" | "muted"
   text: string
   caveat: string | null
-  caveatDetail: string | null
 }
 
 export function platformVerdict(input: {
@@ -76,13 +75,11 @@ export function platformVerdict(input: {
       tone: "muted",
       text: "Sign in to read platform health.",
       caveat: "Nothing is substituted for an unverified session",
-      caveatDetail:
-        "The snapshot is a tenant-scoped operator read. Without a session that allows platform reads the console has no values, and it shows none rather than a sample report.",
     }
   }
 
   if (readiness === "loading") {
-    return { tone: "muted", text: "Reading the platform snapshot.", caveat: null, caveatDetail: null }
+    return { tone: "muted", text: "Reading the platform snapshot.", caveat: null }
   }
 
   if (!input.health) {
@@ -90,7 +87,6 @@ export function platformVerdict(input: {
       tone: "warning",
       text: "Platform snapshot unavailable.",
       caveat: "No values are inferred for the gap",
-      caveatDetail: `${input.failureDetail ?? "The health read did not resolve."} Dependency status, queue depth, recovery evidence and the deployed digest all stay unreported until a snapshot resolves.`,
     }
   }
 
@@ -99,8 +95,6 @@ export function platformVerdict(input: {
       tone: "warning",
       text: "The snapshot resolved but reported no dependency checks.",
       caveat: "An empty report is not a healthy report",
-      caveatDetail:
-        "dependency_health came back empty. The page reads that as an absence of evidence, not as evidence of absence: no dependency has been shown to work.",
     }
   }
 
@@ -112,8 +106,6 @@ export function platformVerdict(input: {
       tone: "warning",
       text: `${counts.unavailable} of ${counts.total} dependencies are reported unavailable.`,
       caveat: staleness.stale ? `Snapshot is ${staleness.asSpan}` : "Read once, at one moment",
-      caveatDetail:
-        "An unavailable dependency is the platform's own failed check. This page cannot say which requests were affected, because the run and incident contracts are not connected here.",
     }
   }
 
@@ -123,8 +115,6 @@ export function platformVerdict(input: {
       tone: "warning",
       text: `${findings} of ${counts.total} dependencies are not reporting ok${mode}.`,
       caveat: staleness.stale ? `Snapshot is ${staleness.asSpan}` : null,
-      caveatDetail:
-        "Degraded mode is reported by the platform separately from the dependency checks, so it can be set while every check still reads ok. Both are shown as the platform stated them.",
     }
   }
 
@@ -132,9 +122,6 @@ export function platformVerdict(input: {
     tone: "ok",
     text: `All ${counts.total} reported dependencies are ok and degraded mode is off.`,
     caveat: staleness.stale ? `Snapshot is ${staleness.asSpan}` : "Observation, not certification",
-    caveatDetail: staleness.stale
-      ? `The page marks a snapshot stale after ${PLATFORM_STALE_AFTER_SECONDS / 60} minutes. These values describe the last observation, not the present.`
-      : "One successful read of one snapshot. Availability over a window, incident history and evidence coverage are separate contracts and are not connected to this page.",
   }
 }
 

@@ -334,7 +334,6 @@ export type OverviewVerdict = {
   tone: "ok" | "warning" | "muted"
   text: string
   caveat: string | null
-  caveatDetail: string | null
 }
 
 /** One sentence an operator can act on, with the reason it is not stronger than that. */
@@ -351,8 +350,6 @@ export function overviewVerdict(input: {
       tone: "muted",
       text: "Sign in to read this organization.",
       caveat: "Nothing on this page is substituted from preview data.",
-      caveatDetail:
-        "The overview, the health snapshot and the run list are all tenant-scoped reads behind the operator session. Without it the console has no values to report, and it shows none.",
     }
   }
 
@@ -361,7 +358,6 @@ export function overviewVerdict(input: {
       tone: "muted",
       text: "Reading the organization snapshot.",
       caveat: null,
-      caveatDetail: null,
     }
   }
 
@@ -370,8 +366,6 @@ export function overviewVerdict(input: {
       tone: "warning",
       text: "Organization snapshot unavailable.",
       caveat: "No counts are invented for the gap.",
-      caveatDetail:
-        "operator.overview.v1 did not resolve for this session. The tiles stay unreported and the verdict stays open rather than falling back to a sample organization.",
     }
   }
 
@@ -383,8 +377,6 @@ export function overviewVerdict(input: {
       tone: "muted",
       text: "Organization counts are read; platform health is not.",
       caveat: "Verdict stays open",
-      caveatDetail:
-        "Counts and dependency health are separate contracts. A healthy organization cannot be claimed while operator.platform.health.v1 has not resolved.",
     }
   }
 
@@ -393,8 +385,6 @@ export function overviewVerdict(input: {
       tone: "warning",
       text: `${critical} critical finding${critical === 1 ? "" : "s"} and ${warning} warning${warning === 1 ? "" : "s"} are open on this snapshot.`,
       caveat: input.staleness.stale ? `Snapshot is ${input.staleness.asSpan}` : null,
-      caveatDetail:
-        "Every finding is derived from a value the platform reported in this snapshot. Findings do not survive a new read unless the same field still reports them.",
     }
   }
 
@@ -403,8 +393,6 @@ export function overviewVerdict(input: {
       tone: warning > 0 ? "warning" : "muted",
       text: `${input.issues.length} reported finding${input.issues.length === 1 ? "" : "s"}; none is critical.`,
       caveat: input.staleness.stale ? `Snapshot is ${input.staleness.asSpan}` : null,
-      caveatDetail:
-        "These are observations from the current snapshot. Incidents, SLO history and evidence coverage have their own contracts and are not connected to this verdict.",
     }
   }
 
@@ -412,8 +400,6 @@ export function overviewVerdict(input: {
     tone: "ok",
     text: `No reported issues across ${formatGovernNumber(platformDependencyCounts(platformDependencyEntries(input.health)).total)} dependencies.`,
     caveat: "Observation, not certification",
-    caveatDetail:
-      "Every dependency in this snapshot reports ok and no other field is out of order. That is an observation at one point in time with no evidence record behind it: it does not certify coverage, availability over a window, or that the snapshot is still true now.",
   }
 }
 

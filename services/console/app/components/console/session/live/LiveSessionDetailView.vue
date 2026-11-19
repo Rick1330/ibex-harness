@@ -89,9 +89,8 @@ function evidenceNote(turn: OperatorSessionTurn): string {
       <GovernStatTile label="Turns" :value="formatGovernNumber(session.turn_count)" :helper="turnsHelper" />
       <GovernStatTile label="Tokens" :value="tokensLabel" helper="Input / output" />
       <GovernStatTile
-        label="Turn latency"
+        label="Total turn latency"
         :value="formatSessionLatency(session.total_latency_ms)"
-        helper="Sum of recorded turns"
       />
       <GovernStatTile
         label="Extracted to"
