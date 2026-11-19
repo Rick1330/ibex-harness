@@ -35,6 +35,27 @@ const (
 	DefaultTimeout = 2 * time.Second
 	enqueuePath    = "/internal/extraction/enqueue"
 
+	// Idle-pool bounds for this client's private transport. Config.BaseURL is a
+	// single worker host, so these are per-host numbers, not a fleet budget.
+	//
+	// MaxIdleConnsPerHost: http.DefaultTransport keeps only 2 idle conns per
+	// host. A burst of concurrent session terminations therefore tears down the
+	// extra conns and re-dials them on the next burst. 10 covers normal enqueue
+	// fan-out while keeping the fd cost of an idle proxy small.
+	maxIdleConnsPerHost = 10
+	// MaxIdleConns: with one host the per-host cap already bounds the pool, so
+	// the process-wide cap is set equal to make the single-host assumption
+	// explicit and to keep the total bounded if BaseURL ever spans hosts.
+	maxIdleConns = 10
+	// IdleConnTimeout: below the 90s default, and a deliberate backstop rather
+	// than the primary eviction path. The worker is uvicorn with its default
+	// timeout_keep_alive of 5s (services/worker/app/enqueue_http.py), so the
+	// server normally closes an idle conn long before this fires and the
+	// transport's readLoop drops it on FIN. 30s bounds the case where the server
+	// does not close (a proxy or NAT holding the path), so a dead socket cannot
+	// sit in the pool for a minute and a half.
+	idleConnTimeout = 30 * time.Second
+
 	// ClaimHeader carries the tenant claim that binds the body to the tenant the
 	// proxy already authenticated (S01). The static bearer stays transport auth;
 	// the claim is what authorizes *which* tenant the worker acts for.
@@ -138,6 +159,9 @@ type Client struct {
 	baseURL    string
 	token      string
 	httpClient *http.Client
+	// initErr records a transport that could not be constructed. It is immutable
+	// after New, so it needs no synchronization.
+	initErr error
 }
 
 // Config wires the enqueue client.
@@ -158,18 +182,58 @@ func New(cfg Config) *Client {
 	if to <= 0 {
 		to = DefaultTimeout
 	}
+	tr, err := newTransport(http.DefaultTransport)
+	if err != nil {
+		// Do not fall back to http.DefaultTransport: sharing the process-global
+		// pool is the defect this client avoids. Keep the config so Enqueue can
+		// report the precise cause instead of a generic "disabled".
+		return &Client{baseURL: base, token: token, initErr: err}
+	}
 	return &Client{
 		baseURL: base,
 		token:   token,
 		httpClient: &http.Client{
-			Timeout: to,
+			Timeout:   to,
+			Transport: tr,
 		},
 	}
 }
 
+// newTransport builds the client's private connection pool. It clones base so
+// the process's tuned defaults (dial timeout, TLS handshake timeout, proxy,
+// HTTP/2) are inherited, then bounds the idle pool for a single-host internal
+// client. It never returns base itself: http.DefaultTransport is shared with
+// every other net/http user in the process, so any caller of
+// CloseIdleConnections (httptest.Server.Close does exactly that) would tear
+// down idle connections this client owns.
+func newTransport(base http.RoundTripper) (*http.Transport, error) {
+	dt, ok := base.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("extractionenqueue: base transport is %T, want *http.Transport", base)
+	}
+	tr := dt.Clone()
+	tr.MaxIdleConns = maxIdleConns
+	tr.MaxIdleConnsPerHost = maxIdleConnsPerHost
+	tr.IdleConnTimeout = idleConnTimeout
+	return tr, nil
+}
+
+// configured reports whether the client has the base URL and token an enqueue
+// needs. It is separate from Enabled so a client whose transport could not be
+// built still reports a precise error instead of the generic disabled one.
+func (c *Client) configured() bool {
+	if c == nil {
+		return false
+	}
+	if c.baseURL == "" {
+		return false
+	}
+	return c.token != ""
+}
+
 // Enabled reports whether enqueue calls will be attempted.
 func (c *Client) Enabled() bool {
-	return c != nil && c.baseURL != "" && c.token != "" && c.httpClient != nil
+	return c.configured() && c.httpClient != nil
 }
 
 // Enqueue posts the task; errors are for metrics/logging only (fail-open).
@@ -202,8 +266,11 @@ func (c *Client) newEnqueueHTTPRequest(ctx context.Context, req Request) (*http.
 }
 
 func (c *Client) validateEnqueue(req Request) error {
-	if !c.Enabled() {
+	if !c.configured() {
 		return fmt.Errorf("extractionenqueue: disabled")
+	}
+	if c.initErr != nil {
+		return c.initErr
 	}
 	if len(req.Turns) == 0 {
 		return fmt.Errorf("extractionenqueue: turns required")
