@@ -428,6 +428,40 @@ async def test_store_stage_that_raises_is_failed_never_verified(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("head", "invalidates"), [("present", True), ("error", False)])
+async def test_the_recheck_invalidates_only_the_proof_it_saw(
+    monkeypatch: pytest.MonkeyPatch, head: str, invalidates: bool
+) -> None:
+    """Only a HEAD that reports the object back may replace a stored proof.
+
+    ``present`` is positive evidence of a live copy, so the failed re-delete must
+    be recorded over the old ``verified``. ``error`` is an unanswered check, not
+    evidence the object returned: the store is staged again, but the proof an
+    earlier run earned is left standing.
+    """
+
+    async def failing_stage(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("s3 delete capture/1.json: 503")
+
+    def exists(*_args: Any, **_kwargs: Any) -> bool:
+        if head == "error":
+            raise RuntimeError("s3 down")
+        return True
+
+    monkeypatch.setattr(le.sweep, "_stage", failing_stage)
+    monkeypatch.setattr(le.sweep, "object_exists", exists)
+
+    outcome = await _erase(
+        _StoreTarget("objectstore", ("s3://bucket/one.json",)),
+        {"objectstore": "verified"},
+    )
+
+    assert (outcome.status, outcome.fresh) == ("failed", True)
+    assert outcome.invalidates_proof is invalidates
+    assert outcome.error is not None, "a failure that replaces a proof must say why"
+
+
+@pytest.mark.asyncio
 async def test_store_validation_failure_is_classified_permanent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

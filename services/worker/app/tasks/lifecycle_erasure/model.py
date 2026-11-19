@@ -96,6 +96,22 @@ class _StoreTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class _DurableProof:
+    """What a stored receipt still settles, and whether the store contradicted it.
+
+    ``settled`` is the stored status when no later run has invalidated it, else
+    ``None`` and the store is staged again. ``invalidated`` is set only when the
+    recheck found positive evidence of a live copy: that is the one case where a
+    newer outcome may replace an existing ``verified`` receipt. An unanswered
+    recheck stages the store but invalidates nothing, because an outage is not
+    evidence the object came back.
+    """
+
+    settled: str | None = None
+    invalidated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class _StoreOutcome:
     """What one store proved, and whether this run is what proved it."""
 
@@ -104,3 +120,8 @@ class _StoreOutcome:
     error: str | None = None
     fresh: bool = True
     permanent: bool = False
+    #: A live copy was observed for a store whose receipt said ``verified``, so
+    #: this outcome may replace that proof even though it is weaker. Without it,
+    #: a re-delete that fails would leave ``verified`` standing over a store that
+    #: holds a copy.
+    invalidates_proof: bool = False

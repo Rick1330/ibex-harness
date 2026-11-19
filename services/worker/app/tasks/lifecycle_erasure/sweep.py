@@ -6,7 +6,9 @@ Ordering is load-bearing and easy to get wrong:
 * a row whose revision is lower than one already delivered is retired, not
   erased — the newer revision describes the same memory's end state;
 * a store already proven for this revision is not re-staged, and its
-  ``verified_absent_at`` is not overwritten by a retry;
+  ``verified_absent_at`` is not overwritten by a retry — except that the object
+  store is re-checked, and a HEAD that finds the archive back invalidates the
+  proof so a failed re-delete is recorded instead of hidden;
 * the outbox row is locked and validated against the attempt this run claimed
   *before* any receipt is written, and the refs are re-read under that lock, so
   a copy that appeared in between cannot be certified by a receipt the run did
@@ -70,11 +72,13 @@ from .metrics import ERASURE_OUTCOME, ERASURE_STORE
 from .model import (
     PermanentErasureFailure,
     _ClaimedRow,
+    _DurableProof,
     _Erasure,
     _ErasureState,
     _StoreOutcome,
     _StoreTarget,
 )
+from .redis_failures import is_permanent_redis_failure
 from .sql import (
     _AGENT_ID_SQL,
     _CLAIM_SQL,
@@ -301,9 +305,9 @@ async def _erase_store(
     job_deadline: float,
 ) -> _StoreOutcome:
     """Prove one store absent, or record why this run could not."""
-    settled = await _durable_proof(erasure, target, receipts.get(target.store))
-    if settled is not None:
-        return _StoreOutcome(store=target.store, status=settled, fresh=False)
+    proof = await _durable_proof(erasure, target, receipts.get(target.store))
+    if proof.settled is not None:
+        return _StoreOutcome(store=target.store, status=proof.settled, fresh=False)
     if target.underivable:
         return _underivable_outcome(erasure, target)
     if not target.locators:
@@ -312,37 +316,42 @@ async def _erase_store(
         # fact for a store whose producer always records a ref (RECEIPT_STORES)
         # or whose key this run derived.
         return _StoreOutcome(store=target.store, status="not_applicable")
-    return await _stage_store(erasure, target, job_deadline)
+    return await _stage_store(erasure, target, job_deadline, proof.invalidated)
 
 
 async def _durable_proof(
     erasure: _Erasure, target: _StoreTarget, proven: str | None
-) -> str | None:
-    """The stored receipt that still settles this store, or None to stage it.
+) -> _DurableProof:
+    """The stored receipt that still settles this store, or why it no longer does.
 
     A stored ``verified`` receipt is not proof forever for the object store: the
     archive key is derived from ``(org, memory)`` and nothing fences a late
     re-archive, so an object that is back means the retry has to delete it again.
-    The cache stores are fenced by the forgotten marker, and a new ref is caught
-    by the settle re-check.
 
-    The HEAD this issues is bounded by the job deadline, so it cannot spend the
-    budget the cache stores later in the row still need; an expired check counts
-    as "the object may be back" and restages the store.
+    The distinction that keeps the proof honest: a HEAD that reports the object
+    *invalidates* the receipt, because the copy is live and a re-delete that then
+    fails has to be recorded. A HEAD that cannot answer only stages the store
+    again — an outage is not evidence the object came back, so it must not cost
+    the store the proof an earlier run earned.
+
+    The HEAD is bounded by the job deadline, so it cannot spend the budget the
+    cache stores later in the row still need.
     """
     if proven is None or not _receipt_already_proves(proven, target.locators):
-        return None
-    if await _object_returned(erasure, target):
-        return None
-    return proven
+        return _DurableProof()
+    returned = await _object_returned(erasure, target)
+    if returned is False:
+        return _DurableProof(settled=proven)
+    return _DurableProof(invalidated=returned is True)
 
 
-async def _object_returned(erasure: _Erasure, target: _StoreTarget) -> bool:
+async def _object_returned(erasure: _Erasure, target: _StoreTarget) -> bool | None:
     """Whether HEAD finds an object a stored receipt had proved absent.
 
-    Only the object store is re-checked. A HEAD that cannot answer is treated as
-    "restage": the object is deleted again rather than certified on a check that
-    did not happen, and DELETE is idempotent.
+    Only the object store is re-checked. ``False`` is a confirmed absence,
+    ``True`` is positive evidence of a live copy, and ``None`` is a check that
+    could not answer: the store is staged again either way, but only ``True``
+    invalidates the stored proof.
     """
     if target.store != "objectstore" or not target.locators:
         return False
@@ -357,11 +366,14 @@ async def _object_returned(erasure: _Erasure, target: _StoreTarget) -> bool:
             erasure.row.revision,
             exc_info=True,
         )
-        return True
+        return None
 
 
 async def _stage_store(
-    erasure: _Erasure, target: _StoreTarget, job_deadline: float
+    erasure: _Erasure,
+    target: _StoreTarget,
+    job_deadline: float,
+    invalidated: bool = False,
 ) -> _StoreOutcome:
     """Stage one store inside the smaller of its own budget and the job's."""
     budget = min(
@@ -370,14 +382,22 @@ async def _stage_store(
     )
     if budget <= 0:
         return _StoreOutcome(
-            store=target.store, status="failed", error="job_deadline_exceeded"
+            store=target.store,
+            status="failed",
+            error="job_deadline_exceeded",
+            invalidates_proof=invalidated,
         )
     try:
         await asyncio.wait_for(
             _stage(target, erasure, time.monotonic() + budget), timeout=budget
         )
     except TimeoutError:
-        return _StoreOutcome(store=target.store, status="failed", error="store_timeout")
+        return _StoreOutcome(
+            store=target.store,
+            status="failed",
+            error="store_timeout",
+            invalidates_proof=invalidated,
+        )
     except Exception as exc:
         logger.warning(
             "memory erasure store failed store=%s org_id=%s memory_id=%s revision=%s",
@@ -392,13 +412,22 @@ async def _stage_store(
             status="failed",
             error=_error_reason(exc),
             permanent=_is_permanent(exc),
+            invalidates_proof=invalidated,
         )
     return _StoreOutcome(store=target.store, status="verified")
 
 
 def _is_permanent(exc: BaseException) -> bool:
-    """Whether the failure is a property of the locator, not a transient outage."""
-    return isinstance(exc, (PermanentErasureFailure, ValueError))
+    """Whether the failure is a property of the locator, not a transient outage.
+
+    Locator failures are permanent as before. A Redis refusal joins them: an
+    expired password or a wrong-type reply cannot succeed on the next attempt.
+    Every other exception keeps its existing classification, so an unreachable
+    ClickHouse or object store still retries.
+    """
+    if isinstance(exc, (PermanentErasureFailure, ValueError)):
+        return True
+    return is_permanent_redis_failure(exc)
 
 
 async def _settle(
@@ -430,7 +459,7 @@ async def _settle(
 async def _upsert_fresh_receipts(
     session: Any, erasure: _Erasure, outcomes: list[_StoreOutcome]
 ) -> None:
-    """Write one receipt per store this run proved; an earlier proof stands."""
+    """Write one receipt per store this run proved; a proof it did not invalidate stands."""
     for outcome in outcomes:
         if outcome.fresh:
             await session.execute(
@@ -496,6 +525,7 @@ async def _recheck_outcome(
             store=outcome.store,
             status="failed",
             error="artifact refs changed during erasure",
+            invalidates_proof=True,
         )
     if outcome.store != "objectstore":
         return outcome
@@ -514,7 +544,10 @@ async def _recheck_outcome(
         )
     if reappeared:
         return _StoreOutcome(
-            store=outcome.store, status="failed", error="object reappeared after delete"
+            store=outcome.store,
+            status="failed",
+            error="object reappeared after delete",
+            invalidates_proof=True,
         )
     return outcome
 

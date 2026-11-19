@@ -183,6 +183,7 @@ def _receipt_params(erasure: _Erasure, outcome: _StoreOutcome) -> dict[str, Any]
             f"erase:{row.org_id}:{row.memory_id}:{row.revision}:{outcome.store}"
         ),
         "error": outcome.error,
+        "invalidate_proof": outcome.invalidates_proof,
     }
 
 

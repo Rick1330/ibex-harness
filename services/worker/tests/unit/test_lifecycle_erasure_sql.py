@@ -39,3 +39,17 @@ def test_sql_is_literal_not_built_from_values() -> None:
         assert "f'DELETE" not in source
         assert 'f"UPDATE' not in source
         assert "f'UPDATE" not in source
+
+
+def test_receipt_upsert_replaces_an_invalidated_verified_proof() -> None:
+    """Only the worker writes receipts, so a contradicted proof must be replaceable.
+
+    The first two conditions keep the narrow monotonicity that still matters: an
+    existing ``verified`` is never replaced by a weaker outcome the worker did not
+    earn. The third lets the one run that observed a live copy replace it, which
+    is the case the receipt exists to report.
+    """
+    sql = " ".join(le._UPSERT_RECEIPT_SQL.split())
+    assert "ibex_core.erasure_store_receipts.status <> 'verified'" in sql
+    assert "EXCLUDED.status = 'verified'" in sql
+    assert "CAST(:invalidate_proof AS boolean)" in sql

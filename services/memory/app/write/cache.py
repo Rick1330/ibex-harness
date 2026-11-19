@@ -9,22 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from redis.asyncio import Redis
-from redis.exceptions import (
-    AuthenticationError,
-    AuthorizationError,
-    BusyLoadingError,
-    ClusterDownError,
-    DataError,
-    MasterDownError,
-    RedisError,
-    TryAgainError,
-)
-from redis.exceptions import (
-    ConnectionError as RedisConnectionError,
-)
-from redis.exceptions import (
-    TimeoutError as RedisTimeoutError,
-)
+from redis.exceptions import RedisError
 
 from app.cache.hot_score import compute_hot_cache_score
 from app.cache.hot_write import HotZaddRequest, register_hot_zadd_trim_script, zadd_hot_memory
@@ -34,6 +19,7 @@ from app.cache.memory_keys import (
     memory_hot_key,
     memory_object_key,
 )
+from app.cache.redis_failures import is_retryable_redis_failure
 from app.config import Settings
 from app.write.metrics import WRITE_CACHE_ERRORS
 from app.write.models import MemoryRow, WriteOutcome, WriteOutcomeKind
@@ -56,46 +42,6 @@ end
 redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
 return 1
 """
-
-#: Failures a later attempt can fix. A timeout or a dropped connection is the
-#: outage a retry is for; ``AuthenticationError`` and ``AuthorizationError``
-#: subclass ``ConnectionError``, so the non-retryable tuple is checked first.
-_RETRYABLE_REDIS_FAILURES = (
-    RedisTimeoutError,
-    RedisConnectionError,
-    BusyLoadingError,
-    TryAgainError,
-    MasterDownError,
-    ClusterDownError,
-)
-
-#: Failures that are a property of the deployment or the command, not an outage:
-#: an expired password, a missing permission, and a wrong-type reply cannot
-#: succeed on the next attempt no matter how long the caller waits. ``DataError``
-#: is a client-side refusal for the same reason.
-_NON_RETRYABLE_REDIS_FAILURES = (
-    AuthenticationError,
-    AuthorizationError,
-    DataError,
-)
-
-
-def is_retryable_redis_failure(exc: BaseException) -> bool:
-    """Whether a failed Redis command is worth retrying.
-
-    Only a timeout, a connection failure, or a cluster state that says "try
-    again" is. A wrong-type or authentication error is recorded immediately with
-    its reason: retrying it delays the honest ``failed`` state and cannot change
-    the outcome.
-
-    The retryable tuple names the transient ``ResponseError`` subclasses
-    (``TryAgainError``, ``MasterDownError``) explicitly. A generic
-    ``ResponseError`` — a wrong-type reply, a missing permission — is in neither
-    tuple and is therefore not retryable.
-    """
-    if isinstance(exc, _NON_RETRYABLE_REDIS_FAILURES):
-        return False
-    return isinstance(exc, (OSError, *_RETRYABLE_REDIS_FAILURES))
 
 
 class CacheInvalidationError(RuntimeError):

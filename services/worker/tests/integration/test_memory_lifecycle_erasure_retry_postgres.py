@@ -134,6 +134,88 @@ async def test_a_reappeared_object_is_deleted_again_on_the_retry(
     assert (state, delivered_at is not None, attempts) == ("complete", True, 2)
 
 
+@pytest.mark.asyncio
+async def test_a_failed_redelete_replaces_the_verified_receipt(
+    harness: Harness, object_store: FakeObjectStore
+) -> None:
+    """A proof that a live copy contradicted must not outlive the failure.
+
+    First run proves the archive absent. The archive then reappears and the
+    re-delete fails, so the receipt has to say ``failed`` with a reason and no
+    timestamp: keeping ``verified`` would describe a store that holds a live
+    copy. A later retry deletes it and earns a fresh proof.
+    """
+    forgotten, row_id = await harness.seed_queued(object_store)
+
+    first = await harness.run(ch_dsn=None)
+    assert first["partial"] == 1, first
+    proved_at = (
+        await harness.receipts(org_id=forgotten.org_id, memory_id=forgotten.memory_id)
+    )["objectstore"][2]
+    assert proved_at is not None
+
+    object_store.present.add(forgotten.object_uri)
+    object_store.delete_failures = 1
+    await harness.make_due(row_id)
+
+    second = await harness.run(ch_dsn=None)
+
+    assert second["partial"] == 1, second
+    status, error, verified_at = (
+        await harness.receipts(org_id=forgotten.org_id, memory_id=forgotten.memory_id)
+    )["objectstore"]
+    assert status == "failed"
+    assert verified_at is None, "a failed receipt must clear the verified timestamp"
+    assert "503" in (error or ""), error
+    state, delivered_at, _available, attempts = await harness.outbox(row_id=row_id)
+    assert (state, delivered_at, attempts) == ("partial", None, 2)
+
+    await harness.make_due(row_id)
+    third = await harness.run(ch_dsn=harness.env.ch_dsn)
+
+    assert third["complete"] == 1, third
+    status, error, verified_at = (
+        await harness.receipts(org_id=forgotten.org_id, memory_id=forgotten.memory_id)
+    )["objectstore"]
+    assert (status, error) == ("verified", None)
+    assert verified_at is not None and verified_at > proved_at, (
+        "the proof that replaced the failure must carry a fresh timestamp"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unanswerable_recheck_keeps_the_valid_verified_receipt(
+    harness: Harness, object_store: FakeObjectStore
+) -> None:
+    """A transient outage must not cost the store a proof it already earned.
+
+    The HEAD cannot answer and the re-delete fails for the same reason, so this
+    run has no evidence the object came back. The stored ``verified`` receipt and
+    its timestamp must survive; the row is ``partial`` and retries.
+    """
+    forgotten, row_id = await harness.seed_queued(object_store)
+    await harness.seed_receipt(forgotten, store="objectstore")
+    proved_at = (
+        await harness.receipts(org_id=forgotten.org_id, memory_id=forgotten.memory_id)
+    )["objectstore"][2]
+    assert proved_at is not None
+
+    object_store.raises = True
+    await harness.make_due(row_id)
+
+    out = await harness.run(ch_dsn=None)
+
+    assert out["partial"] == 1, out
+    status, _error, verified_at = (
+        await harness.receipts(org_id=forgotten.org_id, memory_id=forgotten.memory_id)
+    )["objectstore"]
+    assert status == "verified"
+    assert verified_at == proved_at, "an unanswered recheck must not refresh or drop it"
+    assert object_store.deleted == []
+    state, delivered_at, _available, _attempts = await harness.outbox(row_id=row_id)
+    assert (state, delivered_at) == ("partial", None)
+
+
 async def _erase_stale_claim(harness: Harness, forgotten: Forgotten) -> str:
     """Claim revision 2, deliver revision 3, then erase the stale claim.
 
