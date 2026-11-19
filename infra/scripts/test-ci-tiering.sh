@@ -1866,13 +1866,15 @@ else
 fi
 
 # --- the release manifest waits for the smoke evidence it needs ------------
-# `gh run list` does not report a run that is still in progress, and release-docker.yml
-# and ci.yml both start from the release merge with no dependency edge. A single
-# lookup therefore recorded `unverified` for a bundle whose artifact was uploaded
-# moments later. The step body is executed here against a `gh` stub: a completed run
-# must promote, a run that is still in progress must be waited for and then promote,
-# and an absent, stalled or failed run must stay `unverified` without pretending
-# otherwise.
+# `gh run list` reports a run only once it is registered, and release-docker.yml and
+# ci.yml both start from the release merge with no dependency edge. A lookup that
+# gives up too early records `unverified` for a bundle whose artifact already exists,
+# which is a release publishing a weaker statement than the truth. The step body is
+# executed here against a `gh` stub: evidence that already exists must promote on the
+# first lookup, a run that is still in progress must be waited for and then promote, a
+# lookup that fails must never be read as an absent run, and an absent, stalled,
+# failed or artifact-less run must stay `unverified` without pretending otherwise.
+# The bound itself is asserted too, against the 381 s v0.1.10 turned out to need.
 step_run_body() {
   local workflow="$1" step="$2"
   awk -v want="      - name: $step" '
@@ -1906,6 +1908,12 @@ printf '%s\n' "$*" >>"$state/calls.log"
 case "$1 $2" in
   "run list")
     n="$(grep -c '^run list' "$state/calls.log" || true)"
+    # Transport failure (rate limit, 5xx): the step must retry it and must never read
+    # it as evidence that no run exists.
+    if [[ -f "$state/fail-run-list.all" || -f "$state/fail-run-list.${n}" ]]; then
+      echo "gh: API rate limit exceeded for 1.2.3.4 (HTTP 403)" >&2
+      exit 1
+    fi
     if [[ -f "$state/run-list.${n}.json" ]]; then
       cat "$state/run-list.${n}.json"
     else
@@ -1944,76 +1952,75 @@ run_smoke_case() {
   local rc=0
   (
     cd "$case_dir" || exit 1
-    PATH="$stub_dir:$PATH" GH_STUB_DIR="$case_dir" GH_STUB_COMMIT="$smoke_sha" \
-      COMMIT="$smoke_sha" REPOSITORY=owner/repo GH_TOKEN=stub \
-      GITHUB_OUTPUT="$case_dir/github-output" \
-      IBEX_SMOKE_RUN_ATTEMPTS="$attempts" IBEX_SMOKE_RUN_INTERVAL=0 \
-      bash "$smoke_fetch"
+    export PATH="$stub_dir:$PATH" GH_STUB_DIR="$case_dir" GH_STUB_COMMIT="$smoke_sha"
+    export COMMIT="$smoke_sha" REPOSITORY=owner/repo GH_TOKEN=stub
+    export GITHUB_OUTPUT="$case_dir/github-output"
+    export IBEX_SMOKE_RUN_INTERVAL=0
+    # `default` leaves the workflow's own bound and absence grace in place, which is
+    # what the case for the measured budget needs.
+    if [[ "$attempts" != default ]]; then
+      export IBEX_SMOKE_RUN_ATTEMPTS="$attempts"
+    fi
+    bash "$smoke_fetch"
   ) >"$case_dir/stdout" 2>"$case_dir/stderr" || rc=$?
   printf '%s' "$rc"
 }
 
+lookups() { grep -c '^run list' "$fixture_dir/smoke-$1/calls.log" || true; }
+promoted() { grep -Fq 'smoke_results=smoke-results/bundle-smoke-result.json' "$fixture_dir/smoke-$1/github-output"; }
+
 completed_run="[{\"databaseId\":4242,\"headSha\":\"${smoke_sha}\",\"status\":\"completed\",\"conclusion\":\"success\"}]"
 in_progress_run="[{\"databaseId\":4243,\"headSha\":\"${smoke_sha}\",\"status\":\"in_progress\",\"conclusion\":null}]"
+failed_run="[{\"databaseId\":4244,\"headSha\":\"${smoke_sha}\",\"status\":\"completed\",\"conclusion\":\"failure\"}]"
 
+# Answer N lookups with "still running", then a completed run.
+late_success() {
+  local case_dir="$1" polls="$2" i
+  for (( i = 1; i <= polls; i++ )); do
+    printf '%s\n' "$in_progress_run" >"$case_dir/run-list.${i}.json"
+  done
+  printf '%s\n' "$completed_run" >"$case_dir/run-list.json"
+}
+
+# Case 1: the artifact is already there. The wait must cost nothing.
 mkdir -p "$fixture_dir/smoke-completed"
 printf '%s\n' "$completed_run" >"$fixture_dir/smoke-completed/run-list.json"
 smoke_rc="$(run_smoke_case completed)"
-if [[ "$smoke_rc" == 0 ]] &&
-  grep -Fq 'smoke_results=smoke-results/bundle-smoke-result.json' \
-    "$fixture_dir/smoke-completed/github-output" &&
-  [[ -f "$fixture_dir/smoke-completed/smoke-results/bundle-smoke-result.json" ]]; then
-  pass "a completed CI run for the commit promotes its bundle smoke evidence"
+if [[ "$smoke_rc" == 0 ]] && promoted completed &&
+  [[ -f "$fixture_dir/smoke-completed/smoke-results/bundle-smoke-result.json" ]] &&
+  [[ "$(lookups completed)" == 1 ]]; then
+  pass "evidence that already exists promotes on the first lookup, with no waiting"
 else
-  bad "a completed CI run did not promote its bundle smoke evidence (exit ${smoke_rc})"
+  bad "a completed CI run did not promote its bundle smoke evidence (exit ${smoke_rc}, $(lookups completed) lookups)"
 fi
 
-# The race this change fixes: the first lookup sees the run in progress, a later one
-# sees it completed. The old single-shot lookup recorded unverified here.
+# Case 2: present after three polls. The old single-shot lookup recorded unverified.
 mkdir -p "$fixture_dir/smoke-race"
-printf '%s\n' "$in_progress_run" >"$fixture_dir/smoke-race/run-list.1.json"
-printf '%s\n' "$completed_run" >"$fixture_dir/smoke-race/run-list.json"
-smoke_rc="$(run_smoke_case race)"
-if [[ "$smoke_rc" == 0 ]] &&
-  grep -Fq 'smoke_results=smoke-results/bundle-smoke-result.json' \
-    "$fixture_dir/smoke-race/github-output"; then
-  pass "a run that is still in progress is waited for and promotes once it completes"
+late_success "$fixture_dir/smoke-race" 3
+smoke_rc="$(run_smoke_case race 24)"
+if [[ "$smoke_rc" == 0 ]] && promoted race && [[ "$(lookups race)" == 4 ]]; then
+  pass "a run that is still in progress is waited for and promotes on the fourth lookup"
 else
-  bad "a run that was in progress when the release looked did not promote after completing (exit ${smoke_rc})"
+  bad "a run that was in progress when the release looked did not promote after completing (exit ${smoke_rc}, $(lookups race) lookups)"
 fi
 
-# In progress for the whole bound: the wait ends, nothing is promoted, and no
-# artifact is invented.
-mkdir -p "$fixture_dir/smoke-stalled"
-printf '%s\n' "$in_progress_run" >"$fixture_dir/smoke-stalled/run-list.json"
-smoke_rc="$(run_smoke_case stalled 3)"
+# Case 3: a completed successful run that carries no smoke artifact. A green run is
+# not the evidence; the artifact is.
+mkdir -p "$fixture_dir/smoke-no-artifact"
+printf '%s\n' "$completed_run" >"$fixture_dir/smoke-no-artifact/run-list.json"
+: >"$fixture_dir/smoke-no-artifact/no-artifact"
+smoke_rc="$(run_smoke_case no-artifact)"
 if [[ "$smoke_rc" == 0 ]] &&
-  [[ ! -s "$fixture_dir/smoke-stalled/github-output" ]] &&
-  grep -Fq 'did not complete within' "$fixture_dir/smoke-stalled/stdout" &&
-  ! grep -Fq 'run download' "$fixture_dir/smoke-stalled/calls.log"; then
-  pass "a run that never completes stops at the bound and stays unverified"
+  [[ ! -s "$fixture_dir/smoke-no-artifact/github-output" ]] &&
+  grep -Fq 'carries no bundle-smoke-result artifact' "$fixture_dir/smoke-no-artifact/stdout"; then
+  pass "a completed successful run without the smoke artifact stays unverified and names the reason"
 else
-  bad "a run that never completes did not stop at the bound: $(cat "$fixture_dir/smoke-stalled/stdout")"
+  bad "a completed successful run without the artifact did not report the missing artifact: $(cat "$fixture_dir/smoke-no-artifact/stdout")"
 fi
 
-# Absent: no run exists for the commit at all. It must give up early (three checks),
-# keep unverified, and say which fact it found.
-mkdir -p "$fixture_dir/smoke-absent"
-printf '%s\n' '[]' >"$fixture_dir/smoke-absent/run-list.json"
-smoke_rc="$(run_smoke_case absent 24)"
-if [[ "$smoke_rc" == 0 ]] &&
-  [[ ! -s "$fixture_dir/smoke-absent/github-output" ]] &&
-  grep -Fq 'no CI push run on main for' "$fixture_dir/smoke-absent/stdout" &&
-  [[ "$(grep -c 'run list' "$fixture_dir/smoke-absent/calls.log")" == 3 ]]; then
-  pass "an absent CI run stops after three checks instead of burning the whole bound"
-else
-  bad "an absent CI run did not stop early: $(cat "$fixture_dir/smoke-absent/stdout")"
-fi
-
-# A completed but red run: the artifact may exist, but a failed run is not evidence.
+# Case 4: a completed but red run: the artifact may exist, but a failed run is not evidence.
 mkdir -p "$fixture_dir/smoke-failed"
-printf '%s\n' "[{\"databaseId\":4244,\"headSha\":\"${smoke_sha}\",\"status\":\"completed\",\"conclusion\":\"failure\"}]" \
-  >"$fixture_dir/smoke-failed/run-list.json"
+printf '%s\n' "$failed_run" >"$fixture_dir/smoke-failed/run-list.json"
 smoke_rc="$(run_smoke_case failed)"
 if [[ "$smoke_rc" == 0 ]] &&
   [[ ! -s "$fixture_dir/smoke-failed/github-output" ]] &&
@@ -2022,6 +2029,76 @@ if [[ "$smoke_rc" == 0 ]] &&
   pass "a failed CI run leaves the bundle unverified instead of promoting its artifact"
 else
   bad "a failed CI run was treated as smoke evidence: $(cat "$fixture_dir/smoke-failed/stdout")"
+fi
+
+# Case 5: the regression for the number itself. v0.1.10's CI run completed 381 s after
+# release-manifest started, which the old 24-check bound (360 s) could not reach; the
+# same evidence arriving at check 25 must promote under the default bound.
+mkdir -p "$fixture_dir/smoke-late"
+late_success "$fixture_dir/smoke-late" 24
+smoke_rc="$(run_smoke_case late default)"
+if [[ "$smoke_rc" == 0 ]] && promoted late && [[ "$(lookups late)" == 25 ]]; then
+  pass "evidence that completes at check 25 still promotes under the default bound"
+else
+  bad "evidence that arrives after the old 24-check bound was dropped (exit ${smoke_rc}, $(lookups late) lookups): $(tail -n 2 "$fixture_dir/smoke-late/stdout")"
+fi
+
+# Case 6: a lookup that fails is not evidence of absence. Two transport failures, then
+# the run appears; the step must retry and promote, not claim the run never existed.
+mkdir -p "$fixture_dir/smoke-api-blip"
+printf '%s\n' "$completed_run" >"$fixture_dir/smoke-api-blip/run-list.json"
+: >"$fixture_dir/smoke-api-blip/fail-run-list.1"
+: >"$fixture_dir/smoke-api-blip/fail-run-list.2"
+smoke_rc="$(run_smoke_case api-blip 24)"
+if [[ "$smoke_rc" == 0 ]] && promoted api-blip && [[ "$(lookups api-blip)" == 3 ]] &&
+  ! grep -Fq 'no CI push run' "$fixture_dir/smoke-api-blip/stdout"; then
+  pass "a failed gh lookup is retried and never read as an absent run"
+else
+  bad "a failed gh lookup was read as an absent run: $(cat "$fixture_dir/smoke-api-blip/stdout")"
+fi
+
+# Case 7: every lookup fails for the whole budget. The step must report the outage,
+# never assert that the run does not exist.
+mkdir -p "$fixture_dir/smoke-api-down"
+printf '%s\n' '[]' >"$fixture_dir/smoke-api-down/run-list.json"
+: >"$fixture_dir/smoke-api-down/fail-run-list.all"
+smoke_rc="$(run_smoke_case api-down 6)"
+if [[ "$smoke_rc" == 0 ]] &&
+  [[ ! -s "$fixture_dir/smoke-api-down/github-output" ]] &&
+  grep -Fq 'could not be queried' "$fixture_dir/smoke-api-down/stdout" &&
+  ! grep -Fq 'no CI push run' "$fixture_dir/smoke-api-down/stdout"; then
+  pass "an unreachable run list reports the outage instead of claiming the run is absent"
+else
+  bad "an unreachable run list claimed a fact it could not observe: $(cat "$fixture_dir/smoke-api-down/stdout")"
+fi
+
+# Case 8: confirmed absence. The step gives up after the eight-lookup grace, not after
+# three checks and not after the whole budget.
+mkdir -p "$fixture_dir/smoke-absent"
+printf '%s\n' '[]' >"$fixture_dir/smoke-absent/run-list.json"
+smoke_rc="$(run_smoke_case absent 24)"
+if [[ "$smoke_rc" == 0 ]] &&
+  [[ ! -s "$fixture_dir/smoke-absent/github-output" ]] &&
+  grep -Fq 'no CI push run on main for' "$fixture_dir/smoke-absent/stdout" &&
+  [[ "$(lookups absent)" == 8 ]] &&
+  ! grep -Fq 'run download' "$fixture_dir/smoke-absent/calls.log"; then
+  pass "an absent CI run is declared absent at the grace of 8 lookups, not at 3 and not at the bound"
+else
+  bad "an absent CI run did not stop at the grace of 8 lookups ($(lookups absent) lookups): $(cat "$fixture_dir/smoke-absent/stdout")"
+fi
+
+# Case 9: the bound and the absence grace themselves. The number is the fix, so a
+# future edit that shortens it has to fail here instead of in a release.
+budget_attempts="$(sed -n 's/.*IBEX_SMOKE_RUN_ATTEMPTS:-\([0-9][0-9]*\)}.*/\1/p' "$release_docker" | head -n 1)"
+budget_interval="$(sed -n 's/.*IBEX_SMOKE_RUN_INTERVAL:-\([0-9][0-9]*\)}.*/\1/p' "$release_docker" | head -n 1)"
+budget_absent="$(sed -n 's/.*IBEX_SMOKE_ABSENT_CHECKS:-\([0-9][0-9]*\)}.*/\1/p' "$release_docker" | head -n 1)"
+if [[ -n "$budget_attempts" && -n "$budget_interval" && -n "$budget_absent" ]] &&
+  (( budget_attempts * budget_interval >= 1200 )) &&
+  (( budget_absent * budget_interval >= 120 )) &&
+  (( budget_absent < budget_attempts )); then
+  pass "the release wait budget is ${budget_attempts} x ${budget_interval}s = $(( budget_attempts * budget_interval ))s with an absence grace of ${budget_absent}, above the 381 s v0.1.10 needed"
+else
+  bad "the release wait budget is below the measured requirement (attempts=${budget_attempts:-?} interval=${budget_interval:-?} absent=${budget_absent:-?})"
 fi
 
 if (( fail != 0 )); then

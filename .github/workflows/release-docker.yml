@@ -120,14 +120,32 @@ jobs:
       # `finished_at` is not a timezone-aware timestamp, so an artifact from another
       # commit can never promote a bundle here.
       #
-      # The lookup is bounded polling, not a single call. `gh run list` only reports a
-      # run that is already registered, so it returns nothing for a run that exists but
-      # is still in progress; ci.yml and this workflow both start from the release merge
-      # with no dependency edge between them, so one release finishing while CI was still
-      # running recorded `unverified` for an artifact uploaded moments later, and nothing
-      # retried. The wait is bounded at 6 minutes (24 checks x 15 s) so a stalled or
-      # absent run delays a release by minutes at most, never indefinitely; v1-smoke
-      # alone is allowed 90 minutes, so waiting for the whole matrix is not the goal.
+      # The lookup is bounded polling, not a single call. `gh run list` reports a run
+      # only once it is registered, and ci.yml and this workflow both start from the
+      # release merge with no dependency edge between them, so one release finishing
+      # while CI was still running recorded `unverified` for an artifact uploaded
+      # minutes earlier, and nothing retried.
+      #
+      # The bound is measured, not rounded. The v0.1.10 release commit's CI run
+      # (44086160092) completed at 12:58:43 while release-manifest started at 12:52:22,
+      # so the release needed 381 s of waiting; the previous bound of 360 s (24 x 15 s)
+      # would have expired 21 s short and recorded `unverified` for evidence that
+      # existed. CI on main since 2026-11-01 (55 runs) runs p50 842 s, p95 1166 s,
+      # max 1209 s, and this job starts ~380 s after the tag, so a tag cut straight
+      # after the merge has to survive most of a CI run. 80 x 15 s = 1200 s covers
+      # every observed CI duration. It is still bounded: a run that does not finish
+      # ends in the timeout branch below with a warning, never an indefinite block.
+      # The cost is release latency on that path only — when the artifact already
+      # exists, which is the normal case (v0.1.10's artifact was uploaded 4m34s before
+      # release-manifest started), the first lookup returns and the step is instant.
+      #
+      # A failed lookup is not evidence of absence. `gh run list` returning non-zero
+      # (rate limit, 5xx) used to be folded into an empty list, so three such answers
+      # 30 s apart asserted "no CI push run on main" about a run that existed. A
+      # transport failure now retries without touching the absence counter, and
+      # absence is only declared after IBEX_SMOKE_ABSENT_CHECKS consecutive successful
+      # lookups (8 = 120 s, ~5x the 21 s observed between the CI run and the release
+      # run for the same commit) return nothing for this commit.
       #
       # Absence is not an error: a tag cut after the artifact's 14-day retention, or a
       # commit CI never built, leaves the bundle `unverified`, which is the truthful
@@ -140,54 +158,75 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Bounded wait for this commit's CI push run to finish. Both knobs exist so
+          # Bounded wait for this commit's CI push run to finish. These knobs exist so
           # infra/scripts/test-ci-tiering.sh can exercise the loop without sleeping; the
           # defaults are the release behaviour and no workflow sets them.
-          attempts="${IBEX_SMOKE_RUN_ATTEMPTS:-24}"   # 24 x 15 s = 6 minutes
+          attempts="${IBEX_SMOKE_RUN_ATTEMPTS:-80}"   # 80 x 15 s = 1200 s
           interval="${IBEX_SMOKE_RUN_INTERVAL:-15}"
-          # A run that has not appeared after three checks (two waits, 30 s) is not
-          # slow, it does not exist. Stop waiting and say so instead of spending the
-          # whole bound on a commit CI never built.
-          absent_checks=3
+          # Consecutive *successful* lookups that find no run for this commit before the
+          # step concludes the run does not exist. A lookup that fails never counts
+          # towards this: a 5xx says nothing about whether a run exists.
+          absent_checks="${IBEX_SMOKE_ABSENT_CHECKS:-8}"   # 8 x 15 s = 120 s
+          (( attempts >= 1 )) || attempts=1
 
           run_id=""
           conclusion=""
           saw_run=0
+          absent=0
+          errors=0
+          last_error=""
+          checks=0
+          errlog="$(mktemp)"
           for (( attempt = 1; attempt <= attempts; attempt++ )); do
-            run_json="$(gh run list --repo "$REPOSITORY" --workflow ci.yml \
+            checks="$attempt"
+            if ! run_json="$(gh run list --repo "$REPOSITORY" --workflow ci.yml \
               --commit "$COMMIT" --event push --branch main --limit 5 \
-              --json databaseId,headSha,status,conclusion)" || run_json='[]'
-            [[ -n "$run_json" ]] || run_json='[]'
-            exists="$(jq -r --arg sha "$COMMIT" \
-              'map(select(.headSha == $sha)) | length' <<<"$run_json")"
-            run_id="$(jq -r --arg sha "$COMMIT" \
-              'map(select(.headSha == $sha and .status == "completed")) | .[0].databaseId // empty' \
-              <<<"$run_json")"
-            if [[ -n "$run_id" ]]; then
-              conclusion="$(jq -r --arg sha "$COMMIT" \
-                'map(select(.headSha == $sha and .status == "completed")) | .[0].conclusion // "unknown"' \
-                <<<"$run_json")"
-              break
-            fi
-            if (( exists > 0 )); then
-              saw_run=1
-              state="is not complete yet"
-            elif (( attempt >= absent_checks )); then
-              break
+              --json databaseId,headSha,status,conclusion 2>"$errlog")"; then
+              errors=$(( errors + 1 ))
+              last_error="$(tail -n 1 "$errlog" | tr -d '\r')"
+              state="could not be queried (${last_error:-no error output})"
             else
-              state="has not appeared yet"
+              [[ -n "$run_json" ]] || run_json='[]'
+              exists="$(jq -r --arg sha "$COMMIT" \
+                'map(select(.headSha == $sha)) | length' <<<"$run_json")"
+              run_id="$(jq -r --arg sha "$COMMIT" \
+                'map(select(.headSha == $sha and .status == "completed")) | .[0].databaseId // empty' \
+                <<<"$run_json")"
+              if [[ -n "$run_id" ]]; then
+                conclusion="$(jq -r --arg sha "$COMMIT" \
+                  'map(select(.headSha == $sha and .status == "completed")) | .[0].conclusion // "unknown"' \
+                  <<<"$run_json")"
+                break
+              fi
+              if (( exists > 0 )); then
+                saw_run=1
+                absent=0
+                state="is not complete yet"
+              else
+                absent=$(( absent + 1 ))
+                state="has not appeared yet"
+                # A run that has not appeared after this many successful lookups is not
+                # slow, it does not exist. Stop waiting instead of spending the whole
+                # bound on a commit CI never built.
+                if (( absent >= absent_checks )); then
+                  break
+                fi
+              fi
             fi
             if (( attempt < attempts )); then
               echo "CI push run on main for ${COMMIT} ${state} (check ${attempt}/${attempts}); waiting ${interval}s"
               sleep "$interval"
             fi
           done
+          rm -f "$errlog"
 
           if [[ -z "$run_id" ]]; then
             if (( saw_run )); then
               echo "::warning::the CI push run on main for ${COMMIT} did not complete within $(( attempts * interval ))s; bundle status stays unverified"
+            elif (( absent > 0 )); then
+              echo "::warning::no CI push run on main for ${COMMIT} was found in ${checks} lookups (CI was never run for the commit, or the run and its artifact are older than retention); bundle status stays unverified"
             else
-              echo "::warning::no CI push run on main for ${COMMIT} (CI was never run for the commit, or the run and its artifact are older than retention); bundle status stays unverified"
+              echo "::warning::the CI run list for ${COMMIT} could not be queried (${errors} failed lookups over $(( checks * interval ))s, last error: ${last_error:-unknown}); bundle status stays unverified"
             fi
             exit 0
           fi
