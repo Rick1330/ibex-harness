@@ -23,7 +23,7 @@ pnpm --filter @ibex/console test:e2e
 pnpm --filter @ibex/console test:e2e:live
 ```
 
-Open `/`. To exercise live D1/D2 against a local operator API:
+Open `/login` and sign in with a personal access token. To exercise live D1/D2 against a local operator API:
 
 ```bash
 IBEX_OPERATOR_API_ORIGIN=https://operator.example.invalid \
@@ -31,7 +31,8 @@ IBEX_OPERATOR_SESSION_COOKIE_NAME=ibex_session \
 pnpm --filter @ibex/console dev
 ```
 
-The API origin must be HTTPS whenever an operator session cookie is present. The BFF forwards only the configured access cookie; refresh, CSRF, and unrelated cookies are never forwarded.
+The API origin must be HTTPS whenever an operator session cookie is present. On operator data routes the BFF forwards
+only the configured access cookie; refresh, CSRF, and unrelated cookies are forwarded only on the three session routes.
 
 ## Surface status
 
@@ -42,13 +43,13 @@ The API origin must be HTTPS whenever an operator session cookie is present. The
 | Surface | Route | Status | Evidence and boundary |
 | --- | --- | --- | --- |
 | Overview | `/` | Live D1 | Tenant-scoped organization snapshot; no fixture fallback. |
-| Agents | `/agents` | Live D2 | Tenant-scoped inventory and detail from `operator.agents.v1`; no fixture fallback. |
-| Sessions | `/sessions` | Live D3 | Metadata-only session index and turn-to-trace ledger from `operator.sessions.v1`. |
-| Memories | `/memories` | Live D2 | Metadata-only index from `operator.memories.v1`; content is not exposed. |
+| Agents | `/agents` | Live D2 | Tenant-scoped inventory and detail from `operator.agents.read.v1`; no fixture fallback. |
+| Sessions | `/sessions` | Live D3 | Metadata-only session index and turn-to-trace ledger from `operator.sessions.read.v1`. |
+| Memories | `/memories` | Live D2 | Metadata-only index from `operator.memories.read.v1`; content is not exposed. |
 | Evidence | `/evidence` | Live D2 | Capture completeness and relay delivery from `operator.evidence.summary.v1`; tombstone propagation, receipted erasure jobs, and audit-chain continuity from `operator.evidence.deletions.v1`. Field-level redaction is explicitly unavailable. |
-| Directives | `/directives` | Live D5 | Version timeline, the live pointer, and per-version session usage from `operator.directives.versions.v1`; instruction text, diffs, and promotion history are explicitly unavailable. |
+| Directives | `/directives` | Live D5 | Version timeline, the live pointer, and per-version session usage from `operator.directives.read.v1` and `operator.directives.get.v1`; instruction text, diffs, and promotion history are explicitly unavailable. |
 | Policies | `/policies` | Preview | Snapshots, readable rules, and diffs; run-to-policy provenance is not connected. |
-| Explore | `/explore`, `/explore/t/:traceId`, `/explore/r/:runId` | Live D2 | Metadata-only trace list, multi-run trace view, and validated run detail using `operator.trace-query.v1`. |
+| Explore | `/explore`, `/explore/t/:traceId`, `/explore/r/:runId` | Live D2 | Metadata-only trace list, multi-run trace view, and validated run detail using `operator.traces.read.v1` and `operator.traces.get.v1`. |
 | Platform | `/platform` | Live D1 | Dependency health, ingestion lag, retention, backup, restore, and deployment evidence. |
 | Settings | `/settings` | Preview | Illustrative configuration only; no write path, owner attestation, or audit link is connected. |
 
@@ -84,15 +85,21 @@ Development demo mode (`CONSOLE_DEMO_ENABLED`) is compile-time `import.meta.dev`
 
 Browser code calls same-origin Nuxt server routes only:
 
-- `GET /api/operator/context`
-- `GET /api/operator/overview`
-- `GET /api/operator/platform/health`
-- `GET /api/operator/traces`
-- `GET /api/operator/traces/:traceId`
-- `GET /api/operator/traces/runs/:runId`
+- `GET /api/operator/context`, `/api/operator/overview`, `/api/operator/platform/health`
+- `GET /api/operator/agents`, `/api/operator/agents/:agentId`
+- `GET /api/operator/memories`, `/api/operator/memories/:memoryId`
+- `GET /api/operator/sessions`, `/api/operator/sessions/:sessionId`
+- `GET /api/operator/evidence/summary`, `/api/operator/evidence/deletions`
+- `GET /api/operator/directives`, `/api/operator/directives/:directiveId`
+- `GET /api/operator/traces`, `/api/operator/traces/:traceId`, `/api/operator/traces/runs/:runId`
 - `GET /api/operator/events/stream`
+- `GET /api/operator/session/bootstrap`
+- `POST /api/operator/session/login`, `/api/operator/session/logout`, `/api/operator/session/refresh`
 
-The BFF strips `org_id` before returning D1 context and overview payloads. Responses use runtime Zod validation, `Cache-Control: private, no-store`, `Vary: Cookie`, and same-origin SSE restrictions.
+The session routes are the only cookie mutations — login, logout, and refresh; the fourth, `bootstrap`, is a same-origin
+read of non-secret wiring. Every operator **data** route above is a read. The BFF strips `org_id` before returning D1
+context and overview payloads. Responses use runtime Zod validation, `Cache-Control: private, no-store`, `Vary: Cookie`,
+and same-origin SSE restrictions.
 
 ## Configuration boundary
 
@@ -100,14 +107,20 @@ The BFF strips `org_id` before returning D1 context and overview payloads. Respo
 | --- | --- |
 | `IBEX_OPERATOR_API_ORIGIN` | Server-only approved upstream origin for operator reads. |
 | `IBEX_OPERATOR_SESSION_COOKIE_NAME` | Access-session cookie name; defaults to `ibex_session`. |
+| `IBEX_OPERATOR_REFRESH_COOKIE_NAME` | Refresh-cookie name; defaults to `ibex_refresh`. |
+| `IBEX_OPERATOR_CSRF_COOKIE_NAME` | CSRF double-submit cookie name; defaults to `ibex_csrf`. |
 | `NUXT_PUBLIC_IBEX_ENV` | Environment label shown in the console chrome. |
 
-The Console exposes no mutation routes. Read-only behavior is structural, not flag-gated (ADR-0091): `CONSOLE_READ_ONLY` is reserved and is not consulted by the Nuxt implementation. There is no production preview-data mode; the only fixture substitution is compile-time `import.meta.dev`. No bearer token is available to browser configuration, and the client holds no organization ID authority.
+Every operator **data** route is a read, and the three session BFF routes (login, logout, refresh) are the only cookie
+mutations, so read-only behavior is structural, not flag-gated (ADR-0091): `CONSOLE_READ_ONLY` is reserved and is not
+consulted by the Nuxt implementation. There is no production preview-data mode; the only fixture substitution is
+compile-time `import.meta.dev`. No bearer token is available to browser configuration, and the client holds no
+organization ID authority.
 
 ## Verification
 
 - `pnpm --filter @ibex/console test` covers contracts, query parsing, return-target safety, and surface status.
 - `pnpm --filter @ibex/console test:e2e` verifies fail-closed production behavior, legacy redirects, preview labelling, mobile navigation, and WCAG 2.2 AA checks.
-- `pnpm --filter @ibex/console test:e2e:live` runs a loopback HTTPS fixture API and the real Nuxt server path. It verifies D1/D2 rendering, access-cookie-only forwarding, SSE resume, hostile-event non-retention, and axe coverage.
+- `pnpm --filter @ibex/console test:e2e:live` runs a loopback HTTPS fixture API and the real Nuxt server path. It verifies D1/D2 rendering, access-cookie-only forwarding, SSE resume, hostile-event non-retention, and axe coverage, plus the clean-browser session journey (`e2e/login-journey.spec.ts`): login, live read, server-side rotation, logout, rejected token, refresh replay with family revocation, and the origin rule. The two-tenant journey (`e2e/tenant-journey.spec.ts`) runs there too, against the same loopback stand-in.
 
 Any expansion beyond the current live slice must add an owning API contract, tenant-negative tests, redaction/hostile-content tests, accessibility checks, performance evidence, and a rollback plan before changing this README's status.
