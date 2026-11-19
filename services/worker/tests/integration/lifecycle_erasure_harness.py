@@ -167,19 +167,26 @@ class FakeObjectStore:
     ``present`` is the set of URIs the store still holds; ``delete`` removes from
     it so ``object_exists`` can prove absence the way HEAD does. ``raises`` makes
     every call fail, which is how the "store answers with an error" path is
-    exercised without inventing a receipt status. ``slow_calls`` makes that many
-    HEADs take ``delay`` seconds each, which is how a slow store spends a budget
-    the caller must cap without making every later check slow too.
+    exercised without inventing a receipt status. ``delete_failures`` makes that
+    many deletes fail and then succeed, which is the re-delete-after-reappearance
+    sequence: the copy is back, the first delete cannot remove it, the retry can.
+    ``slow_calls`` makes that many HEADs take ``delay`` seconds each, which is how
+    a slow store spends a budget the caller must cap without making every later
+    check slow too.
     """
 
     present: set[str] = field(default_factory=set)
     deleted: list[str] = field(default_factory=list)
     raises: bool = False
+    delete_failures: int = 0
     delay: float = 0.0
     slow_calls: int = 0
 
     def delete(self, uri: str, *, org_id: str, settings: Any | None = None) -> None:
         del org_id, settings
+        if self.delete_failures > 0:
+            self.delete_failures -= 1
+            raise RuntimeError("s3 delete capture/1.json: 503")
         if self.raises:
             raise RuntimeError("s3 delete capture/1.json: 503")
         self.deleted.append(uri)

@@ -617,6 +617,34 @@ async def test_settle_downgrades_an_object_that_reappeared_after_the_delete(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("recheck", "invalidates"), [("present", True), ("error", False)]
+)
+async def test_settle_invalidates_a_proof_only_when_the_recheck_saw_the_object(
+    monkeypatch: pytest.MonkeyPatch, recheck: str, invalidates: bool
+) -> None:
+    """Positive evidence replaces the proof; an unanswered check preserves it."""
+    session = _held_session(("objectstore", "s3://b/org-1/a.json"))
+    monkeypatch.setattr(le.sweep, "session_as_erasure_org", _scope(session))
+
+    def head(*_args: Any, **_kwargs: Any) -> bool:
+        if recheck == "error":
+            raise RuntimeError("s3 down")
+        return True
+
+    monkeypatch.setattr(le.sweep, "object_exists", head)
+    staged = {"objectstore": ("s3://b/org-1/a.json",)}
+
+    assert await le._settle(
+        _ERASURE, [_StoreOutcome("objectstore", "verified")], staged
+    ) == "partial"
+
+    receipt = next(params for sql, params in session.statements if sql.startswith("INSERT"))
+    assert receipt["status"] == "failed"
+    assert receipt["invalidate_proof"] is invalidates
+
+
+@pytest.mark.asyncio
 async def test_settle_downgrades_when_the_object_store_recheck_is_unreachable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

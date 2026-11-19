@@ -15,8 +15,10 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
+from typing import Any
 
 import pytest
+from redis.exceptions import AuthenticationError
 
 from app.tasks import lifecycle_erasure as le
 from app.tasks.lifecycle_erasure import _Erasure, _StoreTarget
@@ -322,6 +324,31 @@ async def test_cache_locator_outside_the_namespace_is_a_permanent_failure() -> N
 
     assert outcome.status == "failed"
     assert outcome.permanent is True
+
+
+class _RefusingRedis:
+    """A client whose first command is refused the way an expired password is."""
+
+    async def set(self, *_args: Any, **_kwargs: Any) -> bool:
+        raise AuthenticationError("WRONGPASS invalid username-password pair")
+
+    async def aclose(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_an_auth_refusal_from_the_cache_stage_is_permanent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real stage's Redis refusal reaches the classifier, not a retry loop."""
+    monkeypatch.setattr(le.staging, "_redis_client", lambda _settings: _RefusingRedis())
+
+    outcome = await le._stage_store(
+        erasure(), _cache_target("cache", _OBJECT_KEY), time.monotonic() + 5
+    )
+
+    assert (outcome.status, outcome.permanent) == ("failed", True)
+    assert "WRONGPASS" in (outcome.error or "")
 
 
 @pytest.mark.asyncio

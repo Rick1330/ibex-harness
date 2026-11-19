@@ -72,10 +72,14 @@ SELECT agent_id::text AS agent_id
 
 # The unique key from 000073 is the idempotency mechanism: a redelivery of the
 # same (org, memory, revision, store) updates the one row instead of adding one.
-# The conflict guard is monotonic: a receipt that already says ``verified`` is
-# never replaced by a weaker status. The request path can write a ``failed``
-# cache receipt while this sweep is settling the same revision, and a late
-# failure must not overwrite the proof this run earned.
+# Only the erasure worker may write this table: 000075 revoked INSERT/UPDATE from
+# the tenant identity and grants them to ibex_erasure, which only ibex_worker can
+# set. So the guard is not defending against the request path any more (000078
+# gives it an outbox attempt column instead, never a receipt). It protects the
+# one thing a single writer can still get wrong: a retry's weaker outcome must not
+# overwrite a proof it did not invalidate. A ``failed`` replaces a ``verified``
+# only when this run observed a live copy (``:invalidate_proof``); an outage that
+# merely could not re-confirm the proof leaves the proof standing.
 _UPSERT_RECEIPT_SQL = """
 INSERT INTO ibex_core.erasure_store_receipts (
     org_id, memory_id, revision, store, status, verified_absent_at,
@@ -92,6 +96,7 @@ ON CONFLICT (org_id, memory_id, revision, store) DO UPDATE
        idempotency_key = EXCLUDED.idempotency_key
  WHERE ibex_core.erasure_store_receipts.status <> 'verified'
     OR EXCLUDED.status = 'verified'
+    OR CAST(:invalidate_proof AS boolean)
 """
 
 _COMPLETE_SQL = """

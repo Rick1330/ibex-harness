@@ -31,7 +31,12 @@ Contract, in the order the details are easy to get wrong:
   is ``failed`` — never ``verified``, and never ``not_applicable`` (which means
   "this memory has no copy in that store" and nothing else).
 * A store already proven for this revision is not re-staged: the first proof
-  stands and its ``verified_absent_at`` is not overwritten by a retry.
+  stands and its ``verified_absent_at`` is not overwritten by a retry. The one
+  exception is the object store, whose key nothing fences: a HEAD that finds the
+  archive back re-deletes it, and a re-delete that then fails replaces the
+  ``verified`` receipt with ``failed`` and its reason. An unanswered HEAD does
+  not replace the proof — it only retries — because an outage is not evidence
+  the object returned.
 * A row whose ``revision`` is lower than one already delivered for the same
   memory is retired, not erased: the newer revision describes the same memory's
   end state, so this row has nothing left to prove.
@@ -82,7 +87,16 @@ from app.tasks.base import IbexTask
 # test can drive the seam it is exercising without importing a private module
 # path. The public and private names below are re-exported for the same reason:
 # callers keep importing from this package.
-from . import constants, decisions, metrics, model, sql, staging, sweep  # noqa: F401
+from . import (  # noqa: F401
+    constants,
+    decisions,
+    metrics,
+    model,
+    redis_failures,
+    sql,
+    staging,
+    sweep,
+)
 from .constants import (  # noqa: F401
     _CACHE_FORGOTTEN_NAMESPACE,
     _CACHE_FORGOTTEN_TTL_SECONDS,
@@ -120,6 +134,7 @@ from .metrics import ERASURE_OUTCOME, ERASURE_STORE
 from .model import (  # noqa: F401
     PermanentErasureFailure,
     _ClaimedRow,
+    _DurableProof,
     _Erasure,
     _ErasureState,
     _StoreOutcome,
