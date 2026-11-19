@@ -114,11 +114,12 @@ returning D1 context and overview payloads. Responses use runtime Zod validation
 | `IBEX_OPERATOR_CSRF_COOKIE_NAME` | CSRF double-submit cookie name; defaults to `ibex_csrf`. |
 | `NUXT_PUBLIC_IBEX_ENV` | Environment label shown in the console chrome. |
 
-Every operator **data** route is a read, and the three session BFF routes (login, logout, refresh) are the only cookie
-mutations, so read-only behavior is structural, not flag-gated (ADR-0091): `CONSOLE_READ_ONLY` is reserved and is not
-consulted by the Nuxt implementation. There is no production preview-data mode; the only fixture substitution is
-compile-time `import.meta.dev`. No bearer token is available to browser configuration, and the client holds no
-organization ID authority.
+Every operator **data** route is a read: the three session BFF routes (login, logout, refresh) are the only cookie
+actions the browser can initiate, a `401` data read can still rotate the session server-side, and no data route writes
+an operator record. Read-only behavior is therefore structural, not flag-gated (ADR-0091): `CONSOLE_READ_ONLY` is
+reserved and is not consulted by the Nuxt implementation. There is no production preview-data mode; the only fixture
+substitution is compile-time `import.meta.dev`. No bearer token is available to browser configuration, and the client
+holds no organization ID authority.
 
 ## Verification
 
