@@ -150,6 +150,83 @@ class InterpolationTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual(read("A='$MISSING'\n", "A"), "$MISSING")
 
+    # --- positional syntax -------------------------------------------------
+    #
+    # `$1` is shell positional syntax, not Compose interpolation. Compose reads a
+    # bare `$NAME` only when the name starts with a letter or underscore, so it
+    # exports `p$1` unchanged; the reader used to take `1` as a variable name and
+    # delete it. An operator-supplied password is the real case: the generator
+    # writes it back escaped (`\$1`), and the two readers must agree on the value.
+
+    def test_positional_parameter_is_literal(self):
+        self.assertEqual(read("A=prefix-$1\n", "A"), "prefix-$1")
+
+    def test_bare_dollar_followed_by_digit_is_literal(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("A=$1\n", "A"), "$1")
+
+    def test_positional_parameter_after_an_escaped_dollar(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read('A="p\\$1"\n', "A"), "p$1")
+
+    def test_positional_parameter_inside_a_default_operand_is_literal(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("A=${MISSING:-pre-$1-post}\n", "A"), "pre-$1-post")
+
+    def test_braced_positional_is_empty_not_an_error(self):
+        # A choice, not parity: Compose refuses to start on `${1}` ("Invalid
+        # template"), while this reader resolves the unknown name to empty. The
+        # reader extracts one value for a script; it is not a second config
+        # validator, and a file Compose rejects cannot produce a running profile,
+        # so turning this into an error would only add a failure mode that a
+        # working deployment never reaches.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("A=${1}\n", "A"), "")
+
+    # --- nested defaults ---------------------------------------------------
+    #
+    # `${NAME:-${OTHER:-fallback}}` nests, and Compose resolves the operand as an
+    # expression before applying the operator. The reader used to close the outer
+    # expression at the first `}`, so the value became the literal text
+    # `${OTHER:-fallback}`.
+
+    def test_nested_default_resolves_the_innermost(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("A=${MISSING:-${OTHER:-c}}\n", "A"), "c")
+
+    def test_nested_default_uses_an_earlier_assignment(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("OTHER=deep\nA=${MISSING:-${OTHER:-c}}\n", "A"), "deep")
+
+    def test_nested_default_does_not_see_a_later_assignment(self):
+        # Compose resolves values in file order, so an assignment below the
+        # reference is not visible yet. This pins that order, not just nesting.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("A=${MISSING:-${OTHER}}\nOTHER=later\n", "A"), "")
+
+    def test_nested_default_is_skipped_when_the_outer_value_is_set(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("SET=outer\nA=${SET:-${MISSING:-c}}\n", "A"), "outer")
+
+    def test_outer_default_keeps_the_nested_default_when_it_is_needed(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(read("SET=\nA=${SET:-${MISSING:-c}}\n", "A"), "c")
+
+    # --- escapes Compose does not define -----------------------------------
+    #
+    # Compose decodes `\\`, `\"`, `\$`, `\n`, `\t` and `\r`. Any other escape is
+    # left as the backslash plus the character; the reader used to drop the
+    # backslash, so `a\qb` read here as `aqb` while Compose exported `a\qb`.
+
+    def test_unknown_escape_keeps_its_backslash(self):
+        self.assertEqual(read('A="a\\qb"\n', "A"), "a\\qb")
+
+    def test_unknown_escape_keeps_the_following_character(self):
+        self.assertEqual(read('A="path\\dto"\n', "A"), "path\\dto")
+
+    def test_known_escapes_still_decode(self):
+        self.assertEqual(read('A="a\\\\b"\n', "A"), "a\\b")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -647,6 +647,28 @@ jobs:
         run: docker compose -f infra/compose/test/docker-compose.yml config
       - name: Validate observability compose
         run: docker compose -f infra/compose/observability/docker-compose.yml --env-file infra/compose/observability/.env.example config
+      # The only supported deployment profile (ADR-0097) was validated by nothing in
+      # this job: dev, test and observability were, so a broken v1 compose file
+      # reached a release before anything read it. Render it from the tracked
+      # template, never from an operator `.env`: `make v1-secrets` does not run in
+      # CI, and the template leaves the secrets empty on purpose. Compose's `:?`
+      # treats an empty value as missing, so a blank assignment is filled with a
+      # CI-only placeholder, and a required key the generator appends to the
+      # operator `.env` but the template omits is added the same way. Nothing is
+      # started and no value here is a secret.
+      - name: Validate v1-single-node compose
+        run: |
+          set -euo pipefail
+          template=infra/compose/v1-single-node/.env.example
+          rendered="$(mktemp)"
+          trap 'rm -f "$rendered"' EXIT
+          sed -E 's/^([A-Z0-9_]+)=$/\1=ci-placeholder/' "$template" >"$rendered"
+          while read -r name; do
+            grep -qE "^${name}=" "$rendered" || printf '%s=ci-placeholder\n' "$name" >>"$rendered"
+          done < <(grep -oE '\$\{[A-Z0-9_]+:\?' infra/compose/v1-single-node/compose.yml |
+            sed 's/[${:?]//g' | sort -u)
+          docker compose -f infra/compose/v1-single-node/compose.yml --env-file "$rendered" config >/dev/null
+          echo "v1-single-node profile renders from the tracked template"
 
   db-migrate-smoke:
     name: db-migrate-smoke

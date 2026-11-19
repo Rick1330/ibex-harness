@@ -17,10 +17,11 @@
 #   IBEX_V1_PGBACKREST_CONF=/tmp/x/pgbackrest.conf
 #
 # Idempotent: existing non-empty secret values and valid keypairs are kept.
-# --force rewrites .env from infra/compose/v1-single-node/.env.example and regenerates every
-# secret and keypair. It does NOT rotate the TLS CA; gen-v1-tls.sh reuses a valid
-# CA and only reissues missing or invalid leaves. Use gen-v1-tls.sh --force when
-# a CA rotation is actually intended.
+# --force rewrites .env from infra/compose/v1-single-node/.env.example and regenerates the
+# secrets and keypairs, except the two values whose replacement destroys data
+# (the repository passphrase and the credentials master key, below). It does NOT
+# rotate the TLS CA; gen-v1-tls.sh reuses a valid CA and only reissues missing or
+# invalid leaves. Use gen-v1-tls.sh --force when a CA rotation is intended.
 #
 # --force also preserves PGBACKREST_REPO1_CIPHER_PASS when the previous .env had
 # one: that passphrase is the only key to every object in the backup repository,
@@ -28,11 +29,17 @@
 # explicitly with --rotate-pgbackrest-cipher, which refuses while a value exists
 # unless IBEX_PGBACKREST_ALLOW_CIPHER_ROTATION=1 is set.
 #
+# --force preserves IBEX_CREDENTIALS_MASTER_KEY for the same reason: it is the
+# key-encryption key for every org's sealed provider credential, so a regenerated
+# one makes those credentials undecryptable -- a data-loss event, not a
+# convenience. Rotation is requested explicitly with --rotate-master-key, which
+# warns that every affected org must re-submit its provider key.
+#
 # An unreadable .env is a hard error, not an empty value: reading it as empty
-# would generate a new passphrase and orphan every existing backup. The
-# replacement .env is staged in a temporary file with the retained passphrase
-# already written, then renamed into place, so an interruption between the two
-# cannot leave .env without the only copy of the key.
+# would generate a new passphrase or master key and orphan the data each one
+# opens. The replacement .env is staged in a temporary file with both retained
+# values already written, then renamed into place, so an interruption between
+# the two cannot leave .env without the only copy of a key.
 #
 # An exported REDIS_PASSWORD that disagrees with .env is refused before the redis
 # config is written: Compose interpolates the environment value first, so the two
@@ -61,27 +68,34 @@ PGBACKREST_CONF_DEST="${IBEX_V1_PGBACKREST_CONF:-$ROOT_DIR/infra/backup/pgbackre
 
 usage() {
   cat <<'EOF'
-Usage: gen-v1-secrets.sh [--force] [--rotate-pgbackrest-cipher]
+Usage: gen-v1-secrets.sh [--force] [--rotate-pgbackrest-cipher] [--rotate-master-key]
 
 Creates the v1-single-node .env and file secrets.
-  --force   rewrite .env from infra/compose/v1-single-node/.env.example and regenerate all
+  --force   rewrite .env from infra/compose/v1-single-node/.env.example and regenerate the
             secrets and keypairs (the TLS CA is not rotated). PGBACKREST_REPO1_CIPHER_PASS
-            is preserved when one exists: rotating it would make every existing backup
-            unreadable.
+            and IBEX_CREDENTIALS_MASTER_KEY are preserved when they exist: rotating either
+            would make existing data unreadable.
   --rotate-pgbackrest-cipher
             generate a new PGBACKREST_REPO1_CIPHER_PASS. Refused when a value already
             exists, because that passphrase encrypts the existing repository. Set
             IBEX_PGBACKREST_ALLOW_CIPHER_ROTATION=1 only after recording the old pass and
             accepting that backups encrypted with it become unreadable.
+  --rotate-master-key
+            generate a new IBEX_CREDENTIALS_MASTER_KEY. This is destructive: provider
+            credentials sealed with the previous key cannot be decrypted with the new
+            one, so every affected org must re-submit its provider API key. --force
+            alone never rotates it; the existing value is preserved.
 EOF
 }
 
 FORCE=0
 ROTATE_CIPHER=0
+ROTATE_MASTER_KEY=0
 for arg in "$@"; do
   case "$arg" in
     --force) FORCE=1 ;;
     --rotate-pgbackrest-cipher) ROTATE_CIPHER=1 ;;
+    --rotate-master-key) ROTATE_MASTER_KEY=1 ;;
     -h | --help) usage; exit 0 ;;
     *)
       echo "gen-v1-secrets.sh: unknown option: $arg" >&2
@@ -247,10 +261,30 @@ ensure_env_file() {
       exit 1
     fi
   fi
+  # The master key is staged for the same reason: an interruption between
+  # "template written" and "key written" must not leave .env holding no copy.
+  if [[ -n "$PREVIOUS_MASTER_KEY" ]]; then
+    if ! env_set_file "$tmp" IBEX_CREDENTIALS_MASTER_KEY "$PREVIOUS_MASTER_KEY"; then
+      rm -f "$tmp"
+      echo "gen-v1-secrets.sh: could not carry IBEX_CREDENTIALS_MASTER_KEY into the staged .env; $ENV_FILE is unchanged" >&2
+      exit 1
+    fi
+  fi
   mv -f "$tmp" "$ENV_FILE"
   chmod 0600 "$ENV_FILE"
   if [[ "$FORCE" -eq 1 ]]; then
-    echo "gen-v1-secrets.sh: --force rewrote $ENV_FILE from the template (repository passphrase preserved)" >&2
+    local preserved=""
+    if [[ -n "$PREVIOUS_CIPHER_PASS" ]]; then
+      preserved="repository passphrase"
+    fi
+    if [[ -n "$PREVIOUS_MASTER_KEY" ]]; then
+      preserved="${preserved:+$preserved and }credentials master key"
+    fi
+    if [[ -n "$preserved" ]]; then
+      echo "gen-v1-secrets.sh: --force rewrote $ENV_FILE from the template ($preserved preserved)" >&2
+    else
+      echo "gen-v1-secrets.sh: --force rewrote $ENV_FILE from the template" >&2
+    fi
   fi
 }
 
@@ -569,6 +603,7 @@ echo
 # generator produced a new key: every existing backup silently orphaned. An
 # unreadable file therefore aborts here, before ensure_env_file can replace it.
 PREVIOUS_CIPHER_PASS=""
+PREVIOUS_MASTER_KEY=""
 if [[ -e "$ENV_FILE" || -L "$ENV_FILE" ]]; then
   if [[ ! -f "$ENV_FILE" ]]; then
     echo "gen-v1-secrets.sh: $ENV_FILE exists but is not a regular file; refusing to continue" >&2
@@ -581,6 +616,20 @@ PGBACKREST_REPO1_CIPHER_PASS may be set there, and it is the only key to every
 object in the backup repository. Refusing to continue: generating a new
 passphrase would leave the repository intact but unreadable, and rewriting .env
 would discard the old one. Fix the ownership/permissions on the file and rerun.
+EOF
+    exit 1
+  fi
+  # A failed read is not an absent value here either. If the key cannot be
+  # read, --force must not proceed: ensure_env_file would replace .env and the
+  # generator would mint a new key, which is the data-loss path this guard
+  # exists to block.
+  if ! PREVIOUS_MASTER_KEY="$(env_value IBEX_CREDENTIALS_MASTER_KEY)"; then
+    cat >&2 <<EOF
+gen-v1-secrets.sh: cannot read $ENV_FILE.
+IBEX_CREDENTIALS_MASTER_KEY may be set there, and it decrypts every sealed
+provider credential. Refusing to continue: a new key would leave those
+credentials unreadable, and rewriting .env would discard the old one. Fix the
+ownership/permissions on the file and rerun.
 EOF
     exit 1
   fi
@@ -612,7 +661,28 @@ set_secret IBEX_AUTH_DB_PASSWORD "$(gen_hex)"
 set_secret IBEX_WORKER_DB_PASSWORD "$(gen_hex)"
 set_secret IBEX_BOOTSTRAP_DB_PASSWORD "$(gen_hex)"
 set_secret REDIS_PASSWORD "$(gen_hex)"
-set_secret IBEX_CREDENTIALS_MASTER_KEY "$(openssl rand -base64 32 | tr -d '\n')"
+# The credentials master key seals org provider API keys (ADR-0074) and is the
+# only key that opens them (engineering/runbooks/RUNBOOK-master-key.md). --force
+# preserves an existing value; only --rotate-master-key replaces it, and that
+# warns because the operation is destructive. An empty or absent value is
+# generated as before, so a first install and a repair still work.
+if (( ROTATE_MASTER_KEY )); then
+  env_set IBEX_CREDENTIALS_MASTER_KEY "$(openssl rand -base64 32 | tr -d '\n')"
+  log_item IBEX_CREDENTIALS_MASTER_KEY "rotated"
+  cat >&2 <<'EOF'
+gen-v1-secrets.sh: WARNING: rotated IBEX_CREDENTIALS_MASTER_KEY.
+Provider credentials sealed with the previous key cannot be decrypted with the
+new one. Every org must re-submit its provider API key, and any restore that
+expects the old key must keep its own copy. See
+engineering/runbooks/RUNBOOK-master-key.md. If this rotation was not intended,
+restore the previous value before starting the profile.
+EOF
+elif [[ -n "$PREVIOUS_MASTER_KEY" ]]; then
+  env_set IBEX_CREDENTIALS_MASTER_KEY "$PREVIOUS_MASTER_KEY"
+  log_item IBEX_CREDENTIALS_MASTER_KEY "kept"
+else
+  set_secret IBEX_CREDENTIALS_MASTER_KEY "$(openssl rand -base64 32 | tr -d '\n')"
+fi
 # The API-to-AuthService credential is split by authority (finding S04). The
 # lifecycle token validates, revokes, and consumes step-up proofs and must name
 # the org it acts for; the issue token mints sessions and nothing else. They are
