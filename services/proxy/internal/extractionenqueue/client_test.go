@@ -79,6 +79,39 @@ func TestUnit_ClientDisabled(t *testing.T) {
 	}
 }
 
+// TestUnit_ClientDisabledWithoutToken pins the other half of the config check:
+// a BaseURL alone is not a usable client, because the worker requires the
+// bearer. The client must fail closed on the config, before any request.
+func TestUnit_ClientDisabledWithoutToken(t *testing.T) {
+	t.Parallel()
+	c := extractionenqueue.New(extractionenqueue.Config{BaseURL: "http://127.0.0.1:9"})
+	if c.Enabled() {
+		t.Fatal("expected disabled without a token")
+	}
+	err := c.Enqueue(context.Background(), extractionenqueue.Request{
+		OrgID: uuid.New(), AgentID: uuid.New(), SessionID: uuid.New(),
+		Turns: []extractionenqueue.Turn{{TurnIndex: 0, Role: "user", Content: "hi"}},
+	})
+	if err == nil || err.Error() != "extractionenqueue: disabled" {
+		t.Fatalf("err=%v want extractionenqueue: disabled", err)
+	}
+}
+
+// TestUnit_NilClientIsDisabled covers the nil-receiver guard. Enabled and
+// Enqueue are reachable through wiring that may hold a nil client, so neither
+// may panic; both must report the client as disabled.
+func TestUnit_NilClientIsDisabled(t *testing.T) {
+	t.Parallel()
+	var c *extractionenqueue.Client
+	if c.Enabled() {
+		t.Fatal("a nil client must not report itself enabled")
+	}
+	err := c.Enqueue(context.Background(), extractionenqueue.Request{})
+	if err == nil || err.Error() != "extractionenqueue: disabled" {
+		t.Fatalf("err=%v want extractionenqueue: disabled", err)
+	}
+}
+
 func TestUnit_ClientEnqueueOK(t *testing.T) {
 	t.Parallel()
 	var gotAuth string

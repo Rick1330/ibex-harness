@@ -160,7 +160,7 @@ type Client struct {
 	token      string
 	httpClient *http.Client
 	// initErr records a transport that could not be constructed. It is immutable
-	// after New, so it needs no synchronization.
+	// after construction, so it needs no synchronization.
 	initErr error
 }
 
@@ -173,6 +173,13 @@ type Config struct {
 
 // New returns a Client. Empty BaseURL or Token means the client is disabled.
 func New(cfg Config) *Client {
+	return newClient(cfg, http.DefaultTransport)
+}
+
+// newClient is New with the base transport injected, so the construction
+// failure path is reachable from a test without a mutable package-level hook.
+// These tests run in parallel, and a shared variable would be a data race.
+func newClient(cfg Config, baseTransport http.RoundTripper) *Client {
 	base := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	token := strings.TrimSpace(cfg.Token)
 	if base == "" || token == "" {
@@ -182,7 +189,7 @@ func New(cfg Config) *Client {
 	if to <= 0 {
 		to = DefaultTimeout
 	}
-	tr, err := newTransport(http.DefaultTransport)
+	tr, err := newTransport(baseTransport)
 	if err != nil {
 		// Do not fall back to http.DefaultTransport: sharing the process-global
 		// pool is the defect this client avoids. Keep the config so Enqueue can
