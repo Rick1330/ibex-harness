@@ -462,12 +462,18 @@ func TestUnit_ClientPoolIsPrivate(t *testing.T) {
 
 	victimErrs, stopVictim := startVictimHammer(c, req)
 	closeServersConcurrently(others)
-	// Give the victim a request after the storm so a redial, if any, is counted.
-	time.Sleep(20 * time.Millisecond)
+	// Stop the hammer before the check below: nothing may enqueue concurrently
+	// with the request whose connection outcome this test measures.
 	stopVictim()
 
 	if n := victimErrs.Load(); n != 0 {
 		t.Fatalf("victim enqueue errors=%d want 0", n)
+	}
+	// Exactly one request after the storm, from this goroutine, so a redial
+	// forced by a foreign pool close is counted. Waiting for the hammer to
+	// happen to issue one would make the accept count depend on scheduling.
+	if err := c.Enqueue(context.Background(), req); err != nil {
+		t.Fatalf("post-storm enqueue: %v", err)
 	}
 	if got := accepted.Load(); got != warmAccepts {
 		t.Fatalf("victim accepted=%d want %d: closing unrelated servers disturbed its idle pool", got, warmAccepts)
