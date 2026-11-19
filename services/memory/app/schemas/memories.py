@@ -142,10 +142,19 @@ class ErasureStores(BaseModel):
     would either over-claim (``not_applicable``/``verified``) or read as work
     still queued (``pending``) that will never happen. ClickHouse evidence is
     erased by the org-deletion saga, which proves absence org-wide.
+
+    ``cache`` and ``cache_hot`` are the two Redis structures that can hold a
+    memory after a write. They are separate because their purge verbs differ: the
+    object entry is deleted, the hot sorted set loses one member. A ``failed``
+    cache receipt is outstanding work the worker sweep retries, not a report of a
+    completed forget.
     """
 
     objectstore: ErasureStoreState = "pending"
     session_event: ErasureStoreState = "pending"
+    cache: ErasureStoreState = "pending"
+    cache_hot: ErasureStoreState = "pending"
+
 
 
 class ErasureStatus(BaseModel):

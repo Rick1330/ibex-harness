@@ -36,6 +36,7 @@ from app.lifecycle import ForgetMemory
 from app.read.lineage import DEFAULT_LINEAGE_DEPTH, MAX_LINEAGE_DEPTH, LineageQuery
 from app.read.models import HotMemoryQuery
 from app.routers.memory_forget_support import (
+    forget_cache_scope,
     forget_memory_with_error_mapping,
     invalidate_forgotten_memory,
     read_forget_erasure,
@@ -187,6 +188,14 @@ async def forget_memory(
     gets ``AGENT_SCOPE_REQUIRED`` rather than acting for an arbitrary agent.
     """
     agent_id = require_agent_scope(ctx.token)
+    # The cache addresses are recorded in the forget transaction itself, so the
+    # worker can still evict them if this request dies after the commit.
+    cache_scope = forget_cache_scope(
+        ctx.cache_writer,
+        org_id=ctx.token.org_id,
+        agent_id=agent_id,
+        memory_id=memory_id,
+    )
     revision = await forget_memory_with_error_mapping(
         session_factory=ctx.session_factory,
         command=ForgetMemory(
@@ -195,12 +204,15 @@ async def forget_memory(
             memory_id=memory_id,
             expected_revision=request.expected_revision,
         ),
+        cache_scope=cache_scope,
     )
     await invalidate_forgotten_memory(
         ctx.cache_writer,
+        session_factory=ctx.session_factory,
         org_id=ctx.token.org_id,
         agent_id=agent_id,
         memory_id=memory_id,
+        revision=revision,
     )
     erasure = await read_forget_erasure(
         ctx.session_factory,

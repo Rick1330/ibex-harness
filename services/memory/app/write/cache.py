@@ -11,9 +11,9 @@ from uuid import UUID
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from app.cache.hot_keys import hot_memories_key
 from app.cache.hot_score import compute_hot_cache_score
 from app.cache.hot_write import HotZaddRequest, register_hot_zadd_trim_script, zadd_hot_memory
+from app.cache.memory_keys import memory_hot_key, memory_object_key
 from app.config import Settings
 from app.write.metrics import WRITE_CACHE_ERRORS
 from app.write.models import MemoryRow, WriteOutcome, WriteOutcomeKind
@@ -23,6 +23,16 @@ logger = logging.getLogger(__name__)
 _OBJECT_TTL = 3600
 
 
+class CacheInvalidationError(RuntimeError):
+    """A cache eviction that did not complete.
+
+    Raised rather than swallowed: a forgotten memory's cached object still holds
+    its content, so an eviction failure is a disclosure the caller has to record,
+    not a warning to drop. The caller retries and, on exhaustion, writes the
+    receipt the erasure ledger reads.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class MemoryCacheWriter:
     redis: Redis
@@ -30,23 +40,27 @@ class MemoryCacheWriter:
     _hot_zadd_trim: object | None = field(init=False, repr=False, compare=False, default=None)
 
     def object_key(self, org_id: UUID, memory_id: UUID) -> str:
-        return f"{org_id}:memory:{memory_id}"
+        return memory_object_key(org_id, memory_id)
 
     def hot_key(self, org_id: UUID, agent_id: UUID) -> str:
-        return hot_memories_key(org_id, agent_id)
+        return memory_hot_key(org_id, agent_id)
 
     async def forget_memory(self, *, org_id: UUID, agent_id: UUID, memory_id: UUID) -> None:
-        """Best-effort cache eviction after the authoritative tombstone commits."""
+        """Evict both cached copies, or raise so the caller can record the gap.
+
+        Both operations are idempotent: DEL of an absent key and ZREM of an absent
+        member are no-ops, so a retry after a partial failure is safe and a second
+        forget of the same memory cannot corrupt another memory's state.
+        """
         try:
             await self.redis.delete(self.object_key(org_id, memory_id))
             await self.redis.zrem(self.hot_key(org_id, agent_id), str(memory_id))
-        except (OSError, RedisError):
+        except (OSError, RedisError) as exc:
             WRITE_CACHE_ERRORS.labels(op="forget_invalidate").inc()
-            logger.warning(  # NOSONAR pythonsecurity:S5145 - UUID hex is hex-only, not free text
-                "memory cache invalidation failed org_id=%s memory_id=%s",
-                org_id.hex,
-                memory_id.hex,
-            )
+            # Fixed message: the caller records this type name in a receipt, and
+            # a Redis error can carry the endpoint, never memory content.
+            raise CacheInvalidationError("memory cache eviction failed") from exc
+
 
     async def write_created(self, outcome: WriteOutcome) -> None:
         if outcome.kind != WriteOutcomeKind.CREATED:

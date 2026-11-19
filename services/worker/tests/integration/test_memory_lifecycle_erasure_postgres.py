@@ -39,7 +39,13 @@ async def test_consumer_verifies_every_store_and_deletes_the_copies(
     receipts = await harness.receipts(
         org_id=forgotten.org_id, memory_id=forgotten.memory_id
     )
-    assert set(receipts) == {"objectstore", "clickhouse", "session_event"}
+    assert set(receipts) == {
+        "objectstore",
+        "clickhouse",
+        "session_event",
+        "cache",
+        "cache_hot",
+    }
     for store, (status, error, verified_at) in receipts.items():
         assert status == "verified", (store, error)
         assert error is None, (store, error)
@@ -57,8 +63,17 @@ async def test_consumer_verifies_every_store_and_deletes_the_copies(
     assert await harness.session_event_count(forgotten) == 0, (
         "the session_events copy must be gone"
     )
+    # The cache is the disclosure store: the content-bearing entry is gone, and
+    # only this memory's member left the hot set — the other live member stays.
+    assert not harness.cached_object_present(forgotten), (
+        "the cached object still carries the forgotten memory's content"
+    )
+    assert not harness.hot_member_present(forgotten)
+    assert harness.hot_other_member_present(forgotten), (
+        "the hot set lost a live memory's score, not just the forgotten member"
+    )
     # The refs stay: the receipt is the proof, the ref is the address it refers to.
-    assert await harness.artifact_ref_count(forgotten) == 3
+    assert await harness.artifact_ref_count(forgotten) == 5
 
 
 @pytest.mark.asyncio
@@ -104,7 +119,7 @@ async def test_memory_without_refs_is_not_applicable_not_failed(
     # Only the stores whose producer records a ref for every copy get a receipt.
     # ClickHouse is not among them: "no ref" there means "not checked", so a
     # receipt would be a claim nobody made.
-    assert set(receipts) == {"objectstore", "session_event"}
+    assert set(receipts) == {"objectstore", "session_event", "cache", "cache_hot"}
     assert {status for status, _error, _at in receipts.values()} == {"not_applicable"}
     assert {verified_at for _status, _error, verified_at in receipts.values()} == {None}
     state, delivered_at, _available, _attempts = await harness.outbox(row_id=row_id)

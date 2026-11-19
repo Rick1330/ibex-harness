@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -9,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cache.memory_keys import HOT_CACHE_STORE, OBJECT_CACHE_STORE
 from app.erased_response import ERASED_MARKER_TEXT
 from app.exceptions import (
     LegalHoldActiveError,
@@ -48,6 +50,36 @@ class ForgetMemory:
     agent_id: UUID
     memory_id: UUID
     expected_revision: int
+
+
+@dataclass(frozen=True, slots=True)
+class ForgetCacheScope:
+    """The Redis addresses a forget must clear, when a cache is configured.
+
+    Empty when no cache writer exists, which means this deployment has no Redis
+    cache: no ref is recorded and the erasure reports the cache store as
+    ``not_applicable`` instead of claiming a purge that had nothing to purge.
+
+    The keys are passed in rather than derived here so the key format has one
+    definition (``app.cache.memory_keys``) and this transaction only records the
+    addresses a producer handed it — the same contract as the object-store and
+    session-event refs written by the capture task.
+    """
+
+    object_keys: tuple[str, ...] = ()
+    hot_keys: tuple[str, ...] = ()
+
+    def refs(self) -> tuple[tuple[str, str], ...]:
+        """``(store, locator)`` pairs for the cache artifact refs."""
+        return (
+            *((OBJECT_CACHE_STORE, key) for key in self.object_keys),
+            *((HOT_CACHE_STORE, key) for key in self.hot_keys),
+        )
+
+
+#: Shared default: a request with no cache writer records no cache address. A
+#: module-level singleton keeps the default immutable and obvious.
+NO_CACHE_SCOPE = ForgetCacheScope()
 
 
 _EVENT_TYPES = frozenset(
@@ -178,6 +210,22 @@ _ADVANCE_SESSION_SQL = """
     WHERE id = :session_id AND org_id = :org_id AND agent_id = :agent_id
 """
 
+# The cache addresses are recorded in the forget transaction, not after it: the
+# consumer can only erase a store whose copy a producer recorded, and a request
+# that commits the tombstone and then dies before its cache eviction must still
+# leave the consumer a way to reach the cache. ON CONFLICT DO NOTHING makes a
+# retried forget write no second ref; the unique key is (org, memory, store,
+# locator).
+_INSERT_CACHE_REFS_SQL = """
+    INSERT INTO ibex_core.memory_artifact_refs (org_id, memory_id, store, locator)
+    SELECT CAST(:org_id AS uuid),
+           CAST(:memory_id AS uuid),
+           ref.store,
+           ref.locator
+      FROM jsonb_to_recordset(CAST(:refs AS jsonb)) AS ref(store text, locator text)
+    ON CONFLICT DO NOTHING
+"""
+
 
 def _memory_scope_params(request: ForgetMemory) -> dict[str, object]:
     return {
@@ -282,7 +330,12 @@ async def enqueue_memory_lifecycle_event(
     )
 
 
-async def forget_memory_session(session: AsyncSession, request: ForgetMemory) -> int:
+async def forget_memory_session(
+    session: AsyncSession,
+    request: ForgetMemory,
+    *,
+    cache_scope: ForgetCacheScope = NO_CACHE_SCOPE,
+) -> int:
     """Tombstone one scoped memory and fence extraction from its source session."""
     if request.expected_revision < 1:
         raise StaleLifecycleError("expected memory lifecycle revision must be positive")
@@ -297,6 +350,7 @@ async def forget_memory_session(session: AsyncSession, request: ForgetMemory) ->
     await _require_no_active_hold(session, request.org_id)
     new_revision = await _tombstone_memory(session, request)
     await _erase_memory_children(session, request)
+    await _record_cache_refs(session, request, cache_scope)
     if source_session_id is not None:
         await _advance_source_session_revision(session, request, source_session_id)
     await enqueue_memory_lifecycle_event(
@@ -309,6 +363,32 @@ async def forget_memory_session(session: AsyncSession, request: ForgetMemory) ->
         ),
     )
     return new_revision
+
+
+async def _record_cache_refs(
+    session: AsyncSession, request: ForgetMemory, cache_scope: ForgetCacheScope
+) -> None:
+    """Record the cache addresses the erasure consumer must reach.
+
+    Nothing is written when no cache is configured: an empty scope means this
+    deployment has no Redis cache, so there is no copy and the consumer reports
+    ``not_applicable`` rather than a purge of an address that never existed.
+    """
+    refs = cache_scope.refs()
+    if not refs:
+        return
+    await session.execute(
+        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            _INSERT_CACHE_REFS_SQL
+        ),
+        {
+            "org_id": str(request.org_id),
+            "memory_id": str(request.memory_id),
+            "refs": json.dumps(
+                [{"store": store, "locator": locator} for store, locator in refs]
+            ),
+        },
+    )
 
 
 async def _require_no_active_hold(session: AsyncSession, org_id: UUID) -> None:

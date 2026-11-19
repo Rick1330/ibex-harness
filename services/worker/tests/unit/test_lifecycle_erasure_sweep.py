@@ -266,6 +266,8 @@ async def test_erase_row_stages_the_provable_set_then_settles(
     assert staged == [
         ("objectstore", ("s3://b/org-1/a.json",), {"session_event": "verified"}),
         ("session_event", (), {"session_event": "verified"}),
+        ("cache", (), {"session_event": "verified"}),
+        ("cache_hot", (), {"session_event": "verified"}),
     ]
 
 

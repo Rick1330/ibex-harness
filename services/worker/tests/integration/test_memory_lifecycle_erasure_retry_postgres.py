@@ -172,6 +172,11 @@ async def test_erasure_of_one_tenant_leaves_another_tenants_copies_alone(
     )
     assert object_store.deleted == [forgotten.object_uri]
     assert harness.clickhouse_count(other) == 1
+    assert harness.cached_object_present(other), (
+        "another tenant's cached memory object must survive"
+    )
+    assert harness.hot_member_present(other)
+    assert not harness.cached_object_present(forgotten)
     assert (
         await harness.receipts(org_id=other.org_id, memory_id=other.memory_id) == {}
     )
@@ -205,7 +210,7 @@ async def test_clickhouse_evidence_without_a_ref_is_unproven_not_not_applicable(
     assert "clickhouse" not in receipts, (
         "a store with no provenance producer must not be receipted at all"
     )
-    assert set(receipts) == {"objectstore", "session_event"}
+    assert set(receipts) == {"objectstore", "session_event", "cache", "cache_hot"}
     assert harness.clickhouse_count(forgotten) == 1, (
         "the unproven store is not claimed as erased; the row is the open gap"
     )

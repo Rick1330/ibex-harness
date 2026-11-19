@@ -123,13 +123,53 @@ async def test_forget_memory_evicts_object_and_hot_entry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_forget_memory_fail_open_on_redis_error() -> None:
+async def test_forget_memory_raises_so_the_caller_can_record_it() -> None:
+    """A cache eviction failure is a disclosure, not a warning to drop.
+
+    The old contract swallowed ``RedisError`` and returned, so
+    ``invalidate_forgotten_memory`` could not tell a failed eviction from a
+    successful one and the forget reported a clean result while the cached
+    object still carried the content. The writer now raises a typed error; the
+    caller retries it and records exhaustion in the erasure ledger.
+    """
     from redis.exceptions import RedisError
+
+    from app.write.cache import CacheInvalidationError
 
     redis = MagicMock()
     redis.delete = AsyncMock(side_effect=RedisError("down"))
     redis.zrem = AsyncMock()
     writer = MemoryCacheWriter(redis, MagicMock())
-    await writer.forget_memory(org_id=uuid4(), agent_id=uuid4(), memory_id=uuid4())
+    with pytest.raises(CacheInvalidationError):
+        await writer.forget_memory(org_id=uuid4(), agent_id=uuid4(), memory_id=uuid4())
     redis.delete.assert_awaited_once()
     redis.zrem.assert_not_awaited()
+
+
+async def test_forget_memory_raises_when_the_hot_member_removal_fails() -> None:
+    """A half-evicted memory is not evicted: the member is still in the hot set."""
+    from redis.exceptions import RedisError
+
+    from app.write.cache import CacheInvalidationError
+
+    redis = MagicMock()
+    redis.delete = AsyncMock()
+    redis.zrem = AsyncMock(side_effect=RedisError("down"))
+    writer = MemoryCacheWriter(redis, MagicMock())
+    with pytest.raises(CacheInvalidationError):
+        await writer.forget_memory(org_id=uuid4(), agent_id=uuid4(), memory_id=uuid4())
+    redis.delete.assert_awaited_once()
+    redis.zrem.assert_awaited_once()
+
+
+async def test_forget_memory_evicts_both_copies_on_success() -> None:
+    """The object entry is deleted and the one hot member is removed, not the key."""
+    redis = MagicMock()
+    redis.delete = AsyncMock()
+    redis.zrem = AsyncMock()
+    writer = MemoryCacheWriter(redis, MagicMock())
+    org_id, agent_id, memory_id = uuid4(), uuid4(), uuid4()
+    await writer.forget_memory(org_id=org_id, agent_id=agent_id, memory_id=memory_id)
+    redis.delete.assert_awaited_once_with(f"{org_id}:memory:{memory_id}")
+    redis.zrem.assert_awaited_once_with(f"{org_id}:hot_memories:{agent_id}", str(memory_id))
+
