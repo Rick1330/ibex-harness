@@ -6,10 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -333,5 +336,140 @@ func TestUnit_ClientNilSessionFailsBeforeHTTP(t *testing.T) {
 	}
 	if hits != 0 {
 		t.Fatalf("hits=%d want 0", hits)
+	}
+}
+
+// newConnCountingServer starts an httptest server that counts accepted
+// connections. A reused keep-alive connection does not change the count, so the
+// counter distinguishes "the idle pool still holds my conn" from "I had to
+// redial".
+func newConnCountingServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	var accepted atomic.Int64
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			accepted.Add(1)
+		}
+	}
+	srv.Start()
+	return srv, &accepted
+}
+
+// warmUntilReused enqueues until a request completes without opening a new
+// connection, proving the transport's idle pool holds the conn. It bounds the
+// attempts so a keep-alive regression fails the test instead of hanging.
+func warmUntilReused(t *testing.T, c *extractionenqueue.Client, req extractionenqueue.Request, accepted *atomic.Int64) bool {
+	t.Helper()
+	for range 50 {
+		before := accepted.Load()
+		if err := c.Enqueue(context.Background(), req); err != nil {
+			t.Fatal(err)
+		}
+		if accepted.Load() == before {
+			return true
+		}
+	}
+	return false
+}
+
+// assertPoolWarm proves the client holds a pooled connection to the victim and
+// returns the accept count that establishes the baseline. It fails the test when
+// the client never reuses a connection, because a foreign pool close could then
+// not be detected at all.
+func assertPoolWarm(t *testing.T, c *extractionenqueue.Client, req extractionenqueue.Request, accepted *atomic.Int64) int64 {
+	t.Helper()
+	if err := c.Enqueue(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if !warmUntilReused(t, c, req, accepted) {
+		t.Fatal("client never reused a pooled connection; cannot detect a foreign pool close")
+	}
+	return accepted.Load()
+}
+
+// startVictimHammer enqueues continuously until the returned stop function is
+// called. Errors are counted instead of failing: the zero-error assertion
+// belongs to the caller. The goroutine can only be released through stop, which
+// waits for it to exit, so no caller can leak it.
+func startVictimHammer(c *extractionenqueue.Client, req extractionenqueue.Request) (*atomic.Int64, func()) {
+	var errs atomic.Int64
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if err := c.Enqueue(context.Background(), req); err != nil {
+				errs.Add(1)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	return &errs, func() {
+		close(stop)
+		wg.Wait()
+	}
+}
+
+// closeServersConcurrently closes every server at once, so all their
+// CloseIdleConnections calls land while the victim is still enqueueing.
+func closeServersConcurrently(servers []*httptest.Server) {
+	var wg sync.WaitGroup
+	for _, srv := range servers {
+		wg.Add(1)
+		go func(s *httptest.Server) {
+			defer wg.Done()
+			s.Close()
+		}(srv)
+	}
+	wg.Wait()
+}
+
+// TestUnit_ClientPoolIsPrivate is the regression test for the shared-pool
+// defect. Every httptest.Server.Close closes idle connections on
+// http.DefaultTransport. A client with a nil Transport inherits that global
+// pool, so closing an unrelated server tears down this client's idle conn and
+// forces a redial (and, rarely, breaks an in-flight request). A private
+// transport must be immune.
+func TestUnit_ClientPoolIsPrivate(t *testing.T) {
+	t.Parallel()
+	victim, accepted := newConnCountingServer(t)
+	t.Cleanup(victim.Close)
+	c := extractionenqueue.New(extractionenqueue.Config{BaseURL: victim.URL, Token: "t"})
+	req := extractionenqueue.Request{
+		OrgID: uuid.New(), AgentID: uuid.New(), SessionID: uuid.New(),
+		Turns: []extractionenqueue.Turn{{TurnIndex: 0, Role: "user", Content: "hi"}},
+	}
+
+	warmAccepts := assertPoolWarm(t, c, req, accepted)
+
+	// Unrelated servers, closed concurrently while the victim keeps enqueueing.
+	// With a shared transport each Close closes the victim's idle conn.
+	const closeCount = 16
+	others := make([]*httptest.Server, closeCount)
+	for i := range others {
+		others[i], _ = newConnCountingServer(t)
+		t.Cleanup(others[i].Close)
+	}
+
+	victimErrs, stopVictim := startVictimHammer(c, req)
+	closeServersConcurrently(others)
+	// Give the victim a request after the storm so a redial, if any, is counted.
+	time.Sleep(20 * time.Millisecond)
+	stopVictim()
+
+	if n := victimErrs.Load(); n != 0 {
+		t.Fatalf("victim enqueue errors=%d want 0", n)
+	}
+	if got := accepted.Load(); got != warmAccepts {
+		t.Fatalf("victim accepted=%d want %d: closing unrelated servers disturbed its idle pool", got, warmAccepts)
 	}
 }
