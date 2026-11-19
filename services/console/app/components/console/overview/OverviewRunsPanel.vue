@@ -21,6 +21,7 @@ import {
   publicationClass,
 } from "@/lib/explore-view"
 import { formatLiveRelative } from "@/lib/live-format"
+import type { OperatorAuthStatus } from "@/lib/operator-error"
 import { OVERVIEW_RUNS_LIMIT, OVERVIEW_TRACE_CONTRACT } from "@/lib/overview-view"
 
 type RunRow = { id: string; trace: PublicOperatorTrace }
@@ -29,7 +30,8 @@ const props = defineProps<{
   traces: PublicOperatorTraceList | null
   loading: boolean
   failed: boolean
-  authIssue: boolean
+  /** The trace read's refusal status: 401 is a missing session, 403 a missing grant. */
+  authStatus: OperatorAuthStatus | null
   nowMs: number | null
 }>()
 
@@ -84,11 +86,24 @@ const windowText = computed(() =>
       Window {{ windowText }} · the {{ OVERVIEW_RUNS_LIMIT }} newest rows. Explore owns the query language and the paging.
     </p>
 
-    <div v-if="props.authIssue" class="rounded-lg border border-line-subtle bg-surface p-1">
+    <!--
+      A 401 is a missing session: sign-in is the remedy. A 403 is a missing
+      grant on a signed-in session: the same link would promise something a new
+      session cannot deliver, so it is not rendered.
+    -->
+    <div v-if="props.authStatus === 401" class="rounded-lg border border-line-subtle bg-surface p-1">
+      <GovernEmptyState
+        title="Run metadata needs a signed-in session"
+        reason="This session is not signed in, so the operator API refused the trace read. The page shows no rows rather than a sample."
+        next-step="The organization snapshot and platform health were read with this session and are unaffected."
+        sign-in
+      />
+    </div>
+    <div v-else-if="props.authStatus === 403" class="rounded-lg border border-line-subtle bg-surface p-1">
       <GovernEmptyState
         title="Run metadata needs the metadata read permission"
         reason="This session was not granted the operator trace read, so the page shows nothing rather than a sample."
-        next-step="The organization snapshot and platform health use their own permissions and are unaffected."
+        next-step="The organization snapshot and platform health use their own permissions and are unaffected. Signing in again does not add this permission — it is granted with the role issued at sign-in."
       />
     </div>
     <div v-else-if="props.failed" class="rounded-lg border border-line-subtle bg-surface p-1">
