@@ -73,13 +73,14 @@ async def test_zadd_hot_memory_invokes_lua_script() -> None:
         script,
         HotZaddRequest(
             key="org:hot_memories:agent",
+            forgotten_key="org:memory_forgotten:memory",
             memory_id=memory_id,
             score=0.88,
             ttl_seconds=3600,
         ),
     )
     script.assert_awaited_once_with(
-        keys=["org:hot_memories:agent"],
+        keys=["org:hot_memories:agent", "org:memory_forgotten:memory"],
         args=[0.88, str(memory_id), 3600],
     )
     assert card == 3
@@ -93,7 +94,8 @@ def _writer_with_scripts(
     hot = AsyncMock(return_value=1)
 
     def register(source: str) -> AsyncMock:
-        return guard if "EXISTS" in source else hot
+        # Both scripts check EXISTS, so the write verb is the discriminator.
+        return hot if "ZADD" in source else guard
 
     redis.register_script = MagicMock(side_effect=register)
     redis.delete = AsyncMock()
@@ -128,7 +130,10 @@ async def test_cache_writer_writes_through_the_guard_then_the_hot_script() -> No
     hot.assert_awaited_once()
     call_args = hot.await_args
     assert call_args is not None
-    assert call_args.kwargs["keys"] == [writer.hot_key(row.org_id, row.agent_id)]
+    assert call_args.kwargs["keys"] == [
+        writer.hot_key(row.org_id, row.agent_id),
+        writer.forgotten_key(row.org_id, row.id),
+    ], "the hot write must check the forgotten marker in the same script"
     assert call_args.kwargs["args"][0] == pytest.approx(
         compute_hot_cache_score(row, weights=RankWeights())
     )
@@ -154,6 +159,28 @@ async def test_write_created_does_not_restore_a_forgotten_memory() -> None:
     guard.assert_awaited_once()
     hot.assert_not_awaited()
     redis.set.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_hot_write_checks_the_marker_in_the_same_script() -> None:
+    """A delayed hot write is refused by the marker, exactly like the object write.
+
+    The object guard can pass and the forget can run before ``refresh_hot``: the
+    hot script is then the last writer, and it must see the marker and return 0
+    without adding the member. Passing the marker as KEYS[2] is what lets the
+    script decide; a ZADD with no marker check would re-add it.
+    """
+    redis = MagicMock()
+    writer, _guard, hot = _writer_with_scripts(redis)
+    hot.return_value = 0
+    row = sample_memory_row()
+
+    await writer.refresh_hot(row)
+
+    call_args = hot.await_args
+    assert call_args is not None
+    assert call_args.kwargs["keys"][1] == writer.forgotten_key(row.org_id, row.id)
+    assert hot.await_count == 1
 
 
 def test_register_hot_zadd_trim_script() -> None:

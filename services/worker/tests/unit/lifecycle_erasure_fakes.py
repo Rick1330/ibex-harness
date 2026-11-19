@@ -23,7 +23,10 @@ from app.tasks.lifecycle_erasure import _ClaimedRow, _Erasure
 
 
 def claimed_row(
-    *, deadline: datetime | None = None, attempts: int = 1
+    *,
+    deadline: datetime | None = None,
+    attempts: int = 1,
+    event_type: str = "forgotten",
 ) -> _ClaimedRow:
     """One leased outbox row, with the identifiers the tests assert on."""
     return _ClaimedRow(
@@ -32,7 +35,7 @@ def claimed_row(
         memory_id="00000000-0000-0000-0000-000000000003",
         revision=2,
         attempts=attempts,
-        event_type="forgotten",
+        event_type=event_type,
         deadline=deadline,
     )
 

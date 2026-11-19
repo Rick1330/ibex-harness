@@ -174,11 +174,62 @@ async def test_store_already_proven_is_not_staged_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _stage_must_not_run(monkeypatch, "a satisfied store must not be staged again")
+    monkeypatch.setattr(le.sweep, "object_exists", lambda *_args, **_kwargs: False)
     outcome = await _erase(
         _StoreTarget("objectstore", ("s3://bucket/one.json",)),
         {"objectstore": "verified"},
     )
     assert (outcome.status, outcome.fresh) == ("verified", False)
+
+
+@pytest.mark.asyncio
+async def test_verified_cache_receipt_is_not_rechecked_with_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cache stores are fenced by the forgotten marker, not by a HEAD call."""
+    _stage_must_not_run(monkeypatch, "a fenced cache store must not be staged again")
+
+    def unexpected(*_args: Any, **_kwargs: Any) -> bool:
+        raise AssertionError("only the object store is re-checked")
+
+    monkeypatch.setattr(le.sweep, "object_exists", unexpected)
+    outcome = await _erase(
+        _StoreTarget("cache", ("org:memory:00000000-0000-0000-0000-000000000003",)),
+        {"cache": "verified"},
+    )
+    assert (outcome.status, outcome.fresh) == ("verified", False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("head", ["present", "error"])
+async def test_verified_object_receipt_is_restaged_when_its_proof_no_longer_stands(
+    monkeypatch: pytest.MonkeyPatch, head: str
+) -> None:
+    """A stored ``verified`` receipt is re-checked before it is trusted.
+
+    The archive key is derived from ``(org, memory)``, so a late re-archive
+    recreates exactly the object the receipt covered. A HEAD that reports the
+    object, or that cannot answer at all, means the retry must delete it again
+    instead of settling on the earlier proof.
+    """
+    staged: list[tuple[str, ...]] = []
+
+    async def record(target: _StoreTarget, *_args: Any, **_kwargs: Any) -> None:
+        staged.append(target.locators)
+
+    def exists(*_args: Any, **_kwargs: Any) -> bool:
+        if head == "error":
+            raise RuntimeError("s3 down")
+        return True
+
+    monkeypatch.setattr(le.sweep, "_stage", record)
+    monkeypatch.setattr(le.sweep, "object_exists", exists)
+    outcome = await _erase(
+        _StoreTarget("objectstore", ("s3://bucket/one.json",)),
+        {"objectstore": "verified"},
+    )
+    assert (outcome.status, outcome.fresh) == ("verified", True)
+    assert staged == [("s3://bucket/one.json",)]
 
 
 @pytest.mark.asyncio

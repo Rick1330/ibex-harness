@@ -41,6 +41,24 @@ SELECT store, status
    AND revision = :revision
 """
 
+#: The organization deletion's Redis verdict, the only proof a ``purged`` row has
+#: for the hot set: the saga deletes the memory row before the sweep runs, so the
+#: memory's agent — and therefore the derived hot key — is gone. The saga's
+#: org-wide Redis stage removes every ``{org}:hot_memories:*`` key and records a
+#: receipt, so that receipt is evidence of a real deletion rather than an
+#: unchecked absence. A verified receipt is preferred over a later retry's
+#: failure: the org-wide delete happened and a cancelled org cannot recreate the
+#: key, so the proof still stands.
+_ORG_PURGE_SQL = """
+SELECT receipt.status
+  FROM ibex_core.deletion_store_receipts AS receipt
+  JOIN ibex_core.org_deletion_jobs AS job ON job.id = receipt.job_id
+ WHERE job.org_id = CAST(:org_id AS uuid)
+   AND receipt.store = 'redis'
+ ORDER BY (receipt.status = 'verified') DESC, receipt.updated_at DESC
+ LIMIT 1
+"""
+
 #: The memory's agent, used only to derive the hot cache key for a row that
 #: predates the cache refs. The memory row is tombstoned, not deleted, so the
 #: value is still there for a forget. A missing row is a permanent failure for

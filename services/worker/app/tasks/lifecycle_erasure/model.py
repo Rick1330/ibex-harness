@@ -37,6 +37,26 @@ class _ClaimedRow:
 
 
 @dataclass(frozen=True, slots=True)
+class _ErasureState:
+    """What one tenant read learned about the memory's erasure.
+
+    Read under one ``session_as_app_org`` transaction so refs, receipts, the
+    memory's agent and the organization purge's verdict all come from the same
+    tenant fence and the same connection.
+    """
+
+    #: Recorded artifact locators, grouped by store.
+    refs: dict[str, tuple[str, ...]]
+    #: Receipts an earlier run already wrote for this revision, by store.
+    receipts: dict[str, str]
+    #: ``memories.agent_id``; ``None`` when the memory row is gone.
+    agent_id: str | None
+    #: The organization deletion's Redis verdict for this org, if the saga has
+    #: recorded one. Only a ``purged`` row reads it.
+    org_redis_purge: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class _Erasure:
     """A claimed row plus the dependencies its store stages need."""
 
@@ -45,9 +65,15 @@ class _Erasure:
     factory: Any
     #: ``memories.agent_id`` for the claim's memory. Only the cache stages need
     #: it, to derive the per-agent hot key for a pre-000078 row that recorded no
-    #: cache ref. ``None`` means the memory row is gone and the hot address
-    #: cannot be derived, which is a permanent failure, never "nothing to erase".
+    #: cache ref. ``None`` means the memory row is gone; a ``purged`` row then
+    #: falls back to the organization purge's verdict instead of claiming an
+    #: absence nobody checked.
     agent_id: str | None = None
+    #: The organization purge's Redis receipt status. An org-wide purge deletes
+    #: every ``{org}:hot_memories:*`` key, so a ``verified`` receipt is real
+    #: evidence that a purged memory's hot member is gone even though its agent
+    #: (and therefore its derived key) no longer exists.
+    org_redis_purge: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

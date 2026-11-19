@@ -67,6 +67,35 @@ def _receipt_already_proves(proven: str | None, locators: tuple[str, ...]) -> bo
     return proven == "not_applicable" and not locators
 
 
+def _underivable_outcome(erasure: _Erasure, target: _StoreTarget) -> _StoreOutcome:
+    """The verdict for a cache address this row cannot derive.
+
+    A ``purged`` row's memory was deleted by the org-deletion saga before this
+    consumer saw it, so the hot key's agent is gone. That is not a permanent dead
+    end: the saga's org-wide Redis purge is the evidence for the hot set. Any
+    other row with an underivable address has a property a retry cannot change.
+    """
+    if target.store == "cache_hot" and erasure.row.event_type == "purged":
+        return _org_purge_outcome(target.store, erasure.org_redis_purge)
+    return _failed_target(target, "cache keys not derivable: memory agent unavailable")
+
+
+def _org_purge_outcome(store: str, status: str | None) -> _StoreOutcome:
+    """What the organization purge's Redis verdict proves for one cache store.
+
+    ``verified`` is the saga's proof that the org-wide Redis delete ran, which
+    removed every hot key; ``not_applicable`` is the saga's proof that Redis is
+    not deployed, so there is no store to clear. Anything else — no receipt yet,
+    a pending retry, a failed stage — is unproven: the row retries, and is never
+    reported ``verified`` or ``not_applicable`` on evidence nobody produced.
+    """
+    if status == "verified":
+        return _StoreOutcome(store=store, status="verified")
+    if status == "not_applicable":
+        return _StoreOutcome(store=store, status="not_applicable")
+    return _failed_outcome(store, "organization purge has not verified the hot store")
+
+
 def _erasure_state(outcomes: list[_StoreOutcome]) -> str:
     """``complete`` only when every store is verified or not applicable."""
     if all(outcome.status in SATISFIED_RECEIPT_STATUSES for outcome in outcomes):

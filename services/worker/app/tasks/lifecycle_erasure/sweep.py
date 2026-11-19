@@ -17,6 +17,14 @@ Ordering is load-bearing and easy to get wrong:
 
 The cache stores are staged even without a ref when their keys are derivable
 from the row, because an absent ref means "not recorded", never "proved absent".
+A ``purged`` row is the one exception: the organization saga deleted the memory
+before this consumer ran, so the agent the hot key needs is gone. Its verdict is
+the saga's own org-wide Redis purge receipt, read for that row only; a receipt
+that has not been written yet is a retry, never a claim of absence.
+
+A stored ``verified`` receipt is not proof forever for the object store. The
+archive key is derived from the row and nothing fences a late re-archive, so a
+HEAD that finds the object back restages it instead of trusting the receipt.
 """
 
 from __future__ import annotations
@@ -49,17 +57,18 @@ from .constants import (
 from .decisions import (
     _backoff_seconds,
     _error_reason,
-    _failed_target,
     _outbox_state,
     _receipt_already_proves,
     _receipt_params,
     _stores_to_stage,
+    _underivable_outcome,
 )
 from .metrics import ERASURE_OUTCOME, ERASURE_STORE
 from .model import (
     PermanentErasureFailure,
     _ClaimedRow,
     _Erasure,
+    _ErasureState,
     _StoreOutcome,
     _StoreTarget,
 )
@@ -69,6 +78,7 @@ from .sql import (
     _CLAIM_STILL_HELD_SQL,
     _COMPLETE_SQL,
     _FAIL_SQL,
+    _ORG_PURGE_SQL,
     _RECEIPTS_SQL,
     _REFS_SQL,
     _RETIRE_STALE_SQL,
@@ -141,11 +151,17 @@ async def _erase_row(
             row.revision,
         )
         return "retired"
-    refs, existing, agent_id = await _read_erasure_state(factory, row)
-    erasure = _Erasure(row=row, settings=settings, factory=factory, agent_id=agent_id)
-    targets = _store_targets(refs, agent_id, row)
+    state = await _read_erasure_state(factory, row)
+    erasure = _Erasure(
+        row=row,
+        settings=settings,
+        factory=factory,
+        agent_id=state.agent_id,
+        org_redis_purge=state.org_redis_purge,
+    )
+    targets = _store_targets(state.refs, state.agent_id, row)
     outcomes = [
-        await _erase_store(erasure, target, existing, job_deadline)
+        await _erase_store(erasure, target, state.receipts, job_deadline)
         for target in targets
     ]
     return await _settle(erasure, outcomes, _staged_locators(targets))
@@ -232,35 +248,52 @@ async def _read_agent_id(session: Any, row: _ClaimedRow) -> str | None:
     return str(found[0]) if found is not None else None
 
 
-async def _read_erasure_state(
-    factory: Any, row: _ClaimedRow
-) -> tuple[dict[str, tuple[str, ...]], dict[str, str], str | None]:
-    """Read refs, receipts and the memory's agent in one tenant session."""
+async def _read_erasure_state(factory: Any, row: _ClaimedRow) -> _ErasureState:
+    """Read refs, receipts, the memory's agent and any org purge verdict."""
     params = {"org_id": row.org_id, "memory_id": row.memory_id, "revision": row.revision}
     async with session_as_app_org(factory, row.org_id) as session:
         refs = await _read_refs(session, row)
-        existing = {
+        receipts = {
             str(store): str(status)
             for store, status in (await session.execute(text(_RECEIPTS_SQL), params)).all()
         }
         agent_id = await _read_agent_id(session, row)
-    return refs, existing, agent_id
+        org_redis_purge = await _read_org_purge(session, row)
+    return _ErasureState(
+        refs=refs,
+        receipts=receipts,
+        agent_id=agent_id,
+        org_redis_purge=org_redis_purge,
+    )
+
+
+async def _read_org_purge(session: Any, row: _ClaimedRow) -> str | None:
+    """The organization purge's Redis verdict, for a ``purged`` row only.
+
+    Only a ``purged`` row needs it: the org saga deleted the memory, so its agent
+    — and the hot key derived from it — is gone. Every other row keeps the
+    permanent failure for an underivable address, so the query is skipped there.
+    """
+    if row.event_type != "purged":
+        return None
+    found = (
+        await session.execute(text(_ORG_PURGE_SQL), {"org_id": row.org_id})
+    ).first()
+    return str(found[0]) if found is not None else None
 
 
 async def _erase_store(
     erasure: _Erasure,
     target: _StoreTarget,
-    existing: dict[str, str],
+    receipts: dict[str, str],
     job_deadline: float,
 ) -> _StoreOutcome:
     """Prove one store absent, or record why this run could not."""
-    proven = existing.get(target.store)
-    if _receipt_already_proves(proven, target.locators):
-        return _StoreOutcome(store=target.store, status=proven, fresh=False)
+    settled = await _durable_proof(erasure, target, receipts.get(target.store))
+    if settled is not None:
+        return _StoreOutcome(store=target.store, status=settled, fresh=False)
     if target.underivable:
-        return _failed_target(
-            target, "cache keys not derivable: memory agent unavailable"
-        )
+        return _underivable_outcome(erasure, target)
     if not target.locators:
         # No copy of this memory was ever recorded in this store. That is a fact
         # about the memory, not a failure to reach the store — and it is only a
@@ -268,6 +301,47 @@ async def _erase_store(
         # or whose key this run derived.
         return _StoreOutcome(store=target.store, status="not_applicable")
     return await _stage_store(erasure, target, job_deadline)
+
+
+async def _durable_proof(
+    erasure: _Erasure, target: _StoreTarget, proven: str | None
+) -> str | None:
+    """The stored receipt that still settles this store, or None to stage it.
+
+    A stored ``verified`` receipt is not proof forever for the object store: the
+    archive key is derived from ``(org, memory)`` and nothing fences a late
+    re-archive, so an object that is back means the retry has to delete it again.
+    The cache stores are fenced by the forgotten marker, and a new ref is caught
+    by the settle re-check.
+    """
+    if proven is None or not _receipt_already_proves(proven, target.locators):
+        return None
+    if await _object_returned(erasure, target):
+        return None
+    return proven
+
+
+async def _object_returned(erasure: _Erasure, target: _StoreTarget) -> bool:
+    """Whether HEAD finds an object a stored receipt had proved absent.
+
+    Only the object store is re-checked. A HEAD that cannot answer is treated as
+    "restage": the object is deleted again rather than certified on a check that
+    did not happen, and DELETE is idempotent.
+    """
+    if target.store != "objectstore" or not target.locators:
+        return False
+    try:
+        return await _object_reappeared(erasure, target.locators)
+    except Exception:
+        logger.warning(
+            "memory erasure object-store proof re-check failed org_id=%s "
+            "memory_id=%s revision=%s",
+            erasure.row.org_id,
+            erasure.row.memory_id,
+            erasure.row.revision,
+            exc_info=True,
+        )
+        return True
 
 
 async def _stage_store(

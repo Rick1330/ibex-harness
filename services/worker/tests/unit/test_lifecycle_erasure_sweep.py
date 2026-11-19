@@ -25,7 +25,13 @@ import pytest
 from app.config import Settings
 from app.tasks import lifecycle_erasure as le
 from app.tasks import org_deletion_stores as _stores
-from app.tasks.lifecycle_erasure import _ClaimedRow, _Erasure, _StoreOutcome, _StoreTarget
+from app.tasks.lifecycle_erasure import (
+    _ClaimedRow,
+    _Erasure,
+    _ErasureState,
+    _StoreOutcome,
+    _StoreTarget,
+)
 
 _ROW = _ClaimedRow(
     row_id="11111111-1111-1111-1111-111111111111",
@@ -246,10 +252,10 @@ async def test_erase_row_stages_the_provable_set_then_settles(
         le.sweep,
         "_read_erasure_state",
         AsyncMock(
-            return_value=(
-                {"objectstore": ("s3://b/org-1/a.json",)},
-                {"session_event": "verified"},
-                "agent-1",
+            return_value=_ErasureState(
+                refs={"objectstore": ("s3://b/org-1/a.json",)},
+                receipts={"session_event": "verified"},
+                agent_id="agent-1",
             )
         ),
     )
@@ -306,14 +312,15 @@ async def test_read_erasure_state_groups_locators_and_keeps_receipts(
     )
     monkeypatch.setattr(le.sweep, "session_as_app_org", _scope(session))
 
-    grouped, existing, agent_id = await le._read_erasure_state(object(), _ROW)
+    state = await le._read_erasure_state(object(), _ROW)
 
-    assert grouped == {
+    assert state.refs == {
         "objectstore": ("s3://b/org-1/a.json", "s3://b/org-1/b.json"),
         "session_event": ("7",),
     }
-    assert existing == {"objectstore": "verified"}
-    assert agent_id == "agent-1", "the hot cache key is derivable only with the agent"
+    assert state.receipts == {"objectstore": "verified"}
+    assert state.agent_id == "agent-1", "the hot cache key is derivable only with the agent"
+    assert state.org_redis_purge is None, "a forget does not need the org purge verdict"
     refs_sql, refs_params = session.statements[0]
     assert "memory_artifact_refs" in refs_sql
     assert refs_params == {"org_id": _ROW.org_id, "memory_id": _ROW.memory_id}
@@ -324,7 +331,25 @@ async def test_read_erasure_state_groups_locators_and_keeps_receipts(
     assert agent_params == {"org_id": _ROW.org_id, "memory_id": _ROW.memory_id}
     for _, params in session.statements:
         assert params["org_id"] == _ROW.org_id
-        assert params["memory_id"] == _ROW.memory_id
+    assert session.verbs() == ["SELECT", "SELECT", "SELECT"]
+
+
+@pytest.mark.asyncio
+async def test_read_erasure_state_reads_the_org_purge_verdict_for_a_purged_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A purged row has no memory row, so the org purge is its only hot-store proof."""
+    session = _FakeSession(_Result([]), _Result([]), _Result([]), _Result([("verified",)]))
+    monkeypatch.setattr(le.sweep, "session_as_app_org", _scope(session))
+
+    state = await le._read_erasure_state(object(), replace(_ROW, event_type="purged"))
+
+    assert state.agent_id is None
+    assert state.org_redis_purge == "verified"
+    purge_sql, purge_params = session.statements[3]
+    assert "deletion_store_receipts" in purge_sql
+    assert "org_deletion_jobs" in purge_sql
+    assert purge_params == {"org_id": _ROW.org_id}
 
 
 # ---------------------------------------------------------------------------

@@ -41,6 +41,14 @@ Contract, in the order the details are easy to get wrong:
 * A cache row with no recorded ref is not ``not_applicable``: the keys are
   derivable from ``(org, agent, memory)``, so this consumer derives them and
   erases what the ref could not point at. An unconfigured Redis is ``failed``.
+* A ``purged`` row whose hot key cannot be derived reads the organization
+  deletion's org-wide Redis receipt instead: that purge removed every
+  ``{org}:hot_memories:*`` key, so its ``verified`` receipt is evidence the hot
+  member is gone. A receipt that is absent, pending or failed is a retry, never
+  ``verified`` and never ``not_applicable``.
+* A stored ``verified`` object-store receipt is re-checked with HEAD before it is
+  trusted: the archive key is derived from the row, so a late re-archive recreates
+  the object the receipt covered, and the retry must delete it again.
 
 Tenant boundary: discovery runs through the ``SECURITY DEFINER`` claim function
 (the outbox is RLS-scoped, so a sweep with no tenant selected would see nothing)
@@ -98,17 +106,20 @@ from .decisions import (  # noqa: F401
     _failed_outcome,
     _failed_target,
     _has_permanent_failure,
+    _org_purge_outcome,
     _outbox_state,
     _receipt_already_proves,
     _receipt_params,
     _session_event_id,
     _stores_to_stage,
+    _underivable_outcome,
 )
 from .metrics import ERASURE_OUTCOME, ERASURE_STORE
 from .model import (  # noqa: F401
     PermanentErasureFailure,
     _ClaimedRow,
     _Erasure,
+    _ErasureState,
     _StoreOutcome,
     _StoreTarget,
 )
@@ -120,6 +131,7 @@ from .sql import (  # noqa: F401
     _COUNT_SESSION_EVENT_SQL,
     _DELETE_SESSION_EVENT_SQL,
     _FAIL_SQL,
+    _ORG_PURGE_SQL,
     _RECEIPTS_SQL,
     _REFS_SQL,
     _RETIRE_STALE_SQL,
@@ -149,11 +161,14 @@ from .sweep import (  # noqa: F401
     _claim_one,
     _claim_still_held,
     _derived_cache_locators,
+    _durable_proof,
     _erase_row,
     _erase_store,
     _object_reappeared,
+    _object_returned,
     _read_agent_id,
     _read_erasure_state,
+    _read_org_purge,
     _read_refs,
     _recheck_outcome,
     _recheck_outcomes,
