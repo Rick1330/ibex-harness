@@ -9,7 +9,15 @@ them wrong in ways that break the profile:
 * a quoted value is taken between matching quotes, so ``#`` inside it is data;
 * unquoted and quoted values are interpolated: ``$NAME``, ``${NAME}``,
   ``${NAME:-default}`` and ``${NAME-default}`` resolve against earlier
-  assignments and the process environment, and ``$$`` is a literal ``$``.
+  assignments and the process environment, and ``$$`` is a literal ``$``;
+* a bare ``$`` that does not start a name (``$1``, a trailing ``$``) is literal:
+  Compose only reads a bare ``$NAME`` when the name starts with a letter or
+  underscore, so treating a digit as a name deleted text Compose keeps;
+* ``${NAME:-${OTHER:-fallback}}`` nests: the closing brace is the one that
+  matches the opening ``${``, and the default operand is itself interpolated;
+* a double-quoted escape Compose does not define (a backslash before ``q``)
+  keeps its backslash. Only Compose's own escapes decode: an escaped backslash,
+  an escaped double quote, an escaped dollar, newline, tab, and carriage return.
 
 Usage: ``python3 dotenv.py <key> < .env`` prints the value (empty when absent).
 Reading standard input keeps this helper free of path handling: the caller
@@ -26,7 +34,11 @@ import sys
 class DotenvError(ValueError):
     """A Compose-style required-variable substitution failed."""
 
+
+# A name may contain digits, but only after a letter or underscore: Compose's
+# bare form is `$` followed by `[A-Za-z_][A-Za-z0-9_]*`, so `$1` is not a name.
 NAME_CHARS = frozenset(string.ascii_letters + string.digits + "_")
+NAME_START = frozenset(string.ascii_letters + "_")
 
 
 def _comment_start(value: str) -> int:
@@ -62,7 +74,15 @@ def _unescape(value: str) -> str:
     index = 0
     while index < len(value):
         if value[index] == "\\" and index + 1 < len(value):
-            out.append(ESCAPES.get(value[index + 1], value[index + 1]))
+            following = value[index + 1]
+            if following in ESCAPES:
+                out.append(ESCAPES[following])
+            else:
+                # Compose leaves an escape it does not define untouched, so `\q`
+                # is the two characters `\` and `q`. Dropping the backslash made
+                # the value read here differ from the value Compose exports.
+                out.append("\\")
+                out.append(following)
             index += 2
             continue
         out.append(value[index])
@@ -146,7 +166,10 @@ def _lookup(expression: str, seen: dict[str, str]) -> str:
     value = os.environ[name] if name in os.environ else seen.get(name)
     if operator is None:
         return value or ""
-    return OPERATOR_FUNCS[operator](value, operand)
+    # The operand is an expression too: Compose resolves `${A:-${B:-c}}` by
+    # substituting the nested reference before applying the operator. Applying
+    # the operator to the raw operand returned the literal text `${B:-c}`.
+    return OPERATOR_FUNCS[operator](value, _interpolate(operand, seen))
 
 
 def _name_end(value: str, start: int) -> int:
@@ -156,8 +179,30 @@ def _name_end(value: str, start: int) -> int:
     return end
 
 
+def _matching_brace(value: str, index: int) -> int:
+    """Return the `}` that closes the `${` opened at `index`, or -1.
+
+    Expressions nest, so the first `}` does not necessarily close the outer
+    one: in `${A:-${B:-c}}` it closes `B`. Counting depth finds the right brace
+    and keeps a nested default from being returned as literal text.
+    """
+    depth = 0
+    position = index
+    while position < len(value):
+        if value.startswith("${", position):
+            depth += 1
+            position += 2
+            continue
+        if value[position] == "}":
+            depth -= 1
+            if depth == 0:
+                return position
+        position += 1
+    return -1
+
+
 def _expand_braced(value: str, index: int, seen: dict[str, str], out: list[str]) -> int:
-    end = value.find("}", index + 2)
+    end = _matching_brace(value, index)
     if end == -1:
         out.append(value[index:])
         return len(value)
@@ -172,10 +217,15 @@ def _expand(value: str, index: int, seen: dict[str, str], out: list[str]) -> int
         return index + 2
     if following == "{":
         return _expand_braced(value, index, seen, out)
-    end = _name_end(value, index + 1)
-    if end == index + 1:
+    if following not in NAME_START:
+        # `$1`, `$?`, `$-` and a trailing `$` are literal text: a bare variable
+        # name starts with a letter or underscore in Compose. Reading the digit
+        # as the name `1` resolved it to the empty string, so an operator's
+        # `.env` password containing `$1` reached this reader as a different
+        # value than the one Compose interpolates into the container.
         out.append("$")
         return index + 1
+    end = _name_end(value, index + 1)
     out.append(_lookup(value[index + 1 : end], seen))
     return end
 

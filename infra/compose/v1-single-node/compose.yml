@@ -70,7 +70,14 @@ services:
       # not the single file: the generator replaces the file with `mv -f`, and a
       # file bind mount pins the old inode, so a running container would keep
       # archiving to the previous repository. The in-container path is unchanged.
-      - ../../backup/pgbackrest:/etc/pgbackrest:ro
+      #
+      # :Z relabels the directory (and its contents) for container access on an
+      # SELinux host, where an unlabelled bind mount is unreadable; it is ignored
+      # where SELinux is disabled. Safe to relabel: the only consumer is this
+      # container, the directory holds generated non-secret configuration, and
+      # relabelling changes no content or mode. The private (per-container) label
+      # is correct because no second container mounts it.
+      - ../../backup/pgbackrest:/etc/pgbackrest:ro,Z
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
@@ -692,7 +699,11 @@ services:
       - /config
       - /data
     volumes:
-      - ./edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      # :Z relabels the file for container access on an SELinux host, where an
+      # unlabelled bind mount is unreadable; it is ignored where SELinux is
+      # disabled. Safe to relabel: the Caddyfile is non-secret read-only
+      # configuration whose only consumer is this container.
+      - ./edge/Caddyfile:/etc/caddy/Caddyfile:ro,Z
     secrets:
       - edge.crt
       - edge.key

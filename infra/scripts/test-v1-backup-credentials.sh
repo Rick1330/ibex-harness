@@ -2,7 +2,8 @@
 # test-v1-backup-credentials.sh — regression tests for the v1 backup-repository
 # credential chain.
 #
-# Nine properties are guarded here because they all protect the same secret:
+# Eleven properties are guarded here because each protects a secret the profile
+# cannot regenerate on its own:
 #
 #   1. gen-v1-secrets.sh never loses or silently replaces
 #      PGBACKREST_REPO1_CIPHER_PASS. That passphrase is the only key to every
@@ -35,6 +36,11 @@
 #      before the config is written. Compose interpolates the environment value
 #      first, so the two would give the server and its clients different
 #      passwords and nothing would start.
+#  10. --force preserves IBEX_CREDENTIALS_MASTER_KEY. It decrypts every org's
+#      sealed provider API key, so regenerating it under a convenience flag is
+#      data loss the operator discovers when a provider call fails.
+#  11. --rotate-master-key rotates it, warns that every affected org must
+#      re-submit its provider key, and prints neither the old nor the new value.
 #
 # Every path is redirected: IBEX_V1_ENV_FILE, IBEX_V1_SECRETS_DIR,
 # IBEX_V1_CERTS_DIR and IBEX_V1_PGBACKREST_CONF keep the generator out of the
@@ -105,6 +111,16 @@ seed_env() {
 
 new_cipher() {
   openssl rand -hex 32
+}
+
+# seed_master_env writes the state an installation is in when the generator is
+# rerun: the repository passphrase and the credentials master key. Both are
+# generated values the operator never sees, so the test seeds known ones.
+seed_master_env() {
+  local cipher="$1" master="$2"
+  printf 'PGBACKREST_REPO1_CIPHER_PASS=%s\nIBEX_CREDENTIALS_MASTER_KEY=%s\n' \
+    "$cipher" "$master" >"$IBEX_V1_ENV_FILE"
+  chmod 0600 "$IBEX_V1_ENV_FILE"
 }
 
 # --- case 1: fresh install -------------------------------------------------
@@ -216,6 +232,57 @@ if ! env REDIS_PASSWORD="$file_password" bash "$GEN" >"$dir/out.log" 2>&1; then
   fail "redis conflict: a matching exported REDIS_PASSWORD was refused"
 fi
 pass "an exported REDIS_PASSWORD that disagrees with .env is refused before redis.conf is written"
+
+# --- case 2d: --force preserves the credentials master key -----------------
+#
+# The master key is the AES-256-GCM key-encryption key for org provider
+# credentials (ADR-0074). Regenerating it under --force made every sealed
+# credential undecryptable, and the operator found out when a provider call
+# failed. --force now reuses it; only --rotate-master-key replaces it.
+
+dir="$WORK/master-key"
+gen_env "$dir"
+cipher="$(new_cipher)"
+master="$(openssl rand -base64 32 | tr -d '\n')"
+seed_master_env "$cipher" "$master"
+if ! bash "$GEN" --force >"$dir/out.log" 2>&1; then
+  cat "$dir/out.log" >&2
+  fail "master key: --force exited non-zero"
+fi
+[[ "$(env_read IBEX_CREDENTIALS_MASTER_KEY)" == "$master" ]] \
+  || fail "master key: --force rotated IBEX_CREDENTIALS_MASTER_KEY"
+grep -q 'credentials master key preserved' "$dir/out.log" \
+  || fail "master key: --force did not say the key was preserved"
+if grep -qF -- "$master" "$dir/out.log"; then
+  fail "master key: --force printed the key value"
+fi
+pass "--force keeps the credentials master key"
+
+# --- case 2e: --rotate-master-key rotates explicitly and warns --------------
+
+dir="$WORK/master-key-rotate"
+gen_env "$dir"
+cipher="$(new_cipher)"
+master="$(openssl rand -base64 32 | tr -d '\n')"
+seed_master_env "$cipher" "$master"
+if ! bash "$GEN" --force --rotate-master-key >"$dir/out.log" 2>&1; then
+  cat "$dir/out.log" >&2
+  fail "master key rotation: generator exited non-zero"
+fi
+rotated="$(env_read IBEX_CREDENTIALS_MASTER_KEY)"
+[[ "$rotated" != "$master" ]] || fail "master key rotation: the key was not rotated"
+[[ "$(printf '%s' "$rotated" | base64 -d | wc -c | tr -d ' ')" == "32" ]] \
+  || fail "master key rotation: the new key is not 32 raw bytes"
+[[ "$(env_read PGBACKREST_REPO1_CIPHER_PASS)" == "$cipher" ]] \
+  || fail "master key rotation: it changed the repository passphrase too"
+grep -q 'WARNING: rotated IBEX_CREDENTIALS_MASTER_KEY' "$dir/out.log" \
+  || fail "master key rotation: the warning is missing"
+grep -q 're-submit its provider API key' "$dir/out.log" \
+  || fail "master key rotation: the warning does not name the consequence"
+if grep -qF -- "$master" "$dir/out.log" || grep -qF -- "$rotated" "$dir/out.log"; then
+  fail "master key rotation: a key value was printed"
+fi
+pass "--rotate-master-key rotates explicitly, warns, and never prints the key"
 
 # --- case 3: explicit rotation without the override is refused -------------
 

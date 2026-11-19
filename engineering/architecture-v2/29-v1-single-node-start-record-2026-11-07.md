@@ -110,8 +110,12 @@ edge network namespace. The host listener check (`ss`) is the authoritative surf
   terminator, the transport fixes, and an authenticated staging start now exist; the production start remains open.
 - The worker's extraction path has no live LLM in mock mode; extraction quality is not part of this claim.
 - One host and one tenant. Cross-tenant acceptance, recovery drills, and measured p99 SLOs remain open.
-- TEI's first fetch is network-bound; the `tei-cache` volume persists it. CPU TEI with a 2048-token batch may truncate
-  long memories.
+- TEI's first fetch is network-bound; the `tei-cache` volume persists it. CPU TEI runs with
+  `--max-batch-tokens=2048`, which also bounds the longest input it accepts: with `--auto-truncate` at its default,
+  TEI derives the per-request input limit from that value. The embedder sends `truncate: false`
+  (`services/embedder/app/tei/client.py`), so a memory longer than the limit is rejected by TEI and the memory write
+  fails with an embedding error; it is not silently truncated. Raise `--max-batch-tokens` toward the model's context
+  limit to index longer memories, at the memory cost recorded in the operator guide.
 - A PII-flagged memory is quarantined before embedding; that is the intended content-trust behavior, not a failure.
 
 ## Evidence commands
