@@ -4,10 +4,15 @@ import {
   CSRF_COOKIE,
   ORG_A,
   REFRESH_COOKIE,
+  apiOrigin,
   cookie,
   cookieValue,
   consoleOrigin,
+  loginDirect,
+  postSessionDirect,
   resetStandIn,
+  sessionCookies,
+  sessionErrorCode,
   signIn,
   standInRequests,
   waitForHydration,
@@ -130,6 +135,13 @@ test("a clean browser signs in, reads live data, rotates an expired access cooki
   // rather than replaying an already-consumed refresh token.
   expect(rotations).toHaveLength(1)
   expect(rotations[0]?.status).toBe(200)
+  // A server-side rotation is driven by a GET, which carries no Origin of its
+  // own, so the BFF must supply this console's origin. The API rejects the call
+  // without one, and the session would be sent to login.
+  expect(
+    rotations[0]?.origin,
+    "the BFF supplied this console's origin to the rotation",
+  ).toBe(consoleOrigin)
 
   // Sign out through the console's own route.
   await page.goto("/logout")
@@ -196,4 +208,123 @@ test("a rejected personal access token leaves the browser without a session", as
   await expect(
     page.getByRole("heading", { name: "Sign in to read this organization." }),
   ).toBeVisible()
+})
+
+test("a replayed refresh token revokes the session it rotated into", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000)
+  await resetStandIn(request)
+  await signIn(page, ORG_A.pat)
+
+  // The pair the login issued. Its refresh token is the one an attacker who
+  // captured it would later replay.
+  const first = await sessionCookies(page.context())
+
+  // Rotate exactly as the console does: drop the access cookie and reload, so
+  // the BFF refreshes server-side and relays the new pair.
+  await page.context().clearCookies({ name: ACCESS_COOKIE })
+  await page.reload()
+  await waitForHydration(page)
+  const rotated = await sessionCookies(page.context())
+  expect(rotated.access, "the rotation reissued an access cookie").not.toBe(
+    first.access,
+  )
+  expect(rotated.refresh, "the rotation reissued a refresh cookie").not.toBe(
+    first.refresh,
+  )
+
+  // Replay the consumed token, with the origin and CSRF proof a same-origin
+  // script would have. Refusal alone is not the property.
+  const replay = await postSessionDirect(request, "refresh", first, {
+    origin: consoleOrigin,
+  })
+  expect(replay.status(), "a replayed refresh token is refused").toBe(401)
+  expect(await sessionErrorCode(replay)).toBe("INVALID_TOKEN")
+
+  // The property is family revocation. `RefreshPair` rotates with the refresh
+  // token's own `FamilyID`, so the pair the rotation just issued is a descendant
+  // of the replayed family and must stop working with it.
+  const descendant = await request.get("/api/operator/overview", {
+    headers: { cookie: `${ACCESS_COOKIE}=${rotated.access}` },
+  })
+  expect(
+    descendant.status(),
+    "the access token issued by the rotation was revoked too",
+  ).toBe(401)
+})
+
+/**
+ * The origin rule, driven against the stand-in directly.
+ *
+ * A browser cannot be made to send a foreign `Origin` to the console, and the
+ * BFF sets its own on a server-side rotation, so this half of the contract
+ * cannot be expressed through the browser. It is pinned at the API boundary the
+ * BFF's relay has to satisfy; the journey above proves the relay satisfies it.
+ */
+test("rotation and logout apply the API's origin rule, not only the CSRF proof", async ({
+  request,
+}) => {
+  await resetStandIn(request)
+
+  // A foreign origin is refused before the handler runs, so the refresh token
+  // is still unconsumed afterwards. That ordering is the middleware's.
+  const foreignSession = await loginDirect(request, ORG_A.pat)
+  const foreign = await postSessionDirect(request, "refresh", foreignSession, {
+    origin: "https://attacker.example",
+  })
+  expect(foreign.status(), "a foreign Origin is rejected").toBe(403)
+  expect(await sessionErrorCode(foreign)).toBe("ORIGIN_REJECTED")
+
+  // No Origin is not permission: without a Referer there is nothing to check.
+  const bareSession = await loginDirect(request, ORG_A.pat)
+  const bare = await postSessionDirect(request, "refresh", bareSession)
+  expect(bare.status(), "a missing Origin and Referer is rejected").toBe(403)
+  expect(await sessionErrorCode(bare)).toBe("ORIGIN_REJECTED")
+
+  // A Referer is only a fallback when it is an allowed origin itself.
+  const foreignRefererSession = await loginDirect(request, ORG_A.pat)
+  const foreignReferer = await postSessionDirect(request, "refresh", foreignRefererSession, {
+    referer: "https://attacker.example/collect",
+  })
+  expect(foreignReferer.status(), "a foreign Referer is rejected").toBe(403)
+  expect(await sessionErrorCode(foreignReferer)).toBe("ORIGIN_REJECTED")
+
+  const originSession = await loginDirect(request, ORG_A.pat)
+  const viaOrigin = await postSessionDirect(request, "refresh", originSession, {
+    origin: consoleOrigin,
+  })
+  expect(viaOrigin.status(), "an allowed Origin rotates").toBe(200)
+
+  const refererSession = await loginDirect(request, ORG_A.pat)
+  const viaReferer = await postSessionDirect(request, "refresh", refererSession, {
+    referer: `${consoleOrigin}/agents/${ORG_A.agentId}`,
+  })
+  expect(viaReferer.status(), "an allowed Referer rotates when Origin is absent").toBe(200)
+
+  // Logout applies the same rule, and a refused logout revokes nothing.
+  const session = await loginDirect(request, ORG_A.pat)
+  const refusedLogout = await postSessionDirect(request, "logout", session, {
+    origin: "https://attacker.example",
+  })
+  expect(refusedLogout.status(), "a foreign Origin cannot log the session out").toBe(403)
+  expect(await sessionErrorCode(refusedLogout)).toBe("ORIGIN_REJECTED")
+
+  const stillLive = await request.get(`${apiOrigin}/v1/operator/overview`, {
+    headers: { cookie: `${ACCESS_COOKIE}=${session.access}` },
+  })
+  expect(stillLive.status(), "a refused logout left the session live").toBe(200)
+
+  const bareLogout = await postSessionDirect(request, "logout", session)
+  expect(bareLogout.status(), "a missing Origin and Referer cannot log out").toBe(403)
+  expect(await sessionErrorCode(bareLogout)).toBe("ORIGIN_REJECTED")
+
+  const logout = await postSessionDirect(request, "logout", session, { origin: consoleOrigin })
+  expect(logout.status(), "an allowed Origin logs out").toBe(200)
+
+  const revoked = await request.get(`${apiOrigin}/v1/operator/overview`, {
+    headers: { cookie: `${ACCESS_COOKIE}=${session.access}` },
+  })
+  expect(revoked.status(), "logout revoked the session upstream").toBe(401)
 })

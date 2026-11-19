@@ -154,10 +154,17 @@ function parseJson(raw) {
  * These are the parts of `services/api/app/routers/session.py` the Console's BFF
  * depends on, expressed at the same strength: a PAT exchange issues an HttpOnly
  * access cookie, an HttpOnly refresh cookie and a JavaScript-readable CSRF
- * cookie; refresh is single-use and rotates all three; reuse revokes the family;
- * logout revokes the family; and every state-changing call is protected by the
- * cookie/header double-submit proof. A stand-in that skipped any of this would
- * let the Console's relay pass a test the real API would fail.
+ * cookie; refresh is single-use and rotates all three *inside the existing
+ * token family*; reuse revokes that family; logout revokes it; and every
+ * state-changing call is protected by the origin rule and then the
+ * cookie/header double-submit proof, in that order. A stand-in that skipped any
+ * of this would let the Console's relay pass a test the real API would fail.
+ *
+ * Family continuity is the property, not a detail. `RefreshPair`
+ * (`services/auth/internal/sessionjwt/jwt.go`) rotates with
+ * `FamilyID: FamilyID(claims.FamilyID)` — the new pair carries the refresh
+ * token's own family. So a replayed consumed token revokes the family the
+ * *rotated* pair belongs to, and the tokens that rotation issued die with it.
  */
 
 function parseCookies(header) {
@@ -208,15 +215,21 @@ function sessionCookieHeaders({ access, refresh, csrf }) {
   return headers
 }
 
-function issueSession(org) {
-  const family = newToken("fam")
-  families.set(family, { revoked: false })
+/**
+ * Mint a session pair, optionally inside an existing family.
+ *
+ * A login passes no family and mints one; a rotation passes the consumed
+ * refresh token's family, so the rotated pair is a descendant of the same
+ * family and shares its revocation.
+ */
+function issueSession(org, familyKey = newToken("fam")) {
+  if (!families.has(familyKey)) families.set(familyKey, { revoked: false })
   const access = newToken("access")
   const refresh = newToken("refresh")
   const csrf = newToken("csrf")
-  liveAccess.set(access, { orgKey: org.key, family })
-  liveRefresh.set(refresh, { orgKey: org.key, family, consumed: false })
-  return { access, refresh, csrf, family }
+  liveAccess.set(access, { orgKey: org.key, family: familyKey })
+  liveRefresh.set(refresh, { orgKey: org.key, family: familyKey, consumed: false })
+  return { access, refresh, csrf, family: familyKey }
 }
 
 function dropAccess(access) {
@@ -237,10 +250,26 @@ function csrfAccepted(request, cookies) {
   return Boolean(header) && Boolean(cookie) && header === cookie
 }
 
-/** The API rejects a cross-origin state-changing request before its handler runs. */
+/**
+ * The API rejects a cross-origin state-changing request before its handler runs.
+ *
+ * This mirrors `CSRFMiddleware._origin_allowed`
+ * (`services/api/app/middleware/csrf.py`): an `Origin` must be in the allowed
+ * list; with no `Origin`, a `Referer` whose `scheme://netloc` is allowed is the
+ * fallback; neither header means reject. A missing `Origin` is not permission.
+ */
 function originAccepted(request) {
+  const allowed = [consoleOrigin]
   const origin = request.headers.origin
-  return !origin || origin === consoleOrigin
+  if (origin) return allowed.includes(origin)
+  const referer = request.headers.referer
+  if (!referer) return false
+  try {
+    const parsed = new URL(referer)
+    return allowed.includes(`${parsed.protocol}//${parsed.host}`)
+  } catch {
+    return false
+  }
 }
 
 function rejectSession(response, entry, status, code, message) {
@@ -272,27 +301,38 @@ function handleLogin(request, response, body, entry) {
 }
 
 function handleRefresh(request, response, entry) {
+  // Middleware order upstream: the origin rule first, then the CSRF
+  // double-submit proof, then the handler. A request missing either proof never
+  // reaches it.
+  if (!originAccepted(request)) {
+    return rejectSession(response, entry, 403, "ORIGIN_REJECTED", "Origin rejected")
+  }
   const cookies = parseCookies(request.headers.cookie)
-  const refresh = liveRefresh.get(cookies[REFRESH_COOKIE] ?? "")
-  // CSRF is checked before the token is looked at, matching the middleware
-  // order upstream: a missing or mismatched proof never reaches the handler.
   if (!csrfAccepted(request, cookies)) {
     return rejectSession(response, entry, 403, "CSRF_FAILED", "CSRF token rejected")
   }
-  if (!refresh || !familyIsLive(refresh.family) || refresh.consumed) {
-    // Replay of a consumed refresh token is treated as family compromise.
-    if (refresh) revokeFamily(refresh.family)
+  const refresh = liveRefresh.get(cookies[REFRESH_COOKIE] ?? "")
+  if (!refresh || !familyIsLive(refresh.family)) {
+    return rejectSession(response, entry, 401, "INVALID_TOKEN", "invalid refresh token")
+  }
+  if (refresh.consumed) {
+    // Replay of a consumed refresh token is treated as family compromise: every
+    // descendant of that family, including the pair the rotation issued, dies.
+    revokeFamily(refresh.family)
     return rejectSession(response, entry, 401, "INVALID_TOKEN", "invalid refresh token")
   }
   const org = ORGS.find((candidate) => candidate.key === refresh.orgKey)
   refresh.consumed = true
-  const issued = issueSession(org)
-  // The rotated family replaces the old one; the old tokens stay dead.
-  revokeFamily(refresh.family)
-  return issueSessionResponse(response, entry, org, issued)
+  // Rotation stays inside the refresh token's family (jwt.go::RefreshPair passes
+  // `FamilyID: FamilyID(claims.FamilyID)`), so revoking the family is what kills
+  // the rotated pair.
+  return issueSessionResponse(response, entry, org, issueSession(org, refresh.family))
 }
 
 function handleLogout(request, response, entry) {
+  if (!originAccepted(request)) {
+    return rejectSession(response, entry, 403, "ORIGIN_REJECTED", "Origin rejected")
+  }
   const cookies = parseCookies(request.headers.cookie)
   if (!csrfAccepted(request, cookies)) {
     return rejectSession(response, entry, 403, "CSRF_FAILED", "CSRF token rejected")
@@ -363,6 +403,9 @@ function recordRequest(request, pathname) {
     path: pathname,
     cookieNames,
     lastEventId: request.headers["last-event-id"] ?? null,
+    // Recorded so a journey can assert which origin the BFF supplied upstream.
+    origin: request.headers.origin ?? null,
+    referer: request.headers.referer ?? null,
     org: null,
     status: null,
   }
