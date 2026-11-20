@@ -5,8 +5,10 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -132,6 +134,16 @@ func TestErasureReceiptCoverage_DownRefusesWhenCoverageExists(t *testing.T) {
 	requireVersion(t, f.dsn, f.head)
 }
 
+// erasureCapabilityRole is the identity the erasure worker writes receipts as,
+// and the role the fenced-role test runs the down file as. It is `ibex_erasure`,
+// not `ibex_app`: the down now takes `LOCK TABLE ... ACCESS EXCLUSIVE` before its
+// guard, and that needs at least one of UPDATE, DELETE, or TRUNCATE on the table.
+// 000075 leaves `ibex_app` with SELECT only (measured: LOCK TABLE as ibex_app
+// fails with "permission denied for table erasure_store_receipts"), so `ibex_app`
+// can no longer reach the code path that test exists to exercise. `ibex_erasure`
+// holds SELECT and UPDATE and is still fenced by FORCE row level security.
+const erasureCapabilityRole = "ibex_erasure"
+
 // TestErasureReceiptCoverage_DownRefusesForARoleFencedByRLS proves the guard is
 // not defeated by role attributes.
 //
@@ -143,9 +155,9 @@ func TestErasureReceiptCoverage_DownRefusesWhenCoverageExists(t *testing.T) {
 // non-superuser migrate role reads zero rows and the DROP proceeds.
 //
 // `SET row_security = off` in the down file turns that read into an error
-// instead of a silent zero-row pass. This runs the real file as `ibex_app`
-// (NOLOGIN, NOSUPERUSER, NOBYPASSRLS) and first demonstrates the blind read, so
-// the test would fail if the SET were removed.
+// instead of a silent zero-row pass. This runs the real file as a capability
+// role (NOLOGIN, NOSUPERUSER, NOBYPASSRLS) and first demonstrates the blind read,
+// so the test would fail if the SET were removed.
 func TestErasureReceiptCoverage_DownRefusesForARoleFencedByRLS(t *testing.T) {
 	f := newMigrationFixture(t, erasureReceiptCoverageVersion)
 
@@ -163,14 +175,13 @@ func TestErasureReceiptCoverage_DownRefusesForARoleFencedByRLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read down file: %v", err)
 	}
-	tx, err := f.db.BeginTx(f.ctx, nil)
+	tx, err := beginAsRole(f.ctx, f.db, erasureCapabilityRole)
 	if err != nil {
 		t.Fatalf("begin guarded down: %v", err)
 	}
+	// Rolled back even when the down unexpectedly succeeds, so a regression
+	// cannot drop the column out from under the rest of the suite.
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(f.ctx, `SET LOCAL ROLE ibex_app`); err != nil {
-		t.Fatalf("set role ibex_app: %v", err)
-	}
 	_, err = tx.ExecContext(f.ctx, string(downSQL))
 	if err == nil || !strings.Contains(err.Error(), "row-level security") {
 		t.Fatalf("down as an RLS-fenced role error = %v, want a row-level security error", err)
@@ -178,6 +189,25 @@ func TestErasureReceiptCoverage_DownRefusesForARoleFencedByRLS(t *testing.T) {
 
 	requireVersion(t, f.dsn, f.head)
 	requireCoveredAddressesColumn(t, f.ctx, f.db, true)
+}
+
+// beginAsRole begins a transaction switched to one allowlisted capability role.
+// The caller owns the rollback: both callers must be able to discard everything
+// the transaction did, because one of them executes a destructive down file.
+func beginAsRole(ctx context.Context, db *sql.DB, roleName string) (*sql.Tx, error) {
+	stmt, err := roleStatement(roleName)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, stmt); err != nil {
+		_ = tx.Rollback()
+		return nil, fmt.Errorf("set role %s: %w", roleName, err)
+	}
+	return tx, nil
 }
 
 // requireTestRoleBypassesRLS states the property the refusal test depends on.
@@ -204,22 +234,26 @@ func requireTestRoleBypassesRLS(t *testing.T, ctx context.Context, db *sql.DB) {
 	}
 }
 
-// requireFencedReadSeesNoReceipts runs the guard's predicate as ibex_app with no
-// org GUC and asserts the policy hides every seeded receipt from it.
+// requireFencedReadSeesNoReceipts runs the guard's predicate as the fenced role
+// with no org GUC and asserts the policy hides every seeded receipt from it.
 func requireFencedReadSeesNoReceipts(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	var visible int
-	err := withAppRole(ctx, db, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM ibex_core.erasure_store_receipts
-			 WHERE covered_addresses IS NOT NULL`).Scan(&visible)
-	})
+	tx, err := beginAsRole(ctx, db, erasureCapabilityRole)
 	if err != nil {
-		t.Fatalf("count receipts as ibex_app: %v", err)
+		t.Fatalf("begin fenced read: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	err = tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM ibex_core.erasure_store_receipts
+		 WHERE covered_addresses IS NOT NULL`).Scan(&visible)
+	if err != nil {
+		t.Fatalf("count receipts as %s: %v", erasureCapabilityRole, err)
 	}
 	if visible != 0 {
-		t.Fatalf("ibex_app without an org GUC sees %d covered receipt(s), want 0: "+
-			"the policy is not fencing this read, so the test proves nothing", visible)
+		t.Fatalf("%s without an org GUC sees %d covered receipt(s), want 0: "+
+			"the policy is not fencing this read, so the test proves nothing",
+			erasureCapabilityRole, visible)
 	}
 }
 
@@ -366,16 +400,132 @@ type coveredReceiptSeed struct {
 func insertCoveredReceipt(t *testing.T, f migrationFixture, seed coveredReceiptSeed) {
 	t.Helper()
 	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		// nosemgrep: go_sql_rule-concat-sqli - literal statement with $N bind parameters; nothing is concatenated into the SQL.
-		_, execErr := tx.ExecContext(f.ctx, `
-			INSERT INTO ibex_core.erasure_store_receipts
-				(org_id, memory_id, revision, store, status, idempotency_key,
-				 covered_addresses)
-			VALUES ($1::uuid, $2::uuid, 2, 'objectstore', 'verified', $3, $4)`,
-			seed.orgID, seed.memoryID, "coverage-"+seed.memoryID, pq.Array(seed.covered))
-		return execErr
+		return insertCoveredReceiptIn(f.ctx, tx, seed)
 	})
 	if err != nil {
 		t.Fatalf("insert covered receipt: %v", err)
 	}
+}
+
+// insertCoveredReceiptIn writes that receipt inside a transaction the caller
+// owns, so a test can leave it uncommitted on purpose.
+func insertCoveredReceiptIn(ctx context.Context, tx *sql.Tx, seed coveredReceiptSeed) error {
+	// nosemgrep: go_sql_rule-concat-sqli - literal statement with $N bind parameters; nothing is concatenated into the SQL.
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO ibex_core.erasure_store_receipts
+			(org_id, memory_id, revision, store, status, idempotency_key,
+			 covered_addresses)
+		VALUES ($1::uuid, $2::uuid, 2, 'objectstore', 'verified', $3, $4)`,
+		seed.orgID, seed.memoryID, "coverage-"+seed.memoryID, pq.Array(seed.covered))
+	return err
+}
+
+// downLockWaitBudget is how long a test waits to observe the down's request for
+// ACCESS EXCLUSIVE. It stays below the down file's own `lock_timeout` of 5s, so a
+// test that never sees the waiter fails on its own message rather than on a lock
+// timeout.
+const downLockWaitBudget = 3 * time.Second
+
+// downLockPollInterval is how often that observation is retried.
+const downLockPollInterval = 20 * time.Millisecond
+
+// TestErasureReceiptCoverage_DownWaitsForAnInFlightWriter pins the lock that
+// closes the window between the guard's read and the DROP COLUMN.
+//
+// The guard's `SELECT` on its own takes ACCESS SHARE, which does not conflict
+// with the ROW EXCLUSIVE a worker holds while it commits its first non-NULL
+// coverage. Without `LOCK TABLE ... ACCESS EXCLUSIVE` the sequence is: the guard
+// reads nothing, the worker commits, `DROP COLUMN` then waits for that worker,
+// is granted the lock once it is gone, and drops the only record of the addresses
+// the worker proved absent. The window is driven deterministically here — the
+// writer's insert stays uncommitted, the down is started, and the writer commits
+// only once the down is observably queued for the table lock — so the test fails
+// if the down reads before it locks.
+func TestErasureReceiptCoverage_DownWaitsForAnInFlightWriter(t *testing.T) {
+	f := newMigrationFixture(t, erasureReceiptCoverageVersion)
+	requireTestRoleBypassesRLS(t, f.ctx, f.db)
+
+	orgA, _ := seedTwoOrgsWithAgents(t, f.ctx, f.db)
+
+	writerTx := beginInFlightErasureWrite(t, f, orgA)
+	downSQL, err := migrationFiles.ReadFile("000080_erasure_receipt_coverage.down.sql")
+	if err != nil {
+		t.Fatalf("read down file: %v", err)
+	}
+	downDone := runDownInBackground(f, string(downSQL))
+
+	requireDownBlockedOnReceiptsTable(t, f.ctx, f.db)
+	if err := writerTx.Commit(); err != nil {
+		t.Fatalf("commit the in-flight writer: %v", err)
+	}
+
+	err = <-downDone
+	if err == nil || !strings.Contains(err.Error(), "refusing destructive 000080 rollback") {
+		t.Fatalf("down error = %v, want the 000080 refusal: a coverage committed by a "+
+			"writer that was in flight when the down started was not seen", err)
+	}
+	requireVersion(t, f.dsn, f.head)
+	requireCoveredAddressesColumn(t, f.ctx, f.db, true)
+}
+
+// beginInFlightErasureWrite starts a receipt write as the erasure worker identity
+// and leaves the transaction open, so the row is invisible to every other session
+// until the test commits it.
+func beginInFlightErasureWrite(t *testing.T, f migrationFixture, orgID string) *sql.Tx {
+	t.Helper()
+	tx, err := beginAsRole(f.ctx, f.db, erasureCapabilityRole)
+	if err != nil {
+		t.Fatalf("begin in-flight writer: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback() })
+	if _, err := tx.ExecContext(f.ctx,
+		`SELECT set_config('app.current_org_id', $1, true)`, orgID); err != nil {
+		t.Fatalf("pin the writer's org: %v", err)
+	}
+	seed := coveredReceiptSeed{
+		orgID:    orgID,
+		memoryID: uuid.NewString(),
+		covered:  []string{"s3://ibex-sessions/" + orgID + "/capture/full/in-flight.json"},
+	}
+	if err := insertCoveredReceiptIn(f.ctx, tx, seed); err != nil {
+		t.Fatalf("in-flight covered receipt: %v", err)
+	}
+	return tx
+}
+
+// runDownInBackground executes the down file the same way golang-migrate does —
+// the whole file in one zero-argument ExecContext — and returns its result.
+func runDownInBackground(f migrationFixture, downSQL string) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.db.ExecContext(f.ctx, downSQL)
+		done <- err
+	}()
+	return done
+}
+
+// requireDownBlockedOnReceiptsTable waits until a session is queued for ACCESS
+// EXCLUSIVE on the receipts table, which is the observable that proves the down
+// asked for the lock. It fails rather than hangs when that never happens, so a
+// down file that reads before it locks is reported instead of timing out.
+func requireDownBlockedOnReceiptsTable(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	deadline := time.Now().Add(downLockWaitBudget)
+	for time.Now().Before(deadline) {
+		var waiters int
+		err := db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM pg_locks
+			 WHERE relation = 'ibex_core.erasure_store_receipts'::regclass
+			   AND mode = 'AccessExclusiveLock'
+			   AND NOT granted`).Scan(&waiters)
+		if err != nil {
+			t.Fatalf("count lock waiters: %v", err)
+		}
+		if waiters > 0 {
+			return
+		}
+		time.Sleep(downLockPollInterval)
+	}
+	t.Fatalf("no session waited for ACCESS EXCLUSIVE on ibex_core.erasure_store_receipts "+
+		"within %s: the down does not take the lock before its guard", downLockWaitBudget)
 }
