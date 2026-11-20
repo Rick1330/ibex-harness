@@ -42,6 +42,10 @@ const notes = [
     lead: "What this contract does not carry.",
     body: "Message content, hashes, and provider request ids are not part of this contract and are not shown.",
   },
+  {
+    lead: "Counts describe this page, not the organization.",
+    body: "Segment counts cover the rows loaded on this page. The API returns no organization total, so none is claimed.",
+  },
 ]
 
 const sessionsState = useOperatorSessions(() => serializeLiveSessionQuery(props.state))
@@ -317,9 +321,6 @@ watch(
           panel-id="session-results"
           @update:model-value="segment = $event as SessionSegment['id']"
         />
-        <p class="text-[0.6875rem] leading-4 text-fg-3">
-          Segment counts cover the rows loaded on this page. The API returns no organization total, so none is claimed.
-        </p>
 
         <GovernEmptyState
           v-if="!loading && visibleRows.length === 0"
