@@ -25,6 +25,7 @@ from tests.integration.lifecycle_erasure_harness import (
     Forgotten,
     Harness,
     OutboxSeed,
+    ReceiptSeed,
     RefSeed,
     seed_clickhouse_event,
 )
@@ -247,9 +248,11 @@ async def test_an_unanswerable_recheck_keeps_the_valid_verified_receipt(
     """
     forgotten, row_id = await harness.seed_queued(object_store)
     await harness.seed_receipt(
-        forgotten,
-        store="objectstore",
-        covered_addresses=(forgotten.object_uri,),
+        ReceiptSeed.for_memory(
+            forgotten,
+            store="objectstore",
+            covered_addresses=(forgotten.object_uri,),
+        )
     )
     proved_at = (
         await harness.receipts(org_id=forgotten.org_id, memory_id=forgotten.memory_id)
