@@ -27,6 +27,15 @@
 -- backfill because the old rows do not record what they erased, and inventing a
 -- coverage set would be a false proof.
 --
+-- How far that reaches on deploy: `memory_lifecycle_claim_erasure` (000074:141-147)
+-- claims only rows with `delivered_at IS NULL` and `erasure_state IN
+-- ('pending','partial')`, so the pre-existing receipts that get restaged are the
+-- ones on erasures still in progress. A `complete` erasure is delivered, is never
+-- re-claimed, and its receipts keep NULL coverage for good. That is not a missed
+-- copy — there is no further sweep of that memory to miss one in — but it does
+-- mean an already-finished erasure is not revalidated by this change, and nobody
+-- should read the column as evidence that it was.
+--
 -- Deliberately nullable with no default. Six seeding sites insert an explicit
 -- column list; a NOT NULL would reject them and force a fabricated value. The
 -- `store` domain is untouched.
