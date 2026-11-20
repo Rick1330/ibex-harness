@@ -23,7 +23,12 @@ from typing import Any
 import pytest
 
 from app.tasks import lifecycle_erasure as le
-from app.tasks.lifecycle_erasure import RECEIPT_STORES, _StoreOutcome, _StoreTarget
+from app.tasks.lifecycle_erasure import (
+    RECEIPT_STORES,
+    _Receipt,
+    _StoreOutcome,
+    _StoreTarget,
+)
 from tests.unit.lifecycle_erasure_fakes import claimed_row, erasure
 
 
@@ -45,11 +50,16 @@ async def _erase(
     target: _StoreTarget,
     existing: dict[str, str],
     *,
+    coverage: dict[str, tuple[str, ...] | None] | None = None,
     deadline_seconds: float = 10.0,
 ) -> _StoreOutcome:
-    """Run one store decision with a job deadline relative to now."""
+    """Run one store decision against the receipts (and coverage) an earlier run wrote."""
+    receipts = {
+        store: _Receipt(status=status, covered_addresses=(coverage or {}).get(store))
+        for store, status in existing.items()
+    }
     return await le._erase_store(
-        erasure(), target, existing, time.monotonic() + deadline_seconds
+        erasure(), target, receipts, time.monotonic() + deadline_seconds
     )
 
 
@@ -170,20 +180,53 @@ async def test_store_without_locators_is_not_applicable_and_touches_nothing() ->
 
 
 @pytest.mark.asyncio
-async def test_store_already_proven_is_not_staged_again(
+async def test_store_receipt_covering_its_locator_is_not_staged_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _stage_must_not_run(monkeypatch, "a satisfied store must not be staged again")
+    """A receipt settles the store for the addresses it proved.
+
+    The receipt recorded this locator, so the retry returns the earlier verdict
+    without another store call.
+    """
+    _stage_must_not_run(monkeypatch, "a covered store must not be staged again")
     monkeypatch.setattr(le.sweep, "object_exists", lambda *_args, **_kwargs: False)
     outcome = await _erase(
         _StoreTarget("objectstore", ("s3://bucket/one.json",)),
         {"objectstore": "verified"},
+        coverage={"objectstore": ("s3://bucket/one.json",)},
     )
     assert (outcome.status, outcome.fresh) == ("verified", False)
 
 
 @pytest.mark.asyncio
-async def test_verified_cache_receipt_is_not_rechecked_with_head(
+async def test_store_receipt_for_another_locator_is_staged_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copy at an address the receipt never proved must be erased.
+
+    The receipt covers ``old``; the current locator is ``new``. Returning the old
+    verdict would leave the copy at ``new`` alive, so the store is staged and the
+    new receipt records the address it actually proved.
+    """
+    staged: list[tuple[str, ...]] = []
+
+    async def record(target: _StoreTarget, *_args: Any, **_kwargs: Any) -> None:
+        staged.append(target.locators)
+
+    monkeypatch.setattr(le.sweep, "_stage", record)
+    monkeypatch.setattr(le.sweep, "object_exists", lambda *_args, **_kwargs: False)
+    outcome = await _erase(
+        _StoreTarget("objectstore", ("s3://bucket/new.json",)),
+        {"objectstore": "verified"},
+        coverage={"objectstore": ("s3://bucket/old.json",)},
+    )
+    assert (outcome.status, outcome.fresh) == ("verified", True)
+    assert staged == [("s3://bucket/new.json",)]
+    assert outcome.covered_addresses == ("s3://bucket/new.json",)
+
+
+@pytest.mark.asyncio
+async def test_verified_cache_receipt_covering_its_key_is_not_rechecked_with_head(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The cache stores are fenced by the forgotten marker, not by a HEAD call."""
@@ -193,11 +236,63 @@ async def test_verified_cache_receipt_is_not_rechecked_with_head(
         raise AssertionError("only the object store is re-checked")
 
     monkeypatch.setattr(le.sweep, "object_exists", unexpected)
+    key = "org:memory:00000000-0000-0000-0000-000000000003"
     outcome = await _erase(
-        _StoreTarget("cache", ("org:memory:00000000-0000-0000-0000-000000000003",)),
+        _StoreTarget("cache", (key,)),
         {"cache": "verified"},
+        coverage={"cache": (key,)},
     )
     assert (outcome.status, outcome.fresh) == ("verified", False)
+
+
+@pytest.mark.asyncio
+async def test_same_key_cache_repopulation_is_settled_by_coverage_a_documented_residual(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RESIDUAL: address coverage does not detect a re-populated cache key.
+
+    The ``cache`` locator is the fixed key ``{org}:memory:{id}`` written once, in
+    the forget transaction. A value written back to that same key after its
+    delete reuses the identical locator, so it stays inside the receipt's
+    coverage and this decision settles the store on the earlier proof — the
+    entry can survive a ``complete`` row. That is expected current behaviour, not
+    protection: the same-key write is fenced by the forgotten marker and the
+    ZREM-before-check ordering in ``staging``, which is a different mechanism.
+
+    This test pins the limit so the coverage gate is never mistaken for a
+    re-population fence. Closing the residual needs a marker/verification check,
+    not a change to ``_receipt_already_proves``.
+    """
+    _stage_must_not_run(monkeypatch, "a covered cache key is settled without restaging")
+    key = "org:memory:00000000-0000-0000-0000-000000000003"
+    outcome = await _erase(
+        _StoreTarget("cache", (key,)),
+        {"cache": "verified"},
+        coverage={"cache": (key,)},
+    )
+    assert (outcome.status, outcome.fresh) == ("verified", False)
+
+
+@pytest.mark.asyncio
+async def test_verified_cache_receipt_for_another_key_is_staged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cache key the receipt never proved must be evicted, not settled over."""
+    staged: list[tuple[str, ...]] = []
+
+    async def record(target: _StoreTarget, *_args: Any, **_kwargs: Any) -> None:
+        staged.append(target.locators)
+
+    monkeypatch.setattr(le.sweep, "_stage", record)
+    key = "org:memory:00000000-0000-0000-0000-000000000003"
+    outcome = await _erase(
+        _StoreTarget("cache", (key,)),
+        {"cache": "verified"},
+        coverage={"cache": ("org:memory:00000000-0000-0000-0000-00000000000f",)},
+    )
+    assert (outcome.status, outcome.fresh) == ("verified", True)
+    assert staged == [(key,)]
+    assert outcome.covered_addresses == (key,)
 
 
 @pytest.mark.asyncio
@@ -227,6 +322,7 @@ async def test_verified_object_receipt_is_restaged_when_its_proof_no_longer_stan
     outcome = await _erase(
         _StoreTarget("objectstore", ("s3://bucket/one.json",)),
         {"objectstore": "verified"},
+        coverage={"objectstore": ("s3://bucket/one.json",)},
     )
     assert (outcome.status, outcome.fresh) == ("verified", True)
     assert staged == [("s3://bucket/one.json",)]
@@ -266,7 +362,12 @@ async def test_expired_proof_head_restages_the_object_store(
     outcome = await le._erase_store(
         erasure(job_deadline=started + 5.0),
         _StoreTarget("objectstore", ("s3://bucket/one.json",)),
-        {"objectstore": "verified"},
+        {
+            "objectstore": _Receipt(
+                status="verified",
+                covered_addresses=("s3://bucket/one.json",),
+            )
+        },
         started + 5.0,
     )
 
@@ -377,6 +478,58 @@ async def test_not_applicable_does_not_hide_a_ref_that_appeared_later(
 
 
 @pytest.mark.asyncio
+async def test_a_receipt_with_no_coverage_covers_no_new_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-000080 receipt (NULL coverage) is not a blank cheque for the store.
+
+    It recorded no addresses, so a locator that is now present was never proved;
+    the store must be staged rather than settled on the old ``verified``.
+    """
+    staged: list[tuple[str, ...]] = []
+
+    async def record(target: _StoreTarget, *_args: Any, **_kwargs: Any) -> None:
+        staged.append(target.locators)
+
+    monkeypatch.setattr(le.sweep, "_stage", record)
+    monkeypatch.setattr(le.sweep, "object_exists", lambda *_args, **_kwargs: False)
+    outcome = await _erase(
+        _StoreTarget("objectstore", ("s3://bucket/new.json",)),
+        {"objectstore": "verified"},
+        coverage={"objectstore": None},
+    )
+    assert (outcome.status, outcome.fresh) == ("verified", True)
+    assert staged == [("s3://bucket/new.json",)]
+    assert outcome.covered_addresses == ("s3://bucket/new.json",)
+
+
+@pytest.mark.asyncio
+async def test_a_copy_recorded_between_two_sweeps_forces_a_second_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The receipt proved ``old``; a ref now also names ``new``.
+
+    This is the between-runs case: the second sweep must stage the store again
+    (both addresses) and write a receipt that covers both, rather than settle on
+    the earlier receipt and leave the new copy alive.
+    """
+    staged: list[tuple[str, ...]] = []
+
+    async def record(target: _StoreTarget, *_args: Any, **_kwargs: Any) -> None:
+        staged.append(target.locators)
+
+    monkeypatch.setattr(le.sweep, "_stage", record)
+    outcome = await _erase(
+        _StoreTarget("session_event", ("7", "8")),
+        {"session_event": "verified"},
+        coverage={"session_event": ("7",)},
+    )
+    assert (outcome.status, outcome.fresh) == ("verified", True)
+    assert staged == [("7", "8")]
+    assert outcome.covered_addresses == ("7", "8")
+
+
+@pytest.mark.asyncio
 async def test_store_already_proven_survives_a_later_run_with_no_locators(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -384,7 +537,9 @@ async def test_store_already_proven_survives_a_later_run_with_no_locators(
 
     The empty-locator branch used to run first, so a retry that saw no refs for a
     store already proven rewrote the receipt as ``not_applicable`` with a NULL
-    timestamp — losing the only evidence that the store was cleared.
+    timestamp — losing the only evidence that the store was cleared. An empty
+    locator set is trivially covered, so a receipt with NULL coverage still
+    settles here: it proves the store, and there is nothing new to erase.
     """
 
     async def explode(*_args: Any, **_kwargs: Any) -> None:
@@ -394,7 +549,7 @@ async def test_store_already_proven_survives_a_later_run_with_no_locators(
     outcome = await le._erase_store(
         erasure(),
         _StoreTarget("objectstore", ()),
-        {"objectstore": "verified"},
+        {"objectstore": _Receipt(status="verified", covered_addresses=None)},
         time.monotonic() + 10,
     )
     assert (outcome.status, outcome.fresh) == ("verified", False)
@@ -454,6 +609,7 @@ async def test_the_recheck_invalidates_only_the_proof_it_saw(
     outcome = await _erase(
         _StoreTarget("objectstore", ("s3://bucket/one.json",)),
         {"objectstore": "verified"},
+        coverage={"objectstore": ("s3://bucket/one.json",)},
     )
 
     assert (outcome.status, outcome.fresh) == ("failed", True)

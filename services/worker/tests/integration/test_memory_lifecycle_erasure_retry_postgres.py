@@ -99,6 +99,58 @@ async def test_unreachable_store_leaves_partial_then_a_retry_completes(
 
 
 @pytest.mark.asyncio
+async def test_a_copy_recorded_between_two_sweeps_is_erased_by_the_second(
+    harness: Harness, object_store: FakeObjectStore
+) -> None:
+    """A receipt proves addresses, not a store, so a between-sweeps copy is staged.
+
+    First sweep: the object store fails transiently, so the row stays ``partial``
+    while the session-event copy at the recorded address is verified. A producer
+    then records a second session-event copy for the same memory and revision —
+    an address the earlier receipt never covered. Settling on that receipt would
+    leave the copy alive and mark the row complete; the retry must stage the store
+    again and erase it.
+    """
+    forgotten, row_id = await harness.seed_queued(object_store)
+    object_store.raises = True
+
+    first = await harness.run(ch_dsn=harness.env.ch_dsn)
+
+    assert first["partial"] == 1, first
+    assert await harness.receipt_coverage(forgotten, "session_event") == (
+        str(forgotten.session_event_id),
+    ), "the first sweep proves only the address it saw"
+
+    late_event_id = await harness.add_session_event_copy(forgotten)
+    assert (
+        await harness.session_event_by_id_count(
+            org_id=forgotten.org_id, event_id=late_event_id
+        )
+        == 1
+    )
+
+    object_store.raises = False
+    await harness.make_due(row_id)
+
+    second = await harness.run(ch_dsn=harness.env.ch_dsn)
+
+    assert second["complete"] == 1, second
+    assert (
+        await harness.session_event_by_id_count(
+            org_id=forgotten.org_id, event_id=late_event_id
+        )
+        == 0
+    ), "the copy recorded between sweeps must be erased, not settled over"
+    coverage = await harness.receipt_coverage(forgotten, "session_event")
+    assert set(coverage or ()) == {
+        str(forgotten.session_event_id),
+        str(late_event_id),
+    }, "the replacement receipt covers every address it staged"
+    state, delivered_at, _available, attempts = await harness.outbox(row_id=row_id)
+    assert (state, delivered_at is not None, attempts) == ("complete", True, 2)
+
+
+@pytest.mark.asyncio
 async def test_a_reappeared_object_is_deleted_again_on_the_retry(
     harness: Harness, object_store: FakeObjectStore
 ) -> None:
@@ -194,7 +246,11 @@ async def test_an_unanswerable_recheck_keeps_the_valid_verified_receipt(
     its timestamp must survive; the row is ``partial`` and retries.
     """
     forgotten, row_id = await harness.seed_queued(object_store)
-    await harness.seed_receipt(forgotten, store="objectstore")
+    await harness.seed_receipt(
+        forgotten,
+        store="objectstore",
+        covered_addresses=(forgotten.object_uri,),
+    )
     proved_at = (
         await harness.receipts(org_id=forgotten.org_id, memory_id=forgotten.memory_id)
     )["objectstore"][2]

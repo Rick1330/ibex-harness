@@ -148,6 +148,15 @@ class ErasureStores(BaseModel):
     object entry is deleted, the hot sorted set loses one member. A ``failed``
     cache receipt is outstanding work the worker sweep retries, not a report of a
     completed forget.
+
+    A ``verified`` receipt proves the addresses its proof covered, not the whole
+    store. When the response's job ``state`` is ``failed``, no store is reported
+    ``verified``: the consumer keeps an earlier ``verified`` receipt rather than
+    downgrade a proof over an outage, and this field stops presenting it as the
+    store's current state. The downgrade is deliberately coarse, so while
+    ``state`` is ``failed`` this map is a **lower bound**: a store reported
+    ``failed`` may in fact be proven for every address this revision records.
+    ``state`` is the only authority on whether the erasure settled.
     """
 
     objectstore: ErasureStoreState = "pending"
@@ -161,7 +170,10 @@ class ErasureStatus(BaseModel):
     """Whether the memory's copies outside PostgreSQL are proven gone.
 
     ``pending`` is the honest answer while the consumer has not run yet, which is
-    the normal state immediately after a forget.
+    the normal state immediately after a forget. ``failed`` is terminal: at least
+    one store did not confirm erasure before the deadline, so ``state`` is the
+    only authority on whether the erasure settled; ``stores.*`` is a lower bound
+    while it is ``failed`` — see :class:`ErasureStores`.
     """
 
     state: ErasureJobState = "pending"

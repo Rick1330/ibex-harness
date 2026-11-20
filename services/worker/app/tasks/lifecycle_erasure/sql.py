@@ -34,7 +34,7 @@ SELECT store, locator
 """
 
 _RECEIPTS_SQL = """
-SELECT store, status
+SELECT store, status, covered_addresses
   FROM ibex_core.erasure_store_receipts
  WHERE org_id = CAST(:org_id AS uuid)
    AND memory_id = CAST(:memory_id AS uuid)
@@ -79,21 +79,25 @@ SELECT agent_id::text AS agent_id
 # one thing a single writer can still get wrong: a retry's weaker outcome must not
 # overwrite a proof it did not invalidate. A ``failed`` replaces a ``verified``
 # only when this run observed a live copy (``:invalidate_proof``); an outage that
-# merely could not re-confirm the proof leaves the proof standing.
+# merely could not re-confirm the proof leaves the proof standing. The same guard
+# governs ``covered_addresses``: a verified outcome's coverage is written with its
+# proof, while a failed outcome's empty coverage cannot replace a verified receipt
+# unless the run earned the invalidation.
 _UPSERT_RECEIPT_SQL = """
 INSERT INTO ibex_core.erasure_store_receipts (
     org_id, memory_id, revision, store, status, verified_absent_at,
-    idempotency_key, error
+    idempotency_key, error, covered_addresses
 ) VALUES (
     CAST(:org_id AS uuid), CAST(:memory_id AS uuid), :revision, :store, :status,
     CASE WHEN :status = 'verified' THEN NOW() ELSE NULL END,
-    :idempotency_key, :error
+    :idempotency_key, :error, CAST(:covered_addresses AS text[])
 )
 ON CONFLICT (org_id, memory_id, revision, store) DO UPDATE
    SET status = EXCLUDED.status,
        verified_absent_at = EXCLUDED.verified_absent_at,
        error = EXCLUDED.error,
-       idempotency_key = EXCLUDED.idempotency_key
+       idempotency_key = EXCLUDED.idempotency_key,
+       covered_addresses = EXCLUDED.covered_addresses
  WHERE ibex_core.erasure_store_receipts.status <> 'verified'
     OR EXCLUDED.status = 'verified'
     OR CAST(:invalidate_proof AS boolean)

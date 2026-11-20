@@ -4,10 +4,21 @@
 -- address the consumer can reach. The narrowed CHECK cannot hold either, and
 -- deleting them to make the rollback succeed would delete evidence — the same
 -- reason 000073 and 000074 refuse. A recorded failed attempt is evidence too.
+--
+-- `row_security = off` is session scope, not `SET LOCAL`: golang-migrate runs a
+-- migration file outside a transaction, where `SET LOCAL` is a warning and
+-- changes nothing. With it on, a read the policy would filter raises instead of
+-- returning zero rows, so a migrate role that cannot see every tenant fails
+-- closed rather than rolling back over rows it never counted.
+SET row_security = off;
+
 DO $$
 BEGIN
-    -- No service-account GUC: 000063 stopped every policy reading it. The guard
-    -- reads as the owner, which RLS does not fence.
+    -- No service-account GUC: 000063 stopped every policy reading it. All three
+    -- tables read here are ENABLE and FORCE row level security, so this is *not*
+    -- a privileged owner read: without an org GUC or the `ibex_service` identity
+    -- the policy filters every row. `row_security = off` (above) turns that
+    -- silent zero-row pass into an error for a role subject to the policy.
     IF EXISTS (
         SELECT 1 FROM ibex_core.erasure_store_receipts
         WHERE store IN ('cache','cache_hot')
@@ -47,3 +58,5 @@ ALTER TABLE ibex_core.erasure_store_receipts
 ALTER TABLE ibex_core.erasure_store_receipts
     ADD CONSTRAINT erasure_store_receipts_store_check
     CHECK (store IN ('postgres','clickhouse','objectstore','session_event'));
+
+RESET row_security;

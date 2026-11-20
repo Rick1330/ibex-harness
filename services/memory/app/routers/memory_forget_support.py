@@ -25,7 +25,17 @@ store it never cleared. This module therefore writes only the *attempt* columns
 on the outbox row (``pending``/``failed``, a vocabulary with no ``verified``
 value). The proof stays with ``ibex.worker.lifecycle.erase_memory``. The response
 shows a store as ``failed`` from the attempt column only while no receipt exists;
-a receipt always wins.
+a receipt wins, and is not presented as a store's current state once the job has
+settled ``failed``. A receipt proves the addresses its proof covered
+(``covered_addresses``, 000080), and a terminal failure means at least one store
+was not proved for an address this revision records. While ``state`` is
+``failed``, ``stores.*`` is therefore a **lower bound**, not a per-store verdict:
+a store the consumer proved for every recorded address is still downgraded to
+``failed``, because this read path does not re-derive the worker's coverage rule.
+``state`` is the only authority on whether the erasure settled. The consumer
+keeps the earlier ``verified`` receipt when a stage fails without observing a live
+copy, so an outage cannot downgrade a proof; reading that row as "nothing is left
+at this store" would be exactly the claim the guard exists to refuse.
 """
 
 from __future__ import annotations
@@ -400,7 +410,11 @@ async def read_forget_erasure(
     but a recorded failed attempt is reported ``failed`` — work the sweep will
     retry, not a clean result. Reading them is deliberately separate from the
     forget transaction: erasure happens after it commits, and this route must not
-    report ``complete`` for work that has not run.
+    report ``complete`` for work that has not run. A ``failed`` job state
+    downgrades every ``verified`` receipt to ``failed`` for the same reason, so
+    ``stores.*`` is a lower bound under a failed job: a store can be proven for
+    every address this revision records and still read ``failed``. ``state`` is
+    the only authority on whether the erasure settled.
 
     A read failure degrades to ``pending`` rather than failing the request. The
     tombstone is already committed, so a 503 here would invite a retry that the
@@ -441,27 +455,53 @@ def _erasure_status(
 ) -> ErasureStatus:
     """Map the outbox state, the attempts, and the receipts onto the contract.
 
-    Precedence: a receipt is proof and always wins. A cache store with no receipt
-    but a failed request-path attempt is ``failed``. Everything else with no
-    receipt is ``pending``. The attempt flag is consulted only for the two cache
-    stores, because only those have a tenant-writable attempt column.
+    Precedence: a receipt is proof and wins. A cache store with no receipt but a
+    failed request-path attempt is ``failed``. Everything else with no receipt is
+    ``pending``. The attempt flag is consulted only for the two cache stores,
+    because only those have a tenant-writable attempt column.
+
+    One exception to "a receipt wins": once the job has settled ``failed``, no
+    store is reported ``verified``. The receipt proves only the addresses its
+    proof covered (000080), and the consumer keeps an earlier ``verified`` row
+    when a stage fails over an address it never covered (a failed outcome may not
+    replace a proof). Reporting ``verified`` then would tell an auditor a store is
+    gone while a copy at an uncovered address survives. The receipt row is
+    untouched — the proof is still the record of what was proven; the response
+    just stops presenting it as the store's present state.
+
+    The downgrade is deliberately coarse. A failed job can have one store fail
+    permanently while another staged successfully with coverage matching its
+    current locators; this read path cannot re-run the worker's subset rule, so
+    it downgrades both. ``stores.*`` is therefore a **lower bound** while
+    ``state`` is ``failed``: a store reading ``failed`` may in fact be proven for
+    every address this revision records. ``state`` is the only authority on
+    whether the erasure settled. ``not_applicable`` cannot survive a failed stage
+    at all, because the upsert overwrites it; only ``verified`` needs the guard.
     """
     statuses = {str(store): str(status) for store, status in rows}
+    state = job_state if job_state in _JOB_STATES else "pending"
+    job_failed = state == "failed"
     stores = ErasureStores(
         **{
             store: _store_state(
-                statuses.get(store), store=store, cache_failed=cache_failed
+                statuses.get(store),
+                store=store,
+                cache_failed=cache_failed,
+                job_failed=job_failed,
             )
             for store in ERASURE_STORES
         }
     )
-    state = job_state if job_state in _JOB_STATES else "pending"
     return ErasureStatus(state=state, stores=stores)
 
 
-def _store_state(status: str | None, *, store: str, cache_failed: bool) -> str:
+def _store_state(
+    status: str | None, *, store: str, cache_failed: bool, job_failed: bool
+) -> str:
     """One store's state: receipt first, then the cache attempt, then pending."""
     if status in _STORE_STATES:
+        if job_failed and status == "verified":
+            return "failed"
         return status
     if cache_failed and store in _CACHE_STORES:
         return "failed"

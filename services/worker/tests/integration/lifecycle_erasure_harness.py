@@ -518,6 +518,46 @@ class Harness:
         """Give one memory the artifact refs a producer would have recorded."""
         await insert_refs(self.env.owner, seed)
 
+    async def add_session_event_copy(
+        self, forgotten: Forgotten, *, sequence_number: int = 2
+    ) -> int:
+        """Record a second session-event copy between two sweeps of one revision.
+
+        The first sweep verifies the address a receipt names. A producer that
+        lands afterwards writes another ``session_events`` row and its ref; the
+        retry must see an address the earlier receipt did not cover.
+        """
+        # Read the session from the ref, not the event row: the first sweep has
+        # already deleted the event by the time a between-runs copy is recorded,
+        # while the ref is the worklist and outlives the erasure.
+        row = await fetch_one(
+            self.env.owner,
+            "SELECT session_id FROM ibex_core.memory_artifact_refs"
+            " WHERE org_id = :org AND memory_id = :memory AND store = 'session_event'"
+            " ORDER BY locator LIMIT 1",
+            org=forgotten.org_id,
+            memory=forgotten.memory_id,
+        )
+        session_id = row[0]
+        event_id = await seed_session_event(
+            self.env.owner,
+            SessionEventSeed(
+                org_id=forgotten.org_id,
+                session_id=session_id,
+                data={"memory_ids": [str(forgotten.memory_id)]},
+                sequence_number=sequence_number,
+            ),
+        )
+        await self.refs(
+            RefSeed(
+                org_id=forgotten.org_id,
+                memory_id=forgotten.memory_id,
+                session_id=session_id,
+                locators={"session_event": str(event_id)},
+            )
+        )
+        return event_id
+
     async def seed_queued(self, store: FakeObjectStore) -> tuple[Forgotten, str]:
         """Seed a forgotten memory, queue its erasure, and hold its object.
 
@@ -540,12 +580,16 @@ class Harness:
         store: str,
         status: str = "verified",
         revision: int = 2,
+        covered_addresses: tuple[str, ...] | None = None,
     ) -> None:
         """Record the receipt an earlier run of this revision would have written.
 
         A test that needs the durable-proof path (rather than a fresh stage) has
         to start from a proof, and the consumer never rewrites a verified
         receipt, so the row has to be seeded exactly as a previous run left it.
+        ``covered_addresses`` is what that proof covered; a test that wants the
+        receipt to settle a locator must name it, because no coverage settles
+        nothing.
         """
         idem = f"erase:{forgotten.org_id}:{forgotten.memory_id}:{revision}:{store}"
         async with self.env.owner() as session, session.begin():
@@ -554,11 +598,11 @@ class Harness:
                     """
                     INSERT INTO ibex_core.erasure_store_receipts (
                         org_id, memory_id, revision, store, status,
-                        verified_absent_at, idempotency_key
+                        verified_absent_at, idempotency_key, covered_addresses
                     ) VALUES (
                         :org, :memory, :revision, :store, :status,
                         CASE WHEN :status = 'verified' THEN NOW() ELSE NULL END,
-                        :idem
+                        :idem, CAST(:covered AS text[])
                     )
                     """
                 ),
@@ -569,6 +613,9 @@ class Harness:
                     "store": store,
                     "status": status,
                     "idem": idem,
+                    "covered": (
+                        list(covered_addresses) if covered_addresses else None
+                    ),
                 },
             )
 
@@ -576,6 +623,24 @@ class Harness:
         self, *, org_id: UUID, memory_id: UUID
     ) -> dict[str, tuple[str, str | None, datetime | None]]:
         return await read_receipts(self.env.owner, org_id=org_id, memory_id=memory_id)
+
+    async def receipt_coverage(
+        self, forgotten: Forgotten, store: str
+    ) -> tuple[str, ...] | None:
+        """The locators one receipt's proof recorded, or ``None`` if it covers none."""
+        row = await fetch_one(
+            self.env.owner,
+            """
+            SELECT covered_addresses
+              FROM ibex_core.erasure_store_receipts
+             WHERE org_id = :org AND memory_id = :memory AND store = :store
+            """,
+            org=forgotten.org_id,
+            memory=forgotten.memory_id,
+            store=store,
+        )
+        covered = row[0]
+        return None if covered is None else tuple(str(address) for address in covered)
 
     async def artifact_refs(self, forgotten: Forgotten) -> dict[str, tuple[str, ...]]:
         """The artifact addresses recorded for one memory, grouped by store."""
@@ -628,6 +693,16 @@ class Harness:
             " WHERE id = :id AND org_id = :org",
             id=forgotten.session_event_id,
             org=forgotten.org_id,
+        )
+
+    async def session_event_by_id_count(self, *, org_id: UUID, event_id: int) -> int:
+        """How many copies of one session event still exist."""
+        return await count_rows(
+            self.env.owner,
+            "SELECT count(*) FROM ibex_core.session_events"
+            " WHERE id = :id AND org_id = :org",
+            id=event_id,
+            org=org_id,
         )
 
     def cached_object_present(self, forgotten: Forgotten) -> bool:

@@ -80,6 +80,37 @@ async def test_consumer_verifies_every_store_and_deletes_the_copies(
 
 
 @pytest.mark.asyncio
+async def test_a_receipt_records_the_addresses_its_proof_covered(
+    harness: Harness, object_store: FakeObjectStore
+) -> None:
+    """A proof is scoped to the locators it erased, not to the store.
+
+    The receipt must name exactly the addresses this run staged, so a later copy
+    at a new address is not mistaken for one already proved.
+    """
+    forgotten, _row_id = await harness.seed_queued(object_store)
+
+    out = await harness.run(ch_dsn=harness.env.ch_dsn)
+
+    assert out["complete"] == 1, out
+    assert await harness.receipt_coverage(forgotten, "objectstore") == (
+        forgotten.object_uri,
+    )
+    assert await harness.receipt_coverage(forgotten, "clickhouse") == (
+        str(forgotten.ch_event_id),
+    )
+    assert await harness.receipt_coverage(forgotten, "session_event") == (
+        str(forgotten.session_event_id),
+    )
+    assert await harness.receipt_coverage(forgotten, "cache") == (
+        forgotten.object_cache_key,
+    )
+    assert await harness.receipt_coverage(forgotten, "cache_hot") == (
+        forgotten.hot_cache_key,
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_slow_object_store_head_cannot_starve_the_cache_stores(
     harness: Harness,
     object_store: FakeObjectStore,
@@ -94,7 +125,11 @@ async def test_a_slow_object_store_head_cannot_starve_the_cache_stores(
     one-second HEAD before reaching any of them.
     """
     forgotten, _row_id = await harness.seed_queued(object_store)
-    await harness.seed_receipt(forgotten, store="objectstore")
+    await harness.seed_receipt(
+        forgotten,
+        store="objectstore",
+        covered_addresses=(forgotten.object_uri,),
+    )
     object_store.delay = 1.0
     object_store.slow_calls = 1
     monkeypatch.setattr(lifecycle_erasure.sweep, "_PROOF_HEAD_CAP_SECONDS", 0.05)

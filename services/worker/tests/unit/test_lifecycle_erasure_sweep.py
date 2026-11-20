@@ -29,6 +29,7 @@ from app.tasks.lifecycle_erasure import (
     _ClaimedRow,
     _Erasure,
     _ErasureState,
+    _Receipt,
     _StoreOutcome,
     _StoreTarget,
 )
@@ -254,7 +255,7 @@ async def test_erase_row_stages_the_provable_set_then_settles(
         AsyncMock(
             return_value=_ErasureState(
                 refs={"objectstore": ("s3://b/org-1/a.json",)},
-                receipts={"session_event": "verified"},
+                receipts={"session_event": _Receipt(status="verified")},
                 agent_id="agent-1",
             )
         ),
@@ -273,10 +274,14 @@ async def test_erase_row_stages_the_provable_set_then_settles(
     object_key = f"{_ROW.org_id}:memory:{_ROW.memory_id}"
     hot_key = f"{_ROW.org_id}:hot_memories:agent-1"
     assert staged == [
-        ("objectstore", ("s3://b/org-1/a.json",), {"session_event": "verified"}),
-        ("session_event", (), {"session_event": "verified"}),
-        ("cache", (object_key,), {"session_event": "verified"}),
-        ("cache_hot", (hot_key,), {"session_event": "verified"}),
+        (
+            "objectstore",
+            ("s3://b/org-1/a.json",),
+            {"session_event": _Receipt(status="verified")},
+        ),
+        ("session_event", (), {"session_event": _Receipt(status="verified")}),
+        ("cache", (object_key,), {"session_event": _Receipt(status="verified")}),
+        ("cache_hot", (hot_key,), {"session_event": _Receipt(status="verified")}),
     ], "an absent cache ref is derived from the row, not treated as not_applicable"
 
 
@@ -301,7 +306,12 @@ async def test_expired_proof_does_not_starve_the_stores_after_it(
                     "objectstore": ("s3://b/org-1/a.json",),
                     "cache_hot": (f"{_ROW.org_id}:hot_memories:agent-1",),
                 },
-                receipts={"objectstore": "verified"},
+                receipts={
+                    "objectstore": _Receipt(
+                        status="verified",
+                        covered_addresses=("s3://b/org-1/a.json",),
+                    )
+                },
                 agent_id="agent-1",
             )
         ),
@@ -359,7 +369,9 @@ async def test_read_erasure_state_groups_locators_and_keeps_receipts(
         ]
     )
     session = _FakeSession(
-        refs, _Result([("objectstore", "verified")]), _Result([("agent-1",)])
+        refs,
+        _Result([("objectstore", "verified", ["s3://b/org-1/a.json"])]),
+        _Result([("agent-1",)]),
     )
     monkeypatch.setattr(le.sweep, "session_as_app_org", _scope(session))
 
@@ -369,13 +381,16 @@ async def test_read_erasure_state_groups_locators_and_keeps_receipts(
         "objectstore": ("s3://b/org-1/a.json", "s3://b/org-1/b.json"),
         "session_event": ("7",),
     }
-    assert state.receipts == {"objectstore": "verified"}
+    assert state.receipts == {
+        "objectstore": _Receipt("verified", ("s3://b/org-1/a.json",))
+    }, "the coverage the receipt proved must survive the read"
     assert state.agent_id == "agent-1", "the hot cache key is derivable only with the agent"
     assert state.org_redis_purge is None, "a forget does not need the org purge verdict"
     refs_sql, refs_params = session.statements[0]
     assert "memory_artifact_refs" in refs_sql
     assert refs_params == {"org_id": _ROW.org_id, "memory_id": _ROW.memory_id}
-    _, receipt_params = session.statements[1]
+    receipt_sql, receipt_params = session.statements[1]
+    assert "covered_addresses" in receipt_sql
     assert receipt_params["revision"] == _ROW.revision
     agent_sql, agent_params = session.statements[2]
     assert "FROM ibex_core.memories" in agent_sql

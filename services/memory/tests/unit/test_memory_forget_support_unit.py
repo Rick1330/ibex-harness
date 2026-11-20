@@ -228,6 +228,20 @@ def test_unknown_values_degrade_to_no_proof_instead_of_raising() -> None:
     assert (status.state, status.stores.cache) == ("pending", "pending")
 
 
+def test_a_terminal_failure_stops_reporting_a_verified_receipt_as_current() -> None:
+    """A failed job settles the store's current state, not its old proof."""
+    status = _erasure_status("failed", [("session_event", "verified")])
+    assert status.state == "failed"
+    assert status.stores.session_event == "failed"
+    assert status.stores.objectstore == "pending", "no receipt stays pending, not failed"
+
+
+def test_a_live_job_still_reports_a_verified_receipt() -> None:
+    """The downgrade is the failed job's, not a blanket rule about receipts."""
+    status = _erasure_status("partial", [("session_event", "verified")])
+    assert status.stores.session_event == "verified"
+
+
 @pytest.mark.asyncio
 async def test_read_forget_erasure_maps_the_row_and_the_receipts(
     monkeypatch: pytest.MonkeyPatch,
