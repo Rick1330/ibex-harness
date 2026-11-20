@@ -43,7 +43,7 @@
     "axe-core": "4.13.0",
     "eslint": "^10.13.0",
     "prettier": "^3.9.10",
-    "tailwindcss": "4.3.3",
+    "tailwindcss": "4.3.5",
     "typescript": "^5.8.3",
     "vitest": "^4.1.12",
     "vue-tsc": "^3.3.13"
