@@ -71,12 +71,12 @@ const newest = computed(() => {
 
 const notes = [
   {
-    lead: "Live means the pointer, not the newest version.",
-    body: "A rollback moves the pointer back to an older version; it does not create a version. The live version is whatever the pointer names, even when a newer version exists.",
+    lead: "Instruction text and diffs are not part of this contract.",
+    body: "A live version means the pointer names it, not that its content was read. Versions are identified by number, digest prefix, and size; reading the text, or diffing two versions, needs a separate contract behind the redacted-read permission.",
   },
   {
-    lead: "Instruction text is not in this contract.",
-    body: "Versions are identified by number, digest prefix, and size. Reading the text, or diffing two versions, needs a separate contract behind the redacted-read permission.",
+    lead: "Live means the pointer, not the newest version.",
+    body: "A rollback moves the pointer back to an older version; it does not create a version. The live version is whatever the pointer names, even when a newer version exists.",
   },
   {
     lead: "Promotion history needs a write path.",
@@ -104,7 +104,6 @@ function detailHref(directiveId: string): string {
       range="Latest change per agent"
       :coverage="coverage"
       :observed="newest"
-      caveat="Instruction text and diffs are not part of this contract. A live version means the pointer names it, not that its content was read."
       :notes="notes"
     >
       <template #actions>

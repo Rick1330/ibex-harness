@@ -19,8 +19,6 @@ const props = withDefaults(
     observed?: string | null
     request?: string | null
     notes?: AboutNote[]
-    /** At most one material caveat, shown under the title. */
-    caveat?: string | null
     crossLink?: { text: string; href: string; label: string } | null
   }>(),
   {
@@ -29,7 +27,6 @@ const props = withDefaults(
     observed: undefined,
     request: undefined,
     notes: () => [],
-    caveat: null,
     crossLink: null,
   },
 )
@@ -55,10 +52,6 @@ defineExpose({ openAbout })
         <p v-if="crossLink" class="mt-1 text-xs leading-5 text-fg-3">
           {{ crossLink.text }}
           <NuxtLink :to="crossLink.href" class="ix-link font-medium">{{ crossLink.label }}</NuxtLink>
-        </p>
-        <p v-if="caveat" class="mt-1.5 flex max-w-2xl items-start gap-1.5 text-xs leading-5 text-warn">
-          <span class="mt-2 size-1.5 shrink-0 rounded-full bg-warn" aria-hidden="true" />
-          <span class="text-pretty">{{ caveat }}</span>
         </p>
       </div>
 

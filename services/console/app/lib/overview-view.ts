@@ -424,14 +424,14 @@ export function overviewTiles(input: {
       label: "Agents in this organization",
       value: counts ? formatGovernNumber(counts.agents) : "Not reported",
       helper: counts
-        ? `${formatGovernNumber(counts.active_agents)} reported active · source operator.overview.v1`
+        ? `${formatGovernNumber(counts.active_agents)} active`
         : "The organization snapshot did not resolve.",
       tone: "default",
     },
     {
       label: "Active users",
       value: counts ? formatGovernNumber(counts.active_users) : "Not reported",
-      helper: counts ? "Verified accounts reported by the source." : null,
+      helper: null,
       tone: "default",
     },
     {

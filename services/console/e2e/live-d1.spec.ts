@@ -1,6 +1,7 @@
 import { createRequire } from "node:module"
 
 import { expect, type Page, test } from "@playwright/test"
+import { expectHeaderLimitationInAbout } from "./header-disclosure"
 
 const require = createRequire(import.meta.url)
 const apiOrigin = "https://127.0.0.1:3283"
@@ -277,6 +278,11 @@ test("live Agents renders the operator inventory and detail with axe coverage", 
   ).toBeVisible()
   await expect(page.getByRole("button", { name: "Copy agent ID" })).toBeVisible()
   await expect(page.getByText("901,234")).toBeVisible()
+  await expectHeaderLimitationInAbout(
+    page,
+    "Support Agent",
+    "Health, budget, environment, owner, and drift are not part of this contract and are not shown.",
+  )
   await expectNoAxeViolations(page)
 })
 
@@ -306,6 +312,11 @@ test("live Memories renders the metadata index and detail with axe coverage", as
     page.locator("dd").filter({ hasText: "33333333-3333-4333-8333-333333333333" }),
   ).toBeVisible()
   await expect(page.getByText("Content tokens")).toBeVisible()
+  await expectHeaderLimitationInAbout(
+    page,
+    /^Memory 44444444/,
+    "Content, embeddings, and free-form metadata are not part of this contract and are not shown.",
+  )
   await expectNoAxeViolations(page)
 })
 
@@ -338,6 +349,11 @@ test("live Sessions renders the turn ledger and trace link with axe coverage", a
   await expect(page.getByText("Total turn latency", { exact: true })).toBeVisible()
   await expect(page.getByText("Turn latency", { exact: true })).toHaveCount(0)
   await expect(page.getByText("Sum of recorded turns")).toHaveCount(0)
+  await expectHeaderLimitationInAbout(
+    page,
+    /^Session 88888888/,
+    "Message content, hashes, and provider request ids are not part of this contract and are not shown.",
+  )
   await expectNoAxeViolations(page)
 })
 

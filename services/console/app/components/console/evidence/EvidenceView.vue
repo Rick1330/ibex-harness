@@ -82,12 +82,12 @@ const observed = computed(() => summary.value?.observed_at ?? null)
 
 const notes = [
   {
-    lead: "A completeness value describes the record.",
-    body: "Complete means the run's record holds the full capture. Partial, sampled, late, redacted, expired, deleted, and simulated each name why it does not, and the page never folds them into one verdict.",
+    lead: "What complete capture does not claim.",
+    body: "Complete capture is a statement about the record. It is not a delivery guarantee, and it is not a population estimate. A sampled or partial window is reported as sampled or partial, never extrapolated. Delivery is a separate axis: the outbox carries no run reference, so relay health is reported for the organization, not per run. A complete capture that has not reached its sink is shown as exactly that.",
   },
   {
-    lead: "Delivery is a separate axis.",
-    body: "The outbox carries no run reference, so relay health is reported for the organization, not per run. A complete capture that has not reached its sink is shown as exactly that.",
+    lead: "A completeness value describes the record.",
+    body: "Complete means the run's record holds the full capture. Partial, sampled, late, redacted, expired, deleted, and simulated each name why it does not, and the page never folds them into one verdict.",
   },
   {
     lead: "Tombstones and redaction need their own read models.",
@@ -111,7 +111,6 @@ function update(patch: Partial<LiveEvidenceQuery>): void {
       :range="EVIDENCE_RANGE_LABELS[state.range]"
       :coverage="coverage"
       :observed="observed"
-      caveat="Complete capture is a statement about the record. It is not a delivery guarantee, and it is not a population estimate."
       :notes="notes"
     >
       <template #actions>

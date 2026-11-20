@@ -69,7 +69,7 @@ const observedValue = computed(() => {
     case "live":
       return "Live operator data"
     case "partial":
-      return "Partial · see page caveats"
+      return "Partial · some sections did not return"
     default:
       return "None"
   }

@@ -17,6 +17,13 @@ import type { PublicOperatorSessionRecordDetail } from "~~/shared/operator/publi
 
 const props = defineProps<{ session: PublicOperatorSessionRecordDetail; returnTo: string }>()
 
+const notes = [
+  {
+    lead: "What this contract does not carry.",
+    body: "Message content, hashes, and provider request ids are not part of this contract and are not shown.",
+  },
+]
+
 const turns = computed<OperatorSessionTurn[]>(() => props.session.turns)
 const extraction = computed(() => sessionExtraction(props.session.last_extracted_turn, props.session.turn_count))
 const extractionHelper = computed(() =>
@@ -72,7 +79,7 @@ function evidenceNote(turn: OperatorSessionTurn): string {
       scope="Organization"
       range="Session record"
       :observed="session.updated_at"
-      caveat="Message content, hashes, and provider request ids are not part of this contract and are not shown."
+      :notes="notes"
     >
       <template #back>
         <NuxtLink :to="returnTo" class="mb-2 inline-flex text-xs text-fg-3 hover:text-fg-1">
