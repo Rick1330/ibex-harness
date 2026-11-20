@@ -1,6 +1,11 @@
 import { createRequire } from "node:module"
 import { expect, test } from "@playwright/test"
-import { expectHeaderLimitationInAbout } from "./header-disclosure"
+import {
+  expectAboutDismissesWithEscape,
+  expectAboutNotesReachable,
+  expectHeaderLimitationInAbout,
+  openAboutDisclosure,
+} from "./header-disclosure"
 
 const require = createRequire(import.meta.url)
 
@@ -652,6 +657,10 @@ test("sessions fail closed without an operator API and never render fixtures", a
   await expectNoAxeViolations(page)
 })
 
+/** The longest limitation on any page, and the one that made the mobile panel too tall. */
+const evidenceLimitation =
+  "Complete capture is a statement about the record. It is not a delivery guarantee, and it is not a population estimate. A sampled or partial window is reported as sampled or partial, never extrapolated."
+
 /**
  * The header used to carry one amber sentence under the title on ten pages. The
  * sentence was a limitation, not a restatement, so it moved into the header's
@@ -681,8 +690,7 @@ const caveatChecks = [
   {
     path: "/evidence",
     title: "Evidence",
-    sentence:
-      "Complete capture is a statement about the record. It is not a delivery guarantee, and it is not a population estimate. A sampled or partial window is reported as sampled or partial, never extrapolated.",
+    sentence: evidenceLimitation,
   },
   {
     path: "/memories",
@@ -718,3 +726,26 @@ for (const entry of caveatChecks) {
     await expectNoAxeViolations(page)
   })
 }
+
+/**
+ * The matrix above runs at 1440x1000, where the About panel is anchored to its
+ * trigger and always fits. On a phone the panel is fixed to the bottom edge and
+ * its height follows its content, so an uncapped panel extends past the top edge
+ * and takes the limitation with it. The Evidence page carries the longest note,
+ * which is what made the panel tall enough to expose it.
+ */
+test("the About disclosure keeps every note reachable on a phone viewport", async ({ page }) => {
+  for (const viewport of [
+    { width: 375, height: 600 },
+    { width: 375, height: 480 },
+  ]) {
+    await page.setViewportSize(viewport)
+    await page.goto("/evidence")
+    await waitForHydration(page)
+    await openAboutDisclosure(page, "Evidence")
+
+    await expectAboutNotesReachable(page, "Evidence", evidenceLimitation)
+    await expectNoAxeViolations(page)
+    await expectAboutDismissesWithEscape(page, "Evidence")
+  }
+})
