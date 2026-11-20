@@ -241,6 +241,9 @@ describe("overview verdict and tiles", () => {
       traces: list([trace(), trace()]),
     })
     expect(tiles[0]?.value).toBe("9")
+    expect(tiles[0]?.helper).toBe("6 active")
+    expect(tiles[1]?.value).toBe("4")
+    expect(tiles[1]?.helper).toBeNull()
     expect(tiles[2]?.value).toBe("1 of 2")
     expect(tiles[2]?.tone).toBe("warning")
     expect(tiles[3]?.value).toBe("2")

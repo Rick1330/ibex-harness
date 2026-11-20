@@ -151,7 +151,7 @@ defineExpose({ open })
     </summary>
 
     <div
-      class="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[28rem] rounded-lg border border-line bg-overlay p-4 text-left shadow-2xl max-sm:fixed max-sm:inset-x-3 max-sm:top-auto max-sm:bottom-3 max-sm:w-auto"
+      class="ix-scroll absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[28rem] rounded-lg border border-line bg-overlay p-4 text-left shadow-2xl max-sm:fixed max-sm:inset-x-3 max-sm:top-auto max-sm:bottom-3 max-sm:w-auto max-sm:max-h-[calc(100dvh-1.5rem)] max-sm:overflow-y-auto"
       role="dialog"
       aria-label="About this data"
     >
