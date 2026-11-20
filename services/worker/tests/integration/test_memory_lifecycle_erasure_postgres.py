@@ -24,6 +24,7 @@ from tests.integration.lifecycle_erasure_harness import (
     FakeObjectStore,
     Harness,
     OutboxSeed,
+    ReceiptSeed,
 )
 
 pytestmark = pytest.mark.integration
@@ -126,9 +127,11 @@ async def test_a_slow_object_store_head_cannot_starve_the_cache_stores(
     """
     forgotten, _row_id = await harness.seed_queued(object_store)
     await harness.seed_receipt(
-        forgotten,
-        store="objectstore",
-        covered_addresses=(forgotten.object_uri,),
+        ReceiptSeed.for_memory(
+            forgotten,
+            store="objectstore",
+            covered_addresses=(forgotten.object_uri,),
+        )
     )
     object_store.delay = 1.0
     object_store.slow_calls = 1

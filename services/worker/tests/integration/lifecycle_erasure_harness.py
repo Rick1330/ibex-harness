@@ -249,6 +249,24 @@ class OutboxSeed:
         return replace(base, **overrides)
 
 
+@dataclass(frozen=True, slots=True)
+class ReceiptSeed:
+    """One erasure_store_receipts row; the defaults match a verified proof."""
+
+    org_id: UUID
+    memory_id: UUID
+    store: str
+    revision: int = 2
+    status: str = "verified"
+    covered_addresses: tuple[str, ...] | None = None
+
+    @classmethod
+    def for_memory(cls, forgotten: Forgotten, *, store: str, **overrides: Any) -> ReceiptSeed:
+        """The receipt ``forgotten``'s revision carries for ``store``, as overridden."""
+        base = cls(org_id=forgotten.org_id, memory_id=forgotten.memory_id, store=store)
+        return replace(base, **overrides)
+
+
 async def insert_memory(
     owner: async_sessionmaker[AsyncSession],
     *,
@@ -573,25 +591,17 @@ class Harness:
         """Write the outbox row a forget would write; return its id."""
         return await insert_outbox(self.env.owner, seed)
 
-    async def seed_receipt(
-        self,
-        forgotten: Forgotten,
-        *,
-        store: str,
-        status: str = "verified",
-        revision: int = 2,
-        covered_addresses: tuple[str, ...] | None = None,
-    ) -> None:
+    async def seed_receipt(self, seed: ReceiptSeed) -> None:
         """Record the receipt an earlier run of this revision would have written.
 
         A test that needs the durable-proof path (rather than a fresh stage) has
         to start from a proof, and the consumer never rewrites a verified
         receipt, so the row has to be seeded exactly as a previous run left it.
-        ``covered_addresses`` is what that proof covered; a test that wants the
-        receipt to settle a locator must name it, because no coverage settles
+        ``seed.covered_addresses`` is what that proof covered; a test that wants
+        the receipt to settle a locator must name it, because no coverage settles
         nothing.
         """
-        idem = f"erase:{forgotten.org_id}:{forgotten.memory_id}:{revision}:{store}"
+        idem = f"erase:{seed.org_id}:{seed.memory_id}:{seed.revision}:{seed.store}"
         async with self.env.owner() as session, session.begin():
             await session.execute(
                 sql_text(
@@ -607,15 +617,13 @@ class Harness:
                     """
                 ),
                 {
-                    "org": forgotten.org_id,
-                    "memory": forgotten.memory_id,
-                    "revision": revision,
-                    "store": store,
-                    "status": status,
+                    "org": seed.org_id,
+                    "memory": seed.memory_id,
+                    "revision": seed.revision,
+                    "store": seed.store,
+                    "status": seed.status,
                     "idem": idem,
-                    "covered": (
-                        list(covered_addresses) if covered_addresses else None
-                    ),
+                    "covered": list(seed.covered_addresses) if seed.covered_addresses else None,
                 },
             )
 
