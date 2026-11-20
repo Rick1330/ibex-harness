@@ -50,18 +50,38 @@ def _stores_to_stage(refs: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
     return tuple(dict.fromkeys((*RECEIPT_STORES, *sorted(refs))))
 
 
-def _receipt_already_proves(proven: str | None, locators: tuple[str, ...]) -> bool:
+def _receipt_already_proves(
+    proven: str | None,
+    covered_addresses: tuple[str, ...] | None,
+    locators: tuple[str, ...],
+) -> bool:
     """Whether a receipt an earlier run wrote already settles this store.
 
-    The durable proof is checked before the empty-locator case. A retry can
-    legitimately see no locators for a store a previous run already proved (a
-    store the earlier run cleared), and reporting ``not_applicable`` there would
-    overwrite a ``verified`` receipt with a weaker one and drop its timestamp.
+    A receipt proves the addresses it recorded, not the whole store. ``locators``
+    is what this run would stage, so the receipt settles only when that set is a
+    subset of its coverage. ``None`` coverage is a pre-000080 receipt (or one
+    that proved nothing) and covers no address, never everything: a retry stages
+    the store rather than certifying a copy the earlier run never saw.
 
-    ``not_applicable`` is kept only while there is still nothing to erase. A ref
-    that appeared after that receipt is a copy that exists, so it is staged like
-    any other: the weaker receipt must not hide a real copy.
+    An empty ``locators`` is trivially covered, so a ``verified`` receipt still
+    settles a store a previous run already proved. Reporting ``not_applicable``
+    there would overwrite a ``verified`` receipt with a weaker one and drop its
+    timestamp. ``not_applicable`` is kept only while there is still nothing to
+    erase; a ref that appeared after that receipt is a copy that exists, so it is
+    staged like any other.
+
+    This is address coverage, not a re-population fence. ``cache`` and
+    ``cache_hot`` name a fixed key written once, so a value re-populated at that
+    key after its delete reuses the identical locator, stays inside the coverage
+    set, and is settled by the earlier receipt. The same-key write is fenced by
+    the forgotten marker and the ZREM-before-check ordering in ``staging``, not
+    here; it remains a residual, and this predicate must not be read as
+    protection against it.
     """
+    if proven is None:
+        return False
+    if not set(locators).issubset(covered_addresses or ()):
+        return False
     if proven == "verified":
         return True
     return proven == "not_applicable" and not locators
@@ -184,6 +204,9 @@ def _receipt_params(erasure: _Erasure, outcome: _StoreOutcome) -> dict[str, Any]
         ),
         "error": outcome.error,
         "invalidate_proof": outcome.invalidates_proof,
+        "covered_addresses": (
+            list(outcome.covered_addresses) if outcome.covered_addresses else None
+        ),
     }
 
 

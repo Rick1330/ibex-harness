@@ -5,10 +5,15 @@ Ordering is load-bearing and easy to get wrong:
 * only erasure events are consumed (the claim function enforces the set);
 * a row whose revision is lower than one already delivered is retired, not
   erased — the newer revision describes the same memory's end state;
-* a store already proven for this revision is not re-staged, and its
-  ``verified_absent_at`` is not overwritten by a retry — except that the object
-  store is re-checked, and a HEAD that finds the archive back invalidates the
-  proof so a failed re-delete is recorded instead of hidden;
+* a store already proven for this revision is not re-staged when the receipt
+  covers the addresses this run would stage, and its ``verified_absent_at`` is
+  not overwritten by a retry — a receipt proves the locators it recorded, so a
+  copy recorded at a new address after it is staged again; except that the
+  object store is re-checked, and a HEAD that finds the archive back invalidates
+  the proof so a failed re-delete is recorded instead of hidden. The fixed
+  ``cache``/``cache_hot`` keys are the limit of this rule: a same-key
+  re-population reuses the covered locator and settles on the earlier receipt,
+  fenced by the marker rather than by coverage (see ``decisions``);
 * the outbox row is locked and validated against the attempt this run claimed
   *before* any receipt is written, and the refs are re-read under that lock, so
   a copy that appeared in between cannot be certified by a receipt the run did
@@ -75,6 +80,7 @@ from .model import (
     _DurableProof,
     _Erasure,
     _ErasureState,
+    _Receipt,
     _StoreOutcome,
     _StoreTarget,
 )
@@ -270,8 +276,12 @@ async def _read_erasure_state(factory: Any, row: _ClaimedRow) -> _ErasureState:
     async with session_as_app_org(factory, row.org_id) as session:
         refs = await _read_refs(session, row)
         receipts = {
-            str(store): str(status)
-            for store, status in (await session.execute(text(_RECEIPTS_SQL), params)).all()
+            str(store): _Receipt(
+                status=str(status), covered_addresses=_receipt_coverage(covered)
+            )
+            for store, status, covered in (
+                await session.execute(text(_RECEIPTS_SQL), params)
+            ).all()
         }
         agent_id = await _read_agent_id(session, row)
         org_redis_purge = await _read_org_purge(session, row)
@@ -281,6 +291,15 @@ async def _read_erasure_state(factory: Any, row: _ClaimedRow) -> _ErasureState:
         agent_id=agent_id,
         org_redis_purge=org_redis_purge,
     )
+
+
+def _receipt_coverage(covered: Any) -> tuple[str, ...] | None:
+    """Normalise a stored ``text[]`` into the locator set a receipt covers.
+
+    ``None`` stays ``None``: a pre-000080 receipt covers no address, and turning
+    it into an empty tuple must not change that meaning.
+    """
+    return None if covered is None else tuple(str(address) for address in covered)
 
 
 async def _read_org_purge(session: Any, row: _ClaimedRow) -> str | None:
@@ -301,7 +320,7 @@ async def _read_org_purge(session: Any, row: _ClaimedRow) -> str | None:
 async def _erase_store(
     erasure: _Erasure,
     target: _StoreTarget,
-    receipts: dict[str, str],
+    receipts: dict[str, _Receipt],
     job_deadline: float,
 ) -> _StoreOutcome:
     """Prove one store absent, or record why this run could not."""
@@ -320,12 +339,18 @@ async def _erase_store(
 
 
 async def _durable_proof(
-    erasure: _Erasure, target: _StoreTarget, proven: str | None
+    erasure: _Erasure, target: _StoreTarget, receipt: _Receipt | None
 ) -> _DurableProof:
     """The stored receipt that still settles this store, or why it no longer does.
 
-    A stored ``verified`` receipt is not proof forever for the object store: the
-    archive key is derived from ``(org, memory)`` and nothing fences a late
+    A receipt settles only the addresses it covered. A copy recorded at a new
+    address after it — the between-sweeps case — has an address the receipt never
+    proved, so the store is staged again instead of being certified by an older
+    verdict. A cache key re-populated at the same locator is not caught here; see
+    ``decisions._receipt_already_proves`` for that residual.
+
+    A stored ``verified`` receipt is also not proof forever for the object store:
+    the archive key is derived from ``(org, memory)`` and nothing fences a late
     re-archive, so an object that is back means the retry has to delete it again.
 
     The distinction that keeps the proof honest: a HEAD that reports the object
@@ -337,11 +362,13 @@ async def _durable_proof(
     The HEAD is bounded by the job deadline, so it cannot spend the budget the
     cache stores later in the row still need.
     """
-    if proven is None or not _receipt_already_proves(proven, target.locators):
+    if receipt is None or not _receipt_already_proves(
+        receipt.status, receipt.covered_addresses, target.locators
+    ):
         return _DurableProof()
     returned = await _object_returned(erasure, target)
     if returned is False:
-        return _DurableProof(settled=proven)
+        return _DurableProof(settled=receipt.status)
     return _DurableProof(invalidated=returned is True)
 
 
@@ -414,7 +441,11 @@ async def _stage_store(
             permanent=_is_permanent(exc),
             invalidates_proof=invalidated,
         )
-    return _StoreOutcome(store=target.store, status="verified")
+    return _StoreOutcome(
+        store=target.store,
+        status="verified",
+        covered_addresses=target.locators,
+    )
 
 
 def _is_permanent(exc: BaseException) -> bool:

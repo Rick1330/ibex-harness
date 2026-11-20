@@ -30,13 +30,23 @@ Contract, in the order the details are easy to get wrong:
 * ``verified`` requires the store to have confirmed absence. An unreachable store
   is ``failed`` — never ``verified``, and never ``not_applicable`` (which means
   "this memory has no copy in that store" and nothing else).
-* A store already proven for this revision is not re-staged: the first proof
-  stands and its ``verified_absent_at`` is not overwritten by a retry. The one
-  exception is the object store, whose key nothing fences: a HEAD that finds the
-  archive back re-deletes it, and a re-delete that then fails replaces the
-  ``verified`` receipt with ``failed`` and its reason. An unanswered HEAD does
-  not replace the proof — it only retries — because an outage is not evidence
-  the object returned.
+* A store already proven for this revision is not re-staged when the receipt
+  covers every address this run would stage: the first proof stands and its
+  ``verified_absent_at`` is not overwritten by a retry. A receipt covers only the
+  locators it recorded (``covered_addresses``), so a copy recorded at a *new*
+  address after it — a new ``session_event`` row, a different archive key, a
+  ClickHouse event id — is not covered and the retry stages the store again; a
+  receipt from before 000080 has no coverage and therefore proves no address. The
+  object store is additionally re-observed, because its key nothing fences: a
+  HEAD that finds the archive back re-deletes it, and a re-delete that then fails
+  replaces the ``verified`` receipt with ``failed`` and its reason. An
+  unanswered HEAD does not replace the proof — it only retries — because an
+  outage is not evidence the object returned.
+* Coverage does not detect a cache key re-populated after its delete. The
+  ``cache`` and ``cache_hot`` locators are fixed keys written once, so a new
+  value at the same key has the same locator and the earlier receipt settles it.
+  That case is fenced by the forgotten marker and the ZREM-before-check ordering
+  (``staging``), not by coverage, and remains a residual.
 * A row whose ``revision`` is lower than one already delivered for the same
   memory is retired, not erased: the newer revision describes the same memory's
   end state, so this row has nothing left to prove.
@@ -137,6 +147,7 @@ from .model import (  # noqa: F401
     _DurableProof,
     _Erasure,
     _ErasureState,
+    _Receipt,
     _StoreOutcome,
     _StoreTarget,
 )

@@ -37,6 +37,21 @@ class _ClaimedRow:
 
 
 @dataclass(frozen=True, slots=True)
+class _Receipt:
+    """One receipt an earlier run wrote for this revision.
+
+    ``covered_addresses`` is the locator set that receipt's proof covered.
+    ``None`` is a receipt from before 000080, or one that proved nothing, and
+    covers no address — never everything. Keeping the coverage beside the status
+    is what lets a retry tell "the store was cleared" from "the addresses this
+    run can see were cleared".
+    """
+
+    status: str
+    covered_addresses: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class _ErasureState:
     """What one tenant read learned about the memory's erasure.
 
@@ -48,7 +63,7 @@ class _ErasureState:
     #: Recorded artifact locators, grouped by store.
     refs: dict[str, tuple[str, ...]]
     #: Receipts an earlier run already wrote for this revision, by store.
-    receipts: dict[str, str]
+    receipts: dict[str, _Receipt]
     #: ``memories.agent_id``; ``None`` when the memory row is gone.
     agent_id: str | None
     #: The organization deletion's Redis verdict for this org, if the saga has
@@ -120,6 +135,10 @@ class _StoreOutcome:
     error: str | None = None
     fresh: bool = True
     permanent: bool = False
+    #: The locators this outcome's proof covered, persisted with the receipt.
+    #: ``None`` means it proved no address (a failure, or a store with nothing to
+    #: erase), so a later run must not read it as covering anything.
+    covered_addresses: tuple[str, ...] | None = None
     #: A live copy was observed for a store whose receipt said ``verified``, so
     #: this outcome may replace that proof even though it is weaker. Without it,
     #: a re-delete that fails would leave ``verified`` standing over a store that

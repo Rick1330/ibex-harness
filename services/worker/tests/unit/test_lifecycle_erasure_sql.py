@@ -53,3 +53,7 @@ def test_receipt_upsert_replaces_an_invalidated_verified_proof() -> None:
     assert "ibex_core.erasure_store_receipts.status <> 'verified'" in sql
     assert "EXCLUDED.status = 'verified'" in sql
     assert "CAST(:invalidate_proof AS boolean)" in sql
+    # Coverage travels with the proof it belongs to, so a verified update
+    # replaces the addresses the receipt now covers.
+    assert "CAST(:covered_addresses AS text[])" in sql
+    assert "covered_addresses = EXCLUDED.covered_addresses" in sql

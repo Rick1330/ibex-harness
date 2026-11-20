@@ -79,8 +79,13 @@ async def _seed_receipts(
     factory: async_sessionmaker[AsyncSession],
     revision: _Revision,
     statuses: dict[str, str],
+    covered: dict[str, tuple[str, ...]] | None = None,
 ) -> None:
-    """Write the receipts a consumer run would have written, as the tenant."""
+    """Write the receipts a consumer run would have written, as the tenant.
+
+    ``covered`` names the addresses each receipt's proof covered (000080). A
+    receipt with no entry covers nothing, which is what a pre-000080 receipt does.
+    """
     for store, status in statuses.items():
         await _execute_sql(
             factory,
@@ -88,13 +93,14 @@ async def _seed_receipts(
             """
             INSERT INTO ibex_core.erasure_store_receipts
                 (org_id, memory_id, revision, store, status, verified_absent_at,
-                 idempotency_key)
+                 idempotency_key, covered_addresses)
             VALUES (:org, :memory, :revision, :store, :status,
                     CASE WHEN :status = 'verified' THEN NOW() ELSE NULL END,
-                    :key)
+                    :key, CAST(:covered AS text[]))
             ON CONFLICT (org_id, memory_id, revision, store) DO UPDATE
                SET status = EXCLUDED.status,
-                   verified_absent_at = EXCLUDED.verified_absent_at
+                   verified_absent_at = EXCLUDED.verified_absent_at,
+                   covered_addresses = EXCLUDED.covered_addresses
             """,
             {
                 **_revision_params(revision),
@@ -102,8 +108,30 @@ async def _seed_receipts(
                 "status": status,
                 "key": f"erase:{revision.org_id}:{revision.memory_id}:"
                 f"{revision.revision}:{store}",
+                "covered": list((covered or {}).get(store, ())) or None,
             },
         )
+
+
+async def _seed_ref(
+    factory: async_sessionmaker[AsyncSession],
+    revision: _Revision,
+    *,
+    store: str,
+    locator: str,
+) -> None:
+    """Record one artifact address the way a producer would, as the tenant."""
+    await _execute_sql(
+        factory,
+        revision.org_id,
+        """
+        INSERT INTO ibex_core.memory_artifact_refs
+            (org_id, memory_id, store, locator)
+        VALUES (:org, :memory, :store, :locator)
+        ON CONFLICT DO NOTHING
+        """,
+        {**_revision_params(revision), "store": store, "locator": locator},
+    )
 
 
 async def _set_outbox_state(
@@ -185,6 +213,11 @@ _ONE_FAILED = {
     "cache_hot": "verified",
 }
 
+#: A terminal failure does not present a proof as the store's current state: the
+#: job settled without proving every address this revision records, so the three
+#: ``verified`` receipts are reported ``failed`` while the job says failed.
+_ONE_FAILED_TERMINAL = dict.fromkeys(_ONE_FAILED, "failed")
+
 
 @pytest.mark.parametrize(
     "case",
@@ -221,7 +254,7 @@ _ONE_FAILED = {
                 receipts=_ONE_FAILED,
                 outbox_state="failed",
                 expected_state="failed",
-                expected_stores=_ONE_FAILED,
+                expected_stores=_ONE_FAILED_TERMINAL,
             ),
             id="terminal-failed",
         ),
@@ -253,6 +286,122 @@ async def test_erasure_view_reports_the_receipts_without_over_claiming(
 
     assert erasure.state == case.expected_state
     assert erasure.stores.model_dump() == case.expected_stores
+
+
+async def test_a_terminal_failure_does_not_present_an_earlier_proof_as_current(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A verified receipt proves its addresses, not the store as it is now.
+
+    The chain this pins: a verified receipt covers the address an earlier sweep
+    erased; a producer then records a copy at an address the proof never covered;
+    the restage fails; the consumer keeps the ``verified`` row (an outage must not
+    downgrade a proof); the job settles terminal ``failed``. The response must not
+    report that store ``verified`` while the job says the erasure did not finish —
+    ``stores.*`` is the surface an auditor reads, and a copy at the uncovered
+    address still exists. The receipt itself must be untouched: the proof is still
+    the record of what was proven.
+    """
+    org_id, agent_id, memory_id = await seed_org_agent_memory(
+        session_factory, content="terminal failure fixture"
+    )
+    response = await _forget(
+        session_factory, org_id=org_id, agent_id=agent_id, memory_id=memory_id
+    )
+    revision = _Revision(
+        org_id=org_id, memory_id=memory_id, revision=response.data.revision
+    )
+    covered_address = str(uuid4())
+    uncovered_address = str(uuid4())
+    await _seed_receipts(
+        session_factory,
+        revision,
+        {"objectstore": "verified", "session_event": "verified"},
+        covered={"session_event": (covered_address,)},
+    )
+    # A copy exists at an address the receipt's coverage does not include.
+    await _seed_ref(
+        session_factory, revision, store="session_event", locator=uncovered_address
+    )
+    await _set_outbox_state(session_factory, revision, "failed")
+
+    erasure = await read_forget_erasure(
+        session_factory,
+        org_id=org_id,
+        memory_id=memory_id,
+        revision=revision.revision,
+    )
+
+    assert erasure.state == "failed"
+    assert erasure.stores.session_event == "failed", (
+        "a verified receipt must not be presented as the store's current state "
+        "while the job is terminally failed and an uncovered copy exists"
+    )
+    assert "verified" not in erasure.stores.model_dump().values()
+
+    stored = await lifecycle_erasure_support.fetch_scalar(
+        session_factory,
+        org_id,
+        """
+        SELECT status FROM ibex_core.erasure_store_receipts
+         WHERE org_id = :org AND memory_id = :memory
+           AND revision = :revision AND store = 'session_event'
+        """,
+        _revision_params(revision),
+    )
+    assert stored == "verified", "the proof is not rewritten by the read path"
+
+
+async def test_a_failed_job_reports_stores_as_a_lower_bound_not_a_verdict(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """While ``state`` is ``failed``, ``stores.*`` is a lower bound.
+
+    One store failed permanently while another was proven for exactly the
+    addresses this revision records. The read path cannot re-derive the worker's
+    coverage rule, so it downgrades every ``verified`` receipt — including the
+    one whose proof matches its locators — and reports ``failed`` for both. This
+    pins that contract: ``state`` is the only authority on whether the erasure
+    settled, and a store reading ``failed`` here is not a per-store verdict. A
+    future change that starts mirroring the worker's subset rule would still have
+    to keep ``state`` as the authority; this test would then need to change
+    deliberately, not by drift.
+    """
+    org_id, agent_id, memory_id = await seed_org_agent_memory(
+        session_factory, content="lower bound fixture"
+    )
+    response = await _forget(
+        session_factory, org_id=org_id, agent_id=agent_id, memory_id=memory_id
+    )
+    revision = _Revision(
+        org_id=org_id, memory_id=memory_id, revision=response.data.revision
+    )
+    proven_uri = "s3://bucket/org-a/memory.json"
+    # objectstore is proven for its only recorded address; session_event failed
+    # permanently (a locator the worker could not parse as a row id).
+    await _seed_ref(session_factory, revision, store="objectstore", locator=proven_uri)
+    await _seed_receipts(
+        session_factory,
+        revision,
+        {"objectstore": "verified", "session_event": "failed"},
+        covered={"objectstore": (proven_uri,)},
+    )
+    await _set_outbox_state(session_factory, revision, "failed")
+
+    erasure = await read_forget_erasure(
+        session_factory,
+        org_id=org_id,
+        memory_id=memory_id,
+        revision=revision.revision,
+    )
+
+    assert erasure.state == "failed", "the job, not the per-store map, is the verdict"
+    assert erasure.stores.objectstore == "failed", (
+        "a covered verified receipt is still reported failed under a failed job: "
+        "stores.* is a lower bound, not a per-store verdict"
+    )
+    assert erasure.stores.session_event == "failed"
+    assert "verified" not in erasure.stores.model_dump().values()
 
 
 async def test_erasure_view_never_reports_another_tenants_receipts(

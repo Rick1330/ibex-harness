@@ -181,6 +181,45 @@ def test_receipt_params_are_deterministic_and_scoped_to_the_revision() -> None:
     assert params["error"] is None
 
 
+def test_receipt_params_persist_the_addresses_the_proof_covered() -> None:
+    outcome = _StoreOutcome(
+        store="session_event", status="verified", covered_addresses=("7", "8")
+    )
+    params = le._receipt_params(erasure(), outcome)
+    assert params["covered_addresses"] == ["7", "8"]
+
+
+def test_receipt_params_write_no_coverage_for_a_proof_that_covers_nothing() -> None:
+    params = le._receipt_params(erasure(), _outcome("objectstore", "not_applicable"))
+    assert params["covered_addresses"] is None
+
+
+@pytest.mark.parametrize(
+    ("status", "covered", "locators", "expected"),
+    [
+        ("verified", ("a",), ("a",), True),
+        ("verified", ("a",), ("a", "b"), False),
+        ("verified", ("a", "b"), ("a",), True),
+        ("verified", None, ("a",), False),
+        ("verified", None, (), True),
+        ("not_applicable", None, (), True),
+        ("not_applicable", ("a",), ("a",), False),
+        ("not_applicable", None, ("a",), False),
+        ("failed", ("a",), ("a",), False),
+        ("pending", ("a",), ("a",), False),
+        (None, ("a",), ("a",), False),
+    ],
+)
+def test_a_receipt_proves_only_the_addresses_it_covers(
+    status: str | None,
+    covered: tuple[str, ...] | None,
+    locators: tuple[str, ...],
+    expected: bool,
+) -> None:
+    """Coverage gates the status; an empty locator set is trivially covered."""
+    assert le._receipt_already_proves(status, covered, locators) is expected
+
+
 # ---------------------------------------------------------------------------
 # Session-event locators
 # ---------------------------------------------------------------------------
