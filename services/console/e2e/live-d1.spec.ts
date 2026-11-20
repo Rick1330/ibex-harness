@@ -1,7 +1,11 @@
 import { createRequire } from "node:module"
 
 import { expect, type Page, test } from "@playwright/test"
-import { expectHeaderLimitationInAbout } from "./header-disclosure"
+import {
+  expectAboutDismissesWithEscape,
+  expectAboutNotesReachable,
+  expectHeaderLimitationInAbout,
+} from "./header-disclosure"
 
 const require = createRequire(import.meta.url)
 const apiOrigin = "https://127.0.0.1:3283"
@@ -369,12 +373,20 @@ test("live Sessions joins the agent, segments by status, and filters without inv
   await expect(row.getByRole("link", { name: "Support Agent" })).toBeVisible()
   await expect(row.getByText("support-agent", { exact: true })).toBeVisible()
 
-  // Segments come from the statuses that occur, with a per-page count.
+  // Segments come from the statuses that occur, with a per-page count. The
+  // caveat is a header limitation now: `<details>` keeps it in the DOM but
+  // hidden while the About disclosure is collapsed.
   const tabs = page.getByRole("tab")
   await expect(tabs).toHaveCount(2)
   await expect(tabs.first()).toContainText("All sessions")
   await expect(page.getByRole("tab", { name: /Completed/ })).toBeVisible()
-  await expect(page.getByText(/no organization total/)).toBeVisible()
+  const perPageCountLimitation =
+    "Segment counts cover the rows loaded on this page. The API returns no organization total, so none is claimed."
+  await expectHeaderLimitationInAbout(page, "Sessions", perPageCountLimitation)
+  await expectAboutNotesReachable(page, "Sessions", perPageCountLimitation)
+  // The panel is anchored under the header and would cover the toolbar, so it
+  // is dismissed before the column control is used.
+  await expectAboutDismissesWithEscape(page, "Sessions")
 
   // The column control hides one of the optional columns, and Escape returns
   // focus to the trigger that opened it.
