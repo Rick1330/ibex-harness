@@ -1,5 +1,6 @@
 import { createRequire } from "node:module"
 import { expect, test } from "@playwright/test"
+import { expectHeaderLimitationInAbout } from "./header-disclosure"
 
 const require = createRequire(import.meta.url)
 
@@ -650,3 +651,70 @@ test("sessions fail closed without an operator API and never render fixtures", a
   await expect(page.getByRole("heading", { name: "Session record unavailable" })).toBeVisible()
   await expectNoAxeViolations(page)
 })
+
+/**
+ * The header used to carry one amber sentence under the title on ten pages. The
+ * sentence was a limitation, not a restatement, so it moved into the header's
+ * About disclosure rather than disappearing.
+ *
+ * These are the surfaces that render their header without an operator API; the
+ * three detail views that need a record are covered by the live suite.
+ */
+const caveatChecks = [
+  {
+    path: "/agents",
+    title: "Agents",
+    sentence: "Health, budget, environment, owner, and drift are not part of this contract and are not shown.",
+  },
+  {
+    path: "/directives",
+    title: "Directives",
+    sentence:
+      "Instruction text and diffs are not part of this contract. A live version means the pointer names it, not that its content was read.",
+  },
+  {
+    path: "/directives/11111111-1111-4111-8111-111111111111",
+    title: "Directive",
+    sentence:
+      "Version identity only: the instruction text is not in this contract, so no diff or promotion history is shown.",
+  },
+  {
+    path: "/evidence",
+    title: "Evidence",
+    sentence:
+      "Complete capture is a statement about the record. It is not a delivery guarantee, and it is not a population estimate. A sampled or partial window is reported as sampled or partial, never extrapolated.",
+  },
+  {
+    path: "/memories",
+    title: "Memories",
+    sentence: "Content, embeddings, and free-form metadata are not part of this contract and are not shown.",
+  },
+  {
+    path: "/sessions",
+    title: "Sessions",
+    sentence: "Message content, hashes, and provider request ids are not part of this contract and are not shown.",
+  },
+  {
+    path: "/access",
+    title: "Access",
+    sentence:
+      "1 live key is past its 30-day rotation window. Rotation and revocation require a privileged write contract.",
+  },
+  {
+    path: "/policies/compare",
+    title: "Compare snapshots",
+    sentence: "A rule missing on one side was not published there; it was not deleted at runtime.",
+  },
+]
+
+for (const entry of caveatChecks) {
+  test(`${entry.title} states its limitation in the About disclosure, not under the title`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await page.goto(entry.path)
+    await waitForHydration(page)
+    await expectHeaderLimitationInAbout(page, entry.title, entry.sentence)
+    // The disclosure is now the only place on the page that states it.
+    await expect(page.locator("li").filter({ hasText: entry.sentence })).toHaveCount(1)
+    await expectNoAxeViolations(page)
+  })
+}

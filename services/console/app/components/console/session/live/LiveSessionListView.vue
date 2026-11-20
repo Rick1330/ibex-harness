@@ -37,6 +37,13 @@ const emit = defineEmits<{ update: [state: LiveSessionQuery] }>()
  */
 const AGENT_PAGE_QUERY = new URLSearchParams({ limit: "100" })
 
+const notes = [
+  {
+    lead: "What this contract does not carry.",
+    body: "Message content, hashes, and provider request ids are not part of this contract and are not shown.",
+  },
+]
+
 const sessionsState = useOperatorSessions(() => serializeLiveSessionQuery(props.state))
 const agentsState = useOperatorAgents(() => AGENT_PAGE_QUERY)
 
@@ -209,7 +216,7 @@ watch(
       scope="Organization"
       :range="state.cursor ? 'Cursor page' : 'First page'"
       :coverage="coverage"
-      caveat="Message content, hashes, and provider request ids are not part of this contract and are not shown."
+      :notes="notes"
     >
       <template #actions>
         <button

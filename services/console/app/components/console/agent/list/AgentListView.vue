@@ -52,6 +52,13 @@ const coverage = computed(() => {
   return `${agents.value.length} live rows`
 })
 
+const notes = [
+  {
+    lead: "What this contract does not carry.",
+    body: "Health, budget, environment, owner, and drift are not part of this contract and are not shown.",
+  },
+]
+
 const nowMs = ref<number | null>(null)
 let clock: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
@@ -143,7 +150,7 @@ function refresh(): void {
       scope="Organization"
       :range="state.cursor ? 'Cursor page' : 'First page'"
       :coverage="coverage"
-      :caveat="'Health, budget, environment, owner, and drift are not part of this contract and are not shown.'"
+      :notes="notes"
     >
       <template #actions>
         <button

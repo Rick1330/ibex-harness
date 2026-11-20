@@ -214,6 +214,43 @@ export function accessKeyRotationLabel(key: AccessKey): string {
   return `in ${days}d`
 }
 
+export type AccessNote = { lead: string; body: string }
+
+/** Notes the Access page's About disclosure always renders, in display order. */
+const ACCESS_STATIC_NOTES: readonly AccessNote[] = [
+  {
+    lead: "Keys are shown by prefix only.",
+    body: "The console never requests or renders secret material. A new secret is shown once at creation and never again.",
+  },
+  {
+    lead: "Rotation is a window, not a suggestion.",
+    body: "A key past its rotation window stays usable until it is revoked. The console flags it; it does not rotate or revoke on its own.",
+  },
+  {
+    lead: "Role checks are server-side.",
+    body: "The capability matrix describes the intended boundary. It is not a claim that this read-only console can exercise any of those capabilities.",
+  },
+]
+
+/**
+ * Builds the Access page's About disclosure notes.
+ *
+ * The rotation caveat only exists while a key is overdue, so it is appended
+ * conditionally instead of always rendering a zero-count sentence. The count is
+ * interpolated verbatim: the sentence keeps its fixture-authored grammar so the
+ * rendered disclosure does not change with the number of overdue keys.
+ */
+export function accessNotes(overdueKeys: number): AccessNote[] {
+  const notes = [...ACCESS_STATIC_NOTES]
+  if (overdueKeys > 0) {
+    notes.push({
+      lead: "What is due for rotation.",
+      body: `${overdueKeys} live key is past its 30-day rotation window. Rotation and revocation require a privileged write contract.`,
+    })
+  }
+  return notes
+}
+
 export function accessCounts() {
   return {
     activeKeys: ACCESS_KEYS.filter((key) => key.state === "active").length,

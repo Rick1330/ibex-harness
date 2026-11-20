@@ -74,6 +74,13 @@ const tabBadges = computed<Record<string, string>>(() => {
   return badges
 })
 
+const notes = [
+  {
+    lead: "What this contract does not carry.",
+    body: "Version identity only: the instruction text is not in this contract, so no diff or promotion history is shown.",
+  },
+]
+
 const clock = computed(() => detail.value?.observed_at ?? null)
 
 const liveVersion = computed(() =>
@@ -127,7 +134,7 @@ function copyLink(): void {
       :range="`Usage: ${rangeOptions.find((option) => option.value === state.range)?.label ?? state.range}`"
       :coverage="coverage"
       :observed="detail?.observed_at ?? null"
-      caveat="Version identity only: the instruction text is not in this contract, so no diff or promotion history is shown."
+      :notes="notes"
     >
       <template #actions>
         <GovernFilterSelect

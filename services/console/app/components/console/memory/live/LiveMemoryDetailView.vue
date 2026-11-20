@@ -9,6 +9,13 @@ import type { OperatorMemoryLineageEdge, OperatorMemoryLineageTarget } from "~~/
 
 const props = defineProps<{ memory: PublicOperatorMemoryDetail; returnTo: string }>()
 
+const notes = [
+  {
+    lead: "What this contract does not carry.",
+    body: "Content, embeddings, and free-form metadata are not part of this contract and are not shown.",
+  },
+]
+
 const RELATIONSHIP_LABELS: Record<OperatorMemoryLineageEdge["relationship_type"], string> = {
   supersedes: "Supersedes",
   contradicts: "Contradicts",
@@ -68,7 +75,7 @@ function piiLabel(): string {
       scope="Organization"
       range="Memory record"
       :observed="memory.updated_at"
-      caveat="Content, embeddings, and free-form metadata are not part of this contract and are not shown."
+      :notes="notes"
     >
       <template #back>
         <NuxtLink :to="returnTo" class="mb-2 inline-flex text-xs text-fg-3 hover:text-fg-1">

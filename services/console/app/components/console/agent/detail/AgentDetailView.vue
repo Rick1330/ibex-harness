@@ -9,6 +9,13 @@ import type { PublicOperatorAgent } from "~~/shared/operator/public"
 
 const props = defineProps<{ agent: PublicOperatorAgent; returnTo: string; returnLabel: string }>()
 
+const notes = [
+  {
+    lead: "What this contract does not carry.",
+    body: "Health, budget, environment, owner, and drift are not part of this contract and are not shown.",
+  },
+]
+
 const copyState = ref<"idle" | "copied" | "failed">("idle")
 
 async function copyId(): Promise<void> {
@@ -42,7 +49,7 @@ function providerLabel(): string {
       scope="Organization"
       range="Agent record"
       :observed="agent.updated_at"
-      :caveat="'Health, budget, environment, owner, and drift are not part of this contract and are not shown.'"
+      :notes="notes"
     >
       <template #back>
         <NuxtLink :to="returnTo" class="mb-2 inline-flex text-xs text-fg-3 hover:text-fg-1">

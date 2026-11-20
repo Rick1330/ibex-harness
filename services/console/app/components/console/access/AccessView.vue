@@ -26,6 +26,7 @@ import {
   ACCESS_SESSIONS,
   accessCounts,
   accessKeyRotationLabel,
+  accessNotes,
   type AccessKey,
   type AccessMember,
   type AccessSession,
@@ -217,26 +218,7 @@ watch(
   },
 )
 
-const aboutNotes = [
-  {
-    lead: "Keys are shown by prefix only.",
-    body: "The console never requests or renders secret material. A new secret is shown once at creation and never again.",
-  },
-  {
-    lead: "Rotation is a window, not a suggestion.",
-    body: "A key past its rotation window stays usable until it is revoked. The console flags it; it does not rotate or revoke on its own.",
-  },
-  {
-    lead: "Role checks are server-side.",
-    body: "The capability matrix describes the intended boundary. It is not a claim that this read-only console can exercise any of those capabilities.",
-  },
-]
-
-const caveat = computed(() =>
-  counts.overdueKeys
-    ? `${counts.overdueKeys} live key is past its 30-day rotation window. Rotation and revocation require a privileged write contract.`
-    : null,
-)
+const aboutNotes = computed(() => accessNotes(counts.overdueKeys))
 
 const primaryAction = computed(() => {
   if (props.state.tab === "members") return { label: "Invite member", icon: UserPlus }
@@ -273,7 +255,6 @@ function sessionTone(session: AccessSession): string {
       scope="org_demo_42 · organization"
       range="Current access state · fixture clock"
       coverage="0% live · illustrative only"
-      :caveat="caveat"
       :notes="aboutNotes"
     >
       <template #actions>

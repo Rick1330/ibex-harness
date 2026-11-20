@@ -111,11 +111,5 @@ function tierPercent(key: (typeof COMPLETENESS_ORDER)[number]): number {
         :tone="summary.legal_hold.active ? 'warning' : 'default'"
       />
     </div>
-
-    <GovernCaveat tone="info" title="What complete capture does not claim">
-      It names the record, not the delivery: this page reports relay health separately because the outbox carries no run
-      reference. It is also not a population estimate — a sampled or partial window is reported as sampled or partial,
-      never extrapolated.
-    </GovernCaveat>
   </div>
 </template>

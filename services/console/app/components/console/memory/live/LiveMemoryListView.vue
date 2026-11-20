@@ -18,6 +18,13 @@ const emit = defineEmits<{ update: [state: LiveMemoryQuery] }>()
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+const notes = [
+  {
+    lead: "What this contract does not carry.",
+    body: "Content, embeddings, and free-form metadata are not part of this contract and are not shown.",
+  },
+]
+
 const memoriesState = useOperatorMemories(() => serializeLiveMemoryQuery(props.state))
 const memories = computed<OperatorMemory[]>(() => memoriesState.data.value?.data ?? [])
 const pagination = computed(() => memoriesState.data.value?.pagination ?? null)
@@ -134,7 +141,7 @@ function refresh(): void {
       scope="Organization"
       :range="state.cursor ? 'Cursor page' : 'First page'"
       :coverage="coverage"
-      caveat="Content, embeddings, and free-form metadata are not part of this contract and are not shown."
+      :notes="notes"
     >
       <template #actions>
         <button type="button" class="ix-button-secondary inline-flex items-center gap-1.5" :disabled="pending" @click="refresh">
