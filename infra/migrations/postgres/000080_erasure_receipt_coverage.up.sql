@@ -35,11 +35,17 @@
 -- set, because dropping the column would delete the only record of which
 -- addresses a proof covered.
 --
--- `lock_timeout` is session scope, not `SET LOCAL`: golang-migrate runs a
--- migration file outside a transaction, where `SET LOCAL` is a warning and
--- changes nothing. `ADD COLUMN` takes ACCESS EXCLUSIVE on a table the erasure
--- worker writes continuously, so the wait is bounded (same intent as 000063:30
--- and 000075:28) instead of queueing readers behind the worker's lock.
+-- `lock_timeout` is `SET`, not `SET LOCAL`, and is reset at the end. The whole
+-- file is one implicit transaction — golang-migrate passes it to a single
+-- zero-argument `ExecContext`, which lib/pq sends as one simple-query message, so
+-- the statements are atomic — but it is not a transaction *block*: `SET LOCAL` is
+-- honoured only while the message holds more than one statement and warns "SET
+-- LOCAL can only be used in transaction blocks" otherwise (measured on 16.15).
+-- `SET` is session scope and survives that commit, hence the `RESET`: the driver
+-- reuses one connection for consecutive steps. `ADD COLUMN` takes ACCESS
+-- EXCLUSIVE on a table the erasure worker writes continuously, so the wait is
+-- bounded (same intent as 000063:30 and 000075:28) instead of queueing readers
+-- behind the worker's lock.
 
 SET lock_timeout = '5s';
 

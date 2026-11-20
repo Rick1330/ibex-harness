@@ -14,17 +14,49 @@
 -- migrate role subject to the policy sees zero rows here. With
 -- `row_security = off` a query the policy would filter *raises* instead of
 -- returning zero rows, which makes an unprivileged migrate role fail closed
--- rather than drop a column whose contents it could not read. It is session
--- scope, not `SET LOCAL`: golang-migrate runs a migration file outside a
--- transaction, where `SET LOCAL` is a warning and changes nothing.
+-- rather than drop a column whose contents it could not read.
 --
--- `lock_timeout` is session scope for the same reason. `DROP COLUMN` takes
--- ACCESS EXCLUSIVE on a table the erasure worker writes continuously, so the
--- wait is bounded (same intent as 000063:30 and 000075:28) instead of queueing
--- readers behind a lock the worker holds.
+-- Transaction scope, measured on PostgreSQL 16.15 through the path this file is
+-- run on: golang-migrate's Postgres driver hands the whole file to one
+-- zero-argument `ExecContext`, which lib/pq sends as a single simple-query
+-- message, and PostgreSQL executes a multi-statement simple query as one
+-- implicit transaction. So these statements are atomic — a raise in the guard
+-- rolls back every statement before it — but they are not an explicit transaction
+-- block. Hence `SET`, not `SET LOCAL`, for both settings:
+--
+--   * `SET` is session scope and survives the implicit commit: `SHOW
+--     lock_timeout` still reports the set value on the same connection once the
+--     file has finished. That is why each setting is `RESET` at the end — the
+--     driver reuses one connection for consecutive migration steps.
+--   * `SET LOCAL` does take effect inside this file (the multi-statement message
+--     is the nearest transaction block it can bind to) but warns "SET LOCAL can
+--     only be used in transaction blocks" and changes nothing when the same
+--     setting is executed as its own single-statement message. Keeping `SET`
+--     means the `row_security = off` half of the guard cannot silently degrade
+--     into a no-op, which would let a fenced role read zero rows and drop the
+--     column.
+--
+-- The lock is what closes the window between the guard's read and the DROP. The
+-- guard's `SELECT` alone takes ACCESS SHARE, which does not conflict with the
+-- ROW EXCLUSIVE a worker holds while it commits its first non-NULL coverage: the
+-- guard reads, a writer commits, `DROP COLUMN` then waits for that writer and is
+-- granted the lock once it is gone, so the column holding the only record of the
+-- addresses that worker proved absent is dropped on a stale verdict. Taking
+-- ACCESS EXCLUSIVE before the guard instead puts the guard's read and the DROP
+-- inside a transaction no writer can enter: a writer already in flight finishes
+-- (commits or rolls back) before the lock is granted, so its commit is visible to
+-- the guard's READ COMMITTED snapshot, and a write attempted afterwards blocks
+-- behind the lock. ACCESS EXCLUSIVE is the mode `DROP COLUMN` needs anyway.
+--
+-- `lock_timeout` bounds that wait and is set first, because it also bounds the
+-- LOCK: `DROP COLUMN` takes ACCESS EXCLUSIVE on a table the erasure worker writes
+-- continuously, so the wait is bounded (same intent as 000063:30 and 000075:28)
+-- instead of queueing readers behind a lock the worker holds.
 
 SET lock_timeout = '5s';
 SET row_security = off;
+
+LOCK TABLE ibex_core.erasure_store_receipts IN ACCESS EXCLUSIVE MODE;
 
 DO $$
 BEGIN
