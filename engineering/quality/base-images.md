@@ -25,7 +25,8 @@ file describes what actually ships and the disagreement is a defect to fix, not 
 | Image | Digest | Base built | First pinned in the tree |
 |---|---|---|---|
 | `alpine:3.24.1` | `sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b` | 2026-06-16 | 2026-09-19 |
-| `alpine:3.24.2` | `sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6` | 2026-09-17 | 2026-09-23 |
+| `alpine:3.24.2` | `sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf` | 2026-09-17 | 2026-11-20 |
+| `alpine:3.24.2` (superseded) | `sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6` | 2026-09-17 | 2026-09-23 |
 | `ghcr.io/astral-sh/uv:0.7.20` | `sha256:2fd1b38e3398a256d6af3f71f0e2ba6a517b249998726a64d8cfbe55ab34af5e` | 2025-07-09 | 2026-08-25 |
 | `golang:1.26.11-alpine3.24` | `sha256:ae52b5bc6ed045a9ed26ab03dc19327a802a9cc9aa8b27ed57f5c6b60579b0bb` | 2026-11-10 | 2026-11-11 |
 | `node:22-bookworm-slim` | `sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d` | 2026-11-05 | 2026-11-07 |
@@ -44,7 +45,7 @@ file describes what actually ships and the disagreement is a defect to fix, not 
 | `services/api/Dockerfile` | deps | `python:3.12-slim-bookworm` | `sha256:da54eb86849f…` | 2026-11-05 |
 | `services/api/Dockerfile` | runtime | `python:3.12-slim-bookworm` | `sha256:da54eb86849f…` | 2026-11-05 |
 | `services/auth/Dockerfile` | build | `golang:1.26.11-alpine3.24` | `sha256:ae52b5bc6ed0…` | 2026-11-11 |
-| `services/auth/Dockerfile` | final | `alpine:3.24.2` | `sha256:294b683cb724…` | 2026-09-23 |
+| `services/auth/Dockerfile` | final | `alpine:3.24.2` | `sha256:f59abe656b69…` | 2026-11-20 |
 | `services/console/Dockerfile` | build | `node:22-bookworm-slim` | `sha256:5ec23b7c622b…` | 2026-11-07 |
 | `services/console/Dockerfile` | runtime | `node:22-bookworm-slim` | `sha256:5ec23b7c622b…` | 2026-11-07 |
 | `services/context/Dockerfile` | uv | `ghcr.io/astral-sh/uv:0.7.20` | `sha256:2fd1b38e3398…` | 2026-11-07 |
@@ -64,7 +65,7 @@ file describes what actually ships and the disagreement is a defect to fix, not 
 | `services/memory/Dockerfile` | deps | `python:3.12-slim-bookworm` | `sha256:da54eb86849f…` | 2026-11-05 |
 | `services/memory/Dockerfile` | runtime | `python:3.12-slim-bookworm` | `sha256:da54eb86849f…` | 2026-11-05 |
 | `services/proxy/Dockerfile` | build | `golang:1.26.11-alpine3.24` | `sha256:ae52b5bc6ed0…` | 2026-11-11 |
-| `services/proxy/Dockerfile` | final | `alpine:3.24.2` | `sha256:294b683cb724…` | 2026-09-23 |
+| `services/proxy/Dockerfile` | final | `alpine:3.24.2` | `sha256:f59abe656b69…` | 2026-11-20 |
 | `services/relay/Dockerfile` | build | `golang:1.26.11-alpine3.24` | `sha256:ae52b5bc6ed0…` | 2026-11-17 |
 | `services/relay/Dockerfile` | final | `alpine:3.24.2` | `sha256:294b683cb724…` | 2026-11-17 |
 | `services/worker/Dockerfile` | uv | `ghcr.io/astral-sh/uv:0.7.20` | `sha256:2fd1b38e3398…` | 2026-08-31 |
