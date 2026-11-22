@@ -41,6 +41,7 @@ runs:
           exit 1
         fi
         short="${BENCHMARK_BOT_SHA:0:7}"
+        configured_tag="${BENCHMARK_BOT_RELEASE_TAG:-}"
         tags=()
         if [ -n "${BENCHMARK_BOT_RELEASE_TAG:-}" ]; then
           # Reject stale overrides that do not match the pin (root cause of missing subcommands).
@@ -94,6 +95,14 @@ runs:
         echo "path=$path" >> "$GITHUB_OUTPUT"
         echo "source=$source" >> "$GITHUB_OUTPUT"
         if [ "$source" = "build" ]; then
+          # An explicitly configured release tag is a claim that a verified release
+          # exists for this pin. Falling back to a source build would hide a pin that
+          # no longer matches any release - the drift that let this repository run a
+          # bot five commits behind the fix it needed.
+          if [ -n "${configured_tag}" ]; then
+            echo "::error::BENCHMARK_BOT_RELEASE_TAG=${configured_tag} was configured but no release asset verified for pin ${BENCHMARK_BOT_SHA}. Refusing to fall back to a source build; fix the pin (SHA, tag and digest move together)." >&2
+            exit 1
+          fi
           echo "No usable release asset for pin ${BENCHMARK_BOT_SHA}; will cargo build."
         fi
 
