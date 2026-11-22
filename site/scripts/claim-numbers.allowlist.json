@@ -34,7 +34,7 @@
       "file": "app/data/ledger.ts",
       "line": 123,
       "token": "p99",
-      "reason": "The p99 in 'p99 ≤20 ms is a ratified warm target' is the ratified target from engineering/PERFORMANCE.md, not a measurement, and the same sentence says it is not a hosted SLO. Tracked as GAP-004."
+      "reason": "The p99 in 'p99 \u226420 ms is a ratified warm target' is the ratified target from engineering/PERFORMANCE.md, not a measurement, and the same sentence says it is not a hosted SLO. Tracked as GAP-004."
     },
     {
       "file": "app/data/ledger.ts",
@@ -50,15 +50,15 @@
     },
     {
       "file": "app/data/benchmark-cells.ts",
-      "line": 96,
+      "line": 60,
       "token": "p95",
-      "reason": "Coverage sentence names the percentile the gate is measured on, at the cell compute_gate_summary gated. The value is read from hnsw-benchmark-data.json; this occurrence is a label naming the metric, not a measurement."
+      "reason": "The percentile label the publisher gates, defined once here and interpolated into every sentence and row label. The value it labels is read from hnsw-benchmark-data.json; this occurrence is a label naming the metric, not a measurement."
     },
     {
       "file": "app/data/benchmark-cells.ts",
-      "line": 116,
-      "token": "p95",
-      "reason": "Labels each HNSW summary row with the percentile its value comes from; the value is rendered from hnsw-benchmark-data.json. A label, not a measurement."
+      "line": 61,
+      "token": "p99",
+      "reason": "The percentile label the publisher gates, defined once here and interpolated into every sentence and row label. The value it labels is read from hnsw-benchmark-data.json; this occurrence is a label naming the metric, not a measurement."
     }
   ]
 }

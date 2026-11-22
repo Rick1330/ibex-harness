@@ -18,8 +18,10 @@ import {
 import {
   formatCorpusSize,
   hnswCoverage,
+  hnswGateHeadline,
   hnswMissingCells,
   hnswSummaryRows,
+  hnswWorstRecall,
   largestHnswCell,
   sortHnswCells,
 } from '~/data/benchmark-cells'
@@ -139,7 +141,10 @@ const hnswRows = computed(() => latestHnsw.results || [])
 const hnswCells = computed(() => sortHnswCells(hnswRows.value))
 const hnswRefCell = computed(() => largestHnswCell(hnswRows.value))
 const hnswMissing = computed(() => hnswMissingCells(hnswRows.value))
-const hnswCoverageText = computed(() => hnswCoverage(hnswRows.value))
+const hnswWorst = computed(() => hnswWorstRecall(hnswRows.value, latestHnsw.gate_summary))
+const hnswCoverageText = computed(() => hnswCoverage(hnswRows.value, latestHnsw.gate_summary))
+// The publisher gates three criteria; the card must not report one as the gate.
+const hnswGateMeta = computed(() => hnswGateHeadline(hnswRows.value, latestHnsw.gate_summary))
 
 const rankingRows = computed(() => [
   { label: 'Precision@5', value: latestRanking.metrics.precision_at_5 },
@@ -707,11 +712,11 @@ function hnswModal(kind: 'latency' | 'recall' | 'method'): GraphModalState {
     summary: [
       ...hnswSummaryRows(hnswRows.value).map(row => ({
         label: row.label,
-        value: `${formatNumber(row.cell.latency_ms_p95, 1)} ms`,
+        value: row.value,
         note: row.note,
-        color: 'var(--chart-blue)',
+        color: row.gate ? 'var(--chart-pink)' : 'var(--chart-blue)',
       })),
-      { label: 'Mean recall', value: formatPercent(latestHnsw.mean_recall_at_10), note: `floor ${formatPercent(latestHnsw.gate_summary.recall_floor)}` },
+      { label: 'Worst recall', value: formatPercent(hnswWorst.value), note: `floor ${formatPercent(latestHnsw.gate_summary.recall_floor)} · gate`, color: 'var(--chart-lime)' },
     ],
     tableColumns: ['Corpus', 'Queries', 'Recall@10', 'p50', 'p95', 'p99', 'p95 CI', 'Build'],
     tableRows: hnswCells.value.map(item => [
@@ -1152,7 +1157,7 @@ function compactNs(value: number) {
             <BenchmarkGraphCard
               title="Recall@10"
               meta="planted near-neighbour"
-              :caption="`Floor ${formatPercent(latestHnsw.gate_summary.recall_floor)}. ${hnswCoverageText}`"
+              :caption="hnswCoverageText"
               @expand="openHnsw('recall')"
             >
               <div class="w-full">
@@ -1174,7 +1179,7 @@ function compactNs(value: number) {
 
             <BenchmarkGraphCard
               title="Gate and method"
-              meta="recall gate · pass"
+              :meta="hnswGateMeta"
               caption="Recall checks for a planted near-neighbour in the top 10. It is not a general semantic-quality score."
               @expand="openHnsw('method')"
             >
