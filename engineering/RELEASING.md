@@ -70,7 +70,8 @@ IBEX Harness is currently in **pre-1.0** maturity. We use Semantic Versioning wi
 - `v1.0.0` only after explicit production-readiness and compatibility sign-off.
 - During pre-1.0:
   - Ordinary **features and fixes bump the patch** (`0.x.y+1`), so releases carry features at `0.x.y` (`bump-patch-for-minor-pre-major`).
-  - A **breaking change bumps the minor automatically** (`bump-minor-pre-major`), so a proposed `0.x+1.0` may be the engine's decision, not a reviewer's. A human can still override it by editing the proposed version or the release configuration.
+  - A **breaking change bumps the minor automatically** (`bump-minor-pre-major`), so a proposed `0.x+1.0` may be the engine's decision, not a reviewer's.
+  - The version can be **forced outright** with a `Release-As: x.y.z` line in a commit body, which supersedes both rules above for that commit.
 
 Configured in `version-release.config.json` and `.version-release-manifest.json`.
 
