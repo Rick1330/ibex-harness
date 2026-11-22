@@ -75,3 +75,25 @@ export function formatPercent(value: number | null | undefined, digits = 1): str
   if (value === null || value === undefined || Number.isNaN(value)) return '—'
   return `${formatNumber(value * 100, digits)}%`
 }
+
+/** Corpus size the HNSW latency/recall gate is defined against. */
+export const HNSW_GATE_CORPUS = 1_000_000
+
+/** `10000 → 10k`, `1000000 → 1M`; never `1000k`. */
+export function formatCorpusSize(size: number): string {
+  if (size >= 1_000_000) return `${formatNumber(size / 1_000_000, size % 1_000_000 === 0 ? 0 : 1)}M`
+  return `${formatNumber(size / 1_000, size % 1_000 === 0 ? 0 : 1)}k`
+}
+
+/**
+ * The published HNSW cell for a corpus size. Cells are selected by size, never
+ * by array position: the published profile grows new sizes over time.
+ */
+export function hnswCellBySize(corpusSize: number) {
+  return latestHnsw.results.find(cell => cell.corpus_size === corpusSize)
+}
+
+/** The largest published HNSW cell — the worst-case latency point. */
+export function largestHnswCell() {
+  return latestHnsw.results.reduce((largest, cell) => (cell.corpus_size > largest.corpus_size ? cell : largest))
+}
