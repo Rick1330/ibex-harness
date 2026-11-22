@@ -3,8 +3,8 @@
  *
  * Deliberately free of the published-JSON imports so the selection and labelling
  * rules can be unit-tested against synthetic runs — reordered cells, missing
- * cells, a tail-latency-only failure, an empty run — without depending on which
- * sizes or verdicts today's artifact holds.
+ * cells, a tail-latency-only failure, a fast run with deferred latency, an empty
+ * run — without depending on which sizes or verdicts today's artifact holds.
  */
 
 /** Corpus size the publisher's HNSW latency gate is defined against. */
@@ -31,11 +31,16 @@ export interface ScoredCell extends CorpusCell {
  * `recall_ok`, `p95_1m_ok`, and `p99_1m_ok` are the publisher's own verdicts
  * (`publish_cells.py::compute_status`), because the artifact publishes the two
  * latency limits only as those booleans, not as numbers.
+ *
+ * `has_1m` is the publisher's own flag for "a published cell reaches the latency
+ * gate". It is what `_1m_latency_failed` branches on, so it decides whether a
+ * missing latency verdict means *deferred* or *unknown*.
  */
 export interface HnswGateSummary {
   readonly recall_floor: number
   readonly worst_recall_at_10?: number
   readonly recall_ok?: boolean
+  readonly has_1m?: boolean
   readonly p95_1m_ok?: boolean
   readonly p99_1m_ok?: boolean
 }
@@ -145,41 +150,147 @@ export function hnswWorstRecall(cells: readonly ScoredCell[], gate: HnswGateSumm
 
 export type HnswGateCriterion = 'recall' | typeof P95 | typeof P99
 
+/**
+ * How one criterion stands, in the publisher's own terms:
+ *
+ * - `hold` — the publisher's verdict is a pass;
+ * - `fail` — the publisher's verdict is a fail;
+ * - `deferred` — no published cell reaches the gate, so there is nothing to
+ *   measure. `publish_cells.py::_1m_latency_failed` returns `False` when
+ *   `has_1m` is false, and its docstring calls a missing 1M on the smoke and
+ *   fast profiles "expected coverage deferral, not a soft failure" — so this
+ *   state neither passes nor fails the criterion, it postpones it;
+ * - `unknown` — a gate cell exists but the artifact carries no verdict for it.
+ *   Nothing can be said either way, so the page fails closed.
+ */
+export type HnswGateCriterionState = 'hold' | 'fail' | 'deferred' | 'unknown'
+
 export interface HnswGateCheck {
   readonly criterion: HnswGateCriterion
   /** The criterion's name in a sentence: `worst recall`, or the percentile. */
   readonly label: string
+  readonly state: HnswGateCriterionState
   /** The publisher's verdict; `undefined` when the artifact publishes none. */
   readonly ok: boolean | undefined
 }
 
 /**
+ * Whether the publisher measured the two latency criteria, read as
+ * `_1m_latency_failed` reads it: `has_1m` decides.
+ *
+ * The flag is the publisher's own, computed from the same cell list it publishes,
+ * so it and the scan below cannot disagree in a valid artifact. They are read as
+ * a union so an artifact edited into disagreement still fails closed rather than
+ * claiming a deferral it has no flag for, or a measurement it has no cell for.
+ */
+function latencyGated(cells: readonly CorpusCell[], gate: HnswGateSummary): boolean {
+  return gate.has_1m === true || hnswGateCell(cells) !== undefined
+}
+
+function latencyState(verdict: boolean | undefined, gated: boolean): HnswGateCriterionState {
+  if (!gated) return 'deferred'
+  if (verdict === undefined) return 'unknown'
+  return verdict ? 'hold' : 'fail'
+}
+
+/**
  * The publisher's three gate criteria in the order `compute_status` applies
  * them: worst recall against the floor, then the two latency percentiles at the
- * gate cell.
- * `compute_status` fails a run when recall fails **or** either latency fails, so
- * all three are reported together and none may stand for the gate alone.
+ * gate cell. `compute_status` fails a run when recall fails **or** either latency
+ * fails, and a deferred criterion is never a failure, so all three are reported
+ * together with how each one stands and none may stand for the gate alone.
  */
 export function hnswGateChecks(cells: readonly ScoredCell[], gate: HnswGateSummary): HnswGateCheck[] {
   const worst = hnswWorstRecall(cells, gate)
   const recallOk = gate.recall_ok ?? (worst === undefined ? undefined : worst >= gate.recall_floor)
+  const gated = latencyGated(cells, gate)
   return [
-    { criterion: 'recall', label: 'worst recall', ok: recallOk },
-    { criterion: P95, label: P95, ok: gate.p95_1m_ok },
-    { criterion: P99, label: P99, ok: gate.p99_1m_ok },
+    {
+      criterion: 'recall',
+      label: 'worst recall',
+      ok: recallOk,
+      state: recallOk === undefined ? 'unknown' : recallOk ? 'hold' : 'fail',
+    },
+    { criterion: P95, label: P95, ok: gate.p95_1m_ok, state: latencyState(gate.p95_1m_ok, gated) },
+    { criterion: P99, label: P99, ok: gate.p99_1m_ok, state: latencyState(gate.p99_1m_ok, gated) },
   ]
 }
 
-/** Labels of the criteria the publisher's verdict marks as failed. */
-function failedLabels(checks: readonly HnswGateCheck[]): string[] {
-  return checks.filter(check => check.ok === false).map(check => check.label)
+export type HnswGateStatus = 'pass' | 'fail' | 'unknown'
+
+export interface HnswGateVerdict {
+  readonly status: HnswGateStatus
+  /** Criteria the publisher's verdict marks as failed; empty unless `fail`. */
+  readonly failed: readonly string[]
+  /** Criteria postponed for want of a gate cell; empty when the run was gated. */
+  readonly deferred: readonly string[]
+  /** Criteria carrying no interpretable verdict; empty unless `unknown`. */
+  readonly missing: readonly string[]
 }
 
-/** The sentence naming the failed criteria, or the all-hold / no-verdict outcome. */
-function gateOutcome(checks: readonly HnswGateCheck[]): string {
-  const failed = failedLabels(checks)
-  if (failed.length) return `Fails on ${listWords(failed)}.`
-  if (checks.some(check => check.ok === undefined)) return 'The publisher published no verdict for at least one criterion.'
+/**
+ * The run's verdict, from the publisher's own three-branch rule
+ * (`publish_cells.py::compute_status`):
+ *
+ * 1. worst recall below the floor fails the run;
+ * 2. otherwise a run with no cell at or above the gate passes, with the two
+ *    latency criteria deferred — the publisher does not fail a fast or smoke
+ *    profile for the coverage it does not claim to have;
+ * 3. otherwise either latency verdict failing fails the run.
+ *
+ * Recall is decided first, as `compute_status` decides it, so a recall failure is
+ * still reported when a latency criterion is deferred or unreadable.
+ *
+ * One case is deliberately stricter than `compute_status`: when a gate cell
+ * exists but the artifact publishes no latency verdict, `compute_status` defaults
+ * each to `True` (`gate.get("p95_1m_ok", True)`) and reports a pass. A missing
+ * field is not evidence of a pass, so the verdict is `unknown` and every
+ * rendering says "verdict not published".
+ */
+export function hnswGateVerdict(cells: readonly ScoredCell[], gate: HnswGateSummary): HnswGateVerdict {
+  const checks = hnswGateChecks(cells, gate)
+  const deferred = checks.filter(check => check.state === 'deferred').map(check => check.label)
+  const failed = checks.filter(check => check.state === 'fail').map(check => check.label)
+  if (failed.length) return { status: 'fail', failed, deferred, missing: [] }
+  const missing = checks.filter(check => check.state === 'unknown').map(check => check.label)
+  if (missing.length) return { status: 'unknown', failed, deferred, missing }
+  return { status: 'pass', failed: [], deferred, missing: [] }
+}
+
+/** `is` or `are` for a list of criteria: one criterion takes `is`, two take `are`. */
+function isAre(items: readonly string[]): string {
+  return items.length === 1 ? 'is' : 'are'
+}
+
+/**
+ * The verdict as a clause for the card line. One rule with two renderings: this
+ * and `verdictSentence` read the same `hnswGateVerdict`, so the card and the
+ * coverage sentence cannot disagree about the same run.
+ *
+ * A deferred pass says so: it names the one criterion that decided the run and
+ * the percentiles it postponed. Calling it a flat pass would hide that the run
+ * was never measured at the gate size, and "verdict not published" would
+ * contradict the publisher, which calls this outcome a pass.
+ */
+function verdictClause(verdict: HnswGateVerdict): string {
+  if (verdict.status === 'fail') return `fails ${listWords(verdict.failed)}`
+  if (verdict.status === 'unknown') return 'verdict not published'
+  if (verdict.deferred.length) return `pass on recall, ${listWords(verdict.deferred)} deferred`
+  return 'pass'
+}
+
+/** The verdict as a sentence: the same rule, spelled out for running text. */
+function verdictSentence(verdict: HnswGateVerdict): string {
+  const until = formatCorpusSize(HNSW_GATE_CORPUS)
+  if (verdict.status === 'fail') {
+    const failed = `Fails on ${listWords(verdict.failed)}.`
+    if (!verdict.deferred.length) return failed
+    return `${failed} ${listWords(verdict.deferred)} ${isAre(verdict.deferred)} deferred until a cell reaches ${until}.`
+  }
+  if (verdict.status === 'unknown') return 'The publisher published no verdict for at least one criterion.'
+  if (verdict.deferred.length) {
+    return `Passed; ${listWords(verdict.deferred)} ${isAre(verdict.deferred)} deferred until a cell reaches ${until}.`
+  }
   return 'All three hold.'
 }
 
@@ -188,31 +299,35 @@ function gateOutcome(checks: readonly HnswGateCheck[]): string {
  * the outcome, so no single row can stand for the gate.
  */
 export function hnswGateHeadline(cells: readonly ScoredCell[], gate: HnswGateSummary): string {
-  const checks = hnswGateChecks(cells, gate)
-  const criteria = checks.map(check => check.label).join(' · ')
-  const failed = failedLabels(checks)
-  if (failed.length) return `${criteria} · fails ${failed.join(', ')}`
-  return `${criteria} · ${checks.some(check => check.ok === undefined) ? 'verdict not published' : 'pass'}`
+  const criteria = hnswGateChecks(cells, gate).map(check => check.label).join(' · ')
+  return `${criteria} · ${verdictClause(hnswGateVerdict(cells, gate))}`
 }
 
 /**
  * The gate in one sentence: every criterion the publisher applies, the value each
- * was measured at, and which one failed.
+ * was measured at, and how the run was decided — including a pass that rests on
+ * recall because the 1M cell was never published.
  */
 export function hnswGateText(cells: readonly ScoredCell[], gate: HnswGateSummary): string {
-  const checks = hnswGateChecks(cells, gate)
+  const verdict = hnswGateVerdict(cells, gate)
   const recall = `worst recall ${formatShare(hnswWorstRecall(cells, gate))} against the ${formatShare(gate.recall_floor)} floor`
+  if (verdict.deferred.length) {
+    return `Gate criteria: ${recall}; ${P95} and ${P99} are not measured, because this run publishes no cell at ${formatCorpusSize(HNSW_GATE_CORPUS)}. ${verdictSentence(verdict)}`
+  }
   const cell = hnswGateCell(cells)
   if (!cell) {
-    return `Gate criteria: ${recall}; ${P95} and ${P99} are not measured, because no published cell reaches ${formatCorpusSize(HNSW_GATE_CORPUS)}.`
+    // A gate reported without a cell to quote: name the criterion and the verdict
+    // rather than quote values the page does not have.
+    return `Gate criteria: ${recall}. ${verdictSentence(verdict)}`
   }
   const latencies = `${P95} ${formatMs(cell.latency_ms_p95)} and ${P99} ${formatMs(cell.latency_ms_p99)} at ${formatCorpusSize(cell.corpus_size)} (the first published cell at or above ${formatCorpusSize(HNSW_GATE_CORPUS)}) against the publisher's latency limits`
-  return `Gate criteria: ${recall}, and ${latencies}. ${gateOutcome(checks)}`
+  return `Gate criteria: ${recall}, and ${latencies}. ${verdictSentence(verdict)}`
 }
 
 /**
  * One line of coverage for the HNSW surfaces: the published sizes in ascending
- * order, the reported gaps, and all three criteria the publisher gates.
+ * order, the reported gaps, all three criteria the publisher gates, and the
+ * verdict the publisher would reach on them.
  */
 export function hnswCoverage(cells: readonly ScoredCell[], gate: HnswGateSummary): string {
   if (!cells.length) {

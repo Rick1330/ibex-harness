@@ -50,13 +50,13 @@
     },
     {
       "file": "app/data/benchmark-cells.ts",
-      "line": 60,
+      "line": 65,
       "token": "p95",
       "reason": "The percentile label the publisher gates, defined once here and interpolated into every sentence and row label. The value it labels is read from hnsw-benchmark-data.json; this occurrence is a label naming the metric, not a measurement."
     },
     {
       "file": "app/data/benchmark-cells.ts",
-      "line": 61,
+      "line": 66,
       "token": "p99",
       "reason": "The percentile label the publisher gates, defined once here and interpolated into every sentence and row label. The value it labels is read from hnsw-benchmark-data.json; this occurrence is a label naming the metric, not a measurement."
     }
