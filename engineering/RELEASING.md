@@ -69,10 +69,12 @@ IBEX Harness is currently in **pre-1.0** maturity. We use Semantic Versioning wi
 - `v0.x.y` while APIs and architecture are still evolving.
 - `v1.0.0` only after explicit production-readiness and compatibility sign-off.
 - During pre-1.0:
-  - New features typically bump **minor** (`0.x+1.0`).
-  - Fixes without feature/API changes bump **patch** (`0.x.y+1`).
+  - A release carries whatever merged since the last one, features included, and bumps the **patch** (`0.x.y+1`).
+  - A **minor** bump (`0.x+1.0`) is reserved for a deliberate compatibility or scope change, and is chosen by a human editing the release configuration or the proposed version — not by the automation.
 
 Configured in `version-release.config.json` and `.version-release-manifest.json`.
+
+Commit subjects become the public changelog lines: the pipeline copies each merged subject into `CHANGELOG.md`, and the public release feed is generated from it. Write them to describe the affected behaviour, not the review round that produced the fix.
 
 ## Source of truth
 
