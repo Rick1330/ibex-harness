@@ -282,9 +282,29 @@ describe('hnswGateHeadline', () => {
   it('names the recall failure of a fast run and keeps the deferral visible', () => {
     assert.equal(
       hnswGateHeadline(truncated(), fastGate({ recall_ok: false, worst_recall_at_10: 0.975 })),
-      'worst recall · p95 · p99 · fails worst recall',
+      'worst recall · p95 · p99 · fails worst recall, p95 and p99 deferred',
     )
   })
+
+  /*
+   * A fast run's latency criteria are never measured, so neither outcome may
+   * leave the deferral implicit. Both fixtures are checked against the sentence
+   * that describes the same run: a clause that lists p95 and p99 and stops at
+   * the recall failure implies the checks were evaluated and passed.
+   */
+  for (const [name, gate] of [
+    ['passing recall', fastGate()],
+    ['failing recall', fastGate({ recall_ok: false, worst_recall_at_10: 0.975 })],
+  ]) {
+    it(`names the deferral in the clause and the sentence for a fast run with ${name}`, () => {
+      const headline = hnswGateHeadline(truncated(), gate)
+      const clause = headline.slice(headline.lastIndexOf(' · ') + 3)
+      const text = hnswGateText(truncated(), gate)
+      assert.match(clause, /p95 and p99 deferred$/)
+      assert.match(text, /p95 and p99 are deferred until a cell reaches 1M\.$/)
+      assert.match(clause, /deferred/)
+    })
+  }
 })
 
 describe('hnswGateText', () => {
@@ -417,6 +437,10 @@ describe('the headline and the coverage sentence agree', () => {
       if (status === 'fail') {
         assert.match(headline, / · fails /)
         assert.match(coverage, /Fails on /)
+        if (verdict.deferred.length) {
+          assert.match(headline, /, p95 and p99 deferred$/)
+          assert.match(coverage, /p95 and p99 are deferred until a cell reaches 1M\.$/)
+        }
         return
       }
       assert.match(headline, /verdict not published$/)

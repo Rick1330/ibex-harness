@@ -267,16 +267,22 @@ function isAre(items: readonly string[]): string {
  * and `verdictSentence` read the same `hnswGateVerdict`, so the card and the
  * coverage sentence cannot disagree about the same run.
  *
+ * A deferral is named in both outcomes. A fast run that fails recall was never
+ * measured at the gate size either, so the clause carries the deferred
+ * percentiles alongside the failure; listing the criteria and stopping at the
+ * failure would read as though the latency checks had been evaluated and held,
+ * and only `verdictSentence` would disclose that they were not.
+ *
  * A deferred pass says so: it names the one criterion that decided the run and
  * the percentiles it postponed. Calling it a flat pass would hide that the run
  * was never measured at the gate size, and "verdict not published" would
  * contradict the publisher, which calls this outcome a pass.
  */
 function verdictClause(verdict: HnswGateVerdict): string {
-  if (verdict.status === 'fail') return `fails ${listWords(verdict.failed)}`
+  const deferred = verdict.deferred.length ? `, ${listWords(verdict.deferred)} deferred` : ''
+  if (verdict.status === 'fail') return `fails ${listWords(verdict.failed)}${deferred}`
   if (verdict.status === 'unknown') return 'verdict not published'
-  if (verdict.deferred.length) return `pass on recall, ${listWords(verdict.deferred)} deferred`
-  return 'pass'
+  return verdict.deferred.length ? `pass on recall${deferred}` : 'pass'
 }
 
 /** The verdict as a sentence: the same rule, spelled out for running text. */
