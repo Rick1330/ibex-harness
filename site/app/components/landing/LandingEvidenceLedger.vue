@@ -1,19 +1,17 @@
 <script setup lang="ts">
 import {
-  formatCorpusSize,
   formatDate,
   formatNumber,
   formatPercent,
-  HNSW_GATE_CORPUS,
-  hnswCellBySize,
-  largestHnswCell,
   latestHnsw,
   latestProxy,
   latestWrite,
 } from '~/data/benchmarks'
+import { formatCorpusSize, hnswGateCell, largestHnswCell } from '~/data/benchmark-cells'
 
-// The gate cell if it is published, otherwise the largest published cell.
-const hnswCell = hnswCellBySize(HNSW_GATE_CORPUS) ?? largestHnswCell()
+// The publisher's gate cell — the first published cell at or above 1M — else the
+// largest published cell, so the ledger names the corpus the gate was read from.
+const hnswCell = hnswGateCell(latestHnsw.results) ?? largestHnswCell(latestHnsw.results)
 
 const metrics = [
   {
@@ -25,7 +23,9 @@ const metrics = [
   {
     label: 'HNSW recall@10',
     value: formatPercent(latestHnsw.mean_recall_at_10),
-    scope: `local corpus · p95 ${formatNumber(hnswCell.latency_ms_p95, 1)} ms at ${formatCorpusSize(hnswCell.corpus_size)}`,
+    scope: hnswCell
+      ? `local corpus · p95 ${formatNumber(hnswCell.latency_ms_p95, 1)} ms at ${formatCorpusSize(hnswCell.corpus_size)}`
+      : 'local corpus · no published cells',
     date: formatDate(latestHnsw.timestamp),
   },
   {

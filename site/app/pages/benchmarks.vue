@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import {
   benchmarkMeta,
-  formatCorpusSize,
   formatDate,
   formatNumber,
   formatPercent,
-  HNSW_GATE_CORPUS,
   latestExtraction,
   latestHnsw,
   latestProxy,
@@ -17,6 +15,14 @@ import {
   rankingRuns,
   writeRuns,
 } from '~/data/benchmarks'
+import {
+  formatCorpusSize,
+  hnswCoverage,
+  hnswMissingCells,
+  hnswSummaryRows,
+  largestHnswCell,
+  sortHnswCells,
+} from '~/data/benchmark-cells'
 
 useSeoMeta({
   title: 'Benchmarks',
@@ -130,17 +136,10 @@ const goLegend = computed(() => {
 const hnswRows = computed(() => latestHnsw.results || [])
 
 // Cells are addressed by corpus size, never by position in the results array.
-const hnswCells = computed(() => [...hnswRows.value].sort((a, b) => a.corpus_size - b.corpus_size))
-const hnswRefCell = computed(() => hnswCells.value[hnswCells.value.length - 1])
-const hnswProfile = [10_000, 100_000, 1_000_000]
-const hnswMissingCells = computed(() => hnswProfile.filter(size => !hnswRows.value.some(row => row.corpus_size === size)))
-const hnswCoverage = computed(() => {
-  const published = hnswCells.value.map(row => formatCorpusSize(row.corpus_size)).join(', ')
-  const missing = hnswMissingCells.value.map(formatCorpusSize)
-  return missing.length
-    ? `Published cells: ${published}. Not reported: ${missing.join(', ')}.`
-    : `Published cells: ${published}.`
-})
+const hnswCells = computed(() => sortHnswCells(hnswRows.value))
+const hnswRefCell = computed(() => largestHnswCell(hnswRows.value))
+const hnswMissing = computed(() => hnswMissingCells(hnswRows.value))
+const hnswCoverageText = computed(() => hnswCoverage(hnswRows.value))
 
 const rankingRows = computed(() => [
   { label: 'Precision@5', value: latestRanking.metrics.precision_at_5 },
@@ -697,7 +696,7 @@ function hnswModal(kind: 'latency' | 'recall' | 'method'): GraphModalState {
     ...blankModal(),
     eyebrow: '02 / Memory retrieval',
     title,
-    description: hnswCoverage.value,
+    description: hnswCoverageText.value,
     sourceHref: latestHnsw.run_url,
     chartKind: 'bar',
     barLabels: hnswLabels.value,
@@ -706,10 +705,10 @@ function hnswModal(kind: 'latency' | 'recall' | 'method'): GraphModalState {
       : hnswSeries.value,
     selectionLabel: `Run ${latestHnsw.run_number} · ${formatDate(latestHnsw.timestamp)}`,
     summary: [
-      ...hnswCells.value.map(item => ({
-        label: `p95 at ${formatCorpusSize(item.corpus_size)}`,
-        value: `${formatNumber(item.latency_ms_p95, 1)} ms`,
-        note: item.corpus_size === HNSW_GATE_CORPUS ? 'gate metric' : undefined,
+      ...hnswSummaryRows(hnswRows.value).map(row => ({
+        label: row.label,
+        value: `${formatNumber(row.cell.latency_ms_p95, 1)} ms`,
+        note: row.note,
         color: 'var(--chart-blue)',
       })),
       { label: 'Mean recall', value: formatPercent(latestHnsw.mean_recall_at_10), note: `floor ${formatPercent(latestHnsw.gate_summary.recall_floor)}` },
@@ -1153,7 +1152,7 @@ function compactNs(value: number) {
             <BenchmarkGraphCard
               title="Recall@10"
               meta="planted near-neighbour"
-              :caption="`Floor ${formatPercent(latestHnsw.gate_summary.recall_floor)}. ${hnswCoverage}`"
+              :caption="`Floor ${formatPercent(latestHnsw.gate_summary.recall_floor)}. ${hnswCoverageText}`"
               @expand="openHnsw('recall')"
             >
               <div class="w-full">
@@ -1202,9 +1201,9 @@ function compactNs(value: number) {
 
           <div class="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[0.55rem] uppercase tracking-[0.08em] text-[var(--site-muted)]">
             <span v-for="row in hnswCi" :key="row.label">p95 CI {{ row.label }} {{ row.value }}</span>
-            <template v-if="hnswMissingCells.length">
+            <template v-if="hnswMissing.length">
               <span class="size-1 rounded-full bg-[var(--site-muted)]" />
-              <span>{{ hnswMissingCells.map(formatCorpusSize).join(', ') }} not reported</span>
+              <span>{{ hnswMissing.map(formatCorpusSize).join(', ') }} not reported</span>
             </template>
           </div>
         </section>

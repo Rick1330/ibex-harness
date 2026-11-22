@@ -47,6 +47,18 @@
       "line": 123,
       "token": "p99",
       "reason": "The second p99 on the line says no recent passing full-chat p99 run is published: it records the absence of an artifact, and the same sentence denies a measured hosted SLO. Tracked as GAP-004."
+    },
+    {
+      "file": "app/data/benchmark-cells.ts",
+      "line": 96,
+      "token": "p95",
+      "reason": "Coverage sentence names the percentile the gate is measured on, at the cell compute_gate_summary gated. The value is read from hnsw-benchmark-data.json; this occurrence is a label naming the metric, not a measurement."
+    },
+    {
+      "file": "app/data/benchmark-cells.ts",
+      "line": 116,
+      "token": "p95",
+      "reason": "Labels each HNSW summary row with the percentile its value comes from; the value is rendered from hnsw-benchmark-data.json. A label, not a measurement."
     }
   ]
 }
