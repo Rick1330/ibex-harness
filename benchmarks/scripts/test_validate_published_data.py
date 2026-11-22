@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from benchmark_test_support import ROOT, SCRIPTS, TESTDATA, load_module
 
@@ -234,6 +235,71 @@ class ValidatePublishedDataTests(unittest.TestCase):
             raise AssertionError("strict mode should fail without jsonschema")
         finally:
             builtins.__import__ = real_import  # type: ignore[method-assign]
+
+
+try:
+    import jsonschema
+except ImportError:  # pragma: no cover - CI installs it from .github/requirements/jsonschema.txt
+    jsonschema = None
+
+
+SCHEMA_DIR = ROOT / "benchmarks" / "data-schema"
+PUBLISHED_DIR = ROOT / "site" / "public" / "benchmarks"
+
+_SCHEMA_CASES = (
+    ("hnsw-benchmark-data.schema.json", "hnsw-benchmark-data.json"),
+    ("ranking-quality-benchmark-data.schema.json", "ranking-quality-benchmark-data.json"),
+)
+
+
+@unittest.skipIf(jsonschema is None, "jsonschema is required for schema contract tests")
+class ProvenanceSchemaWideningTests(unittest.TestCase):
+    """The published runs carry a ``provenance`` block; the schemas must declare it precisely.
+
+    Regression guard for the CI failure where the memory workflow validated the full published
+    files against ``additionalProperties: false`` run schemas that predated the widening: the
+    field is declared at ``runs.items`` and stays strictly typed, rather than loosening the
+    schema to accept anything.
+    """
+
+    def _schema(self, name: str) -> dict[str, Any]:
+        return json.loads((SCHEMA_DIR / name).read_text(encoding="utf-8"))
+
+    def _published(self, name: str) -> dict[str, Any]:
+        return json.loads((PUBLISHED_DIR / name).read_text(encoding="utf-8"))
+
+    def test_provenance_is_declared_at_run_level_without_loosening_the_schema(self) -> None:
+        for schema_name, _ in _SCHEMA_CASES:
+            with self.subTest(schema=schema_name):
+                runs_items = self._schema(schema_name)["properties"]["runs"]["items"]
+                self.assertIs(runs_items["additionalProperties"], False)
+                self.assertIn("provenance", runs_items["properties"])
+                provenance = runs_items["properties"]["provenance"]
+                self.assertIs(provenance["additionalProperties"], False)
+
+    def test_published_files_validate(self) -> None:
+        for schema_name, data_name in _SCHEMA_CASES:
+            with self.subTest(data=data_name):
+                jsonschema.validate(
+                    instance=self._published(data_name),
+                    schema=self._schema(schema_name),
+                )
+
+    def test_a_malformed_provenance_block_is_rejected(self) -> None:
+        schema = self._schema("hnsw-benchmark-data.schema.json")
+        payload = self._published("hnsw-benchmark-data.json")
+        run = next(run for run in payload["runs"] if "provenance" in run)
+        run["provenance"]["corpus_hash"] = "not-a-sha256"
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(instance=payload, schema=schema)
+
+    def test_a_recorded_block_missing_required_identity_is_rejected(self) -> None:
+        schema = self._schema("ranking-quality-benchmark-data.schema.json")
+        payload = self._published("ranking-quality-benchmark-data.json")
+        run = next(run for run in payload["runs"] if "provenance" in run)
+        del run["provenance"]["gold_set_hash"]
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(instance=payload, schema=schema)
 
 
 if __name__ == "__main__":

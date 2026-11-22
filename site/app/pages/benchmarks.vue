@@ -15,6 +15,16 @@ import {
   rankingRuns,
   writeRuns,
 } from '~/data/benchmarks'
+import {
+  formatCorpusSize,
+  hnswCoverage,
+  hnswGateHeadline,
+  hnswMissingCells,
+  hnswSummaryRows,
+  hnswWorstRecall,
+  largestHnswCell,
+  sortHnswCells,
+} from '~/data/benchmark-cells'
 
 useSeoMeta({
   title: 'Benchmarks',
@@ -44,11 +54,11 @@ const proxyPercentileLegend = computed(() => proxyPercentiles.value.slice(0, 3).
 })))
 
 const proxyThroughputSeries = computed(() => [
-  { label: 'Throughput', values: proxyThroughput.value, color: 'var(--chart-lime)', suffix: ' req/s', digits: 0 },
+  { label: 'Modelled throughput', values: proxyThroughput.value, color: 'var(--chart-lime)', suffix: ' req/s', digits: 0 },
 ])
 
 const proxyThroughputLegend = computed(() => [
-  { label: 'Mean across run', value: `${formatNumber(latestProxy.k6.req_per_s, 0)} req/s`, color: 'var(--chart-lime)' },
+  { label: 'Modelled from run mean', value: `${formatNumber(latestProxy.k6.req_per_s, 0)} req/s`, color: 'var(--chart-lime)' },
 ])
 
 const proxyPercentiles = computed(() => [
@@ -127,6 +137,15 @@ const goLegend = computed(() => {
 
 const hnswRows = computed(() => latestHnsw.results || [])
 
+// Cells are addressed by corpus size, never by position in the results array.
+const hnswCells = computed(() => sortHnswCells(hnswRows.value))
+const hnswRefCell = computed(() => largestHnswCell(hnswRows.value))
+const hnswMissing = computed(() => hnswMissingCells(hnswRows.value))
+const hnswWorst = computed(() => hnswWorstRecall(hnswRows.value, latestHnsw.gate_summary))
+const hnswCoverageText = computed(() => hnswCoverage(hnswRows.value, latestHnsw.gate_summary))
+// The publisher gates three criteria; the card must not report one as the gate.
+const hnswGateMeta = computed(() => hnswGateHeadline(hnswRows.value, latestHnsw.gate_summary))
+
 const rankingRows = computed(() => [
   { label: 'Precision@5', value: latestRanking.metrics.precision_at_5 },
   { label: 'Recall@10', value: latestRanking.metrics.recall_at_10 },
@@ -170,32 +189,33 @@ const writePercentiles = computed(() => [
   { label: 'p99', value: latestWrite.metrics.latency_ms_p99, display: `${formatNumber(latestWrite.metrics.latency_ms_p99, 1)} ms`, note: 'tail', color: 'var(--chart-pink)' },
 ])
 
-const hnswLabels = computed(() => hnswRows.value.map(row => `${formatNumber(row.corpus_size / 1000, 0)}k`))
+const hnswLabels = computed(() => hnswCells.value.map(row => formatCorpusSize(row.corpus_size)))
 
 const hnswSeries = computed(() => [
-  { label: 'p50', values: hnswRows.value.map(row => row.latency_ms_p50), color: 'var(--chart-lime)', suffix: ' ms', digits: 1 },
-  { label: 'p95', values: hnswRows.value.map(row => row.latency_ms_p95), color: 'var(--chart-blue)', suffix: ' ms', digits: 1 },
-  { label: 'p99', values: hnswRows.value.map(row => row.latency_ms_p99), color: 'var(--chart-pink)', suffix: ' ms', digits: 1 },
+  { label: 'p50', values: hnswCells.value.map(row => row.latency_ms_p50), color: 'var(--chart-lime)', suffix: ' ms', digits: 1 },
+  { label: 'p95', values: hnswCells.value.map(row => row.latency_ms_p95), color: 'var(--chart-blue)', suffix: ' ms', digits: 1 },
+  { label: 'p99', values: hnswCells.value.map(row => row.latency_ms_p99), color: 'var(--chart-pink)', suffix: ' ms', digits: 1 },
 ])
 
 const hnswLegend = computed(() => {
-  const row = hnswRows.value[hnswRows.value.length - 1]
+  const row = hnswRefCell.value
   if (!row) return []
+  const at = formatCorpusSize(row.corpus_size)
   return [
-    { label: 'p50 at 100k', value: `${formatNumber(row.latency_ms_p50, 1)} ms`, color: 'var(--chart-lime)' },
-    { label: 'p95 at 100k', value: `${formatNumber(row.latency_ms_p95, 1)} ms`, color: 'var(--chart-blue)' },
-    { label: 'p99 at 100k', value: `${formatNumber(row.latency_ms_p99, 1)} ms`, color: 'var(--chart-pink)' },
+    { label: `p50 at ${at}`, value: `${formatNumber(row.latency_ms_p50, 1)} ms`, color: 'var(--chart-lime)' },
+    { label: `p95 at ${at}`, value: `${formatNumber(row.latency_ms_p95, 1)} ms`, color: 'var(--chart-blue)' },
+    { label: `p99 at ${at}`, value: `${formatNumber(row.latency_ms_p99, 1)} ms`, color: 'var(--chart-pink)' },
   ]
 })
 
-const hnswRecallRows = computed(() => hnswRows.value.map(row => ({
-  label: `${formatNumber(row.corpus_size / 1000, 0)}k rows`,
+const hnswRecallRows = computed(() => hnswCells.value.map(row => ({
+  label: `${formatCorpusSize(row.corpus_size)} rows`,
   value: row.recall_at_10,
   display: formatPercent(row.recall_at_10),
 })))
 
-const hnswCi = computed(() => hnswRows.value.map(row => ({
-  label: `${formatNumber(row.corpus_size / 1000, 0)}k`,
+const hnswCi = computed(() => hnswCells.value.map(row => ({
+  label: formatCorpusSize(row.corpus_size),
   value: `${formatNumber(row.latency_ms_p95_ci_low, 1)}–${formatNumber(row.latency_ms_p95_ci_high, 1)} ms`,
 })))
 
@@ -250,7 +270,9 @@ const suites = computed(() => [
     metric: formatPercent(latestHnsw.mean_recall_at_10),
     metricLabel: 'mean recall@10',
     runs: hnswRuns.length,
-    tag: `p95 ${formatNumber(hnswRows.value[1]?.latency_ms_p95, 1)} ms`,
+    tag: hnswRefCell.value
+      ? `p95 ${formatNumber(hnswRefCell.value.latency_ms_p95, 1)} ms at ${formatCorpusSize(hnswRefCell.value.corpus_size)}`
+      : 'no cells',
     href: '#retrieval',
   },
   {
@@ -596,7 +618,7 @@ function proxyThroughputModal(row: number): GraphModalState {
     ...blankModal(),
     eyebrow: '01 / Proxy overhead',
     title: 'Throughput history',
-    description: 'Mean request rate for each published proxy run. Provider latency is excluded from the warm-path measurement. Hover to preview a run; click to pin it.',
+    description: 'Measured run mean per published run; provider time excluded. The card series is a modelled shape, not measured. Hover to preview a run; click to pin it.',
     sourceHref: run.run_url,
     chartKind: 'line',
     lineSeries: [
@@ -607,7 +629,7 @@ function proxyThroughputModal(row: number): GraphModalState {
     activeIndex: proxyRuns.length - 1 - row,
     selectionLabel: `Run ${run.run_number} · ${formatDate(run.timestamp)}`,
     summary: summaryWith([
-      { label: 'Mean', value: `${formatNumber(k6.req_per_s, 0)} req/s`, note: 'throughput', color: 'var(--chart-lime)' },
+      { label: 'Mean', value: `${formatNumber(k6.req_per_s, 0)} req/s`, note: 'measured run mean', color: 'var(--chart-lime)' },
       { label: 'p50', value: `${formatNumber(k6.p50_ms, 3)} ms`, note: 'median', color: 'var(--chart-blue)' },
       { label: 'p99', value: `${formatNumber(k6.p99_ms, 3)} ms`, note: 'tail', color: 'var(--chart-pink)' },
       { label: 'Errors', value: formatPercent(k6.error_rate), note: k6.error_rate === 0 ? 'no failures' : 'failed requests' },
@@ -674,28 +696,30 @@ function hnswModalTitle(kind: 'latency' | 'recall' | 'method'): string {
 }
 
 function hnswModal(kind: 'latency' | 'recall' | 'method'): GraphModalState {
-  const latestRow = hnswRows.value[hnswRows.value.length - 1]
   const title = hnswModalTitle(kind)
   return {
     ...blankModal(),
     eyebrow: '02 / Memory retrieval',
     title,
-    description: 'Published pgvector HNSW cells. The profile stops at 100k rows; the 1M cell is not reported.',
+    description: hnswCoverageText.value,
     sourceHref: latestHnsw.run_url,
     chartKind: 'bar',
     barLabels: hnswLabels.value,
     barSeries: kind === 'recall'
-      ? [{ label: 'Recall@10', values: hnswRows.value.map(item => item.recall_at_10 * 100), color: 'var(--chart-lime)', suffix: '%', digits: 1 }]
+      ? [{ label: 'Recall@10', values: hnswCells.value.map(item => item.recall_at_10 * 100), color: 'var(--chart-lime)', suffix: '%', digits: 1 }]
       : hnswSeries.value,
     selectionLabel: `Run ${latestHnsw.run_number} · ${formatDate(latestHnsw.timestamp)}`,
     summary: [
-      { label: 'p50 at 100k', value: latestRow ? `${formatNumber(latestRow.latency_ms_p50, 1)} ms` : '—', color: 'var(--chart-lime)' },
-      { label: 'p95 at 100k', value: latestRow ? `${formatNumber(latestRow.latency_ms_p95, 1)} ms` : '—', note: 'gate metric', color: 'var(--chart-blue)' },
-      { label: 'p99 at 100k', value: latestRow ? `${formatNumber(latestRow.latency_ms_p99, 1)} ms` : '—', color: 'var(--chart-pink)' },
-      { label: 'Mean recall', value: formatPercent(latestHnsw.mean_recall_at_10), note: `floor ${formatPercent(latestHnsw.gate_summary.recall_floor)}` },
+      ...hnswSummaryRows(hnswRows.value).map(row => ({
+        label: row.label,
+        value: row.value,
+        note: row.note,
+        color: row.gate ? 'var(--chart-pink)' : 'var(--chart-blue)',
+      })),
+      { label: 'Worst recall', value: formatPercent(hnswWorst.value), note: `floor ${formatPercent(latestHnsw.gate_summary.recall_floor)} · gate`, color: 'var(--chart-lime)' },
     ],
     tableColumns: ['Corpus', 'Queries', 'Recall@10', 'p50', 'p95', 'p99', 'p95 CI', 'Build'],
-    tableRows: hnswRows.value.map(item => [
+    tableRows: hnswCells.value.map(item => [
       item.corpus_size.toLocaleString(),
       String(item.query_count),
       formatPercent(item.recall_at_10),
@@ -1065,10 +1089,10 @@ function compactNs(value: number) {
             </BenchmarkGraphCard>
 
             <BenchmarkGraphCard
-              title="Throughput"
+              title="Throughput (modelled)"
               :meta="`${latestProxy.k6.duration_s}s · ${latestProxy.k6.vus} VUs`"
               :legend="proxyThroughputLegend"
-              :caption="`Peak ${formatNumber(Math.max(...proxyThroughput), 0)} req/s · ${formatPercent(latestProxy.k6.error_rate)} errors. Provider time excluded.`"
+              :caption="`Modelled from the run-wide mean; not a measured peak. ${formatPercent(latestProxy.k6.error_rate)} errors. Provider time excluded.`"
               @expand="openProxyThroughput"
             >
               <BenchmarkChart :series="proxyThroughputSeries" :labels="proxyThroughputLabels" :width="360" :height="170" minimal :filled="false" />
@@ -1112,7 +1136,7 @@ function compactNs(value: number) {
             index="02"
             label="Memory retrieval"
             title="Recall holds as the corpus grows."
-            description="pgvector HNSW search with a planted near-neighbour check. The published profile stops at 100k rows; the 1M cell is not reported."
+            description="pgvector HNSW search with a planted near-neighbour check."
             icon="i-lucide-database"
             :tag="suites[1]?.tag"
             :run-url="latestHnsw.run_url"
@@ -1133,7 +1157,7 @@ function compactNs(value: number) {
             <BenchmarkGraphCard
               title="Recall@10"
               meta="planted near-neighbour"
-              :caption="`Floor ${formatPercent(latestHnsw.gate_summary.recall_floor)}. The 1M cell is absent on this profile.`"
+              :caption="hnswCoverageText"
               @expand="openHnsw('recall')"
             >
               <div class="w-full">
@@ -1155,7 +1179,7 @@ function compactNs(value: number) {
 
             <BenchmarkGraphCard
               title="Gate and method"
-              meta="recall gate · pass"
+              :meta="hnswGateMeta"
               caption="Recall checks for a planted near-neighbour in the top 10. It is not a general semantic-quality score."
               @expand="openHnsw('method')"
             >
@@ -1182,8 +1206,10 @@ function compactNs(value: number) {
 
           <div class="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[0.55rem] uppercase tracking-[0.08em] text-[var(--site-muted)]">
             <span v-for="row in hnswCi" :key="row.label">p95 CI {{ row.label }} {{ row.value }}</span>
-            <span class="size-1 rounded-full bg-[var(--site-muted)]" />
-            <span>1M cell absent</span>
+            <template v-if="hnswMissing.length">
+              <span class="size-1 rounded-full bg-[var(--site-muted)]" />
+              <span>{{ hnswMissing.map(formatCorpusSize).join(', ') }} not reported</span>
+            </template>
           </div>
         </section>
 
