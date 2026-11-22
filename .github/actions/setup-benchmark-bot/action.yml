@@ -40,18 +40,20 @@ runs:
           echo "Pinned SHA-256 missing or invalid in ${pin_file}" >&2
           exit 1
         fi
-        short="${BENCHMARK_BOT_SHA:0:7}"
         configured_tag="${BENCHMARK_BOT_RELEASE_TAG:-}"
-        tags=()
-        if [ -n "${BENCHMARK_BOT_RELEASE_TAG:-}" ]; then
-          # Reject stale overrides that do not match the pin (root cause of missing subcommands).
-          if [ "$BENCHMARK_BOT_RELEASE_TAG" = "bot-${short}" ] || [ "$BENCHMARK_BOT_RELEASE_TAG" = "v${short}" ]; then
-            tags+=("$BENCHMARK_BOT_RELEASE_TAG")
-          else
-            echo "Ignoring BENCHMARK_BOT_RELEASE_TAG=${BENCHMARK_BOT_RELEASE_TAG} (does not match pin ${short})"
-          fi
+        resolver="${GITHUB_ACTION_PATH}/resolve-release.sh"
+        # Which tags may be tried is a policy decision, so it lives in
+        # resolve-release.sh, where it is tested
+        # (infra/scripts/test-benchmark-bot-resolve.sh). A configured tag that does
+        # not name the pin fails here instead of being silently ignored: the SHA,
+        # the tag and the digest are one pin, and a tag for a different commit is
+        # drift to fix, not an override to skip.
+        candidates="$(bash "$resolver" tags --sha "$BENCHMARK_BOT_SHA" --tag "$configured_tag")"
+        mapfile -t tags < <(printf '%s\n' "$candidates" | sed -n 's/^tag=//p')
+        if [ "${#tags[@]}" -eq 0 ]; then
+          echo "resolve-release.sh returned no candidate tag for pin ${BENCHMARK_BOT_SHA}" >&2
+          exit 1
         fi
-        tags+=("bot-${short}" "v${short}")
         source=build
         path=""
         for tag in "${tags[@]}"; do
@@ -98,12 +100,10 @@ runs:
           # An explicitly configured release tag is a claim that a verified release
           # exists for this pin. Falling back to a source build would hide a pin that
           # no longer matches any release - the drift that let this repository run a
-          # bot five commits behind the fix it needed.
-          if [ -n "${configured_tag}" ]; then
-            echo "::error::BENCHMARK_BOT_RELEASE_TAG=${configured_tag} was configured but no release asset verified for pin ${BENCHMARK_BOT_SHA}. Refusing to fall back to a source build; fix the pin (SHA, tag and digest move together)." >&2
-            exit 1
-          fi
-          echo "No usable release asset for pin ${BENCHMARK_BOT_SHA}; will cargo build."
+          # bot five commits behind the fix it needed. resolve-release.sh refuses
+          # that fallback; with no tag configured it prints source=build and the
+          # cargo build is legitimate, because an unreleased commit has no asset.
+          bash "$resolver" fallback --sha "$BENCHMARK_BOT_SHA" --tag "$configured_tag"
         fi
 
     - name: Checkout benchmark bot
