@@ -69,12 +69,12 @@ IBEX Harness is currently in **pre-1.0** maturity. We use Semantic Versioning wi
 - `v0.x.y` while APIs and architecture are still evolving.
 - `v1.0.0` only after explicit production-readiness and compatibility sign-off.
 - During pre-1.0:
-  - A release carries whatever merged since the last one, features included, and bumps the **patch** (`0.x.y+1`).
-  - A **minor** bump (`0.x+1.0`) is reserved for a deliberate compatibility or scope change, and is chosen by a human editing the release configuration or the proposed version — not by the automation.
+  - Ordinary **features and fixes bump the patch** (`0.x.y+1`), so releases carry features at `0.x.y` (`bump-patch-for-minor-pre-major`).
+  - A **breaking change bumps the minor automatically** (`bump-minor-pre-major`), so a proposed `0.x+1.0` may be the engine's decision, not a reviewer's. A human can still override it by editing the proposed version or the release configuration.
 
 Configured in `version-release.config.json` and `.version-release-manifest.json`.
 
-Commit subjects become the public changelog lines: the pipeline copies each merged subject into `CHANGELOG.md`, and the public release feed is generated from it. Write them to describe the affected behaviour, not the review round that produced the fix.
+`CHANGELOG.md` includes **selected commit types**: `feat`, `fix`, `perf`, `revert`, and any breaking change; `docs`, `chore`, `ci`, `test`, `build`, `style`, and `refactor` are merged but omitted from the public feed. Write the subject of a `feat`, `fix`, `perf`, or `revert` commit as the line a release reader will see.
 
 ## Source of truth
 
