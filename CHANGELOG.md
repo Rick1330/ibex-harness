@@ -12,6 +12,54 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ---
 
+## [0.1.11](https://github.com/Rick1330/ibex-harness/compare/v0.1.10...v0.1.11) (2026-11-22)
+
+
+### Features
+
+* **console:** design the sessions surface, and stop describing pages in their own header ([26b6081](https://github.com/Rick1330/ibex-harness/commit/26b60811e2cb6013d139205b353e75a569aa6b84))
+* **smoke:** make v1-smoke prove the chat path, and stop reporting a skip as a pass ([4ba2bfe](https://github.com/Rick1330/ibex-harness/commit/4ba2bfeb0bce4d29cd398132163805c745048aeb))
+* **stage3:** close the remaining rows, with the scanners run before the push ([d7ff50b](https://github.com/Rick1330/ibex-harness/commit/d7ff50b6c2d1c770e2d372c2797aaeddf1785cf4))
+
+
+### Bug Fixes
+
+* **build:** remove the no-op package upgrade and record the base digests ([48bca51](https://github.com/Rick1330/ibex-harness/commit/48bca51792fb7ba62883332d2a3adc7875fe9213))
+* **console:** a trace-only refusal says which remedy it needs ([7d7b50c](https://github.com/Rick1330/ibex-harness/commit/7d7b50c224f3fd66815ebc8ff959c864472b2b12))
+* **console:** an abandoned session is not a completed one ([14cc6de](https://github.com/Rick1330/ibex-harness/commit/14cc6de0ca5abcb7fafcab21c0b59cbb03649928))
+* **console:** keep the health snapshot's own read time, at the value ([b8d5e6d](https://github.com/Rick1330/ibex-harness/commit/b8d5e6d4199332ba6abea8a9575ad258d45e10f8))
+* **console:** let the mobile disclosure scroll, and test it at phone size ([6d88f78](https://github.com/Rick1330/ibex-harness/commit/6d88f78b97bc13a37fa0b36b7cb5f45a746ef17e))
+* **console:** offer the sign-in the page asks for, and a way to sign out ([6df9eed](https://github.com/Rick1330/ibex-harness/commit/6df9eed58c38a8dfd79cd324ad0062d7c45f3aa2))
+* **console:** the extraction pointer is an index, not a count — stop printing it as a percentage ([57f3576](https://github.com/Rick1330/ibex-harness/commit/57f35760173dbca824bb023c9f6ebbeb2ebbc668))
+* **gates:** clear the Sonar, Codacy and CodeScene findings locally before pushing ([d600129](https://github.com/Rick1330/ibex-harness/commit/d6001297e58ab54b44b3318cac8887295f1c771b))
+* **gates:** stop reporting a missing reference when the issue could not be read ([3180f80](https://github.com/Rick1330/ibex-harness/commit/3180f806a92e0d9395dbf98ab507cede91758428))
+* **memory:** a forget must clear the cache it wrote, and prove it ([347b4cc](https://github.com/Rick1330/ibex-harness/commit/347b4cc6651240432e3cc16e57c449faab83c361))
+* **memory:** a late create can no longer undo a forget, and the retry tells transient from permanent ([c189cf0](https://github.com/Rick1330/ibex-harness/commit/c189cf098fce7fa87640c9d6be18d4942ab4a550))
+* **memory:** the purge records the address it is about to erase, and the archive recheck pays from the job budget ([458dd8c](https://github.com/Rick1330/ibex-harness/commit/458dd8c9b97c1d07017e7b49bcbf8c12bd11ed47))
+* **memory:** the purge saga's own evidence settles a purged row, and a reappeared copy is deleted ([e825a23](https://github.com/Rick1330/ibex-harness/commit/e825a23285b32a6cfe22feb56fb1d8a244ea8dfd))
+* **migrations:** hold the table before the rollback guard reads it ([7f5b9b0](https://github.com/Rick1330/ibex-harness/commit/7f5b9b0eaae8a42f16588cdb5bbb7c7986a5f0ce))
+* **proxy:** give the extraction enqueue client its own connection pool ([3b604a3](https://github.com/Rick1330/ibex-harness/commit/3b604a3b41514908a4b9d99542be54f555b33a65))
+* **proxy:** the context hop was asleep, not slow ([6f7ae55](https://github.com/Rick1330/ibex-harness/commit/6f7ae55095bff57b52543f78de131392b611d85e))
+* **redact:** close a disclosure regression and a quadratic scan ([6a67381](https://github.com/Rick1330/ibex-harness/commit/6a6738126c70ac07be8ce3237791750063aa3178))
+* **release:** an exhausted budget is not evidence of absence, and failed lookups back off ([a2f06a0](https://github.com/Rick1330/ibex-harness/commit/a2f06a0ea1877faa9ba58e4db9b590dafb3fa270))
+* **release:** back off on a sustained failure, not on a lifetime count ([899ab17](https://github.com/Rick1330/ibex-harness/commit/899ab173dc1f7d4bda12be1850ffa27f98916738))
+* **release:** wait long enough for the smoke evidence, and stop inventing its absence ([14dc5dc](https://github.com/Rick1330/ibex-harness/commit/14dc5dc6bb188b884f9db4d89fd727d853bd20ff))
+* **smoke:** reject a non-positive attempt budget, and filter an unfixable advisory ([86098ba](https://github.com/Rick1330/ibex-harness/commit/86098baef3e77056547429e38096119057b3df3b))
+* **smoke:** require the chat check to prove context assembly did not degrade ([a79e060](https://github.com/Rick1330/ibex-harness/commit/a79e060feaa2c32c0c5b9e58c1e505f0210130ea))
+* **stage3:** close every review finding, and the defects they exposed ([030869d](https://github.com/Rick1330/ibex-harness/commit/030869d783f1d0faf3cb644ad1882e19745468dd))
+* **stage3:** close the open rows, and the gaps the row list never named ([f9a58e5](https://github.com/Rick1330/ibex-harness/commit/f9a58e5fd99a26c4825727cac709ece53c789376))
+* **stage3:** close twelve review findings, including a startup-desynchronising one ([c41cc09](https://github.com/Rick1330/ibex-harness/commit/c41cc09fe67ef77b228a0263346a92e3ba1bf1e8))
+* **stage3:** keep a generated PAT out of test logs, and refuse a dated waiver ([2e8d930](https://github.com/Rick1330/ibex-harness/commit/2e8d930edbcfd33466858052cf59ff556111d0f7))
+* **stage3:** the fifth review round, including two holes I created ([863b533](https://github.com/Rick1330/ibex-harness/commit/863b53316a7b45b58f260a83c2163ea0ec46bd0d))
+* **stage3:** the second CodeRabbit review, which found real bugs in the first fix ([7df3020](https://github.com/Rick1330/ibex-harness/commit/7df302008169acfc3d75dfca6ddfde3446f5df9e))
+* **stage3:** the six findings posted after the last push, and a correction ([2ad84f7](https://github.com/Rick1330/ibex-harness/commit/2ad84f79dd26cf6c60d073ea5c350288b1da4559))
+* **stage3:** use the parsers instead of the lexers I wrote ([ba72e98](https://github.com/Rick1330/ibex-harness/commit/ba72e989d51aaf7f0c31654f7fae3f34aea7ed23))
+* **v1-profile:** a shared label for the backup config, and lazy operands in dotenv ([fca8673](https://github.com/Rick1330/ibex-harness/commit/fca86736bd7c8391f49e7f4dbf9dc10488a40fc7))
+* **v1-profile:** the six hardening items an audit left open, two of them hazards ([69e77a5](https://github.com/Rick1330/ibex-harness/commit/69e77a538b296cda90328227d4db8cf8e756be12))
+* **v1-smoke:** distinguish a cold start from a broken assembly path ([d77b15f](https://github.com/Rick1330/ibex-harness/commit/d77b15fdec5316d6a28f05b5de4e195d942ce4e1))
+* **worker:** a failure the worker observed may replace its own proof, and Redis refusals are permanent ([bf08008](https://github.com/Rick1330/ibex-harness/commit/bf08008cf392875906e8582ba23cb5a578867158))
+* **worker:** an erasure receipt records the addresses it proved ([7af7450](https://github.com/Rick1330/ibex-harness/commit/7af7450ea3e25dd3949471e48542865ceda524ed))
+
 ## [0.1.10](https://github.com/Rick1330/ibex-harness/compare/v0.1.9...v0.1.10) (2026-11-17)
 
 
