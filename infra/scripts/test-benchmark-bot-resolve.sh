@@ -166,8 +166,21 @@ OTHER_DIGEST="$(sha256sum "$OTHER_BODY" | awk '{ print $1 }')"
 # without it, and that stale release is what the check exists to catch.
 SUBCMD="post-hnsw-pr-comment"
 SUB_BODY="$WORK/subcommand-asset"
-printf '#!/bin/sh\necho "usage: ibex-benchmark-bot <command>"\necho "  %s  post the PR comment"\n' \
-  "$SUBCMD" >"$SUB_BODY"
+# The subcommand is listed only when the binary is asked for --help. Printing it
+# unconditionally would make the positive control pass even if the step stopped
+# passing the flag, which is the regression this fixture exists to catch.
+cat >"$SUB_BODY" <<EOF
+#!/bin/sh
+case "\$1" in
+  --help|-h)
+    echo "usage: ibex-benchmark-bot <command>"
+    echo "  $SUBCMD  post the PR comment"
+    ;;
+  *)
+    echo "ibex-benchmark-bot: no command given; try --help"
+    ;;
+esac
+EOF
 SUB_DIGEST="$(sha256sum "$SUB_BODY" | awk '{ print $1 }')"
 
 # gh_stub answers `gh release download` from the environment and records every
