@@ -4,7 +4,7 @@
 # (.github/actions/setup-benchmark-bot/resolve-release.sh) and for the action step
 # that consumes it.
 #
-# Five decisions are guarded here, because each one is a way for CI to run a bot
+# Seven decisions are guarded here, because each one is a way for CI to run a bot
 # that is not the bot the pin names:
 #
 #   1. No release tag configured and no release published for the pin: a source
@@ -25,6 +25,15 @@
 #   5. No configured tag and nothing verifies - a digest mismatch or a published
 #      checksum that disagrees: a source build is still allowed, and both derived
 #      tag spellings (`bot-<7>` then `v<7>`) are tried first.
+#   6. A candidate whose download fails does not stop the next spelling from
+#      being used: the loop advances from a failed first tag to a succeeding
+#      second one, and the release that is selected is the second tag's.
+#   7. A release that verifies by digest but whose binary lacks the subcommand the
+#      caller requires is rejected, and the loop moves on. All five benchmark
+#      workflows pass require-subcommand, so this is the path production takes: a
+#      stale pin whose release predates the subcommand must not be accepted. With
+#      no configured tag the build fallback still applies; with one the step
+#      fails, because the configured tag claims a usable release exists.
 #
 # No network. The action's `run:` block is executed as extracted from the YAML,
 # with a stub `gh` first on PATH that answers from the environment, and with the
@@ -151,11 +160,23 @@ printf '#!/bin/sh\necho another bot\n' >"$OTHER_BODY"
 BODY_DIGEST="$(sha256sum "$BODY" | awk '{ print $1 }')"
 OTHER_DIGEST="$(sha256sum "$OTHER_BODY" | awk '{ print $1 }')"
 
+# The subcommand the benchmark workflows require, and a binary that carries it:
+# `--help` names it, which is the only thing the step greps for. A release that
+# verifies by digest but was built before the subcommand existed answers --help
+# without it, and that stale release is what the check exists to catch.
+SUBCMD="post-hnsw-pr-comment"
+SUB_BODY="$WORK/subcommand-asset"
+printf '#!/bin/sh\necho "usage: ibex-benchmark-bot <command>"\necho "  %s  post the PR comment"\n' \
+  "$SUBCMD" >"$SUB_BODY"
+SUB_DIGEST="$(sha256sum "$SUB_BODY" | awk '{ print $1 }')"
+
 # gh_stub answers `gh release download` from the environment and records every
 # call. FAKE_GH_MODE=absent models a tag with no release; FAKE_GH_MODE=serve
 # models one, and FAKE_GH_PUBLISHED_DIGEST is the digest its `.sha256` asset
 # carries, so a binary that matches the pin can still be paired with a published
-# checksum that does not.
+# checksum that does not. FAKE_GH_ABSENT_TAGS lists tags whose download fails
+# even though the mode serves, which is how a case tells the first candidate from
+# the second.
 gh_stub() {
   cat >"$1" <<'STUB'
 #!/usr/bin/env bash
@@ -190,6 +211,13 @@ case "${FAKE_GH_MODE:-absent}" in
     exit 2
     ;;
 esac
+# A tag named here has no release even though the mode serves one. The loop must
+# move to the next candidate rather than treat the failure as final.
+for skipped in ${FAKE_GH_ABSENT_TAGS:-}; do
+  if [[ "$tag" == "$skipped" ]]; then
+    exit 1
+  fi
+done
 mkdir -p "$dir"
 if [[ "$asset" == *.sha256 ]]; then
   printf '%s  %s\n' "${FAKE_GH_PUBLISHED_DIGEST:-}" "${asset%.sha256}" >"$dir/$asset"
@@ -206,6 +234,10 @@ gh_stub "$WORK/bin/gh"
 # file carries <digest>, the extracted step, and empty output and call logs. The
 # private pin file is what lets the real `sha256sum` check a real fixture binary
 # instead of a digest that had to be faked.
+#
+# It also resets the knobs run_step reads, so a case cannot inherit a configured
+# tag, a required subcommand, a fixture binary or an absent tag from the case
+# above it. A case that needs a non-default sets it after staging.
 stage_case() {
   local dir="$1" digest="$2"
   mkdir -p "$dir/action" "$dir/bin"
@@ -216,12 +248,23 @@ stage_case() {
   cp "$WORK/bin/gh" "$dir/bin/gh"
   : >"$dir/github-output"
   : >"$dir/gh.log"
+  configured=""
+  required_subcommand=""
+  asset_body="$BODY"
+  absent_tags=""
 }
 
-# run_step <dir> <gh-mode> <published-digest> runs the step as GitHub would, with
-# the configured tag in $configured. The exit status is recorded, never raised, so
-# a failing case is an assertion rather than an aborted suite.
+# run_step <dir> <gh-mode> <published-digest> runs the step as GitHub would, with:
+#   configured           the BENCHMARK_BOT_RELEASE_TAG the caller sets
+#   required_subcommand  REQUIRE_SUBCOMMAND, the action's require-subcommand input
+#   asset_body           the fixture binary the stub `gh` serves
+#   absent_tags          tags whose download fails while the rest succeed
+# The exit status is recorded, never raised, so a failing case is an assertion
+# rather than an aborted suite.
 configured=""
+required_subcommand=""
+asset_body="$BODY"
+absent_tags=""
 run_step() {
   local dir="$1" mode="$2" published="$3" status=0
   (
@@ -232,15 +275,17 @@ run_step() {
     GH_TOKEN="test-token"
     BENCHMARK_BOT_SHA="$PIN"
     BENCHMARK_BOT_RELEASE_TAG="$configured"
-    REQUIRE_SUBCOMMAND=""
+    REQUIRE_SUBCOMMAND="$required_subcommand"
     FAKE_GH_LOG="$dir/gh.log"
     FAKE_GH_MODE="$mode"
-    FAKE_GH_BODY="$BODY"
+    FAKE_GH_BODY="$asset_body"
     FAKE_GH_PUBLISHED_DIGEST="$published"
+    FAKE_GH_ABSENT_TAGS="$absent_tags"
     PATH="$dir/bin:$PATH"
     export GITHUB_ACTION_PATH GITHUB_WORKSPACE GITHUB_OUTPUT GH_TOKEN
     export BENCHMARK_BOT_SHA BENCHMARK_BOT_RELEASE_TAG REQUIRE_SUBCOMMAND
-    export FAKE_GH_LOG FAKE_GH_MODE FAKE_GH_BODY FAKE_GH_PUBLISHED_DIGEST PATH
+    export FAKE_GH_LOG FAKE_GH_MODE FAKE_GH_BODY FAKE_GH_PUBLISHED_DIGEST
+    export FAKE_GH_ABSENT_TAGS PATH
     bash "$dir/action-step.sh"
   ) >"$dir/out.log" 2>&1 || status=$?
   printf '%s\n' "$status" >"$dir/status"
@@ -428,6 +473,115 @@ expect_field "case 5b (no tag, published checksum disagrees)" "$dir" source buil
 expect_log "case 5b (no tag, published checksum disagrees) reports the disagreement" "$dir" \
   "checksum asset does not match repo pin"
 expect_log "case 5b (no tag, published checksum disagrees) says the build will happen" "$dir" "will cargo build"
+
+# --- case 6: the loop advances from a failed candidate ----------------------
+#
+# Both tag spellings name the same commit, so a case that fails the first one and
+# serves the second proves the loop advances rather than stopping at the first
+# error. Without this, a step that only ever tried `bot-<7>` would pass every case
+# above, because the stub used to answer both spellings identically.
+
+dir="$WORK/case6-second-tag"
+stage_case "$dir" "$BODY_DIGEST"
+absent_tags="$BOT_TAG"
+run_step "$dir" serve "$BODY_DIGEST"
+expect_status "case 6a (first tag absent, second serves)" "$dir" 0
+expect_field "case 6a (first tag absent, second serves)" "$dir" source release
+expect_field "case 6a (first tag absent, second serves)" "$dir" path \
+  "$dir/benchmark-bot-bin/ibex-benchmark-bot-linux-amd64"
+expect_log "case 6a (first tag absent, second serves) names the tag that was used" "$dir" \
+  "Downloaded verified bot binary from release tag ${V_TAG}"
+expect_no_log "case 6a (first tag absent, second serves) did not take the first tag" "$dir" \
+  "Downloaded verified bot binary from release tag ${BOT_TAG}"
+if [[ "$(attempted_tags "$dir" | tr '\n' ' ')" == "${BOT_TAG} ${V_TAG} " ]]; then
+  pass "case 6a (first tag absent, second serves) asked for $BOT_TAG, failed, then asked for $V_TAG"
+else
+  bad "case 6a (first tag absent, second serves) tried '$(attempted_tags "$dir" | tr '\n' ' ')'"
+fi
+
+# The other direction: a configured tag is tried first, and its failure falls
+# through to the derived spelling rather than ending the search.
+dir="$WORK/case6-configured-tag-absent"
+stage_case "$dir" "$BODY_DIGEST"
+configured="$V_TAG"
+absent_tags="$V_TAG"
+run_step "$dir" serve "$BODY_DIGEST"
+expect_status "case 6b (configured tag absent, other spelling serves)" "$dir" 0
+expect_field "case 6b (configured tag absent, other spelling serves)" "$dir" source release
+expect_log "case 6b (configured tag absent, other spelling serves) names the tag that was used" "$dir" \
+  "Downloaded verified bot binary from release tag ${BOT_TAG}"
+expect_no_log "case 6b (configured tag absent, other spelling serves) did not take the configured tag" "$dir" \
+  "Downloaded verified bot binary from release tag ${V_TAG}"
+if [[ "$(attempted_tags "$dir" | tr '\n' ' ')" == "${V_TAG} ${BOT_TAG} " ]]; then
+  pass "case 6b (configured tag absent, other spelling serves) tried the configured tag first"
+else
+  bad "case 6b (configured tag absent, other spelling serves) tried '$(attempted_tags "$dir" | tr '\n' ' ')'"
+fi
+
+# --- case 7: the required-subcommand gate ----------------------------------
+#
+# All five benchmark workflows pass require-subcommand, so the check is on the
+# path production takes. It used to be untested: run_step cleared
+# REQUIRE_SUBCOMMAND, so the branch that rejects a verified release whose binary
+# is too old - the stale pin the variable exists to catch - never ran.
+
+dir="$WORK/case7-missing-subcommand-build"
+stage_case "$dir" "$BODY_DIGEST"
+required_subcommand="$SUBCMD"
+run_step "$dir" serve "$BODY_DIGEST"
+expect_status "case 7a (no tag, releases lack the subcommand)" "$dir" 0
+expect_field "case 7a (no tag, releases lack the subcommand)" "$dir" source build
+expect_field "case 7a (no tag, releases lack the subcommand)" "$dir" path ""
+expect_log "case 7a (no tag, releases lack the subcommand) reports the rejection" "$dir" \
+  "missing subcommand ${SUBCMD}"
+expect_log "case 7a (no tag, releases lack the subcommand) says the build will happen" "$dir" "will cargo build"
+expect_no_log "case 7a (no tag, releases lack the subcommand) accepted no release" "$dir" \
+  "Downloaded verified bot binary from release tag"
+if [[ "$(attempted_tags "$dir" | tr '\n' ' ')" == "${BOT_TAG} ${V_TAG} " ]]; then
+  pass "case 7a (no tag, releases lack the subcommand) tried the next candidate after the first was rejected"
+else
+  bad "case 7a (no tag, releases lack the subcommand) tried '$(attempted_tags "$dir" | tr '\n' ' ')'"
+fi
+
+dir="$WORK/case7-missing-subcommand-fail"
+stage_case "$dir" "$BODY_DIGEST"
+configured="$BOT_TAG"
+required_subcommand="$SUBCMD"
+run_step "$dir" serve "$BODY_DIGEST"
+expect_status "case 7b (tag configured, releases lack the subcommand)" "$dir" 1
+expect_log "case 7b (tag configured, releases lack the subcommand) reports the rejection" "$dir" \
+  "missing subcommand ${SUBCMD}"
+expect_log "case 7b (tag configured, releases lack the subcommand) refuses the source fallback" "$dir" \
+  "was configured but no release asset verified for pin ${PIN}"
+expect_log "case 7b (tag configured, releases lack the subcommand) says the fallback is refused" "$dir" \
+  "Refusing to fall back to a source build"
+expect_no_log "case 7b (tag configured, releases lack the subcommand) accepted no release" "$dir" \
+  "Downloaded verified bot binary from release tag"
+expect_no_log "case 7b (tag configured, releases lack the subcommand) does not announce a cargo build" "$dir" \
+  "will cargo build"
+if [[ "$(attempted_tags "$dir" | tr '\n' ' ')" == "${BOT_TAG} ${V_TAG} " ]]; then
+  pass "case 7b (tag configured, releases lack the subcommand) tried every candidate before failing"
+else
+  bad "case 7b (tag configured, releases lack the subcommand) tried '$(attempted_tags "$dir" | tr '\n' ' ')'"
+fi
+
+# The positive control: without it, a step that rejected every release whenever
+# REQUIRE_SUBCOMMAND is set would pass both cases above. This binary's --help
+# names the subcommand, so the release must be accepted.
+dir="$WORK/case7-subcommand-present"
+stage_case "$dir" "$SUB_DIGEST"
+configured="$BOT_TAG"
+required_subcommand="$SUBCMD"
+asset_body="$SUB_BODY"
+run_step "$dir" serve "$SUB_DIGEST"
+expect_status "case 7c (tag configured, binary carries the subcommand)" "$dir" 0
+expect_field "case 7c (tag configured, binary carries the subcommand)" "$dir" source release
+expect_field "case 7c (tag configured, binary carries the subcommand)" "$dir" path \
+  "$dir/benchmark-bot-bin/ibex-benchmark-bot-linux-amd64"
+expect_log "case 7c (tag configured, binary carries the subcommand) names the tag it used" "$dir" \
+  "Downloaded verified bot binary from release tag ${BOT_TAG}"
+expect_no_log "case 7c (tag configured, binary carries the subcommand) did not reject the release" "$dir" \
+  "missing subcommand"
 
 # --- result ----------------------------------------------------------------
 
