@@ -22,7 +22,7 @@
     "@fontsource-variable/geist-mono": "5.3.0",
     "@lucide/vue": "1.62.0",
     "@nuxtjs/color-mode": "^3.5.2",
-    "@tabler/icons-vue": "^3.49.0",
+    "@tabler/icons-vue": "^3.52.0",
     "@tanstack/vue-table": "^8.21.3",
     "@unovis/vue": "^1.7.1",
     "@vueuse/core": "^14.4.0",
