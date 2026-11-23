@@ -61,7 +61,8 @@ CI validates the published file with `benchmarks/scripts/validate_published_hnsw
 (recall@10 ≥ 98%; 1M p99 < 100ms when a 1M cell is present — fails the workflow on
 `status: fail`). Fails the Memory collect artifact upload if the bot binary lacks
 `post-hnsw-pr-comment`, `post-ranking-pr-comment`, and `post-write-pr-comment` (stale
-`BENCHMARK_BOT_RELEASE_TAG` is ignored when it does not match `BENCHMARK_BOT_SHA`).
+`BENCHMARK_BOT_RELEASE_TAG` that does not name `BENCHMARK_BOT_SHA` fails setup instead of
+being ignored).
 
 ## Memory CI regression gates (3.E.3)
 
